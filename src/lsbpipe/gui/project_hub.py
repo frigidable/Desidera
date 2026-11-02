@@ -28,11 +28,11 @@ class CreateProjectDialog(QDialog):
 
     def __init__(self, parent=None, *, default_root: Path | None = None):
         super().__init__(parent)
-        self.setWindowTitle("New galaxy project · LSBpipe")
+        self.setWindowTitle("New galaxy project · DESIDERA")
         self.setMinimumWidth(540)
         self.resize(620, 510)
         self.project = None
-        self.parent_root = default_root or Path.home() / "LSBpipeProjects"
+        self.parent_root = default_root or Path.home() / "DESIDERAProjects"
         self._directory_user_edited = False
 
         self.name = QLineEdit()
@@ -191,7 +191,7 @@ class ProjectHub(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setObjectName("lsbpipe_project_hub")
-        self.setWindowTitle("LSBpipe · Galaxy Projects")
+        self.setWindowTitle("DESIDERA · Galaxy Projects")
         self.resize(1100, 720)
         self.workspace = None
 
@@ -200,7 +200,7 @@ class ProjectHub(QMainWindow):
         outer.setContentsMargins(24, 20, 24, 18)
         outer.setSpacing(14)
 
-        heading = QLabel("LSBpipe")
+        heading = QLabel("DESIDERA")
         heading.setStyleSheet("font-size: 26px; font-weight: 700")
         subheading = QLabel(
             "Galaxy projects · local-first scientific workspace")
@@ -479,7 +479,7 @@ class ProjectHub(QMainWindow):
         root = record["root"]
         response = QMessageBox.question(
             self, "Remove from recent projects?",
-            f"Remove this entry from the LSBpipe recent-project list?\n\n"
+            f"Remove this entry from the DESIDERA recent-project list?\n\n"
             f"Project: {name}\n"
             f"Location: {root}\n\n"
             "Only the list entry will be removed. The directory, original "
@@ -507,7 +507,7 @@ class ProjectHub(QMainWindow):
 
     def _import_dialog(self):
         directory = QFileDialog.getExistingDirectory(
-            self, "Import existing LSBpipe or Legacy FITS folder",
+            self, "Import existing DESIDERA or Legacy FITS folder",
             str(Path.home()))
         if directory:
             try:
