@@ -106,8 +106,8 @@ def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
             "band": key[3], "dataset_id": "/".join(key),
             "status": status, "products": products,
         })
-    if len(rows) > MAX_DATASETS:
-        raise ValueError(f"Dataset inventory exceeds {MAX_DATASETS} datasets")
+    # Inventory is an unbounded metadata listing. Preserve MAX_DATASETS only
+    # for the *expensive deep audit*; one galaxy can own many source assets.
     known = {(x["release"], x["region"], x["brick"]) for x in rows}
     for (release, region, brick), path in sorted(masks.items()):
         if (release, region, brick) not in known:
