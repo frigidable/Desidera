@@ -187,3 +187,36 @@ def test_only_verified_original_image_is_accepted(project, tmp_path):
         import_brick_ccd_catalog(
             project.root, coadd_asset_id=images["dr9"], catalogue_file=file)
     assert not lineage_path(project.root).exists()
+
+
+def test_single_multiband_brick_catalog_indexes_distinct_g_r_coadds(
+        project, tmp_path):
+    images = add_original_coadds(project)
+    root = project.root / "data"
+    hit = BrickHit("dr9", "south", "1554p180", 0, 0, 0, 0, {"g": 3})
+    for kind in ("image", "invvar", "nexp"):
+        original = root / product_for(hit, kind, "g").relative_path
+        original.parent.mkdir(parents=True, exist_ok=True)
+        original.write_bytes(f"ORIGINAL_DR9_G:{kind}".encode())
+    import_legacy_fits(project.root, root)
+    state = read_dataset_index(project.root)
+    dr9 = next(s for s in state["sources"] if s["release"] == "dr9")
+    g_image = next(
+        a["asset_id"] for a in state["assets"]
+        if a["source_id"] == dr9["source_id"] and
+        a["product_kind"] == "image" and a["band"] == "g")
+    verify_asset_checksum(project.root, g_image)
+    file = make_catalog(tmp_path)
+    r_result = import_brick_ccd_catalog(
+        project.root, coadd_asset_id=images["dr9"], catalogue_file=file)
+    g_result = import_brick_ccd_catalog(
+        project.root, coadd_asset_id=g_image, catalogue_file=file)
+    assert r_result["catalogue_sha256"] == g_result["catalogue_sha256"]
+    assert r_result["catalogue_reference"] != g_result["catalogue_reference"]
+    registry = read_observation_lineage(project.root)
+    assert len(registry["catalogue_receipts"]) == 2
+    assert len(registry["contributions"]) == 2
+    assert {r["band"] for r in registry["catalogue_receipts"]} == {"g", "r"}
+    assert compare_coadd_lineage(
+        project.root, images["dr9"], g_image)["status"] == (
+            "NO_SHARED_REGISTERED_IDS_NOT_CERTIFIED")
