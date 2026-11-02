@@ -112,6 +112,77 @@ def test_three_band_grz_layout_uses_three_columns_not_empty_quadrant(qtbot):
     widget.shutdown_renderer()
 
 
+def test_grz_fit_all_preserves_native_field_and_angular_scale(qtbot):
+    """Regression: three narrow panels cannot crop source FITS at Fit all."""
+    from PySide6.QtCore import Qt
+    from astropy.wcs.utils import proj_plane_pixel_scales
+    widget = MultibandComparison()
+    qtbot.addWidget(widget)
+    widget.resize(1350, 870)
+    widget.show()
+    sources = {}
+    shape = (384, 384)
+    for band, crpix in (
+            ("g", (192., 192.)), ("r", (190., 194.)),
+            ("z", (195., 189.))):
+        d = dataset(band, crpix=crpix)
+        d["pixel_shape"] = shape
+        d["data"] = {
+            "image": np.broadcast_to(np.array([[0.1]], dtype="f4"), shape),
+            "invvar": np.broadcast_to(np.array([[25.]], dtype="f4"), shape),
+            "nexp": np.broadcast_to(np.array([[5]], dtype="i2"), shape),
+            "maskbits": np.broadcast_to(np.array([[0]], dtype="i2"), shape),
+        }
+        sources[band] = d
+    widget.set_data({
+        "status": "DIAGNOSTIC_NOT_ADOPTED",
+        "datasets": sources,
+        "missing": {"i": "DR9 North has no i band"},
+    })
+    qtbot.waitUntil(
+        lambda: (widget._future is None and not widget._fit_queued
+                 and all(not widget.images[b].pixmap().isNull()
+                         for b in sources)),
+        timeout=10000)
+    widget.fit_views()
+    angular_pixel_scales = []
+    world_centers = []
+    for band in sources:
+        view = widget.views[band]
+        assert view.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+        assert view.verticalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+        displayed = view.mapToScene(
+            view.viewport().rect()).boundingRect()
+        native = widget.scenes[band].sceneRect()
+        # Within a 1-pixel numerical allowance, every *native* cutout
+        # must be visible when 'Fit all' is requested.
+        assert displayed.adjusted(-1, -1, 1, 1).contains(native)
+        assert view._relative_zoom == pytest.approx(1.)
+        angle = float(np.mean(np.abs(
+            proj_plane_pixel_scales(sources[band]["wcs"].celestial))))
+        angular_pixel_scales.append(angle / view.transform().m11())
+        center = view.mapToScene(view.viewport().rect().center())
+        ny = sources[band]["pixel_shape"][0]
+        ra, dec = sources[band]["wcs"].all_pix2world(
+            center.x(), ny - 1. - center.y(), 0)
+        world_centers.append((float(np.asarray(ra)),
+                              float(np.asarray(dec))))
+    assert max(angular_pixel_scales) - min(angular_pixel_scales) < 1e-10
+    for ra, dec in world_centers[1:]:
+        assert ra == pytest.approx(world_centers[0][0], abs=2e-5)
+        assert dec == pytest.approx(world_centers[0][1], abs=2e-5)
+
+    source = widget.views["g"]
+    source.scale(1.22, 1.22)
+    source._relative_zoom = 1.22
+    widget._sync(source)
+    assert widget.views["r"]._relative_zoom == pytest.approx(1.22)
+    assert widget.views["z"]._relative_zoom == pytest.approx(1.22)
+    widget.fit_views()
+    assert all(widget.views[b]._relative_zoom == 1. for b in sources)
+    widget.shutdown_renderer()
+
+
 def test_multiband_faint_log_matches_single_band_transfer_and_is_reversible(
         qtbot):
     from lsbpipe.gui.fits_raster import rgb_for_layer
