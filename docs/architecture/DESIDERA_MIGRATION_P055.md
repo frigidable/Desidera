@@ -53,3 +53,30 @@ without any WebEngine view, embedded Chromium/Qt texture composition is
 implicated; if they remain, inspect overlays/external software/Qt QWidget
 painting before trying GPU or driver changes. It is not necessary to
 reinstall the Python environment or redownload survey FITS.
+
+## Follow-up after real no-WebEngine screenshot
+
+The real Leo P screen still exhibits translucent rounded elements over the
+Back to Projects button when `DESIDERA_DISABLE_WEBENGINE=1`. Therefore
+embedded Chromium raster composition is not a sufficient explanation.
+
+P0.5.6b adds an **opt-in, on-device GUI paint diagnosis**. Launch DESIDERA
+with `DESIDERA_DISABLE_WEBENGINE=1` and `DESIDERA_UI_DIAG=1` simultaneously,
+open Leo P from the project hub, and read the printed
+`DESIDERA UI DIAGNOSTICS: <temporary-folder>`.
+
+That local folder contains:
+- `qt_widget_corner.png`: first 250×120 *client pixels* painted via
+  `QWidget.grab()`;
+- `native_window_corner.png`: corresponding OS window-grab path if the
+  local Windows compositor supports it (the two crops may have slightly
+  different frame offsets);
+- `ui_diagnostic.json`: names and geometry of Qt widgets intersecting the
+  application corner and the top-level visible Qt windows; no FITS
+  content, URLs, typed text or other application windows are recorded.
+
+Comparing these crops with an ordinary desktop screenshot can distinguish
+Qt paint artifacts from native or third-party overlays. The inference is
+diagnostic rather than proof; Qt native windows are sometimes rendered
+differently depending on platform and grab semantics. No diagnostic files
+are written into a galaxy project or research-data folder.
