@@ -120,7 +120,9 @@ def test_data_workbench_is_progressive_and_essential_actions_remain_reachable(
     assert not window.qa_toggle.isVisible()
     assert not window.qa_widget.isVisible()
     window.files_options.click()
-    assert window.files.isVisible()
+    # No catalog has been searched; advanced settings must not fabricate
+    # or reveal a candidate FITS table before it has entries.
+    assert not window.files.isVisible()
     assert window.qa_toggle.isVisible()
     window.qa_toggle.click()
     qtbot.wait(20)
