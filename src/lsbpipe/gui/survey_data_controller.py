@@ -39,8 +39,8 @@ class SurveyDataController(QObject):
         w.brick_filter.blockSignals(False)
 
     def _fill_files(self, *, checked_paths=None):
-        w = self.owner
         """Compact row identity, full provenance on hover, persistent selection."""
+        w = self.owner
         entries = w.manifest["products"] if w.manifest else []
         w.files.setRowCount(len(entries))
         for row, entry in enumerate(entries):
@@ -68,8 +68,8 @@ class SurveyDataController(QObject):
         w._mark_local_files()
 
     def _mark_local_files(self):
-        w = self.owner
         """Annotate local evidence separately from remote HTTP verification."""
+        w = self.owner
         project = w._local_project
         if project is None or w.manifest is None:
             return
@@ -120,29 +120,29 @@ class SurveyDataController(QObject):
         w._update_selection_summary()
 
     def select_science_quartet(self):
-        w = self.owner
         """Prepare *exactly* four primary science products for a brick and band.
 
         Explicitly clears the whole manifest selection, not just visible
         rows, so choosing one science bundle cannot accidentally leave 80
         unrelated files selected.
         """
+        w = self.owner
         if w.manifest is None:
             return
         row = w.bricks.currentRow()
         if not (0 <= row < len(w.hits)):
             QMessageBox.information(
-                self, "Select a brick",
+                w, "Select a brick",
                 "Select one release/region brick row above first.")
             return
         hit = w.hits[row]
         bands = tuple(hit.median_exposures)
         if not bands:
-            QMessageBox.warning(self, "No band", "No optical bands listed.")
+            QMessageBox.warning(w, "No band", "No optical bands listed.")
             return
         default = bands.index("r") if "r" in bands else 0
         band, ok = QInputDialog.getItem(
-            self, "Science quartet", "Band:", list(bands), default, False)
+            w, "Science quartet", "Band:", list(bands), default, False)
         if not ok:
             return
         needed = {
@@ -155,7 +155,7 @@ class SurveyDataController(QObject):
             for e in w.manifest["products"]}
         if not needed.issubset(available):
             QMessageBox.warning(
-                self, "Incomplete manifest",
+                w, "Incomplete manifest",
                 "Not all four products are in the current download profile.")
             return
         for i, entry in enumerate(w.manifest["products"]):
