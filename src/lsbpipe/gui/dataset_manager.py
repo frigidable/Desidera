@@ -151,6 +151,7 @@ class DatasetManager(QWidget):
     externalRequested = Signal(str, str, str)
     coverageRequested = Signal()
     checksumRequested = Signal(str)
+    ccdCatalogueRequested = Signal(str, str)
     pixelQaRequested = Signal()
     backRequested = Signal()
 
@@ -224,6 +225,15 @@ class DatasetManager(QWidget):
             "establish FITS validity or scientific quality.")
         self.hash_btn.clicked.connect(self._request_hash)
         actions.addWidget(self.hash_btn)
+        self.ccd_btn = QPushButton("Index brick CCDs…")
+        self.ccd_btn.setObjectName("dataset_manager_ccd_catalog")
+        self.ccd_btn.setToolTip(
+            "Import a local original legacysurvey-<brick>-ccds.fits for "
+            "the selected SHA-verified Legacy IMAGE. Catalogue assertions "
+            "are not independent-exposure certification.")
+        self.ccd_btn.clicked.connect(self._request_ccd_catalog)
+        actions.addWidget(self.ccd_btn)
+        self.ccd_btn.setEnabled(False)
         actions.addStretch(1)
         root.addLayout(actions)
 
@@ -470,6 +480,7 @@ class DatasetManager(QWidget):
             bool(not self._busy and self.tree.currentItem() and
                  self.tree.currentItem().data(0, Qt.UserRole) and
                  self.tree.currentItem().data(0, Qt.UserRole)[0] == "asset"))
+        self._refresh_ccd_button()
         self.map_btn.setEnabled(
             bool(not self._busy and self.project and
                  self.project.field and assets))
@@ -488,6 +499,7 @@ class DatasetManager(QWidget):
         self._selected_asset_id = (
             meta[1] if meta[0] == "asset" else None)
         self.hash_btn.setEnabled(not self._busy and meta[0] == "asset")
+        self._refresh_ccd_button()
         if meta[0] == "missing":
             self.details.setText(
                 "Incomplete indexed Legacy quartet: this original product "
@@ -497,11 +509,28 @@ class DatasetManager(QWidget):
             record = next(
                 (x for x in self.index["assets"] if x["asset_id"] == meta[1]), None)
             if record:
+                ccd_note = ""
+                if (record.get("product_kind") == "image" and
+                        record.get("product_family") == "resampled_coadd" and
+                        self.project is not None):
+                    try:
+                        from lsbpipe.surveys.observation_lineage import (
+                            read_observation_lineage)
+                        lineage = read_observation_lineage(self.project.root)
+                        count = sum(
+                            row["asset_id"] == record["asset_id"]
+                            for row in lineage["contributions"])
+                        ccd_note = (
+                            f" · CCD catalogue assertions: {count} "
+                            "(not validated or independent)")
+                    except (OSError, ValueError) as exc:
+                        ccd_note = f" · CCD lineage INVALID: {exc}"
                 self.details.setText(
                     f"Original product: {record.get('product_kind')} · "
                     f"SHA-256: {record.get('sha256') or 'not yet verified'} · "
                     f"FITS/WCS: {record.get('fits_status')} · "
-                    "no PSF/sky/LSB suitability certification")
+                    "no PSF/sky/LSB suitability certification"
+                    + ccd_note)
         else:
             self.details.setText(
                 "Selected source: independent lineage UNKNOWN; "
@@ -534,6 +563,36 @@ class DatasetManager(QWidget):
         if accepted and band.strip():
             self.externalRequested.emit(filename, provider.strip(), band.strip())
 
+    def _refresh_ccd_button(self):
+        asset = None
+        if self.index is not None and self._selected_asset_id is not None:
+            asset = next(
+                (entry for entry in self.index["assets"]
+                 if entry["asset_id"] == self._selected_asset_id), None)
+        source = None
+        if asset is not None:
+            source = next(
+                (entry for entry in self.index["sources"]
+                 if entry["source_id"] == asset["source_id"]), None)
+        enabled = (
+            not self._busy and self.project is not None and
+            asset is not None and source is not None and
+            asset.get("product_kind") == "image" and
+            asset.get("product_family") == "resampled_coadd" and
+            asset.get("checksum_status") == "FILE_SHA256_VERIFIED" and
+            source.get("provider") == "legacy_surveys")
+        self.ccd_btn.setEnabled(bool(enabled))
+
+    def _request_ccd_catalog(self):
+        if not self.ccd_btn.isEnabled() or not self._selected_asset_id:
+            return
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select official local Legacy brick-CCDs FITS", "",
+            "CCD catalogue (*.fits *.fits.gz)")
+        if path:
+            self.ccdCatalogueRequested.emit(self._selected_asset_id, path)
+
     def _request_hash(self):
         item = self.tree.currentItem()
         meta = item.data(0, Qt.UserRole) if item else None
@@ -544,7 +603,7 @@ class DatasetManager(QWidget):
         self._busy = bool(busy)
         for button in (
                 self.import_btn, self.external_btn, self.map_btn,
-                self.pixel_btn, self.hash_btn):
+                self.pixel_btn, self.hash_btn, self.ccd_btn):
             button.setEnabled(not busy)
         if not busy:
             self.map_btn.setEnabled(bool(
@@ -558,6 +617,7 @@ class DatasetManager(QWidget):
                 bool(self.tree.currentItem() and
                      self.tree.currentItem().data(0, Qt.UserRole) and
                      self.tree.currentItem().data(0, Qt.UserRole)[0] == "asset"))
+            self._refresh_ccd_button()
 
     def set_coverage(self, result: dict):
         self.coverage = result
