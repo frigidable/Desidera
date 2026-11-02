@@ -13,7 +13,7 @@ The test uses these **exact original files** from the official NERSC Legacy arch
 
 1. `dr9/south/coadd/155/1554p180/legacysurvey-1554p180-ccds.fits`
 2. `dr11/south/coadd/155/1554p180/legacysurvey-1554p180-ccds.fits`
-3. `dr9/north/coadd/210/2104p543/legacysurvey-2104p543-ccds.fits`
+3. `dr9/north/coadd/210/2100p542/legacysurvey-2100p542-ccds.fits`
 
 They are initial nominated samples, not yet authenticated to exist. A missing sample must fail the run. Replacement must be an explicit reviewed code change. The paths are source assertions; a matching path alone does not independently authenticate the release or region.
 
@@ -39,4 +39,4 @@ python scripts/accept_legacy_ccd_archives.py --report-dir real-ccd-evidence
 
 No real coadd IMAGE files are fetched in this stage. This does **not** certify the real end-to-end Dataset Manager integration, pixel-level CCD completeness, release authenticity beyond the archive path, calibration, WCS, PSF, noise, independent measurements, photometry, coaddition, or SBF. Shared CCD detection is positive evidence of reuse; no shared entries **never** proves independence. All scientific adoption flags remain false.
 
-After obtaining successful real-data reports, review actual hashes and column formats, expand instrument coverage if northern `2104p543` does not include both `90prime` and `mosaic`, and separately validate project binding using original coadd IMAGE data.
+After obtaining successful real-data reports, review actual hashes and column formats, expand instrument coverage if northern `2100p542` does not include both `90prime` and `mosaic`, and separately validate project binding using original coadd IMAGE data.
