@@ -156,7 +156,7 @@ def test_invalid_batch_has_no_partial_sidecar_or_fits_edits(field_project):
             field_project.root, coadd_asset_id=images["dr9"],
             catalogue_reference="test", records=[_row(), _row(band="z")])
     assert not lineage_path(field_project.root).exists()
-    with pytest.raises(ValueError, match="non-coadd"):
+    with pytest.raises(ValueError, match="native coadd IMAGE"):
         index = read_dataset_index(field_project.root)
         invvar = next(a["asset_id"] for a in index["assets"]
                       if a["product_kind"] == "invvar")
