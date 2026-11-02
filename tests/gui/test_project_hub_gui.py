@@ -4,6 +4,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6.QtWebEngineWidgets")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog
 from scripts.offline_gui_fixture import offline_legacy_viewer
 from lsbpipe.gui.project_hub import ProjectHub, CreateProjectDialog
@@ -349,3 +350,79 @@ def test_return_to_project_hub_explicitly_shuts_down_child_fits_renderer(
     assert hub.workspace is not None
     assert not hub.workspace.fits_explorer._renderer_closed
     hub.workspace._go_back_to_projects()
+
+
+
+def test_hub_removes_selected_stale_shortcut_after_confirmation_without_files(
+        hub, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    a = create_object_project("UGC 2162 usable", tmp_path / "current")
+    b = create_object_project("UGC_2162 stale", tmp_path / "stale")
+    moved = tmp_path / "stale_moved"
+    b.root.rename(moved)
+    hub.refresh()
+    assert hub.projects.count() == 2
+    stale_index = next(i for i in range(hub.projects.count()) if
+                       hub.projects.item(i).data(Qt.UserRole)["project_id"] ==
+                       b.project_id)
+    hub.projects.setCurrentRow(stale_index)
+    assert hub.remove_btn.isEnabled()
+    assert "Missing" in hub.projects.currentItem().text()
+    choices = []
+
+    def confirm(*args, **kwargs):
+        choices.append(args)
+        return QMessageBox.Cancel if len(choices) == 1 else QMessageBox.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", confirm)
+    hub.remove_btn.click()
+    assert hub.projects.count() == 2
+    assert read_object_project(moved).project_id == b.project_id
+    assert len(choices) == 1
+    hub.remove_btn.click()
+    assert hub.projects.count() == 1
+    assert hub.projects.item(0).data(Qt.UserRole)["project_id"] == a.project_id
+    assert read_object_project(moved).project_id == b.project_id
+    assert read_object_project(a.root).project_id == a.project_id
+    assert "No files were deleted" in hub.hint.text()
+    assert all("original FITS" not in str(x) or "NOT be deleted" in str(x)
+               for x in choices)
+
+
+def test_hub_remove_available_project_preserves_data_and_can_reimport(
+        hub, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    p = create_object_project("LSB-1", tmp_path / "LSB-1")
+    image = p.root / "original.fits.fz"
+    image.write_bytes(b"read only original")
+    hub.refresh()
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Yes)
+    hub.remove_btn.click()
+    assert hub.projects.count() == 0
+    assert image.read_bytes() == b"read only original"
+    assert read_object_project(p.root).project_id == p.project_id
+    with offline_legacy_viewer():
+        assert hub.import_folder(p.root)
+    assert hub.workspace._object_project.project_id == p.project_id
+    hub.workspace._go_back_to_projects()
+    assert hub.projects.count() == 1
+
+
+def test_hub_remove_disabled_when_no_visible_selection_and_with_active_workspace(
+        hub, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    p = create_object_project("Valid", tmp_path / "Valid")
+    hub.refresh()
+    hub.filter.setText("not-the-object")
+    assert not hub.remove_btn.isEnabled()
+    hub.filter.clear()
+    with offline_legacy_viewer():
+        hub._enter_project(p)
+    assert hub.workspace is not None
+    hub._selection_changed()
+    assert not hub.remove_btn.isEnabled()
+    hub._remove_selected()
+    assert recent_projects()[0]["project_id"] == p.project_id
+    hub.workspace._go_back_to_projects()
+    assert hub.remove_btn.isEnabled()
