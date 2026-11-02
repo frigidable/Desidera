@@ -67,7 +67,9 @@ def _bounded_int(value, name: str) -> int:
             not isinstance(value, (int, np.integer))):
         raise ValueError(f"{name}: integer coordinate required")
     result = int(value)
-    if result < 0 or result > 100_000:
+    # Real DR9/DR11 tables contain small negative offsets (e.g. -10)
+    # and high edges >3600. Require intersection with the brick below.
+    if result < -100_000 or result > 100_000:
         raise ValueError(f"{name}: invalid detector/brick coordinate")
     return result
 
@@ -119,7 +121,12 @@ def _read_table(file: Path, band: str) -> tuple[list[dict], int, dict]:
             bx1 = _bounded_int(record[columns["brick_x1"]], "BRICK_X1")
             by0 = _bounded_int(record[columns["brick_y0"]], "BRICK_Y0")
             by1 = _bounded_int(record[columns["brick_y1"]], "BRICK_Y1")
-            if bx1 <= bx0 or by1 <= by0:
+            # Coordinates describe the CCD footprint before clipping to the
+            # 3600x3600 brick. Out-of-range edges are legitimate; the clipped
+            # footprint must still have strictly positive area.
+            if (bx1 <= bx0 or by1 <= by0 or
+                    min(bx1, 3600) <= max(bx0, 0) or
+                    min(by1, 3600) <= max(by0, 0)):
                 raise ValueError(
                     f"CCD row {index} has nonpositive brick overlap")
             key = (camera, expnum, ccdname.upper())
