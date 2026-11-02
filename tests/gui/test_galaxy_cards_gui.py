@@ -1,16 +1,21 @@
-"""GUI smoke checks for the isolated Galaxy Cards module."""
+"""Qt regression tests for a single passport in the right-hand inspector."""
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6")
 
-from pathlib import Path
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QSplitter
+
 from lsbpipe.gui.galaxy_card_model import GalaxyCardSnapshot
-from lsbpipe.gui.galaxy_cards import GalaxyCardGallery
+from lsbpipe.gui.galaxy_cards import (
+    GalaxyCardsPreview, GalaxyDetailCard, INITIAL_SPLITTER_SIZES,
+)
 
 
-def sample(name, key, *, available=True):
+def sample(name, key, *, available=True, aliases=()):
     return GalaxyCardSnapshot(
         project_id=key,
         display_name=name,
@@ -21,48 +26,89 @@ def sample(name, key, *, available=True):
         dataset="dr11 / south / 0400p012 / r",
         fits_status="No local FITS link",
         last_opened="2026-11-02",
+        aliases=aliases,
     )
 
 
-def test_gallery_filters_and_preserves_order(qtbot):
-    gallery = GalaxyCardGallery()
-    qtbot.addWidget(gallery)
-    gallery.resize(940, 700)
-    gallery.show()
-    gallery.set_snapshots([sample("Leo P", "leo"), sample("UGC 2162", "ugc")])
-    assert [s.project_id for s in gallery.filtered_snapshots()] == ["leo", "ugc"]
-    gallery.search.setText("ugc")
-    assert [s.project_id for s in gallery.filtered_snapshots()] == ["ugc"]
-    assert gallery.counter.text() == "1 / 2 projects"
-    gallery.search.setText("unknown")
-    assert not gallery.filtered_snapshots()
-    assert gallery.empty.isVisible()
-    gallery.search.clear()
-    assert len(gallery.filtered_snapshots()) == 2
+def test_existing_left_list_and_single_right_passport(qtbot):
+    view = GalaxyCardsPreview()
+    qtbot.addWidget(view)
+    view.resize(1100, 720)
+    view.show()
+    view.set_snapshots([sample("Leo P", "leo"), sample("UGC 2162", "ugc")])
+    assert isinstance(view.splitter, QSplitter)
+    assert tuple(INITIAL_SPLITTER_SIZES) == (480, 540)
+    assert view.projects.count() == 2
+    assert view.detail.name.text() == "Leo P"
+    assert view.findChildren(GalaxyDetailCard) == [view.detail]
+    assert view.detail.minimumWidth() <= view.splitter.sizes()[1]
+    assert view.detail.preview.maximumHeight() <= 155
 
 
-def test_card_click_selects_and_enter_requests_open(qtbot):
-    gallery = GalaxyCardGallery()
-    qtbot.addWidget(gallery)
-    gallery.resize(800, 640)
-    gallery.show()
-    gallery.set_snapshots([sample("Leo P", "leo")])
-    card = gallery._cards["leo"]
-    with qtbot.waitSignal(gallery.selectionChanged, timeout=1500) as selected:
-        qtbot.mouseClick(card, Qt.LeftButton)
-    assert selected.args == ["leo"]
-    assert gallery.selected_id == "leo"
-    with qtbot.waitSignal(gallery.openRequested, timeout=1500) as opened:
-        qtbot.keyClick(card, Qt.Key_Return)
-    assert opened.args == ["leo"]
+def test_right_passport_tracks_selected_left_row(qtbot):
+    view = GalaxyCardsPreview()
+    qtbot.addWidget(view)
+    view.show()
+    view.set_snapshots([sample("Leo P", "leo"), sample("UGC 2162", "ugc")])
+    with qtbot.waitSignal(view.selectionChanged, timeout=1500) as event:
+        view.projects.setCurrentRow(1)
+    assert event.args == ["ugc"]
+    assert view.detail.snapshot.project_id == "ugc"
+    assert "0400p012" in view.detail.dataset.text()
 
 
-def test_missing_object_is_readable_without_thumbnail_or_network(qtbot):
-    gallery = GalaxyCardGallery()
-    qtbot.addWidget(gallery)
-    gallery.show()
-    gallery.set_snapshots([sample("KKR 25", "missing", available=False)])
-    card = gallery._cards["missing"]
-    assert "Missing" in card.availability.text()
-    assert card.preview.text() == "No cached image"
-    assert "KKR 25" in card.accessibleName()
+def test_search_name_alias_and_empty_state(qtbot):
+    view = GalaxyCardsPreview()
+    qtbot.addWidget(view)
+    view.show()
+    view.set_snapshots([
+        sample("Leo P", "leo", aliases=("AGC 208583",)),
+        sample("KKR 25", "kkr"),
+    ])
+    view.search.setText("208583")
+    assert not view.projects.item(0).isHidden()
+    assert view.projects.item(1).isHidden()
+    assert view.selected_id == "leo"
+    view.search.setText("nothing like this")
+    assert view.selected_id is None
+    assert view.detail.snapshot is None
+    assert not view.detail.open_button.isEnabled()
+
+
+def test_open_action_emits_immutable_id_without_side_effects(qtbot):
+    view = GalaxyCardsPreview()
+    qtbot.addWidget(view)
+    view.show()
+    view.set_snapshots([sample("Leo P", "stable-uuid")])
+    with qtbot.waitSignal(view.openRequested, timeout=1500) as event:
+        qtbot.mouseClick(view.detail.open_button, Qt.LeftButton)
+    assert event.args == ["stable-uuid"]
+
+
+def test_missing_project_shows_relink_without_faking_data(qtbot):
+    card = GalaxyDetailCard()
+    qtbot.addWidget(card)
+    card.resize(420, 640)
+    card.show()
+    card.set_snapshot(sample("KKR 25", "missing", available=False))
+    assert "Relink" in card.open_button.text()
+    assert "Missing" in card.fits.text()
+    assert "No cached local preview" in card.preview.text()
+    assert "No local FITS link" in card.fits.text()
+    card.set_snapshot(None)
+    assert not card.open_button.isEnabled()
+    assert card.snapshot is None
+
+
+def test_right_inspector_remains_resizable_and_scrollable(qtbot):
+    view = GalaxyCardsPreview()
+    qtbot.addWidget(view)
+    view.resize(760, 560)
+    view.show()
+    view.set_snapshots([sample("Leo P", "leo")])
+    view.splitter.setSizes([300, 420])
+    assert view.detail.width() >= 300
+    assert view.detail.findChild(type(view.detail.findChild(
+        type(view.detail.open_button), "galaxy_card_open"
+    )), "galaxy_card_open") is not None
+    assert view.detail.safety.isVisible()
