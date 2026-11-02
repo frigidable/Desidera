@@ -390,7 +390,7 @@ class SurveyExplorer(QMainWindow):
         self.files.setAlternatingRowColors(True)
         self.files.setMinimumHeight(160)
         self.files.verticalHeader().setVisible(False)
-        data_panel.addWidget(self.files, 3)
+        advanced_files_layout.addWidget(self.files, 3)
 
         # Advanced local FITS coverage parameters are available on demand;
         # they should not permanently hide the file table's rows.
@@ -434,14 +434,14 @@ class SurveyExplorer(QMainWindow):
         self.qa_btn.clicked.connect(self.inspect_coverage)
         qa_layout.addWidget(self.qa_btn)
         advanced_files_layout.addWidget(self.qa_widget)
-        self.files_options = QPushButton("Advanced file options")
+        self.files_options = QPushButton("Browse / customize files")
         self.files_options.setProperty("disclosureAction", True)
         self.files_options.setObjectName("archive_advanced_toggle")
         self.files_options.setCheckable(True)
         self.files_options.setChecked(False)
         self.files_options.setToolTip(
-            "Optional HTTP verification, survey file filters, "
-            "custom selection, coverage radii and manifest export")
+            "Inspect the full archive product table, choose optional "
+            "filters, HTTP checks, coverage settings or manifest export")
         data_panel.addWidget(self.files_options)
         data_panel.addWidget(self.advanced_files)
         self.files_options.toggled.connect(self.advanced_files.setVisible)
