@@ -22,7 +22,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox,
     QPushButton, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsPathItem, QSizePolicy, QLineEdit,
+    QGraphicsPathItem, QSizePolicy, QLineEdit, QSplitter, QScrollArea,
+    QGroupBox, QToolButton, QFrame,
 )
 
 from .fits_raster import (
@@ -95,10 +96,39 @@ class FITSExplorer(QWidget):
         self._render_timer = QTimer(self)
         self._render_timer.setInterval(30)
         self._render_timer.timeout.connect(self._poll_render)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(5)
-        bar = QHBoxLayout()
+        # Navigator + image: science pixels dominate the screen instead of
+        # stacking configuration, masks and provenance above the viewport.
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.workspace_splitter = QSplitter(Qt.Horizontal, self)
+        self.workspace_splitter.setObjectName("fits_workspace_splitter")
+        outer.addWidget(self.workspace_splitter)
+        self.sidebar_scroll = QScrollArea(self)
+        self.sidebar_scroll.setObjectName("fits_sidebar_scroll")
+        self.sidebar_scroll.setWidgetResizable(True)
+        self.sidebar_scroll.setFrameShape(QFrame.NoFrame)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setMinimumWidth(218)
+        self.sidebar_scroll.setMaximumWidth(338)
+        sidebar = QWidget()
+        sidebar.setObjectName("fits_controls_sidebar")
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        self.sidebar_scroll.setWidget(sidebar)
+        self.workspace_splitter.addWidget(self.sidebar_scroll)
+        self.image_pane = QWidget()
+        image_layout = QVBoxLayout(self.image_pane)
+        image_layout.setContentsMargins(5, 5, 5, 5)
+        image_layout.setSpacing(4)
+        self.workspace_splitter.addWidget(self.image_pane)
+        self.workspace_splitter.setStretchFactor(0, 0)
+        self.workspace_splitter.setStretchFactor(1, 1)
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.setSizes([270, 980])
+        layout.addWidget(QLabel("Display"))
+        bar = QVBoxLayout()
         bar.setSpacing(8)
 
         bar.addWidget(QLabel("Layer"))
@@ -112,23 +142,20 @@ class FITSExplorer(QWidget):
             ("QUALITY · diagnostic", "quality"),
         ):
             self.layer.addItem(name, kind)
-        bar.addWidget(self.layer, 2)
-        controls = QHBoxLayout()
-        controls.setSpacing(6)
-        controls.addWidget(QLabel("Stretch"))
+        bar.addWidget(self.layer)
+        controls = None  # controls are placed by transfer_controls below
         self.contrast = QComboBox()
         self.contrast.setObjectName("fits_contrast_selector")
         self.contrast.addItem("Standard", "standard")
         self.contrast.addItem("Faint features", "faint")
-        controls.addWidget(self.contrast, 1)
-        controls.addWidget(QLabel("Scale"))
+        # Transfer controls are assembled below after both selectors exist.
         self.scaling = QComboBox()
         self.scaling.setObjectName("fits_scaling_selector")
         for name, key in (
                 ("Auto", "auto"), ("Linear", "linear"),
                 ("Asinh", "asinh"), ("Log10", "log")):
             self.scaling.addItem(name, key)
-        controls.addWidget(self.scaling, 1)
+        # Scaling selector remains in the sidebar.
 
         self.fit_button = QPushButton("Fit")
         self.fit_button.setToolTip("Fit the entire local FITS cutout into view")
@@ -138,10 +165,19 @@ class FITSExplorer(QWidget):
         self.smooth.setToolTip(
             "Off: exact nearest-neighbor pixels; on: interpolated display "
             "only, not suitable for checking isolated mask pixels")
-        controls.addWidget(self.fit_button)
-        controls.addWidget(self.smooth)
         layout.addLayout(bar)
-        layout.addLayout(controls)
+        # Contrast and scale need the full sidebar width; fit and smoothing
+        # are viewport actions on a separate compact row.
+        transfer_controls = QVBoxLayout()
+        transfer_controls.addWidget(QLabel("Stretch"))
+        transfer_controls.addWidget(self.contrast)
+        transfer_controls.addWidget(QLabel("Scale"))
+        transfer_controls.addWidget(self.scaling)
+        layout.addLayout(transfer_controls)
+        quick_actions = QHBoxLayout()
+        quick_actions.addWidget(self.fit_button)
+        quick_actions.addWidget(self.smooth)
+        layout.addLayout(quick_actions)
 
         scale_row = QHBoxLayout()
         scale_row.addWidget(QLabel("vmin"))
@@ -177,8 +213,7 @@ class FITSExplorer(QWidget):
             "This is not a calibrated photometric measurement.")
         layout.addWidget(self.scale_bar)
 
-        toggles = QHBoxLayout()
-        other_toggles = QHBoxLayout()
+        # Separate checkbox widgets retain their existing stable public API.
         self.flags = {}
         for key, text, enabled in (
             ("SATUR", "SATUR", True),
@@ -195,15 +230,13 @@ class FITSExplorer(QWidget):
             check.setToolTip(
                 "Display-only colored overlay; does not change the FITS "
                 "pixels, mask policy or photometric acceptance")
-            if key in ("SATUR", "ALLMASK", "BRIGHT", "MEDIUM"):
-                toggles.addWidget(check)
-            else:
-                other_toggles.addWidget(check)
             self.flags[key] = check
-        toggles.addStretch()
-        other_toggles.addStretch()
-        layout.addLayout(toggles)
-        layout.addLayout(other_toggles)
+        overlay_group = QGroupBox("Overlays · display only")
+        overlay_layout = QVBoxLayout(overlay_group)
+        for key in ("SATUR", "ALLMASK", "BRIGHT", "MEDIUM", "GALAXY",
+                    "INVALID", "OUTLINES"):
+            overlay_layout.addWidget(self.flags[key])
+        layout.addWidget(overlay_group)
         self.color_legend = QLabel(
             "Red: SATUR  ·  Orange: ALLMASK  ·  Purple: BRIGHT  ·  "
             "Amber: MEDIUM  ·  Blue: GALAXY  ·  Magenta: no data. "
@@ -212,17 +245,34 @@ class FITSExplorer(QWidget):
             "Display only.")
         self.color_legend.setObjectName("fits_overlay_legend")
         self.color_legend.setWordWrap(True)
-        layout.addWidget(self.color_legend)
-
         self.context = QLabel(
             "Open an original FITS quartet from the Science QA panel.")
         self.context.setObjectName("fits_provenance")
         self.context.setWordWrap(True)
-        layout.addWidget(self.context)
         self.render_status = QLabel("Pixel-accurate FITS display · no data loaded.")
         self.render_status.setObjectName("fits_render_status")
         self.render_status.setWordWrap(True)
-        layout.addWidget(self.render_status)
+        self.detail_toggle = QToolButton()
+        self.detail_toggle.setObjectName("fits_toggle_diagnostics")
+        self.detail_toggle.setText("Details & provenance")
+        self.detail_toggle.setCheckable(True)
+        self.detail_toggle.setChecked(False)
+        self.detail_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.detail_toggle.setArrowType(Qt.RightArrow)
+        self.detail_toggle.toggled.connect(
+            lambda expanded: self.detail_toggle.setArrowType(
+                Qt.DownArrow if expanded else Qt.RightArrow))
+        layout.addWidget(self.detail_toggle)
+        self.detail_panel = QWidget()
+        detail_layout = QVBoxLayout(self.detail_panel)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        for diagnostic in (self.context, self.render_status,
+                           self.color_legend):
+            detail_layout.addWidget(diagnostic)
+        self.detail_toggle.toggled.connect(self.detail_panel.setVisible)
+        layout.addWidget(self.detail_panel)
+        self.detail_panel.setVisible(False)
+        layout.addStretch(1)
 
         self.scene = QGraphicsScene(self)
         self.view = FITSGraphicsView()
@@ -230,21 +280,27 @@ class FITSExplorer(QWidget):
         self.view.setScene(self.scene)
         self.view.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self.view, 1)
+        self.viewport_hint = QLabel(
+            "Original FITS · wheel zoom · drag to pan · hover for ICRS")
+        self.viewport_hint.setObjectName("fits_viewport_hint")
+        self.viewport_hint.setWordWrap(True)
+        image_layout.addWidget(self.viewport_hint)
+        image_layout.addWidget(self.view, 1)
 
         self.pixel_info = QLabel(
             "Hover over the image to inspect ICRS coordinates and raw FITS values.")
         self.pixel_info.setObjectName("fits_pixel_readout")
         self.pixel_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.pixel_info.setWordWrap(True)
-        layout.addWidget(self.pixel_info)
+        self.pixel_info.setStyleSheet("font-size: 11px;")
+        image_layout.addWidget(self.pixel_info)
 
         self.provenance = QLabel(
             "LOCAL ORIGINAL FITS · DISPLAY ONLY · DIAGNOSTIC_NOT_ADOPTED")
         self.provenance.setObjectName("fits_science_status")
         self.provenance.setStyleSheet(
             "color: palette(mid); font-size: 11px;")
-        layout.addWidget(self.provenance)
+        detail_layout.addWidget(self.provenance)
         self.base_item = QGraphicsPixmapItem()
         self.base_item.setZValue(0)
         self.overlay_item = QGraphicsPixmapItem()
