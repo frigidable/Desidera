@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 
 from .legacy import ARCHIVE
+from .task_control import checkpoint
 
 
 def _validated_product(entry: dict) -> tuple[str, Path]:
@@ -51,23 +52,27 @@ def probe_product(entry: dict, *, timeout: float = 20) -> dict:
                 "size_bytes": None}
 
 
-def _hash_file(path: Path) -> str:
+def _hash_file(path: Path, *, cancel_check=None) -> str:
+    checkpoint(cancel_check)
     dig = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            checkpoint(cancel_check)
             dig.update(chunk)
     return dig.hexdigest()
 
 
 def download_product(entry: dict, destination_root: Path, *,
                      max_bytes: int = 2_000_000_000,
-                     progress: Callable[[int], None] | None = None) -> dict:
+                     progress: Callable[[int], None] | None = None,
+                     cancel_check=None) -> dict:
     """Download to a temporary file, validate length/FITS signature, then rename.
 
     sha256 is calculated from the downloaded bytes, NOT compared to an
     authoritative checksum. Existing files are reused but *not* asserted
     identical to the remote source.
     """
+    checkpoint(cancel_check)
     url, relative = _validated_product(entry)
     root = Path(destination_root)
     target = root / relative
@@ -76,7 +81,8 @@ def download_product(entry: dict, destination_root: Path, *,
         if target.stat().st_size == 0:
             raise ValueError(f"Existing file is empty: {target}")
         return {"relative_path":relative.as_posix(), "state":"REUSED_LOCAL_UNVERIFIED",
-                "size_bytes":target.stat().st_size,"sha256":_hash_file(target)}
+                "size_bytes":target.stat().st_size,
+                "sha256":_hash_file(target, cancel_check=cancel_check)}
     part = target.with_name(target.name + ".part")
     req = urllib.request.Request(url, headers={"User-Agent":"LSBpipe-survey/0.4"})
     try:
@@ -92,6 +98,7 @@ def download_product(entry: dict, destination_root: Path, *,
             first = b""
             with part.open("wb") as f:
                 while True:
+                    checkpoint(cancel_check)
                     chunk = response.read(1024 * 1024)
                     if not chunk:
                         break
@@ -104,10 +111,14 @@ def download_product(entry: dict, destination_root: Path, *,
                     digest.update(chunk)
                     if progress:
                         progress(len(chunk))
+            checkpoint(cancel_check)
             if not first.startswith(b"SIMPLE  ="):
                 raise IOError("Downloaded content is not a FITS primary HDU")
             if expected is not None and n != expected:
                 raise IOError("Incomplete download: HTTP Content-Length mismatch")
+            # Publish a verified complete product only after the last
+            # cooperative checkpoint. A stop never leaves a .part behind.
+            checkpoint(cancel_check)
             os.replace(part, target)
             return {"relative_path":relative.as_posix(),"state":"DOWNLOADED",
                     "size_bytes":n,"sha256":digest.hexdigest()}
@@ -118,7 +129,8 @@ def download_product(entry: dict, destination_root: Path, *,
 def download_manifest(manifest: dict, destination_root: Path, *,
                       product_paths: set[str] | None = None,
                       progress: Callable[[int, int, str], None] | None = None,
-                      continue_on_error: bool = True) -> dict:
+                      continue_on_error: bool = True,
+                      cancel_check=None) -> dict:
     if manifest.get("schema") != "lsbpipe.legacy-download/0.1":
         raise ValueError("Unknown download manifest schema")
     entries = [
@@ -132,11 +144,14 @@ def download_manifest(manifest: dict, destination_root: Path, *,
     root = Path(destination_root)
     results = []
     for i, entry in enumerate(entries, 1):
+        checkpoint(cancel_check)
         try:
             def bytes_progress(_n):
                 if progress:
                     progress(i-1, len(entries), entry["relative_path"])
-            result = download_product(entry, root, progress=bytes_progress)
+            result = download_product(
+                entry, root, progress=bytes_progress,
+                cancel_check=cancel_check)
             results.append(result)
         except (urllib.error.URLError, OSError, ValueError, IOError) as exc:
             results.append({"relative_path":entry.get("relative_path"),
@@ -145,6 +160,7 @@ def download_manifest(manifest: dict, destination_root: Path, *,
                 raise
         if progress:
             progress(i, len(entries), entry["relative_path"])
+    checkpoint(cancel_check)
     report = {
         "schema":"lsbpipe.legacy-download-report/0.1",
         "field":manifest["field"],"results":results,
