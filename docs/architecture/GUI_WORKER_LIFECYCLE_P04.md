@@ -94,3 +94,68 @@ Real Qt GUI tests check:
 
 Do not describe P0.4 as a completed high-stress manual Windows acceptance
 until the original-FITS test suite is actually run on the user's machine.
+
+## P0.4.1 — hardening follow-up
+
+The previous single `SurveyExplorer._start` implementation was replaced with
+thin compatibility wrappers and a dedicated
+`gui.task_execution.WorkspaceTaskController`. The controller owns thread
+creation, thread shutdown, start/stop controls, GUI dispatch, and the
+object-project operation journal. Legacy test hooks
+`_start(action, finished, on_error)`, `_request_stop()` and `_idle()`
+remain compatible.
+
+A subtle asynchronous race is now explicitly guarded: delivery of
+`worker.completed/failed/cancelled` and delivery of `QThread.finished` are
+separate queued events. The controller and `TaskDispatch` hold a
+**two-event barrier**. The active token, worker, journal and QThread wrapper
+are not released or deleted until *both* worker terminal callback and
+thread exit have been observed on the Qt GUI thread. Tests exercise both
+delivery orders and ensure the end callback runs exactly once.
+
+The science and survey libraries now share a GUI-independent
+`surveys.task_control.OperationCancelled` and optional
+`cancel_check` callback. `TaskWorker` makes a checkpoint available to
+the work closure independently of GUI progress emission. Long operations
+that support fine-grained checkpoints include:
+- Survey HTTP transfer: before starting a file, between 1-MiB chunks,
+  during SHA-256 of an existing file, and before atomic rename.
+- Multi-file downloads: between products and before publishing the batch
+  receipt. Cancellation does not turn into an ordinary per-file error.
+  Complete files remain; `.part` files are cleaned. A cancelled batch
+  is not falsely recorded as complete.
+- Dataset integrity: between 256-row raster slabs, between brick footprint
+  evaluations, during original FITS hashing and before audit publication.
+  An explicit stop is propagated rather than classified as `INVALID_FITS`.
+- HTTP HEAD verification: before each product and after a finished request.
+  A blocked HTTP request still runs until timeout or underlying return.
+
+### Recoverable operation journal
+
+Every new operation started inside an object project creates a separate,
+atomic `operations/<run-id>.json` record with
+`lsbpipe.operation-journal/1`, UUID, action and `RUNNING` state.
+Requesting stop updates it to `STOP_REQUESTED`. After terminal callback
+delivery and QThread exit the state becomes `COMPLETED`, `CANCELLED`,
+`FAILED` or `IGNORED`. Journal states are **not scientific results**:
+all records carry `NOT_SCIENTIFIC_EVIDENCE`.
+
+On reopening the project, the hub checks for journals still in
+`RUNNING` or `STOP_REQUESTED` state. It shows a nonmodal warning that
+the previous process may have crashed. There is no blind replay, deletion,
+source FITS mutation or automatic acceptance of potentially existing QA
+output. New jobs get independent journal records; uncertain old records
+remain available for a later explicit recovery audit.
+
+### Acceptance boundaries
+
+CI exercises interrupted and normally completed journals, foreign UUIDs,
+cancelled downloads, unchanged original FITS, real Qt signals, both queued
+terminal/exit orders and project reopen with a warning. Production-grade
+cancellation of numerical kernels that lack checkpoints, process-level
+crash injection, high-DPI Windows stress tests, multi-gigabyte I/O
+benchmarks and real UGC 2162 FITS validation remain future gates.
+
+**P0.4 is incrementally hardened; it is not yet an independently certified
+full GUI refactor.** Additional controllers for target, survey and science
+workflows will follow after the worker lifecycle is stable on CI.
