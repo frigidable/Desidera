@@ -11,6 +11,7 @@ Official DR9 MASKBITS semantics: https://www.legacysurvey.org/dr9/bitmasks/
 from __future__ import annotations
 
 from contextlib import ExitStack
+import math
 from lsbpipe.survey import maskbits_to_uint
 
 import numpy as np
