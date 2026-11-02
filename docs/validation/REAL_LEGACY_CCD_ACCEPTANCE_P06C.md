@@ -1,6 +1,6 @@
 # Desidera P0.6c: original Legacy CCD catalogue acceptance
 
-**Status: acceptance not yet certified until a real-archive workflow completes.**
+**Status: LIMITED REAL-ARCHIVE PARSER ACCEPTANCE PASSED; full scientific lineage/photometry NOT CERTIFIED.**
 This package adds evidence collection and strict schema testing, not a scientific result.
 
 ## Archive contract and selected samples
@@ -40,3 +40,19 @@ python scripts/accept_legacy_ccd_archives.py --report-dir real-ccd-evidence
 No real coadd IMAGE files are fetched in this stage. This does **not** certify the real end-to-end Dataset Manager integration, pixel-level CCD completeness, release authenticity beyond the archive path, calibration, WCS, PSF, noise, independent measurements, photometry, coaddition, or SBF. Shared CCD detection is positive evidence of reuse; no shared entries **never** proves independence. All scientific adoption flags remain false.
 
 After obtaining successful real-data reports, review actual hashes and column formats, expand instrument coverage if northern `2100p542` does not include both `90prime` and `mosaic`, and separately validate project binding using original coadd IMAGE data.
+
+## Verified real-archive evidence — 2026-11-03 UTC
+
+The [CI run 41546160591](https://github.com/frigidable/Desidera/actions/runs/41546160591) completed successfully. Its downloadable artifact contains the complete JSON and Markdown reports. All three original FITS tables were extracted by the Desidera importer and an independently implemented Astropy reader, with exact row-identity agreement.
+
+| Archive source | Original SHA-256 | CCDs | Exposure groups | Cameras |
+|---|---|---:|---:|---|
+| DR9 South 1554p180 | `e0d1733171ab464c423ee6687a56a952ecb604f23709bf30995cdb55b6077f78` | 39 | 9 | decam: 39 |
+| DR11 South 1554p180 | `8085050046a370eb461896db0b08905195e30cb3cbac93fa8953a1712c3ef7fc` | 39 | 9 | decam: 39 |
+| DR9 North 2100p542 | `db3eeb740f6c463b37329ce1588ad44178989696090e386254c025f8390e2bed` | 33 | See JSON report | 90prime: 22, mosaic: 11 |
+
+DR9 South and DR11 South share **39/39 CCDs from 9 shared exposure groups**, despite different file SHA-256 values. The importer therefore must compare physical CCD identity and must not treat different release files as independent exposures.
+
+The original south tables contain `BRICK_X0=-10`, `BRICK_Y0=-8`, and high edges up to `BRICK_X1=3612` or `BRICK_Y1=3607`. P0.6c fixes the parser to accept these valid signed extents while rejecting zero intersection with the standard 3600×3600 brick area.
+
+The three samples validate format compatibility for the observed camera types and these fields only. No inference of pixel-scale observational completeness, release authentication beyond archive URL, or SBF/photometry readiness follows.
