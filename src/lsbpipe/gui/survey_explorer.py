@@ -1474,6 +1474,7 @@ class SurveyExplorer(QMainWindow):
             self.message.setText(f"{done}/{total}: {path}")
 
     def _release_selection_changed(self, _=None):
+        self._search_request = None
         # Changing requested releases invalidates discovery, never the
         # immutable original FITS or the project's source registry.
         if getattr(self, "_restoring_local_project", False):
@@ -1515,13 +1516,29 @@ class SurveyExplorer(QMainWindow):
         self.message.setText("Finding survey coverage…")
         self._refresh_workflow()
         self.show_viewer()
+        ticket = (field, releases)
+        self._search_request = ticket
 
         def work(progress):
             hits = discover_bricks(field, releases)
             return hits, build_manifest(field, hits)
 
+        def finished(result):
+            now = tuple(dr for dr, box in self.release_boxes.items()
+                        if box.isChecked())
+            try:
+                same_field = self._field() == field
+            except ValueError:
+                same_field = False
+            if self._search_request != ticket or now != releases or not same_field:
+                self.message.setText(
+                    "An earlier release/coordinate search completed but its "
+                    "results were not installed. Run Find data again.")
+                return
+            self._receive_search(result)
+
         work.operation_name = "survey_search"
-        self._start(work, self._receive_search)
+        self._start(work, finished)
 
     def _receive_search(self, result):
         hits, manifest = result
