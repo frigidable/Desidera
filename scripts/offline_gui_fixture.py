@@ -95,7 +95,7 @@ def apply_offline_state(window, state: str):
     if state == "S2":
         window.band_filter.setCurrentText("r")
         window.kind_filter.setCurrentText("image")
-        assert len(window._selected()) == 88  # filters never discard hidden selection
+        assert len(window._selected()) == 0  # filters never change selection
         return
     if state in ("S3", "S4", "S5", "S6"):
         window.bricks.selectRow(0)
