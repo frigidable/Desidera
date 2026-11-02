@@ -35,7 +35,7 @@ def probe_product(entry: dict, *, timeout: float = 20) -> dict:
     """HTTP HEAD is evidence of presence, not proof of scientific coverage."""
     url, _ = _validated_product(entry)
     req = urllib.request.Request(
-        url, method="HEAD", headers={"User-Agent": "LSBpipe-survey/0.4"})
+        url, method="HEAD", headers={"User-Agent": "DESIDERA-survey/0.4"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             size = response.headers.get("Content-Length")
@@ -84,7 +84,7 @@ def download_product(entry: dict, destination_root: Path, *,
                 "size_bytes":target.stat().st_size,
                 "sha256":_hash_file(target, cancel_check=cancel_check)}
     part = target.with_name(target.name + ".part")
-    req = urllib.request.Request(url, headers={"User-Agent":"LSBpipe-survey/0.4"})
+    req = urllib.request.Request(url, headers={"User-Agent":"DESIDERA-survey/0.4"})
     try:
         with urllib.request.urlopen(req, timeout=90) as response:
             if getattr(response, "status", 200) != 200:
