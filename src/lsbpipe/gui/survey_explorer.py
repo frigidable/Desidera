@@ -105,7 +105,15 @@ class SurveyExplorer(QMainWindow):
         # The hosted Legacy web page is visually independent of this stylesheet.
         self.setStyleSheet(
             "QPushButton, QComboBox, QDoubleSpinBox { min-height: 27px; } "
-            "QPushButton { padding-left: 6px; padding-right: 6px; } "
+            "QPushButton { padding-left: 8px; padding-right: 8px; } "
+            "QPushButton[primaryAction='true'] { "
+            "background: palette(highlight); "
+            "color: palette(highlighted-text); "
+            "border: 1px solid palette(highlight); "
+            "border-radius: 6px; font-weight: 600; min-height: 31px; } "
+            "QPushButton[disclosureAction='true'] { "
+            "text-align: left; background: transparent; border: 0px; "
+            "padding: 5px 4px; color: palette(text); } "
             "QTableWidget { font-size: 12px; }"
             "QLineEdit[targetInput=\"true\"] { "
             "min-height: 33px; padding: 1px 9px; border-radius: 6px; "
@@ -210,6 +218,7 @@ class SurveyExplorer(QMainWindow):
         self.advanced_target_layout.addWidget(releases_container)
         actions = QHBoxLayout()
         self.search_btn = QPushButton("Find data")
+        self.search_btn.setProperty("primaryAction", True)
         self.search_btn.setToolTip("Discover Legacy archive bricks for this ICRS field")
         self.search_btn.clicked.connect(self.search)
         actions.addWidget(self.search_btn)
@@ -234,6 +243,7 @@ class SurveyExplorer(QMainWindow):
         self.project_status.setWordWrap(True)
         self.advanced_target_layout.addWidget(self.project_status)
         self.target_options = QPushButton("More target options")
+        self.target_options.setProperty("disclosureAction", True)
         self.target_options.setObjectName("target_advanced_toggle")
         self.target_options.setCheckable(True)
         self.target_options.setChecked(False)
@@ -425,6 +435,7 @@ class SurveyExplorer(QMainWindow):
         qa_layout.addWidget(self.qa_btn)
         advanced_files_layout.addWidget(self.qa_widget)
         self.files_options = QPushButton("Advanced file options")
+        self.files_options.setProperty("disclosureAction", True)
         self.files_options.setObjectName("archive_advanced_toggle")
         self.files_options.setCheckable(True)
         self.files_options.setChecked(False)
@@ -443,6 +454,7 @@ class SurveyExplorer(QMainWindow):
         self.save_btn.clicked.connect(self.save)
         advanced_files_layout.addWidget(self.save_btn)
         self.download_btn = QPushButton("Download selected")
+        self.download_btn.setProperty("primaryAction", True)
         self.download_btn.setEnabled(False)
         self.download_btn.setToolTip(
             "Select a science quartet or individual files first. Nothing "
