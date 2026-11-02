@@ -82,6 +82,30 @@ class TaskDispatch(QObject):
         self.completed_callback = completed
         self.error_callback = on_error
         self.token = token
+        self._terminal_seen = False
+        self._thread_done = False
+        self._finalized = False
+
+    def _acknowledge_terminal(self):
+        self._terminal_seen = True
+        self._maybe_finalize()
+
+    @Slot()
+    def on_thread_finished(self):
+        self._thread_done = True
+        self._maybe_finalize()
+
+    def _maybe_finalize(self):
+        # The worker's terminal result is queued independently of
+        # QThread.finished. Never reset the active token or delete this
+        # receiver until BOTH events have reached this GUI thread.
+        if not (self._terminal_seen and self._thread_done):
+            return
+        if self._finalized:
+            return
+        self._finalized = True
+        self.owner_window._idle()
+        self.deleteLater()
 
     def _current(self) -> bool:
         return (getattr(self.owner_window, "_active_task_token", None)
@@ -90,23 +114,23 @@ class TaskDispatch(QObject):
 
     @Slot(object)
     def deliver_completed(self, value):
-        if not self._current():
-            return
-        if self.token.cancel_requested:
-            self.deliver_cancelled(
-                "Stop requested. Work may have written immutable receipts; "
-                "inspect saved run history before reuse.")
-            return
         try:
-            self.completed_callback(value)
-        except Exception as exc:
-            logging.exception("LSBpipe GUI completion callback failed")
-            self.deliver_failed(f"{type(exc).__name__}: {exc}")
+            if not self._current():
+                return
+            if self.token.cancel_requested:
+                self._show_cancelled(
+                    "Stop requested. Work may have written immutable receipts; "
+                    "inspect saved run history before reuse.")
+                return
+            try:
+                self.completed_callback(value)
+            except Exception as exc:
+                logging.exception("LSBpipe GUI completion callback failed")
+                self._show_failure(f"{type(exc).__name__}: {exc}")
+        finally:
+            self._acknowledge_terminal()
 
-    @Slot(str)
-    def deliver_failed(self, message: str):
-        if not self._current():
-            return
+    def _show_failure(self, message: str):
         self.owner_window.message.setText(message)
         if self.error_callback is not None:
             try:
@@ -116,9 +140,14 @@ class TaskDispatch(QObject):
         QMessageBox.warning(self.owner_window, "Survey operation failed", message)
 
     @Slot(str)
-    def deliver_cancelled(self, message: str):
-        if not self._current():
-            return
+    def deliver_failed(self, message: str):
+        try:
+            if self._current():
+                self._show_failure(message)
+        finally:
+            self._acknowledge_terminal()
+
+    def _show_cancelled(self, message: str):
         self.owner_window.message.setText(
             f"Stop request acknowledged. {message} "
             "No new result has been displayed as accepted science.")
@@ -128,6 +157,14 @@ class TaskDispatch(QObject):
                 "Task stopped or its late result discarded. Any existing "
                 "immutable scientific receipts remain on disk, and are "
                 "not automatically scientifically adopted.")
+
+    @Slot(str)
+    def deliver_cancelled(self, message: str):
+        try:
+            if self._current():
+                self._show_cancelled(message)
+        finally:
+            self._acknowledge_terminal()
 
     @Slot(object)
     def deliver_progress(self, value):
