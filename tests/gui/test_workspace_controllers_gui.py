@@ -106,3 +106,47 @@ def test_project_hub_can_create_three_sequential_independent_workspaces(
         assert hub.workspace is None
         assert hub.isVisible()
     assert len(seen) == 3
+
+
+
+def test_science_context_controller_freezes_project_and_rejects_old_selection(
+        workspace, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QTableWidgetItem
+    from lsbpipe.gui.science_context_controller import ScienceContextController
+    from lsbpipe.surveys.object_projects import create_object_project
+    w = workspace
+    project = create_object_project(
+        "Science candidate", tmp_path / "science_candidate",
+        field=SkyField(40.096208, 1.22925, 5.))
+    w._object_project = project
+    assert isinstance(w._science_context_controller, ScienceContextController)
+    w.ra.setValue(project.field.ra_deg)
+    w.dec.setValue(project.field.dec_deg)
+    w.field_width.setValue(project.field.width_arcmin)
+    hit = BrickHit("dr9", "south", "0401p012",
+                   40., 40.2, 1., 1.4, {"r": 1})
+    w.hits = [hit]
+    w.bricks.setRowCount(1)
+    w.bricks.setItem(0, 0, QTableWidgetItem("DR9"))
+    w.bricks.selectRow(0)
+    w.science_qa.band.setCurrentText("r")
+    w.science_qa.directory.setText(str(project.root / "data"))
+    monkeypatch.setattr(w, "_brick_result_matches_target", lambda: True)
+    context = w._current_science_context("census")
+    assert context is not None
+    assert context.project_id == project.project_id
+    ticket = w._qa_generation
+    assert w._science_ticket_current(context=context, ticket=ticket)
+    assert w._science_context_controller.ticket_current(
+        context=context, ticket=ticket)
+    assert w._qa_context_current({
+        "field": project.field,
+        "source": f"DR9 south · 0401p012 · r"})
+    w.target_radius.setValue(w.target_radius.value() + 1)
+    assert not w._science_ticket_current(context=context, ticket=ticket)
+    w.target_radius.setValue(context.target_radius_arcsec)
+    w.ra.setValue(40.111111)
+    assert not w._qa_context_current({
+        "field": project.field,
+        "source": f"DR9 south · 0401p012 · r"})
+    assert not w._science_ticket_current(context=context, ticket=ticket)
