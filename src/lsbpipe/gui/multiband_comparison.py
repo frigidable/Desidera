@@ -10,19 +10,20 @@ import math
 import numpy as np
 
 from PySide6.QtCore import Qt, QTimer, Signal, QPointF
-from PySide6.QtGui import QPixmap, QColor, QPen, QPainterPath
+from PySide6.QtGui import QPixmap, QColor, QPen, QPainterPath, QTransform
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QComboBox, QCheckBox, QFrame, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsPathItem, QGraphicsScene,
+    QGraphicsPathItem,
 )
 
 from .fits_explorer import FITSExplorer, FITSGraphicsView
 from .fits_raster import rgb_for_layer, fits_pixel_from_scene
-
+from .multiband_preview import (
+    MAX_PREVIEW_SIDE, MAX_NATIVE_BYTES, native_dataset_bytes, display_preview,
+)
 
 BANDS = ("g", "r", "i", "z")
-MAX_TOTAL_PIXELS = 8_000_000
 
 
 def load_multiband_originals(*, directory, field, hit, radii, checkpoint=None):
@@ -40,7 +41,7 @@ def load_multiband_originals(*, directory, field, hit, radii, checkpoint=None):
         raise ValueError("Choose a local original-FITS directory first")
     found = {}
     missing = {}
-    total = 0
+    used_bytes = 0
     for band in BANDS:
         if checkpoint is not None:
             checkpoint()
@@ -74,12 +75,17 @@ def load_multiband_originals(*, directory, field, hit, radii, checkpoint=None):
                 "Local quartet failed FITS/WCS validation: "
                 f"{type(exc).__name__}: {exc}")
             continue
-        pixels = int(np.prod(dataset["pixel_shape"]))
-        total += pixels
-        if total > MAX_TOTAL_PIXELS:
-            raise ValueError(
-                "Multi-band viewer exceeds 8 million original pixels in total. "
-                "Choose a narrower search field; no silent downsampling.")
+        required = native_dataset_bytes(dataset)
+        if used_bytes + required > MAX_NATIVE_BYTES:
+            # Display previews are bounded separately, but native arrays are
+            # retained for exact original-pixel hover. Do not overcommit RAM.
+            missing[band] = (
+                f"Native FITS memory budget exceeded: "
+                f"{(used_bytes + required) / (1024**2):.0f} MiB requested, "
+                f"{MAX_NATIVE_BYTES // (1024**2)} MiB supported. "
+                "Reduce field size or inspect this band individually.")
+            continue
+        used_bytes += required
         found[band] = dataset
     if not found:
         raise FileNotFoundError(
@@ -116,6 +122,8 @@ class MultibandComparison(QWidget):
         self.images = {}
         self.outlines = {}
         self.placeholders = {}
+        self.preview_info = {}
+        self.preview_factors = {}
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="lsbpipe-band-display")
         self._future = None
@@ -159,6 +167,10 @@ class MultibandComparison(QWidget):
             column.setContentsMargins(4, 4, 4, 4)
             column.setSpacing(3)
             column.addWidget(QLabel(band.upper() + " · original IMAGE (nanomaggy)"))
+            info = QLabel("Screen overview · preparing")
+            info.setObjectName("fits_multiband_overview_" + band)
+            info.setStyleSheet("font-size: 11px; color: palette(mid)")
+            column.addWidget(info)
             view = _BandView()
             view.setObjectName("fits_multiband_view_" + band)
             scene = QGraphicsScene(view)
@@ -178,6 +190,7 @@ class MultibandComparison(QWidget):
             self.scenes[band] = scene
             self.images[band] = image
             self.placeholders[band] = placeholder
+            self.preview_info[band] = info
             self.outlines[band] = []
         grid.setRowStretch(0, 1)
         grid.setRowStretch(1, 1)
@@ -205,9 +218,11 @@ class MultibandComparison(QWidget):
         datasets = result.get("datasets", {})
         if not datasets or set(datasets) - set(BANDS):
             raise ValueError("No supported original optical bands")
-        if sum(int(np.prod(d["pixel_shape"])) for d in datasets.values()
-               ) > MAX_TOTAL_PIXELS:
-            raise ValueError("Multi-band viewer memory limit exceeded")
+        total_bytes = sum(native_dataset_bytes(d) for d in datasets.values())
+        if total_bytes > MAX_NATIVE_BYTES:
+            raise ValueError(
+                f"Original FITS arrays need {total_bytes / 2**20:.0f} MiB, "
+                f"exceeding {MAX_NATIVE_BYTES // 2**20} MiB viewer budget")
         identity = None
         for band, d in datasets.items():
             if d.get("status") != "DIAGNOSTIC_NOT_ADOPTED" or d["band"] != band:
@@ -227,6 +242,7 @@ class MultibandComparison(QWidget):
             d = self.datasets.get(band)
             self.views[band].setVisible(d is not None)
             self.placeholders[band].setVisible(d is None)
+            self.preview_info[band].setVisible(d is not None)
             if d is None:
                 self.placeholders[band].setText(
                     band.upper() + ": " +
@@ -269,12 +285,17 @@ class MultibandComparison(QWidget):
         data = dict(self.datasets)
         contrast = self.stretch.currentData()
         self._future = self._executor.submit(
-            lambda: {band: rgb_for_layer(
-                d["data"]["image"], "image", band, contrast=contrast)
-                for band, d in data.items()})
+            lambda: {band: self._prepare_overview(d, band, contrast)
+                     for band, d in data.items()})
         self._pending_generation = generation
         self.status.setText("Preparing original IMAGE previews · display only")
         self._timer.start()
+
+    @staticmethod
+    def _prepare_overview(dataset, band, contrast):
+        overview, factor = display_preview(dataset["data"]["image"])
+        rgb = rgb_for_layer(overview, "image", band, contrast=contrast)
+        return rgb, factor
 
     def _poll(self):
         future = self._future
@@ -289,15 +310,32 @@ class MultibandComparison(QWidget):
             return
         if not self.datasets:
             return
-        for band, arr in images.items():
-            if band in self.datasets:
-                self.images[band].setPixmap(FITSExplorer._pixmap(arr))
+        self.preview_factors.clear()
+        for band, (rgb, factor) in images.items():
+            if band not in self.datasets:
+                continue
+            ny, nx = self.datasets[band]["pixel_shape"]
+            preview_y, preview_x = rgb.shape[:2]
+            item = self.images[band]
+            item.setPixmap(FITSExplorer._pixmap(rgb))
+            # The graphics SCENE and WCS remain in ORIGINAL pixel units.
+            # Only the display raster is averaged and expanded to cover
+            # the native field of view, with no science-array mutation.
+            item.setTransform(QTransform.fromScale(
+                nx / preview_x, ny / preview_y))
+            self.preview_factors[band] = factor
+            self.preview_info[band].setText(
+                f"Display-only: {preview_x}×{preview_y} px "
+                f"(native {nx}×{ny}, {factor}×{factor} bin)"
+                if factor > 1 else
+                f"Native display: {nx}×{ny} px · no binning")
         self.fit_views()
         present = ", ".join(b.upper() for b in BANDS if b in self.datasets)
         missing = ", ".join(b.upper() for b in BANDS if b not in self.datasets)
         self.status.setText(
             f"Loaded: {present} · unavailable: {missing or 'none'} · "
-            "individual display stretches · original FITS only · not adopted")
+            "area-averaged screen overviews where needed; native FITS "
+            "readout by WCS · display only · not adopted")
 
     @staticmethod
     def _scalar(value):
@@ -406,8 +444,11 @@ class MultibandComparison(QWidget):
         self._timer.stop()
         self.datasets = {}
         self.missing = {}
+        self.preview_factors.clear()
         for band in BANDS:
             self.images[band].setPixmap(QPixmap())
+            self.images[band].setTransform(QTransform())
+            self.preview_info[band].setText("Screen overview · preparing")
             for item in self.outlines[band]:
                 self.scenes[band].removeItem(item)
             self.outlines[band].clear()
