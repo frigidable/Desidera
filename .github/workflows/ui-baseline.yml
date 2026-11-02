@@ -8,6 +8,9 @@ on:
       - "scripts/capture_gui_baseline.py"
       - "tests/gui/**"
       - "src/lsbpipe/gui/**"
+      - "src/lsbpipe/surveys/**"
+      - "src/lsbpipe/photometry/**"
+      - "tests/test_observation_lineage.py"
       - ".github/workflows/ui-baseline.yml"
   workflow_dispatch:
 
