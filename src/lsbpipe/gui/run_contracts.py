@@ -285,6 +285,44 @@ def discover_run_history(project_root: str | Path, *,
                 continue
             visited.add(unique)
             found.append(check)
+
+    # P0.2 integrity audits have their own immutable archive and different
+    # provenance schema. Show them in the unified project history without
+    # pretending they have P0.3 parameter or artifact signatures.
+    audits = root / "dataset-audits"
+    if audits.is_dir() and not audits.is_symlink():
+        for directory in audits.iterdir():
+            if (not directory.is_dir() or directory.is_symlink() or
+                    directory.name.startswith(".")):
+                continue
+            receipt = directory / "audit.json"
+            if receipt.is_symlink() or not receipt.is_file():
+                continue
+            try:
+                record = json.loads(receipt.read_text(encoding="utf-8"))
+                if (not isinstance(record, dict) or
+                        record.get("schema") != "lsbpipe.dataset-audit/1" or
+                        not isinstance(record.get("datasets"), list) or
+                        record.get("run_id") != directory.name or
+                        record.get("science_status") != "DIAGNOSTIC_NOT_ADOPTED"):
+                    continue
+                same_project = (project_id is None or
+                                record.get("project_id") == project_id)
+                found.append({
+                    "manifest_path": str(receipt),
+                    "run_id": record["run_id"],
+                    "action": "dataset_audit",
+                    "dataset": f"{len(record['datasets'])} inventoried datasets",
+                    "created_at_utc": record.get("created_utc"),
+                    "state": ("AUDIT_RECORDED_NOT_REVALIDATED" if same_project
+                              else "PROJECT_MISMATCH"),
+                    "reason": (
+                        "P0.2 inventory/WCS diagnostic; no P0.3 run signature "
+                        "or current FITS rehash" if same_project else
+                        "Dataset audit belongs to a different project"),
+                })
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
     return sorted(found, key=lambda r: r.get("run_id", ""), reverse=True)
 
 
