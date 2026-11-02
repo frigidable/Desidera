@@ -6,6 +6,8 @@ existing workspace background-task controller; no downloads or coaddition.
 from __future__ import annotations
 
 from collections import defaultdict
+from itertools import combinations
+import math
 
 from PySide6.QtCore import Qt, Signal, QPointF, QRectF
 from PySide6.QtGui import QBrush, QColor, QPen, QPolygonF, QPainter
@@ -55,6 +57,47 @@ def _legacy_quartets(assets: list[dict]) -> tuple[int, int, list[tuple[str, str,
     return complete, total, missing
 
 
+def _coincident_source_footprints(records: list[dict],
+                                  tolerance_arcsec: float = 0.25) -> list[dict]:
+    """Compare sampled WCS edges across source IDs (not exposures).
+
+    Only comparable IMAGE footprints for the *same brick and band* qualify.
+    The resulting geometric overlap says nothing about independent epochs,
+    detector observations, photometric agreement, or data suitability.
+    """
+    valid = [record for record in records if (
+        record.get("source_id") and record.get("band") and
+        record.get("brick") and len(record.get("points", [])) >= 3)]
+    matches = {}
+    for left, right in combinations(valid, 2):
+        if (left["source_id"] == right["source_id"] or
+                left["band"] != right["band"] or
+                left["brick"] != right["brick"]):
+            continue
+        p, q = left["points"], right["points"]
+        if len(p) != len(q):
+            continue
+        offsets = [
+            math.hypot(float(x1)-float(x2), float(y1)-float(y2))
+            for (x1, y1), (x2, y2) in zip(p, q)]
+        maximum = max(offsets)
+        if maximum > tolerance_arcsec or not math.isfinite(maximum):
+            continue
+        src = sorted((left["source_id"], right["source_id"]))
+        key = (src[0], src[1], left["brick"])
+        entry = matches.setdefault(key, {
+            "source_ids": src, "brick": left["brick"],
+            "bands": [], "max_offset_arcsec": 0.,
+        })
+        if left["band"] not in entry["bands"]:
+            entry["bands"].append(left["band"])
+        entry["max_offset_arcsec"] = max(entry["max_offset_arcsec"], maximum)
+    for entry in matches.values():
+        entry["bands"].sort()
+    return sorted(matches.values(), key=lambda x: (
+        x["brick"], x["source_ids"]))
+
+
 class _SkyFootprintView(QGraphicsView):
     resized = Signal()
 
@@ -91,6 +134,7 @@ class DatasetManager(QWidget):
         self._busy = False
         self._map_fit_mode = "target"
         self._colors = {}
+        self._source_labels = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(9)
@@ -194,6 +238,14 @@ class DatasetManager(QWidget):
         self.map_view.setScene(self.scene)
         self.map_view.resized.connect(self._fit_map)
         map_layout.addWidget(self.map_view, 1)
+        self.map_legend = QLabel("Outlines will be labeled after WCS inspection.")
+        self.map_legend.setObjectName("dataset_manager_source_legend")
+        self.map_legend.setWordWrap(True)
+        map_layout.addWidget(self.map_legend)
+        self.map_overlap = QLabel("")
+        self.map_overlap.setObjectName("dataset_manager_overlap_summary")
+        self.map_overlap.setWordWrap(True)
+        map_layout.addWidget(self.map_overlap)
         self.map_status = QLabel(
             "Footprints not checked. Select Inspect WCS footprints to "
             "read actual local FITS headers.")
@@ -234,6 +286,7 @@ class DatasetManager(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
         self._colors.clear()
+        self._source_labels.clear()
         sources = index.get("sources", [])
         assets = index.get("assets", [])
         by_source = defaultdict(list)
@@ -248,6 +301,7 @@ class DatasetManager(QWidget):
             label = " · ".join(str(x) for x in (
                 source.get("provider", "External"), source.get("release"),
                 source.get("region")) if x)
+            self._source_labels[sid] = label
             children = by_source.get(sid, [])
             bands = ", ".join(sorted({
                 a["band"] for a in children if a.get("band")}))
@@ -266,6 +320,8 @@ class DatasetManager(QWidget):
             item.setToolTip(
                 2, "Index presence only, not FITS/WCS or photometric QA.")
             item.setData(0, Qt.UserRole, ("source", sid))
+            item.setForeground(
+                0, QBrush(QColor(self._colors[sid])))
             self.tree.addTopLevelItem(item)
             for asset in sorted(children, key=lambda a: (
                     str(a.get("brick") or ""),
@@ -421,6 +477,7 @@ class DatasetManager(QWidget):
 
     def _draw_coverage(self):
         self.scene.clear()
+        self.map_overlap.clear()
         if self.project is None or self.project.field is None:
             self.map_status.setText(
                 "ICRS coordinates required for FITS coverage geometry.")
@@ -461,6 +518,11 @@ class DatasetManager(QWidget):
                     unique[signature] = [record]
                 else:
                     unique[signature].append(record)
+            overlaps = _coincident_source_footprints(
+                self.coverage.get("footprints", []))
+            overlapping_ids = {
+                source_id
+                for item in overlaps for source_id in item["source_ids"]}
             for group in unique.values():
                 record = group[0]
                 points = record["points"]
@@ -471,6 +533,13 @@ class DatasetManager(QWidget):
                     color if highlight else QColor("#637183"),
                     1.9 if highlight else 1.0)
                 pen.setCosmetic(True)
+                if record["source_id"] in overlapping_ids:
+                    # Two identical sky contours are deliberately NOT moved
+                    # apart. Complementary colored dashes show both actual
+                    # footprints without inventing a physical separation.
+                    group_index = list(self._colors).index(record["source_id"])
+                    pen.setDashPattern([8., 8.])
+                    pen.setDashOffset(8. * (group_index % 2))
                 polygon = QGraphicsPolygonItem(
                     QPolygonF([QPointF(*xy) for xy in points]))
                 polygon.setPen(pen)
@@ -486,6 +555,28 @@ class DatasetManager(QWidget):
                     f"bands {bands} · {len(group)} original IMAGE files · "
                     "WCS header only")
                 self.scene.addItem(polygon)
+            if overlaps:
+                summaries = []
+                for item in overlaps[:4]:
+                    names = [
+                        self._source_labels.get(sid, "source "+sid[:8])
+                        for sid in item["source_ids"]]
+                    summaries.append(
+                        " / ".join(names) +
+                        f" · {item['brick']} · bands "
+                        + ", ".join(item["bands"]))
+                suffix = (
+                    f" (+{len(overlaps)-4} further groups)"
+                    if len(overlaps) > 4 else "")
+                self.map_overlap.setText(
+                    "Coincident sampled WCS edges (≤0.25″): " +
+                    "; ".join(summaries) + suffix +
+                    ". Same sky geometry does NOT establish independent "
+                    "exposures or interchangeable photometry.")
+            else:
+                self.map_overlap.setText(
+                    "No coincident cross-source WCS contours established "
+                    "within the sampled-edge tolerance.")
             good = len(self.coverage.get("footprints", []))
             rejected = len(self.coverage.get("rejected", []))
             omitted = self.coverage.get("omitted_count", 0)
@@ -499,6 +590,22 @@ class DatasetManager(QWidget):
             self.map_status.setText(
                 "ICRS target and sky rings shown. FITS sky footprints "
                 "not inspected; no geometric coverage claim.")
+            self.map_overlap.setText(
+                "No source overlap inferred before native FITS WCS inspection.")
+        legend_parts = []
+        for sid, label in list(self._source_labels.items())[:5]:
+            color = self._colors.get(sid, "#81A8CE")
+            safe_label = (label.replace("&", "&amp;").replace("<", "&lt;")
+                          .replace(">", "&gt;"))
+            legend_parts.append(
+                f'<span style="color:{color}">━━</span> {safe_label}')
+        if len(self._source_labels) > 5:
+            legend_parts.append(
+                f"+{len(self._source_labels)-5} further source groups")
+        self.map_legend.setText(
+            " · ".join(legend_parts)
+            if self.coverage is not None and legend_parts
+            else "Colored source contours appear after original WCS inspection.")
         bounds = self.scene.itemsBoundingRect()
         bounds.adjust(-width*.08, -width*.08, width*.08, width*.08)
         self.scene.setSceneRect(bounds)
