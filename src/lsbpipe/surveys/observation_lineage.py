@@ -99,6 +99,7 @@ def _empty(project_id: str) -> dict:
         "created_at": _now(),
         "observations": [],
         "contributions": [],
+        "catalogue_receipts": [],
         "scientific_status": "NOT_SCIENTIFICALLY_ADOPTED",
     }
 
@@ -127,6 +128,52 @@ def _validated_observations(record: dict, index: dict) -> None:
         identities[identity.ccd_id] = identity
 
     assets = {a["asset_id"]: a for a in index["assets"]}
+    sources = {source["source_id"]: source for source in index["sources"]}
+    receipts = record.get("catalogue_receipts", [])
+    if not isinstance(receipts, list):
+        raise ValueError("Invalid CCD catalogue receipt collection")
+    by_reference = {}
+    for receipt in receipts:
+        if not isinstance(receipt, dict):
+            raise ValueError("Malformed CCD catalogue receipt")
+        ref = receipt.get("catalogue_reference")
+        sha = receipt.get("catalogue_sha256")
+        coadd = assets.get(receipt.get("coadd_asset_id"))
+        source = sources.get(receipt.get("source_id"))
+        if (not isinstance(ref, str) or not ref.startswith(
+                "legacy_brick_ccds:") or not isinstance(sha, str) or
+                len(sha) != 64 or any(ch not in "0123456789abcdef"
+                                     for ch in sha)):
+            raise ValueError("Invalid CCD catalogue digest/reference")
+        if ref in by_reference:
+            raise ValueError("Duplicate CCD catalogue reference")
+        if (coadd is None or coadd.get("product_kind") != "image" or
+                coadd.get("product_family") != "resampled_coadd" or
+                source is None or source["source_id"] != coadd["source_id"]):
+            raise ValueError("CCD catalogue refers to wrong coadd/source")
+        if (receipt.get("coadd_sha256") != coadd.get("sha256") or
+                receipt.get("band") != coadd.get("band") or
+                receipt.get("brick") != coadd.get("brick") or
+                receipt.get("release") != source.get("release") or
+                receipt.get("region") != source.get("region")):
+            raise ValueError("Catalogue receipt disagrees with indexed coadd")
+        expected = (
+            f"legacy_brick_ccds:{source['release']}:"
+            f"{source['region']}:{coadd['brick']}:sha256:{sha}")
+        if ref != expected:
+            raise ValueError("CCD catalogue reference does not match receipt")
+        if (not isinstance(receipt.get("catalogue_path_ref"), dict) or
+                not isinstance(receipt.get("catalogue_size_bytes"), int) or
+                receipt["catalogue_size_bytes"] <= 0 or
+                not isinstance(receipt.get("catalogue_rows"), int) or
+                receipt["catalogue_rows"] <= 0 or
+                not isinstance(receipt.get("selected_ccd_count"), int) or
+                receipt["selected_ccd_count"] <= 0 or
+                receipt.get("status") != UNVERIFIED or
+                receipt.get("independence_certified") is not False or
+                receipt.get("joint_scientific_combination_allowed") is not False):
+            raise ValueError("Incomplete or invalid catalogue import receipt")
+        by_reference[ref] = receipt
     keys = set()
     locators = {}
     for item in contributions:
@@ -148,6 +195,10 @@ def _validated_observations(record: dict, index: dict) -> None:
         if not isinstance(ref, str) or not ref.strip() or (
                 not isinstance(locator, str) or not locator.strip()):
             raise ValueError("Missing catalogue provenance")
+        if ref.startswith("legacy_brick_ccds:"):
+            receipt = by_reference.get(ref)
+            if receipt is None or receipt["coadd_asset_id"] != aid:
+                raise ValueError("CCD assertion missing source-file receipt")
         key = (aid, oid, ref, locator)
         if key in keys:
             raise ValueError("Duplicate contribution assertion")
@@ -179,6 +230,7 @@ def read_observation_lineage(project_root: str | Path) -> dict:
 def register_ccd_assertions(
     project_root: str | Path, *, coadd_asset_id: str,
     catalogue_reference: str, records: list[dict],
+    catalogue_receipt: dict | None = None,
 ) -> dict:
     """Index explicit catalogue statements about CCDs contributing to a coadd.
 
@@ -207,6 +259,29 @@ def register_ccd_assertions(
                    c["record_locator"]): c["observation_id"]
                   for c in state["contributions"]}
     observations_added = contributions_added = 0
+    receipt_added = False
+    if catalogue_receipt is not None:
+        if (not isinstance(catalogue_receipt, dict) or
+                catalogue_receipt.get("catalogue_reference") !=
+                catalogue_reference or
+                catalogue_receipt.get("coadd_asset_id") != coadd_asset_id):
+            raise ValueError("Catalogue receipt does not match import target")
+        current_receipts = state.setdefault("catalogue_receipts", [])
+        matches = [r for r in current_receipts
+                   if r.get("catalogue_reference") == catalogue_reference]
+        if matches:
+            if matches != [catalogue_receipt]:
+                raise ValueError("Conflicting catalogue receipt for same digest")
+        else:
+            # Reject a new revision of the same catalogue for this asset.
+            # Version supersession must be an explicit separate operation.
+            if any(r.get("coadd_asset_id") == coadd_asset_id and
+                   r.get("catalogue_sha256") !=
+                   catalogue_receipt.get("catalogue_sha256")
+                   for r in current_receipts):
+                raise ValueError("Conflicting catalogue revision for coadd")
+            current_receipts.append(dict(catalogue_receipt))
+            receipt_added = True
     for row in records:
         if not isinstance(row, dict):
             raise ValueError("CCD catalogue rows must be maps")
@@ -247,11 +322,12 @@ def register_ccd_assertions(
             by_key.add(key)
             contributions_added += 1
     _validated_observations(state, index)
-    if observations_added or contributions_added:
+    if observations_added or contributions_added or receipt_added:
         _atomic_json(lineage_path(project.root), state)
     return {
         "observations_added": observations_added,
         "contributions_added": contributions_added,
+        "catalogue_receipt_added": receipt_added,
         "total_observations": len(state["observations"]),
         "total_contributions": len(state["contributions"]),
         "evidence_state": UNVERIFIED,
