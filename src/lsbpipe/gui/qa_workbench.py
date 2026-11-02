@@ -96,6 +96,7 @@ class ScienceQAControls(QWidget):
         self._step_for_action = {
             "dataset_audit": 0, "square": 0, "explore": 0, "figure": 0,
             "census": 1, "masks": 1, "compare": 2,
+            "compare_layers": 0,
         }
         self.buttons = {}
 
@@ -113,8 +114,12 @@ class ScienceQAControls(QWidget):
              "Instrumental coverage and NEXP over the requested TAN square"),
             ("explore", "Explore original FITS interactively",
              "Zoom, pan, layers, ICRS pixel readout and mask warnings"),
-            ("figure", "Export four-layer FITS map",
-             "Read-only WCS-aligned static diagnostic PNG"),
+            ("compare_layers", "Compare 4 layers interactively",
+             "Open a synchronized 2×2 original FITS viewer with live WCS "
+             "readout; no PNG or interpolation of science arrays"),
+            ("figure", "Export static PNG (optional)",
+             "Save a diagnostic report image as an optional file; not the "
+             "interactive Four-layer QA workspace"),
         ):
             self._add_action(inspect_layout, key, caption, tooltip)
         self.steps.addItem(inspect_page, self._step_names[0])
