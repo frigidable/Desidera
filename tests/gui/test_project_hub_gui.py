@@ -426,3 +426,75 @@ def test_hub_remove_disabled_when_no_visible_selection_and_with_active_workspace
     assert recent_projects()[0]["project_id"] == p.project_id
     hub.workspace._go_back_to_projects()
     assert hub.remove_btn.isEnabled()
+
+
+
+def test_new_project_wizard_opens_survey_sky_not_empty_fits(
+        hub, monkeypatch, tmp_path):
+    from lsbpipe.gui import project_hub as hub_module
+    project = create_object_project(
+        "UGC 2162 new", tmp_path / "ugc_new",
+        field=SkyField(40.096208, 1.22925, 5.))
+    class AcceptedWizard:
+        def __init__(self, parent):
+            self.project = project
+        def exec(self):
+            return QDialog.Accepted
+    monkeypatch.setattr(hub_module, "CreateProjectDialog", AcceptedWizard)
+    with offline_legacy_viewer():
+        hub._new_project()
+    w = hub.workspace
+    assert w is not None
+    assert w.preview_tabs.currentWidget() is w.sky
+    assert w.inspector_tabs.currentIndex() == 0
+    assert not w.fits_explorer._dataset
+    assert w.manifest is None and w.bricks.rowCount() == 0
+    assert "REMOTE PREVIEW" in w.preview_label.text()
+    assert "No survey archive search" not in w.message.text() or (
+        w.manifest is None)
+    assert w.back_to_projects.isVisible()
+    # Both widgets share the navigation panel, but the back action is NOT
+    # inside the target/coordinate group box.
+    target_box = w.ra.parentWidget()
+    assert w.back_to_projects.parentWidget() is target_box.parentWidget()
+    assert w.back_to_projects.parentWidget() is not target_box
+    nav = w.back_to_projects.parentWidget().layout()
+    assert nav.indexOf(w.back_to_projects) < nav.indexOf(target_box)
+    w._go_back_to_projects()
+
+
+def test_existing_project_without_fits_opens_survey_tab_offline(
+        hub, tmp_path):
+    project = create_object_project(
+        "Blank target", tmp_path / "blank_target",
+        field=SkyField(40.096208, 1.22925, 5.))
+    with offline_legacy_viewer():
+        hub._enter_project(project)
+    w = hub.workspace
+    assert w.preview_tabs.currentWidget() is w.sky
+    assert w.inspector_tabs.currentIndex() == 0
+    assert w.manifest is None
+    assert not w.sky.url().toString().startswith("https://")
+    w._go_back_to_projects()
+
+
+def test_project_root_data_directory_allows_background_job_journaling(
+        hub, qtbot, tmp_path):
+    from lsbpipe.surveys.object_projects import save_object_project
+    project = create_object_project(
+        "Root data project", tmp_path / "root_data",
+        field=SkyField(40.096208, 1.22925, 5.))
+    project.data_root = project.root
+    save_object_project(project)
+    with offline_legacy_viewer():
+        hub._enter_project(read_object_project(project.root))
+    w = hub.workspace
+    finished = []
+    w._start(lambda progress: "safe", finished.append,
+             operation_name="survey_search")
+    qtbot.waitUntil(
+        lambda: w.thread is None and finished == ["safe"],
+        timeout=12000)
+    assert "Cannot journal operation" not in w.project_status.text()
+    assert (project.root / "operations").is_dir()
+    w._go_back_to_projects()
