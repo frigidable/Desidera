@@ -184,8 +184,14 @@ def read_object_project(root: str | Path) -> ObjectProject:
     if link is None:
         data_root = None
     elif isinstance(link, dict) and isinstance(link.get("relative"), str):
-        value = Path(link["relative"])
-        if value.is_absolute() or ".." in value.parts or not value.parts:
+        raw_relative = link["relative"]
+        value = Path(raw_relative)
+        # save_object_project() legitimately writes {"relative": "."}
+        # when the original FITS inventory is rooted at the project folder.
+        # Path(".").parts is empty, unlike an unsafe empty string.
+        if (not raw_relative or value.is_absolute()
+                or ".." in value.parts
+                or (not value.parts and raw_relative != ".")):
             raise ValueError("Unsafe relative data directory in project manifest")
         data_root = folder / value
     elif isinstance(link, dict) and isinstance(link.get("absolute"), str):
