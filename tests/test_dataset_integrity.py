@@ -192,3 +192,40 @@ def test_verified_source_changed_during_audit_fails_closed(tmp_path, monkeypatch
     with pytest.raises(RuntimeError, match="changed while dataset audit"):
         audit_dataset_root(root, field=FIELD)
     assert not list(root.rglob("audit.json"))
+
+
+def test_cooperative_cancel_inside_native_fits_screening_propagates(
+        tmp_path):
+    from lsbpipe.surveys.task_control import OperationCancelled
+    root = tmp_path / "data"
+    _make_brick(root, "0401p012")
+    calls = [0]
+
+    def stop_after_first_slab():
+        calls[0] += 1
+        if calls[0] >= 4:
+            raise OperationCancelled("stop inside FITS slab")
+
+    with pytest.raises(OperationCancelled, match="slab"):
+        audit_dataset_root(
+            root, field=FIELD, cancel_check=stop_after_first_slab)
+    assert calls[0] >= 4
+    assert not list(root.rglob("audit.json"))
+    # Cancel is not a broken FITS and must not pollute validation status.
+    correct = audit_dataset_root(root, field=FIELD)
+    assert correct["counts"]["validated"] == 1
+
+
+def test_cooperative_cancel_during_original_sha256_hash(tmp_path):
+    from lsbpipe.surveys.dataset_integrity import _sha256_file
+    from lsbpipe.surveys.task_control import OperationCancelled
+    file = tmp_path / "large-original.fits.fz"
+    file.write_bytes(b"x" * (3 * 1024 * 1024))
+    count = [0]
+    def cancel():
+        count[0] += 1
+        if count[0] >= 3:
+            raise OperationCancelled("hash interrupted")
+    with pytest.raises(OperationCancelled):
+        _sha256_file(file, cancel_check=cancel)
+    assert file.stat().st_size == 3 * 1024 * 1024
