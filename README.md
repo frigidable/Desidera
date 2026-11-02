@@ -1,4 +1,4 @@
-# LSBpipe v0.2 — Legacy FITS / WCS experimental integration
+# DESIDERA v0.2 — Legacy FITS / WCS experimental integration
 
 **Scientific status: experimental, not publication-ready.** This builds directly
 on the mathematically benchmarked fixed-ellipse v0.1 prototype. It does not
@@ -33,7 +33,7 @@ network/Legacy Viewer session:
 
 ```powershell
 python -m pip install -e ".[exact,gui,test]"
-python -m lsbpipe.gui
+python -m desidera.gui
 ```
 
 In the hub:
@@ -75,7 +75,7 @@ In the extracted directory, Python 3.10+:
 ```bash
 python -m pip install -e ".[exact,test,demo]"
 python -m pytest -q
-python -m lsbpipe --help
+python -m desidera --help
 ```
 
 `exact` installs Astropy + Photutils, required for the recommended exact
@@ -86,7 +86,7 @@ backend, install `.[astro,test,demo]` and pass `--backend subpixel`.
 
 ```bash
 python scripts/make_mock_legacy_fits.py --output mock_fits --size 128
-python -m lsbpipe measure-fits \
+python -m desidera measure-fits \
   --image mock_fits/mock-image-r.fits \
   --ivar mock_fits/mock-invvar-r.fits \
   --maskbits mock_fits/mock-maskbits.fits \
@@ -108,7 +108,7 @@ Provide the co-registered, same-band **science image**, **inverse variance**, an
 The example below is a command template, **not a completed DR9 run**:
 
 ```bash
-python -m lsbpipe measure-fits \
+python -m desidera measure-fits \
   --image "<path-to-coadd-image-r.fits>" \
   --ivar "<path-to-coadd-invvar-r.fits>" \
   --maskbits "<path-to-coadd-maskbits.fits>" \
@@ -166,3 +166,13 @@ See `docs/VALIDATION_REPORT_V02.md` and `docs/TECHNICAL_DESIGN_V02.md`.
 - [Legacy DR9 image files](https://www.legacysurvey.org/dr9/files/)
 - [Astropy Cutout2D](https://docs.astropy.org/en/stable/api/astropy.nddata.utils.Cutout2D.html)
 - [Photutils EllipticalAperture](https://docs.astropy.org/projects/photutils/en/latest/api/photutils.aperture.EllipticalAperture.html)
+
+
+## Name and on-disk compatibility
+
+DESIDERA is the application and distribution name. The original Python
+`lsbpipe` package, CLI aliases, immutable `lsbpipe-object.json` and
+`lsbpipe-project.json` identifiers, survey-cache locations and pre-existing
+`LSBpipeData` / `LSBpipeProjects` paths remain readable without migration.
+New GUI launch: `python -m desidera.gui`. Existing launches such as
+`python -m lsbpipe.gui` remain supported during the migration.
