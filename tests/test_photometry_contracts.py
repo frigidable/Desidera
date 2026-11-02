@@ -283,8 +283,7 @@ def test_signed_optical_maskbits_are_interpreted_as_uint16_bits():
     bits[0, 0] = np.array([32768], dtype=np.uint16).view(np.int16)[0]
     f = frame(bits=bits)
     assert f.maskbits[0, 0] == 32768
-    assert f.mask_reasons["ALLMASK_R"][0, 0] is np.False_ or (
-        not f.mask_reasons["ALLMASK_R"][0, 0])
+    assert not f.mask_reasons["ALLMASK_R"][0, 0]
 
 
 def test_input_wcs_can_change_after_construction_without_mutating_frame():
