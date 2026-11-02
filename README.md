@@ -48,6 +48,12 @@ In the hub:
 - **Continue selected** opens a project-bound Explorer. **All galaxy projects**
   returns to the hub; switching is blocked while a worker is active.
 - **Relink selected** reconnects a moved project by exact UUID.
+- **Remove from recent…** forgets the highlighted project shortcut after explicit
+  confirmation, including missing or obsolete project locations. It does **not**
+  delete the object folder, original FITS, manifest, QA history or scientific
+  outputs. Use **Import existing folder…** to restore it later. A removed
+  older-version session suggestion stays hidden rather than reappearing at
+  every launch. This is deliberately **not** a delete-from-disk command.
 
 Object identity uses an immutable UUID stored in `lsbpipe-object.json`
 (schema `lsbpipe.object-project/1`). The older
