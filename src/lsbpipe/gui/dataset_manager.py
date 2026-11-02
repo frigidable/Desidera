@@ -312,11 +312,12 @@ class DatasetManager(QWidget):
             "diagnostics, not LSB/PSF/sky readiness.")
         self.pixel_qa_description.setWordWrap(True)
         qa_layout.addWidget(self.pixel_qa_description)
-        self.pixel_qa_table = QTableWidget(0, 6)
+        self.pixel_qa_table = QTableWidget(0, 8)
         self.pixel_qa_table.setObjectName("dataset_manager_pixel_qa_table")
         self.pixel_qa_table.setHorizontalHeaderLabels([
-            "Original dataset", "Band", "Target valid triplet",
-            "Sky valid triplet", "Target SATUR/ALLMASK", "Input status"])
+            "Original dataset", "Band", "Target area ~",
+            "Sky area ~", "Target valid triplet",
+            "Sky valid triplet", "SATUR/ALLMASK", "Input status"])
         self.pixel_qa_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.Stretch)
         self.pixel_qa_table.horizontalHeader().setSectionResizeMode(
@@ -589,15 +590,18 @@ class DatasetManager(QWidget):
                 flags = (
                     f"{100*sat:.1f}% / {100*allflag:.1f}%"
                     if sat is not None and allflag is not None else "no pixels")
+                def area_pct(region):
+                    value = region.get("approximate_geometric_footprint_fraction")
+                    return f"~{100*value:.1f}%" if value is not None else "unknown"
                 cells = [
                     f"{data['release']}/{data['region']}/{data['brick']}",
-                    data["band"],
+                    data["band"], area_pct(target), area_pct(sky),
                     pct(target, "numerical_triplet"),
                     pct(sky, "numerical_triplet"), flags, "DIAGNOSTIC only"]
             else:
                 cells = [
                     f"{data.get('release')}/{data.get('region')}/{data.get('brick')}",
-                    str(data.get("band")), "—", "—", "—",
+                    str(data.get("band")), "—", "—", "—", "—", "—",
                     ("Missing: " + ", ".join(data.get("missing", []))
                      if status == "INCOMPLETE_FILES" else
                      "Invalid: " + str(data.get("error", status)))]
@@ -607,7 +611,8 @@ class DatasetManager(QWidget):
             f"{len(report.get('rows', []))} datasets inspected; "
             f"{report.get('omitted_quartets', 0)} omitted by resource cap. "
             "FITS/WCS checked per complete quartet. Fractions are native "
-            "image pixels in target circle / sky annulus. MASKBITS "
+            "image pixels in target circle / sky annulus. Approximate "
+            "area coverage uses native WCS pixel area. MASKBITS "
             "flags reported, not automatically rejected. "
             "No sky, PSF, noise covariance or LSB suitability certification.")
 
