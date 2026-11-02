@@ -129,7 +129,8 @@ def check_run_receipt(manifest_path: str | Path, *,
                       project_id: str | None = None,
                       current_context: dict | None = None,
                       current_inputs: dict | None = None,
-                      verify_artifacts: bool = True) -> dict:
+                      verify_artifacts: bool = True,
+                      _visited: frozenset[str] = frozenset()) -> dict:
     """Read-only check; never silently rehash all original FITS by default.
 
     CURRENT_INPUTS_AND_PARAMETERS requires the caller to pass a separately
@@ -137,6 +138,13 @@ def check_run_receipt(manifest_path: str | Path, *,
     """
     path = Path(manifest_path)
     result = {"manifest_path": str(path), "state": "INVALID_RECEIPT"}
+    # A rewritten manifest claiming a transitive ancestor must not cause
+    # unbounded recursion. Dependency lookup never follows arbitrary paths.
+    identity = str(path.absolute())
+    if identity in _visited:
+        result.update(state="DEPENDENCY_UNAVAILABLE", reason="Run dependency cycle")
+        return result
+    visited = _visited | {identity}
     if path.is_symlink() or not path.is_file():
         result["reason"] = "Receipt is absent or a symlink"
         return result
@@ -146,6 +154,11 @@ def check_run_receipt(manifest_path: str | Path, *,
                 "lsbpipe.gui-science-qa/1"):
             raise ValueError("Unexpected QA receipt schema")
         result["run_id"] = record["run_id"]
+        result["action"] = record.get("context", {}).get("action")
+        result["dataset"] = "/".join(
+            str(record.get("context", {}).get(k, ""))
+            for k in ("release", "region", "brick", "band"))
+        result["created_at_utc"] = record.get("created_at_utc")
         if record["science_status"] != "DIAGNOSTIC_NOT_ADOPTED":
             raise ValueError("Unexpected scientific adoption status")
         artifacts = record.get("artifacts", {})
@@ -188,6 +201,19 @@ def check_run_receipt(manifest_path: str | Path, *,
             result.update(state="PROJECT_MISMATCH",
                           reason="Different immutable object project")
             return result
+        if verify_artifacts:
+            for dep in contract["dependencies"]:
+                if not RUN_ID.fullmatch(dep):
+                    raise ValueError("Invalid scientific dependency ID")
+                parent = check_run_receipt(
+                    path.parent.parent / dep / "manifest.json",
+                    project_id=contract["project_id"],
+                    verify_artifacts=True, _visited=visited)
+                if parent["state"] != "RECORDED_NOT_REVALIDATED":
+                    result.update(
+                        state="DEPENDENCY_UNAVAILABLE",
+                        reason=f"Parent {dep}: {parent['state']}")
+                    return result
         if current_context is not None:
             if canonical_digest(science_parameters(current_context)) != (
                     contract["parameter_sha256"]):
