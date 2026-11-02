@@ -149,3 +149,35 @@ def test_desidera_launch_compatibility_aliases():
     from lsbpipe.gui.project_hub import main as old_hub
     assert new_cli is old_cli
     assert new_hub is old_hub
+
+def test_same_brick_across_releases_has_separate_candidate_rows(qtbot):
+    from dataclasses import replace
+    from lsbpipe.gui.survey_explorer import SurveyExplorer
+    from lsbpipe.surveys.legacy import SkyField, build_manifest
+    from scripts.offline_gui_fixture import make_offline_catalog
+    with offline_legacy_viewer():
+        w = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(w)
+    w.show()
+    hits, _ = make_offline_catalog()
+    dr9 = hits[0]
+    dr11 = replace(dr9, release="dr11")
+    all_hits = [dr9, dr11]
+    field = SkyField(w.ra.value(), w.dec.value(), w.field_width.value())
+    manifest = build_manifest(field, all_hits)
+    w._receive_search((all_hits, manifest))
+    assert w.files.isVisible()
+    assert len(manifest["products"]) > 4
+    w.bricks.selectRow(0)
+    assert w.brick_filter.currentData() == (
+        dr9.release, dr9.region, dr9.name)
+    shown = [manifest["products"][i] for i in range(w.files.rowCount())
+             if not w.files.isRowHidden(i)]
+    assert shown and {e["release"] for e in shown} == {"dr9"}
+    w.bricks.selectRow(1)
+    assert w.brick_filter.currentData() == (
+        dr11.release, dr11.region, dr11.name)
+    shown = [manifest["products"][i] for i in range(w.files.rowCount())
+             if not w.files.isRowHidden(i)]
+    assert shown and {e["release"] for e in shown} == {"dr11"}
+    assert not w._selected(), "DR selection must not trigger a download"
