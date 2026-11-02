@@ -511,7 +511,8 @@ class MultibandComparison(QWidget):
         if any(min(self.views[b].viewport().width(),
                    self.views[b].viewport().height()) < 32
                for b in self.datasets):
-            self._queue_fit_for_resize()
+            # Await a real viewport resize; never reschedule an idle loop
+            # while a hidden workspace has zero-size tiles.
             return
         if not self.link.isChecked() or len(self.datasets) == 1:
             for band in self.datasets:
