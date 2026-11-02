@@ -525,8 +525,7 @@ class SurveyExplorer(QMainWindow):
         preview_layout = QVBoxLayout(preview_container)
         preview_layout.setContentsMargins(4, 4, 4, 4)
         preview_layout.setSpacing(4)
-        self.preview_label = QLabel(
-            "REMOTE PREVIEW · Legacy Survey Viewer · not calibrated FITS input")
+        self.preview_label = QLabel("Sky preview · not calibrated FITS")
         self.preview_label.setAccessibleName("Remote image provenance warning")
         heading_row = QHBoxLayout()
         heading_row.addWidget(self.preview_label, 1)
@@ -631,6 +630,7 @@ class SurveyExplorer(QMainWindow):
                 "No survey archive search or FITS download has been performed.")
         finally:
             self._restoring_local_project = False
+        self._refresh_workflow()
 
     def _go_back_to_projects(self):
         if self.thread is not None:
@@ -814,6 +814,7 @@ class SurveyExplorer(QMainWindow):
             self._restore_prior_qa(project)
         finally:
             self._restoring_local_project = False
+        self._refresh_workflow()
 
     def _restore_prior_qa(self, project):
         item = project.last_science
@@ -935,6 +936,41 @@ class SurveyExplorer(QMainWindow):
         self.data_toggle.setText(
             "Hide files and coverage" if visible else "Files and coverage")
 
+    def _refresh_workflow(self):
+        """Presentation only; no auto-selection or science acceptance."""
+        if not hasattr(self, "workflow_stage"):
+            return
+        try:
+            self._field()
+            has_target = True
+        except ValueError:
+            has_target = False
+        row = self.bricks.currentRow()
+        selected = bool(
+            self.bricks.selectedItems() and 0 <= row < len(self.hits))
+        has_catalog = self.manifest is not None and not self._manual_target_edited
+        local_available = (
+            self._local_project is not None and
+            selected and not self._manual_target_edited)
+        image_ready = (
+            self.fits_explorer._dataset is not None and
+            self._qa_context_current(self.fits_explorer._dataset))
+        cue = workflow_cue(
+            has_target=has_target, has_catalog=has_catalog,
+            selected_brick=selected,
+            has_local_fits=local_available,
+            has_interactive_image=image_ready)
+        self.workflow_stage.setText(cue.title)
+        self.workflow_hint.setText(cue.instruction)
+        # An empty brick grid is not a meaningful default navigation element.
+        has_bricks = bool(self.hits)
+        for widget in (self.bricks, self.bricks_heading, self.bricks_help):
+            widget.setVisible(has_bricks)
+        self.comparison_btn.setVisible(bool(local_available or image_ready))
+        self.data_toggle.setText(
+            "02 · Get original FITS" if has_catalog and not local_available
+            else "Data & diagnostics")
+
     def _field(self):
         return self._target_controller.field()
 
@@ -1049,6 +1085,7 @@ class SurveyExplorer(QMainWindow):
                   0 <= row < len(self._brick_overlay_keys) else None)
         self._run_brick_js(highlight_script(key))
         self._queue_project_save()
+        self._refresh_workflow()
 
     def _hover_brick_row(self, row, _column):
         key = (self._brick_overlay_keys[row]
@@ -1182,7 +1219,8 @@ class SurveyExplorer(QMainWindow):
         self.science_qa.set_selected_hit(None)
         self.bricks.setRowCount(0)
         self.files.setRowCount(0)
-        self.message.setText("Loading survey geometry and footprint catalogs…")
+        self.message.setText("Finding survey coverage…")
+        self._refresh_workflow()
         self.show_viewer()
 
         def work(progress):
@@ -1212,7 +1250,9 @@ class SurveyExplorer(QMainWindow):
         self._fill_files()
         self.data_drawer.show()
         self._size_data_drawer()
-        self.message.setText(f"{len(manifest['products'])} candidate files")
+        self.message.setText(
+            f"{len(hits)} survey bricks found. Choose a brick to continue.")
+        self._refresh_workflow()
 
     def _fill_brick_filters(self):
         return self._data_controller._fill_brick_filters()
@@ -1471,14 +1511,15 @@ class SurveyExplorer(QMainWindow):
         if (hasattr(self, "comparison_btn") and
                 self.preview_tabs.indexOf(self.four_layer_comparison) >= 0):
             self._close_four_comparison()
+        self._refresh_workflow()
 
     def _preview_tab_changed(self, tab):
         if tab in (1, 2):
             self.preview_label.setText(
-                "LOCAL ORIGINAL FITS · read-only · DIAGNOSTIC_NOT_ADOPTED")
+                "Original FITS · read-only")
         else:
             self.preview_label.setText(
-                "REMOTE PREVIEW · Legacy Survey Viewer · not calibrated FITS input")
+                "Sky preview · not calibrated FITS"
 
     def _close_four_comparison(self):
         tab = self.preview_tabs.indexOf(self.four_layer_comparison)
@@ -1832,6 +1873,7 @@ class SurveyExplorer(QMainWindow):
             "DISPLAY ONLY · DIAGNOSTIC_NOT_ADOPTED")
         self.message.setText(
             "Interactive original-FITS view loaded: " + dataset["source"])
+        self._refresh_workflow()
 
     def _qa_context_current(self, dataset):
         return self._science_context_controller.raster_current(dataset)
