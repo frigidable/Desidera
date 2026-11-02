@@ -7,7 +7,7 @@ pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QSplitter
+from PySide6.QtWidgets import QSplitter, QScrollArea
 
 from lsbpipe.gui.galaxy_card_model import GalaxyCardSnapshot
 from lsbpipe.gui.galaxy_cards import (
@@ -108,7 +108,5 @@ def test_right_inspector_remains_resizable_and_scrollable(qtbot):
     view.set_snapshots([sample("Leo P", "leo")])
     view.splitter.setSizes([300, 420])
     assert view.detail.width() >= 300
-    assert view.detail.findChild(type(view.detail.findChild(
-        type(view.detail.open_button), "galaxy_card_open"
-    )), "galaxy_card_open") is not None
+    assert view.detail.findChild(QScrollArea, "galaxy_card_scroll") is not None
     assert view.detail.safety.isVisible()
