@@ -207,13 +207,16 @@ class SurveyDataController(QObject):
                  if report.unknown_size_files else
                  f"{report.known_mib:.1f} MiB")
         w.selected_label.setText(
-            f"{report.selected_files} selected / {visible} shown · "
-            f"{report.verified_files} HTTP OK · {sizes}")
+            f"{report.selected_files} selected · "
+            + (sizes if report.selected_files else
+               "select a science quartet or individual files"))
         # Never preselect an entire survey product inventory for a
         # potentially enormous download: user explicitly chooses a quartet
         # or specific original FITS products.
         w.download_btn.setEnabled(bool(selected) and w.thread is None)
         w.selected_label.setToolTip(
+            f"{visible} products currently visible; "
+            f"{report.verified_files} URLs HTTP OK; "
             f"{report.unknown_size_files} selected files have unknown sizes; "
             f"{report.missing_files} known HTTP-missing.")
 
