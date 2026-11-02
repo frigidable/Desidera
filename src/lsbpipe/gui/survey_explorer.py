@@ -656,6 +656,8 @@ class SurveyExplorer(QMainWindow):
             self._inspect_dataset_pixel_coverage)
         self.dataset_manager.checksumRequested.connect(
             self._hash_dataset_asset)
+        self.dataset_manager.ccdCatalogueRequested.connect(
+            self._index_brick_ccd_catalog)
         self.dataset_manager.backRequested.connect(
             self._leave_dataset_manager)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
@@ -933,6 +935,44 @@ class SurveyExplorer(QMainWindow):
                     "File SHA-256 verification failed: " + message)
         self._start(job, finished, on_error=failed,
                     operation_name="dataset_file_checksum")
+
+    def _index_brick_ccd_catalog(self, asset_id: str, catalogue_path: str):
+        """Import verified local catalogue assertions without touching FITS."""
+        project = self._object_project
+        if project is None or self.thread is not None:
+            return
+        from lsbpipe.surveys.legacy_ccd_catalog import import_brick_ccd_catalog
+        from lsbpipe.surveys.dataset_registry import read_dataset_index
+        self.dataset_manager.set_busy(True)
+        self.dataset_manager.details.setText(
+            "Reading local Legacy brick-CCDs FITS and verifying provenance…")
+        def job(progress):
+            progress.checkpoint()
+            result = import_brick_ccd_catalog(
+                project.root, coadd_asset_id=asset_id,
+                catalogue_file=catalogue_path)
+            progress.checkpoint()
+            return result, read_dataset_index(project.root)
+        def finished(payload):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is not project:
+                self.message.setText("CCD import for previous project ignored.")
+                return
+            receipt, index = payload
+            self.dataset_manager.set_index(index)
+            self.message.setText(
+                f"Indexed {receipt['selected_ccd_count']} catalogue CCD rows "
+                "for selected original coadd; shared-exposure evidence is "
+                "catalogue-asserted, NOT science-certified.")
+        def failed(message):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is project:
+                self.dataset_manager.details.setText(
+                    "CCD catalogue import refused: " + message)
+                self.message.setText(
+                    "CCD metadata rejected; existing FITS and lineage retained.")
+        self._start(job, finished, on_error=failed,
+                    operation_name="dataset_ccd_catalog")
 
     def _go_back_to_projects(self):
         if self.thread is not None:
