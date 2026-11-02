@@ -89,6 +89,7 @@ class TaskDispatch(QObject):
         self._terminal_seen = False
         self._thread_done = False
         self._finalized = False
+        self.terminal_outcome = "IGNORED"
 
     def _acknowledge_terminal(self):
         self._terminal_seen = True
@@ -120,15 +121,19 @@ class TaskDispatch(QObject):
     def deliver_completed(self, value):
         try:
             if not self._current():
+                self.terminal_outcome = "IGNORED"
                 return
             if self.token.cancel_requested:
+                self.terminal_outcome = "CANCELLED"
                 self._show_cancelled(
                     "Stop requested. Work may have written immutable receipts; "
                     "inspect saved run history before reuse.")
                 return
             try:
                 self.completed_callback(value)
+                self.terminal_outcome = "COMPLETED"
             except Exception as exc:
+                self.terminal_outcome = "FAILED"
                 logging.exception("LSBpipe GUI completion callback failed")
                 self._show_failure(f"{type(exc).__name__}: {exc}")
         finally:
@@ -147,6 +152,7 @@ class TaskDispatch(QObject):
     def deliver_failed(self, message: str):
         try:
             if self._current():
+                self.terminal_outcome = "FAILED"
                 self._show_failure(message)
         finally:
             self._acknowledge_terminal()
@@ -166,6 +172,7 @@ class TaskDispatch(QObject):
     def deliver_cancelled(self, message: str):
         try:
             if self._current():
+                self.terminal_outcome = "CANCELLED"
                 self._show_cancelled(message)
         finally:
             self._acknowledge_terminal()
