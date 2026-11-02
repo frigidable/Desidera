@@ -1,9 +1,10 @@
 """Offline-first startup Project Hub and object creation wizard."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -632,6 +633,13 @@ class ProjectHub(QMainWindow):
         # Windowed maximized mode retains OS taskbar and title bar.
         # Do not use frameless/full-screen presentation.
         workspace.showMaximized()
+        if os.environ.get("DESIDERA_UI_DIAG") == "1":
+            from .ui_diagnostics import capture_workspace_corner
+            QTimer.singleShot(
+                1100,
+                lambda w=workspace: (
+                    capture_workspace_corner(w)
+                    if self.workspace is w and w.isVisible() else None))
         self.hide()
         self.projectOpened.emit(project.project_id)
 
