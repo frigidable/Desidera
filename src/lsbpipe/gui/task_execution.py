@@ -236,7 +236,8 @@ class WorkspaceTaskController(QObject):
         worker.progress.connect(dispatch.deliver_progress, Qt.QueuedConnection)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
+        # QThread itself is deleted only after the terminal-delivery
+        # barrier, never before owner.thread can be safely cleared.
         # The delivery barrier lives on the main Qt thread and outlives
         # QThread.finished until the final result/cancellation is handled.
         thread.finished.connect(
@@ -278,7 +279,10 @@ class WorkspaceTaskController(QObject):
                 w.project_status.setText(
                     f"Operation finished; journal is uncertain: {exc}")
         w._operation_journal_path = None
+        old_thread = w.thread
         w.thread = None
+        if old_thread is not None:
+            old_thread.deleteLater()
         w.worker = None
         w._task_dispatch = None
         w._active_task_token = None
