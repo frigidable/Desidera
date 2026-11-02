@@ -168,9 +168,16 @@ def test_grz_fit_all_preserves_native_field_and_angular_scale(qtbot):
         world_centers.append((float(np.asarray(ra)),
                               float(np.asarray(dec))))
     assert max(angular_pixel_scales) - min(angular_pixel_scales) < 1e-10
+    # Qt viewport centering uses integer scrollbar coordinates even when
+    # scrollbars are visually hidden. Approximate WCS center agreement
+    # should therefore be evaluated in physical *screen pixels*, not
+    # at a sub-device-pixel angular tolerance (native WCS is untouched).
     for ra, dec in world_centers[1:]:
-        assert ra == pytest.approx(world_centers[0][0], abs=2e-5)
-        assert dec == pytest.approx(world_centers[0][1], abs=2e-5)
+        separation_deg = np.hypot(
+            (ra - world_centers[0][0]) *
+            np.cos(np.deg2rad(world_centers[0][1])),
+            dec - world_centers[0][1])
+        assert separation_deg <= 2.0 * max(angular_pixel_scales)
 
     source = widget.views["g"]
     source.scale(1.22, 1.22)
