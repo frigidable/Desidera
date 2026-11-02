@@ -1196,7 +1196,7 @@ class SurveyExplorer(QMainWindow):
         # outlive its owning workspace or cross into a newer job.
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(dispatch.deleteLater)
-        thread.finished.connect(lambda: self._idle(serial))
+        thread.finished.connect(self._idle, Qt.QueuedConnection)
         self._task_dispatch = dispatch
         self.worker = worker
         self.thread = thread
@@ -1213,9 +1213,10 @@ class SurveyExplorer(QMainWindow):
             "Stop requested. Waiting for a safe checkpoint; the running "
             "operation may finish writing an immutable report before stopping.")
 
-    def _idle(self, serial=None):
-        if serial is not None and serial != self._task_serial:
-            return
+    @Slot()
+    def _idle(self):
+        # QObject slot is dispatched on the GUI thread, never via a Python
+        # lambda that Qt could invoke on QThread's worker thread.
         self.thread = None
         self.worker = None
         self._task_dispatch = None
