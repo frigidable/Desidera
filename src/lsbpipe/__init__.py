@@ -1,4 +1,4 @@
-"""LSBpipe v0.2: FITS/WCS prototype; not a publication-ready survey pipeline."""
+"""DESIDERA v0.2: FITS/WCS prototype; not a publication-ready survey pipeline."""
 from .geometry import ReferenceGeometry, fractional_aperture_weights
 from .profiles import MeasurementFrame, ProfileResult, measure_profiles, half_flux_radius
 from .simulation import SersicTruth, sersic_image, analytic_sersic_flux
