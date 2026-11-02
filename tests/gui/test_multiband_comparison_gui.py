@@ -190,8 +190,10 @@ def test_grz_fit_all_preserves_native_field_and_angular_scale(qtbot):
     widget._sync(source)
     assert widget.views["r"]._relative_zoom == pytest.approx(1.22)
     assert widget.views["z"]._relative_zoom == pytest.approx(1.22)
+    assert "Zoomed or clipped view" in widget.framing_info.text()
     widget.fit_views()
     assert all(widget.views[b]._relative_zoom == 1. for b in sources)
+    assert "Full field" in widget.framing_info.text()
     widget.shutdown_renderer()
 
 
@@ -256,6 +258,7 @@ def test_ugc2162_sized_cutouts_fit_after_hidden_workspace_tab_is_shown(qtbot):
                 (view.viewport().width() - 4) / shape[1] + 0.001)
     # Repeat after explicit Fit all and a resize at the actual monitor aspect.
     comparison.fit_views()
+    assert "Full field" in comparison.framing_info.text()
     workspace.resize(1550, 850)
     qtbot.wait(100)
     comparison.fit_views()
