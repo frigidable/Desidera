@@ -264,3 +264,35 @@ def test_loader_cooperative_cancel_preserves_original_files(tmp_path):
             tmp_path, release="dr9", region="south",
             brick="0401p012", band="r", cancel_check=stop)
     assert all(p.read_bytes() == raw for p, raw in before.items())
+
+
+def test_loader_rejects_path_traversal_before_touching_files(tmp_path):
+    with pytest.raises(ValueError, match="brick"):
+        load_native_legacy_quartet(
+            tmp_path, release="dr9", region="south",
+            brick="../../..", band="r")
+    with pytest.raises(ValueError, match="brick"):
+        load_native_legacy_quartet(
+            tmp_path, release="dr9", region="south",
+            brick="0401p0/2", band="r")
+
+
+def test_signed_optical_maskbits_are_interpreted_as_uint16_bits():
+    # Optical bit 15 (ALLMASK_I) appears negative when read as signed int16.
+    bits = np.zeros((12, 12), dtype=np.int16)
+    bits[0, 0] = np.array([32768], dtype=np.uint16).view(np.int16)[0]
+    f = frame(bits=bits)
+    assert f.maskbits[0, 0] == 32768
+    assert f.mask_reasons["ALLMASK_R"][0, 0] is np.False_ or (
+        not f.mask_reasons["ALLMASK_R"][0, 0])
+
+
+def test_input_wcs_can_change_after_construction_without_mutating_frame():
+    original = wcs()
+    arr = np.ones((12, 12))
+    f = NativeBandFrame(
+        image_nMgy=arr, invvar_nMgy2=arr, nexp=arr,
+        maskbits=np.zeros((12, 12), dtype=np.int16),
+        native_wcs=original, brick="0401p012")
+    original.wcs.crval[0] = 90.0
+    assert f.wcs.wcs.crval[0] == pytest.approx(40.096208)
