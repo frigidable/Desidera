@@ -85,6 +85,7 @@ class FITSExplorer(QWidget):
         self._raster_cache = BoundedRasterCache(max_bytes=48 * 1024 * 1024)
         self._render_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="lsbpipe-fits-display")
+        self._renderer_closed = False
         self._render_future = None
         self._render_active = None
         self._render_requested = None
@@ -284,6 +285,8 @@ class FITSExplorer(QWidget):
         self.scale_bar.clear()
 
     def set_dataset(self, dataset: dict):
+        if self._renderer_closed:
+            raise RuntimeError("FITS display executor has been shut down")
         if dataset["status"] != "DIAGNOSTIC_NOT_ADOPTED":
             raise ValueError("Interactive viewer requires diagnostic-only input")
         shape = dataset["pixel_shape"]
@@ -470,7 +473,7 @@ class FITSExplorer(QWidget):
 
     def _request_render(self):
         """Coalesce rapid edits: only the last generation is published."""
-        if self._dataset is None:
+        if self._renderer_closed or self._dataset is None:
             return
         self._render_generation += 1
         generation = self._render_generation
@@ -481,6 +484,8 @@ class FITSExplorer(QWidget):
             self._start_render()
 
     def _start_render(self):
+        if self._renderer_closed:
+            return
         request = self._render_requested
         if request is None or self._dataset is None:
             self._render_timer.stop()
@@ -518,6 +523,9 @@ class FITSExplorer(QWidget):
         self._render_timer.start()
 
     def _poll_render(self):
+        if self._renderer_closed:
+            self._render_timer.stop()
+            return
         future = self._render_future
         if future is None or not future.done():
             return
@@ -599,11 +607,26 @@ class FITSExplorer(QWidget):
             f"{self._raster_cache.max_bytes / (1024*1024):.0f} MiB · "
             "display only")
 
-    def closeEvent(self, event):
+    def shutdown_renderer(self):
+        """Idempotent teardown, callable by parent workspace before deletion.
+
+        QWidget children do not necessarily receive closeEvent when their
+        parent QMainWindow closes. Running NumPy functions cannot be killed
+        safely; they may finish in the background but can never publish a
+        Qt image after renderer shutdown.
+        """
+        if self._renderer_closed:
+            return
+        self._renderer_closed = True
         self._render_timer.stop()
         self._render_generation += 1
         self._render_requested = None
+        self._dataset = None
+        self._raster_cache.clear()
         self._render_executor.shutdown(wait=False, cancel_futures=True)
+
+    def closeEvent(self, event):
+        self.shutdown_renderer()
         super().closeEvent(event)
 
     def _add_outlines(self):
