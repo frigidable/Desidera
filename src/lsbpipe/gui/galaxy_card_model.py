@@ -100,7 +100,7 @@ def snapshot_from_record(
         else:
             fits_status = "FITS linked · integrity not checked"
         return GalaxyCardSnapshot(
-            **common, display_name=project.display_name,
+            **{**common, "display_name": str(project.display_name)},
             coordinates=_coordinates(project.field),
             dataset=dataset,
             fits_status=fits_status,
