@@ -1126,6 +1126,11 @@ class SurveyExplorer(QMainWindow):
                 f"Science files remain available; session save failed: {exc}")
 
     def _toggle_data_drawer(self):
+        if self.preview_tabs.currentWidget() is self.dataset_manager:
+            # The archive inspector belongs to FITS Explorer, not to a
+            # project-wide provenance map that needs the viewport width.
+            self.data_drawer.hide()
+            return
         visible = not self.data_drawer.isVisible()
         self.data_drawer.setVisible(visible)
         if visible:
@@ -1187,7 +1192,18 @@ class SurveyExplorer(QMainWindow):
         for widget in (self.bricks, self.bricks_heading, self.bricks_help):
             widget.setVisible(has_bricks)
         self.comparison_btn.setVisible(bool(local_available or image_ready))
-        self.band_compare_btn.setVisible(bool(local_available))
+        manager_active = (
+            self.preview_tabs.currentWidget() is self.dataset_manager)
+        self.band_compare_btn.setVisible(
+            bool(local_available) and not manager_active)
+        self.comparison_btn.setVisible(
+            bool(local_available or image_ready) and not manager_active)
+        self.data_toggle.setEnabled(not manager_active)
+        if manager_active:
+            self.workflow_stage.setText("02 / 04 · Data sources")
+            self.workflow_hint.setText(
+                "Inspect indexed observations and WCS footprints. "
+                "No primary analysis source has been adopted.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
             else "Data & diagnostics")
@@ -1753,6 +1769,9 @@ class SurveyExplorer(QMainWindow):
         else:
             self.preview_label.setText(
                 "Sky preview · not calibrated FITS")
+        # Presentation changes must follow the active workspace. Keep
+        # actual source selection and scientific workflow state untouched.
+        self._refresh_workflow()
 
     def _close_four_comparison(self):
         tab = self.preview_tabs.indexOf(self.four_layer_comparison)
