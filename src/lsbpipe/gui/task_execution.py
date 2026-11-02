@@ -297,3 +297,5 @@ class WorkspaceTaskController(QObject):
         w.verify_btn.setEnabled(True)
         w.qa_btn.setEnabled(True)
         w.science_qa.set_busy(False)
+        if hasattr(w, "_refresh_workflow"):
+            w._refresh_workflow()
