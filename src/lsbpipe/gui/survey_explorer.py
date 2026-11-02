@@ -1195,8 +1195,10 @@ class SurveyExplorer(QMainWindow):
         # Keep dispatch alive until after worker shutdown. No callback can
         # outlive its owning workspace or cross into a newer job.
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(dispatch.deleteLater)
-        thread.finished.connect(self._idle, Qt.QueuedConnection)
+        # A queued worker terminal slot may arrive AFTER QThread.finished.
+        # Dispatch survives until both signals are delivered on GUI thread.
+        thread.finished.connect(
+            dispatch.on_thread_finished, Qt.QueuedConnection)
         self._task_dispatch = dispatch
         self.worker = worker
         self.thread = thread
