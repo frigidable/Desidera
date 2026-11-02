@@ -22,8 +22,9 @@ from PySide6.QtGui import QFont, QFontInfo, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGroupBox, QTableWidget
 
 from lsbpipe.gui.survey_explorer import SurveyExplorer
-from lsbpipe.gui.project_hub import ProjectHub
+from lsbpipe.gui.project_hub import ProjectHub, CreateProjectDialog
 from lsbpipe.surveys.object_projects import create_object_project
+from lsbpipe.surveys.legacy import SkyField
 
 
 SIZES = ((1366, 768), (1600, 900), (1920, 1080))
@@ -220,7 +221,9 @@ def main():
                     "state": "H0_empty_library_offline", "screenshot": path.name,
                     "screenshot_bytes": path.stat().st_size,
                     "network_used": False, "scientific_status": "NO_SCIENCE_RESULT"})
-            create_object_project("UGC 2162 · synthetic library entry", fixture_root)
+            create_object_project(
+                "UGC 2162 · synthetic library entry", fixture_root,
+                field=SkyField(40.096208, 1.229250, 5.))
             hub.refresh()
             for w, h in SIZES:
                 hub.resize(w, h)
@@ -236,6 +239,32 @@ def main():
                     "network_used": False, "scientific_status": "NO_SCIENCE_RESULT"})
         finally:
             hub.close()
+        # Capture the real single-page creation form with synthetic input.
+        # Do not press Create: screenshot capture may never mutate science data.
+        wizard = CreateProjectDialog(
+            default_root=outdir.resolve() / "fixture-new-projects")
+        try:
+            wizard.name.setText("Synthetic LSB galaxy")
+            wizard.ra.setText("40.096208")
+            wizard.dec.setText("+1.229250")
+            wizard.show()
+            for _ in range(4):
+                app.processEvents()
+            path = outdir / "hub_new_project_form.png"
+            shot = wizard.grab()
+            if shot.isNull() or not shot.save(str(path), "PNG"):
+                raise RuntimeError(f"Could not capture {path}")
+            reports.append({
+                "state": "H2_new_project_form_offline",
+                "screenshot": path.name,
+                "screenshot_px": [shot.width(), shot.height()],
+                "screenshot_bytes": path.stat().st_size,
+                "network_used": False,
+                "scientific_status": "NO_SCIENCE_RESULT",
+                "project_created": False,
+            })
+        finally:
+            wizard.close()
         assert library_index_path().is_file()
     # Fresh widget instance for every state: no inadvertent selection/resize
     # carryover between screenshots, but all components are real Qt widgets.
