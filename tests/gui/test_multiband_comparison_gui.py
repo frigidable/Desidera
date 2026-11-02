@@ -144,7 +144,8 @@ def test_multiband_faint_log_matches_single_band_transfer_and_is_reversible(
         rgb, rgb_for_layer(
             img, "image", "r", contrast="faint", scaling="log"))
     assert float(rgb[64, 64, 0]) > float(rgb[10, 10, 0])
-    assert rgb[10, 10, 0] == 0 if img[10, 10] <= 0 else True
+    assert np.any(img <= 0)
+    assert np.all(rgb[img <= 0, 0] == 0)
 
     widget.set_data({
         "status": "DIAGNOSTIC_NOT_ADOPTED",
