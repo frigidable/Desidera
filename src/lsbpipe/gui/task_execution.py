@@ -56,6 +56,10 @@ class TaskWorker(QObject):
                 self.progress.emit(value)
                 self.token.checkpoint()
 
+            # The work function can pass this hook into long-running,
+            # Qt-independent FITS/HTTP APIs without emitting GUI progress
+            # for every 1 MiB read or every raster slab.
+            checked_progress.checkpoint = self.token.checkpoint
             result = self.task(checked_progress)
             self.token.checkpoint()
             self.completed.emit(result)
