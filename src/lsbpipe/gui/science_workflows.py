@@ -52,6 +52,8 @@ def run_science_qa(
     sky_inner_arcsec: float = 65.,
     sky_outer_arcsec: float = 110.,
     context: ScienceContext | None = None,
+    project_root: str | Path | None = None,
+    dependencies: tuple[str, ...] = (),
 ) -> dict:
     """Run an existing diagnostic and commit a unique immutable QA record.
 
@@ -63,12 +65,20 @@ def run_science_qa(
         raise ValueError(f"Unsupported science-QA operation: {action}")
     if band not in hit.median_exposures:
         raise ValueError(f"{band} band not in the selected brick summary")
+    if project_root is not None:
+        from lsbpipe.surveys.object_projects import read_object_project
+        if context is None or context.project_id is None:
+            raise ValueError("Project-scoped run requires frozen project identity")
+        passport = read_object_project(project_root)
+        if passport.project_id != context.project_id:
+            raise ValueError("Project UUID mismatch; refusing to write science output")
     actual = ScienceContext.capture(
         action=action, field=field, hit=hit, band=band, directory=directory,
         north_directory=north_directory, south_directory=south_directory,
         target_radius_arcsec=target_radius_arcsec,
         sky_inner_arcsec=sky_inner_arcsec,
-        sky_outer_arcsec=sky_outer_arcsec)
+        sky_outer_arcsec=sky_outer_arcsec,
+        project_id=context.project_id if context is not None else None)
     if context is not None and context != actual:
         raise ValueError("Submitted science context does not match the worker inputs")
     context = actual
@@ -91,8 +101,10 @@ def run_science_qa(
         record_root = data_root
 
     inputs = snapshot_inputs(quartets)
-    with new_qa_run(data_root=record_root, context=context,
-                    inputs=inputs) as (staging, record):
+    with new_qa_run(
+            data_root=record_root, context=context, inputs=inputs,
+            project_root=Path(project_root) if project_root is not None else None,
+            dependencies=dependencies) as (staging, record):
         if action == "compare":
             from lsbpipe.surveys.compare_regions import compare_original_regions
             report = compare_original_regions(
@@ -218,8 +230,9 @@ def run_science_qa(
             raise RuntimeError("Science backend did not produce its QA artifact")
         artifact_name = destination.name
 
-    published = (record_root.resolve().parent / "qa-runs" /
-                 record["run_id"])
+    published_root = (Path(project_root).expanduser().resolve()
+                      if project_root is not None else record_root.resolve().parent)
+    published = published_root / "qa-runs" / record["run_id"]
     return {
         "action": action,
         "status": "DIAGNOSTIC_NOT_ADOPTED",
@@ -227,6 +240,7 @@ def run_science_qa(
         "path": str((published / artifact_name).resolve()),
         "manifest_path": str((published / "manifest.json").resolve()),
         "run_id": record["run_id"],
+        "run_contract": record["run_contract"],
         "is_figure": action == "figure",
         "field": {"ra_deg": field.ra_deg, "dec_deg": field.dec_deg,
                   "width_arcmin": field.width_arcmin},
