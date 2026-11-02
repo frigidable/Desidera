@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal, Slot, QUrl, QTimer, QEvent
@@ -57,6 +58,37 @@ class _DiagnosticWebPage(QWebEnginePage):
         self.recent_console.append(
             f"{str(level)}: {message} ({source_id}:{line_number})")
         del self.recent_console[:-20]
+
+
+class _NoWebEngineSky(QLabel):
+    """Diagnostic sky tab without a WebEngine view, process or GPU surface.
+
+    This isolates embedded Chromium from the rest of Qt Widgets. All
+    network-backed survey catalog discovery and local FITS workflows remain
+    available, and the official Viewer can still open externally.
+    """
+    def __init__(self):
+        super().__init__(
+            "Embedded Legacy Viewer disabled for rendering diagnosis.\\n"
+            "Find data, inspect candidate FITS, use Data Manager, or "
+            "open Legacy Viewer in your browser via More target options.")
+        self.setAlignment(Qt.AlignCenter)
+        self.setWordWrap(True)
+        self.setObjectName("remote_webengine_isolation_placeholder")
+
+    def load(self, _url):
+        # Do not navigate, start Chromium or falsely report tiles loaded.
+        pass
+
+    def url(self):
+        return QUrl()
+
+    def page(self):
+        return self
+
+    def runJavaScript(self, _script, callback=None):
+        if callback is not None:
+            callback(None)
 
 
 class SurveyExplorer(QMainWindow):
@@ -547,12 +579,21 @@ class SurveyExplorer(QMainWindow):
         self.message.setMaximumHeight(58)
         panel.addWidget(self.message)
 
-        self.sky = QWebEngineView()
-        self.sky.setAccessibleName("Official Legacy Survey Viewer remote preview")
-        self.sky.setPage(_DiagnosticWebPage(self.sky))
-        self.sky.setZoomFactor(0.8)
-        self.sky.loadStarted.connect(self._viewer_load_started)
-        self.sky.loadFinished.connect(self._viewer_load_finished)
+        # A/B isolation for recurrent top-left ghost overlays on Windows.
+        # This never changes the scientific data path or the user's FITS.
+        self._webengine_isolated = (
+            os.environ.get("DESIDERA_DISABLE_WEBENGINE") == "1")
+        if self._webengine_isolated:
+            self.sky = _NoWebEngineSky()
+        else:
+            self.sky = QWebEngineView()
+            self.sky.setPage(_DiagnosticWebPage(self.sky))
+            self.sky.setZoomFactor(0.8)
+            self.sky.loadStarted.connect(self._viewer_load_started)
+            self.sky.loadFinished.connect(self._viewer_load_finished)
+        self.sky.setAccessibleName(
+            "Legacy remote sky preview" if not self._webengine_isolated
+            else "WebEngine-disabled diagnostic sky placeholder")
         self.navigation_scroll = QScrollArea()
         self.navigation_scroll.setObjectName("survey_scroll")
         self.navigation_scroll.setWidgetResizable(True)
@@ -1291,7 +1332,12 @@ class SurveyExplorer(QMainWindow):
         self.message.setText(
             "Opening Legacy Viewer with the ICRS search-area outline. "
             "The colored boundary is a selection preview, not a coverage map.")
-        self.sky.load(QUrl(link))
+        if self._webengine_isolated:
+            self.message.setText(
+                "Embedded remote sky disabled for GUI rendering diagnosis. "
+                "Archive discovery and local FITS are still available.")
+        else:
+            self.sky.load(QUrl(link))
 
     def _brick_result_matches_target(self):
         """Never draw prior search bricks around edited target coordinates."""
@@ -1404,7 +1450,8 @@ class SurveyExplorer(QMainWindow):
         link = self._viewer_link(
             field=field, release=hit.release, region=hit.region,
             overlay_field=field_width, mark_target=False)
-        self.sky.load(QUrl(link))
+        if not self._webengine_isolated:
+            self.sky.load(QUrl(link))
         self.message.setText(
             f"Previewing brick {hit.name} at RA={mid_ra:.5f}, "
             f"Dec={mid_dec:.5f}; target coordinates unchanged.")
