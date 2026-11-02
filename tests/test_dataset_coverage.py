@@ -109,6 +109,19 @@ def test_header_coverage_cap_reports_omissions_not_silent_skips(
         survey_coverage_footprints(project.root, max_drawn=0)
 
 
+def test_external_file_reattach_keeps_stable_identifiers(project, tmp_path):
+    path = tmp_path / "same_original.fits"
+    _original_wcs(path)
+    first = register_external_fits(
+        project.root, path, provider="HSC", band="r")
+    second = register_external_fits(
+        project.root, path, provider="HSC", band="r")
+    assert first == second
+    index = read_dataset_index(project.root)
+    assert len(index["assets"]) == 1
+    assert len(index["sources"]) == 1
+
+
 def test_legacy_import_accepts_existing_object_root_and_nested_data(
         project):
     hit = BrickHit("dr9", "north", "0401p012", 0, 0, 0, 0, {"r": 1})
