@@ -326,3 +326,26 @@ def test_project_wide_dataset_audit_runs_without_brick_selection(
     assert not list(data.rglob("audit.json"))
     w._go_back_to_projects()
     assert hub.workspace is None
+
+
+
+def test_return_to_project_hub_explicitly_shuts_down_child_fits_renderer(
+        hub, tmp_path):
+    project = create_object_project(
+        "UI worker teardown", tmp_path / "ui-worker-teardown")
+    with offline_legacy_viewer():
+        hub._enter_project(project)
+    window = hub.workspace
+    assert window is not None
+    viewer = window.fits_explorer
+    assert not viewer._renderer_closed
+    window._go_back_to_projects()
+    assert viewer._renderer_closed
+    assert not viewer._render_timer.isActive()
+    assert hub.workspace is None
+    assert hub.isVisible()
+    with offline_legacy_viewer():
+        hub._enter_project(read_object_project(project.root))
+    assert hub.workspace is not None
+    assert not hub.workspace.fits_explorer._renderer_closed
+    hub.workspace._go_back_to_projects()
