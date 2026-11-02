@@ -365,3 +365,35 @@ def test_forget_corrupt_registry_fails_closed(tmp_path):
         forget_recent_project(p.project_id, p.root)
     assert index.read_bytes() == original
     assert (p.root / PROJECT_FILENAME).is_file()
+
+
+
+def test_project_data_root_equal_project_root_roundtrips_and_can_journal(tmp_path):
+    """Regression: a valid relative '.' must not block every worker task."""
+    from lsbpipe.surveys.operation_journal import (
+        start_operation, finish_operation)
+    project = create_object_project(
+        "UGC 2162", tmp_path / "UGC_2162", field=FIELD)
+    original = project.root / "unmodified-image.fits.fz"
+    original.write_bytes(b"original bytes are not changed")
+    project.data_root = project.root
+    save_object_project(project)
+    manifest = project.root / PROJECT_FILENAME
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    assert raw["data_root"] == {"relative": "."}
+    again = read_object_project(project.root)
+    assert again.data_root == project.root
+    started = start_operation(project.root, project.project_id, "survey_search")
+    finish_operation(started, "COMPLETED")
+    assert original.read_bytes() == b"original bytes are not changed"
+
+
+@pytest.mark.parametrize("unsafe", ["", "../elsewhere", "data/../../elsewhere"])
+def test_relative_data_root_still_rejects_empty_and_traversal(tmp_path, unsafe):
+    project = create_object_project("Target", tmp_path / "target")
+    manifest = project.root / PROJECT_FILENAME
+    state = json.loads(manifest.read_text(encoding="utf-8"))
+    state["data_root"] = {"relative": unsafe}
+    manifest.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(ValueError, match="Unsafe relative data directory"):
+        read_object_project(project.root)
