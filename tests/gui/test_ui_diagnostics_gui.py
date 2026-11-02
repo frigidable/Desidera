@@ -1,5 +1,9 @@
 """GUI-only top-left paint provenance diagnostics, never original FITS."""
 import json
+import pytest
+
+pytest.importorskip("pytestqt")
+pytest.importorskip("PySide6.QtWidgets")
 
 from PySide6.QtWidgets import QWidget, QPushButton, QVBoxLayout
 
