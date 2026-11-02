@@ -62,8 +62,15 @@ def test_multiband_native_views_missing_i_and_shared_sky(qtbot):
         timeout=10000)
     assert widget.views["g"].isVisible()
     assert not widget.views["i"].isVisible()
-    assert widget.placeholders["i"].isVisible()
+    assert not widget.cells["i"].isVisible()  # grz uses available width
     assert "unavailable" in widget.status.text()
+    assert widget.scaling.currentData() == "log"
+    assert widget.stretch.currentData() == "faint"
+    widget.show_missing.setChecked(True)
+    assert widget.cells["i"].isVisible()
+    assert widget.placeholders["i"].isVisible()
+    widget.show_missing.setChecked(False)
+    assert not widget.cells["i"].isVisible()
     assert widget.link.isChecked()
     widget.views["g"].scale(1.5, 1.5)
     widget.views["g"]._relative_zoom = 1.5
@@ -81,6 +88,85 @@ def test_multiband_native_views_missing_i_and_shared_sky(qtbot):
     np.testing.assert_array_equal(original_g["data"]["image"], pristine)
     widget.shutdown_renderer()
     assert not widget._timer.isActive()
+
+
+def test_three_band_grz_layout_uses_three_columns_not_empty_quadrant(qtbot):
+    widget = MultibandComparison()
+    qtbot.addWidget(widget)
+    widget.resize(1300, 800)
+    widget.show()
+    widget.set_data({
+        "status": "DIAGNOSTIC_NOT_ADOPTED",
+        "datasets": {b: dataset(b) for b in ("g", "r", "z")},
+        "missing": {"i": "Not available in DR9 north"},
+    })
+    qtbot.waitUntil(
+        lambda: widget._future is None and
+                not widget.images["r"].pixmap().isNull(), timeout=10000)
+    assert not widget.cells["i"].isVisible()
+    assert widget.band_grid.columnCount() >= 3
+    assert [widget.band_grid.getItemPosition(
+        widget.band_grid.indexOf(widget.cells[b]))[:2]
+        for b in ("g", "r", "z")] == [(0, 0), (0, 1), (0, 2)]
+    assert "unavailable: I" in widget.status.text()
+    widget.shutdown_renderer()
+
+
+def test_multiband_faint_log_matches_single_band_transfer_and_is_reversible(
+        qtbot):
+    from lsbpipe.gui.fits_raster import rgb_for_layer
+    from lsbpipe.gui.multiband_preview import display_preview
+    widget = MultibandComparison()
+    qtbot.addWidget(widget)
+    widget.resize(1200, 790)
+    widget.show()
+    d = dataset("r")
+    yy, xx = np.mgrid[:128, :128]
+    rng = np.random.default_rng(1909)
+    background = rng.normal(-0.01, 0.018, (128, 128))
+    diffuse = 0.1 * np.exp(-(
+        ((xx - 64.) / 27.) ** 2 + ((yy - 64.) / 19.) ** 2))
+    img = (background + diffuse).astype(np.float32)
+    img[110, 5:120] = 3.0  # strong bright artifact in field
+    img.setflags(write=False)
+    d["data"]["image"] = img
+    d["data"]["invvar"] = np.ones_like(img)
+    d["data"]["nexp"] = np.ones_like(img, dtype=np.int16)
+    d["data"]["maskbits"] = np.zeros_like(img, dtype=np.int16)
+    d["pixel_shape"] = img.shape
+    original = img.copy()
+
+    rgb, factor, lo, hi, mode = widget._prepare_overview(
+        d, "r", "faint", "log")
+    assert factor == 1
+    assert mode == "log" and 0 < lo < hi
+    np.testing.assert_array_equal(
+        rgb, rgb_for_layer(
+            img, "image", "r", contrast="faint", scaling="log"))
+    assert float(rgb[64, 64, 0]) > float(rgb[10, 10, 0])
+    assert rgb[10, 10, 0] == 0 if img[10, 10] <= 0 else True
+
+    widget.set_data({
+        "status": "DIAGNOSTIC_NOT_ADOPTED",
+        "datasets": {"r": d},
+        "missing": {b: "Unavailable" for b in ("g", "i", "z")},
+    })
+    qtbot.waitUntil(
+        lambda: widget._future is None and not
+                widget.images["r"].pixmap().isNull(), timeout=10000)
+    assert "log" in widget.preview_info["r"].text()
+    assert "nMgy" in widget.preview_info["r"].text()
+    widget.scaling.setCurrentIndex(1)  # signed asinh comparison
+    qtbot.waitUntil(
+        lambda: widget._future is None and "asinh" in
+                widget.preview_info["r"].text(), timeout=10000)
+    widget.scaling.setCurrentIndex(0)
+    qtbot.waitUntil(
+        lambda: widget._future is None and "log" in
+                widget.preview_info["r"].text(), timeout=10000)
+    np.testing.assert_array_equal(img, original)
+    assert not img.flags.writeable
+    widget.shutdown_renderer()
 
 
 def test_multiband_rejects_cross_brick_and_science_adoption(qtbot):
