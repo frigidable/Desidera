@@ -192,7 +192,7 @@ class MultibandComparison(QWidget):
             column.addWidget(QLabel(band.upper() + " · original IMAGE (nanomaggy)"))
             info = QLabel("Screen overview · preparing")
             info.setObjectName("fits_multiband_overview_" + band)
-            info.setStyleSheet("font-size: 11px; color: palette(mid)")
+            info.setStyleSheet("font-size: 11px; color: palette(text)")
             column.addWidget(info)
             view = _BandView()
             view.setObjectName("fits_multiband_view_" + band)
@@ -390,7 +390,7 @@ class MultibandComparison(QWidget):
                 else f"{mode}: no valid positive pixels")
             extent = (
                 f"{preview_x}×{preview_y} screen / {nx}×{ny} native "
-                f"({factor}×{factor} area mean)"
+                f"({factor}×{factor} bin, area mean)"
                 if factor > 1 else
                 f"{nx}×{ny} native screen")
             self.preview_info[band].setText(
