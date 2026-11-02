@@ -408,6 +408,19 @@ def main():
     print(f"Offline GUI capture: {len(reports)} screenshots in {outdir}")
     for report in reports:
         print(report["screenshot"], report["screenshot_bytes"], "bytes")
+    # Explicit Qt destruction matters on Windows offscreen runner. Returning
+    # while still retaining closed WebEngine/graphics widgets can provoke
+    # interpreter-shutdown errors AFTER all 31 files have been written.
+    import gc
+    for widget in (window, manager, wizard, hub):
+        widget.close()
+        widget.deleteLater()
+    app.closeAllWindows()
+    app.processEvents()
+    del window, manager, wizard, hub
+    gc.collect()
+    app.processEvents()
+    print("Qt capture cleanup complete")
     return 0
 
 
