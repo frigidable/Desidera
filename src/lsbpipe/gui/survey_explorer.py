@@ -33,6 +33,7 @@ from lsbpipe.gui.target_input import (
     parse_ra_deg, parse_dec_deg, parse_width_arcmin, parse_coordinate_pair)
 from lsbpipe.gui.qa_workbench import ScienceQAControls
 from lsbpipe.gui.fits_explorer import FITSExplorer
+from lsbpipe.gui.four_layer_comparison import FourLayerComparison
 from lsbpipe.gui.fits_raster import prepare_fits_explorer
 from lsbpipe.gui.science_workflows import run_science_qa as run_science_qa_backend
 from lsbpipe.gui.qa_records import ScienceContext
@@ -75,6 +76,7 @@ class SurveyExplorer(QMainWindow):
         self._brick_overlay_features = []
         self._brick_overlay_keys = []
         self._qa_pixmap = None
+        self._comparison_requested = False
         self._qa_generation = 0
         self._last_download_root = None
         self._local_project = None
@@ -466,22 +468,24 @@ class SurveyExplorer(QMainWindow):
         self.preview_label = QLabel(
             "REMOTE PREVIEW · Legacy Survey Viewer · not calibrated FITS input")
         self.preview_label.setAccessibleName("Remote image provenance warning")
-        preview_layout.addWidget(self.preview_label)
+        heading_row = QHBoxLayout()
+        heading_row.addWidget(self.preview_label, 1)
+        self.comparison_btn = QPushButton("Compare 4 layers")
+        self.comparison_btn.setObjectName("fits_open_four_comparison")
+        self.comparison_btn.setToolTip(
+            "Open an interactive 2×2 comparison of original IMAGE, INVVAR, "
+            "NEXP and MASKBITS. No PNG is used for this workspace.")
+        self.comparison_btn.clicked.connect(self._toggle_four_comparison)
+        heading_row.addWidget(self.comparison_btn)
+        preview_layout.addLayout(heading_row)
         self.preview_tabs = QTabWidget()
         self.preview_tabs.setObjectName("scientific_preview_tabs")
         self.preview_tabs.addTab(self.sky, "Remote sky")
-        self.qa_image_scroll = QScrollArea()
-        self.qa_image_scroll.setObjectName("local_fits_preview")
-        self.qa_image_scroll.setWidgetResizable(True)
-        self.qa_image = QLabel("Run 'Open four-layer FITS map' in Science QA.")
-        self.qa_image.setAlignment(Qt.AlignCenter)
-        self.qa_image.setWordWrap(True)
-        self.qa_image.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self.qa_image_scroll.setWidget(self.qa_image)
-        self.qa_image_scroll.viewport().installEventFilter(self)
-        self.preview_tabs.addTab(self.qa_image_scroll, "Four-layer QA")
         self.fits_explorer = FITSExplorer()
         self.preview_tabs.addTab(self.fits_explorer, "FITS Explorer")
+        # The four-layer workspace is revealed only when requested. It is a
+        # live interactive viewer, not a QPixmap of a previously saved PNG.
+        self.four_layer_comparison = FourLayerComparison(self)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -991,10 +995,6 @@ class SurveyExplorer(QMainWindow):
         self._run_brick_js(highlight_script(key, hover=True))
 
     def eventFilter(self, watched, event):
-        if (hasattr(self, "qa_image_scroll") and
-                watched is self.qa_image_scroll.viewport() and
-                event.type() == QEvent.Resize):
-            QTimer.singleShot(0, self._resize_qa_pixmap)
         if (hasattr(self, "bricks") and
                 watched is self.bricks.viewport() and
                 event.type() == QEvent.Leave):
@@ -1404,11 +1404,12 @@ class SurveyExplorer(QMainWindow):
         if hasattr(self, "fits_explorer"):
             self.fits_explorer.clear_data()
         self._qa_pixmap = None
-        if hasattr(self, "qa_image"):
-            self.qa_image.clear()
-            self.qa_image.setText(
-                "The selected target, brick or band changed. "
-                "Rerun the local FITS QA map.")
+        self._comparison_requested = False
+        if hasattr(self, "four_layer_comparison"):
+            self.four_layer_comparison.clear_data()
+        if (hasattr(self, "comparison_btn") and
+                self.preview_tabs.indexOf(self.four_layer_comparison) >= 0):
+            self._close_four_comparison()
 
     def _preview_tab_changed(self, tab):
         if tab in (1, 2):
@@ -1418,16 +1419,45 @@ class SurveyExplorer(QMainWindow):
             self.preview_label.setText(
                 "REMOTE PREVIEW · Legacy Survey Viewer · not calibrated FITS input")
 
-    def _resize_qa_pixmap(self):
-        if self._qa_pixmap is None:
+    def _close_four_comparison(self):
+        tab = self.preview_tabs.indexOf(self.four_layer_comparison)
+        if tab < 0:
             return
-        viewport = self.qa_image_scroll.viewport().size()
-        width, height = max(viewport.width() - 14, 1), max(viewport.height() - 14, 1)
-        if width < 10 or height < 10:
+        self.preview_tabs.setCurrentWidget(self.fits_explorer)
+        self.preview_tabs.removeTab(tab)
+        self.four_layer_comparison.clear_data()
+        self.comparison_btn.setText("Compare 4 layers")
+
+    def _open_four_comparison(self, dataset):
+        if not self._qa_context_current(dataset):
+            self.message.setText("The selected field or band changed. Reload FITS.")
             return
-        display = self._qa_pixmap.scaled(
-            width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.qa_image.setPixmap(display)
+        try:
+            self.four_layer_comparison.set_dataset(dataset)
+        except (ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, "Four-layer FITS comparison unavailable", str(exc))
+            return
+        if self.preview_tabs.indexOf(self.four_layer_comparison) < 0:
+            self.preview_tabs.addTab(
+                self.four_layer_comparison, "Four-layer QA")
+        self.preview_tabs.setCurrentWidget(self.four_layer_comparison)
+        self.comparison_btn.setText("Close comparison")
+        self.message.setText(
+            "Interactive IMAGE / INVVAR / NEXP / MASKBITS comparison. "
+            "Zoom, pan and hover on original FITS pixels.")
+
+    def _toggle_four_comparison(self):
+        if self.preview_tabs.indexOf(self.four_layer_comparison) >= 0:
+            self._close_four_comparison()
+            return
+        dataset = self.fits_explorer._dataset
+        if dataset is not None and self._qa_context_current(dataset):
+            self._open_four_comparison(dataset)
+            return
+        # Load the original quartet once through the existing validated
+        # science pathway, rather than generating or parsing a PNG.
+        self._comparison_requested = True
+        self.start_science_qa("explore")
 
     def _review_science_history(self):
         """Read prior completed receipts without performing a new science run."""
@@ -1707,6 +1737,7 @@ class SurveyExplorer(QMainWindow):
         callback(result)
 
     def _deliver_science_error(self, message, *, context, ticket):
+        self._comparison_requested = False
         if self._science_ticket_current(context=context, ticket=ticket):
             self.science_qa.show_error(message)
 
@@ -1718,6 +1749,9 @@ class SurveyExplorer(QMainWindow):
             return
         self.fits_explorer.set_dataset(dataset)
         self.preview_tabs.setCurrentWidget(self.fits_explorer)
+        if self._comparison_requested:
+            self._comparison_requested = False
+            self._open_four_comparison(dataset)
         # An interactive view is not a new saved science report; do not
         # leave an old unrelated JSON report button looking current.
         self.science_qa.clear_result()
@@ -1768,16 +1802,11 @@ class SurveyExplorer(QMainWindow):
         self.message.setText(
             "Local FITS QA saved (not adopted): " + result["path"])
         if result["is_figure"]:
-            pixmap = QPixmap(result["path"])
-            if pixmap.isNull():
-                QMessageBox.warning(
-                    self, "FITS figure not readable",
-                    "The diagnostic figure was saved, but Qt could not open "
-                    "the preview. Open the PNG externally from Science QA.")
-                return
-            self._qa_pixmap = pixmap
-            self.preview_tabs.setCurrentWidget(self.qa_image_scroll)
-            self._resize_qa_pixmap()
+            # Figure is an optional exported artifact, not the four-layer
+            # workspace. The latter always renders native arrays interactively.
+            self.message.setText(
+                "Optional diagnostic PNG exported: " + result["path"] +
+                " · Use Compare 4 layers for interactive inspection.")
 
     def closeEvent(self, event):
         if self.thread is not None:
@@ -1796,6 +1825,7 @@ class SurveyExplorer(QMainWindow):
             # its executor explicitly before the parent can be destroyed.
             self._closing_task_ui = True
             self.fits_explorer.shutdown_renderer()
+            self.four_layer_comparison.shutdown_renderer()
             super().closeEvent(event)
 
 
