@@ -512,6 +512,7 @@ class SurveyExplorer(QMainWindow):
         self.inspector_tabs.addTab(drawer_body, "Archive files")
         self.science_qa = ScienceQAControls()
         self.science_qa.requested.connect(self.start_science_qa)
+        self.science_qa.historyRequested.connect(self._review_science_history)
         self.science_qa.contextChanged.connect(
             self._on_science_context_changed)
         for radius in (self.target_radius, self.sky_inner, self.sky_outer):
@@ -1732,6 +1733,55 @@ class SurveyExplorer(QMainWindow):
         display = self._qa_pixmap.scaled(
             width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.qa_image.setPixmap(display)
+
+    def _review_science_history(self):
+        """Read prior completed receipts without performing a new science run."""
+        if self.thread is not None:
+            QMessageBox.information(
+                self, "Busy", "Finish the running operation before reviewing history.")
+            return
+        project = self._object_project
+        root = (project.root if project is not None
+                else self._local_project.root if self._local_project is not None
+                else None)
+        if root is None:
+            QMessageBox.information(
+                self, "No science project", "Open a project to review QA history.")
+            return
+        data_root = (project.data_root if project is not None
+                     else self._local_project.data_root)
+        project_id = project.project_id if project is not None else None
+        contexts = {}
+        for action in ("square", "census", "masks", "figure", "compare"):
+            ctx = self._current_science_context(action)
+            if ctx is not None:
+                contexts[action] = ctx.to_dict()
+        from lsbpipe.gui.run_contracts import discover_run_history
+        from lsbpipe.gui.run_history_dialog import RunHistoryDialog
+        self.message.setText("Reviewing saved scientific run provenance…")
+
+        def job(progress):
+            return discover_run_history(
+                root, data_root=data_root, project_id=project_id,
+                current_contexts=contexts)
+
+        def finished(rows):
+            if self._object_project is not project:
+                self.message.setText(
+                    "History review belongs to a previous project; ignored.")
+                return
+            dialog = RunHistoryDialog(rows, self)
+            dialog.setAttribute(Qt.WA_DeleteOnClose)
+            self._run_history_dialog = dialog
+            dialog.show()
+            self.message.setText(
+                f"Found {len(rows)} saved QA receipts; historical input hashes "
+                "not automatically revalidated.")
+
+        self._start(
+            job, finished,
+            on_error=lambda error: QMessageBox.warning(
+                self, "Cannot open scientific run history", error))
 
     def _start_dataset_audit(self):
         """Standalone offline inspection: no selected brick is required."""
