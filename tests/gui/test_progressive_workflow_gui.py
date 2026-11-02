@@ -68,6 +68,11 @@ def test_discovery_moves_to_data_step_without_auto_downloading(qtbot):
     assert not w.advanced_files.isVisible()
     assert len(w._selected()) == 0
     assert not w.download_btn.isEnabled()
+    from PySide6.QtCore import QPoint
+    w.resize(1366, 768)
+    qtbot.wait(30)
+    y = w.selected_label.mapTo(w.data_scroll.viewport(), QPoint()).y()
+    assert 0 <= y < 210, "Core archive actions must be top-aligned"
     w.files_options.click()
     assert w.advanced_files.isVisible()
     assert w.files.isVisible()
