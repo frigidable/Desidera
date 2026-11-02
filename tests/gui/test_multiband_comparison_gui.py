@@ -195,6 +195,79 @@ def test_grz_fit_all_preserves_native_field_and_angular_scale(qtbot):
     widget.shutdown_renderer()
 
 
+def test_ugc2162_sized_cutouts_fit_after_hidden_workspace_tab_is_shown(qtbot):
+    """Reproduce real 1677x895 UGC 2162 screenshot, not tiny 384px Qt cases.
+
+    All three 1833x1833 native IMAGE cutouts must fit narrow ~440px
+    viewports after the previously hidden comparison tab becomes visible.
+    """
+    from lsbpipe.gui.survey_explorer import SurveyExplorer
+    from scripts.offline_gui_fixture import offline_legacy_viewer
+    with offline_legacy_viewer():
+        workspace = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(workspace)
+    workspace.resize(1677, 895)
+    shape = (1833, 1833)
+    datasets = {}
+    for band in ("g", "r", "z"):
+        d = dataset(band, crpix=(917., 917.))
+        d["pixel_shape"] = shape
+        source = np.array([[0.08]], dtype=np.float32)
+        d["data"] = {
+            "image": np.broadcast_to(source, shape),
+            "invvar": np.broadcast_to(
+                np.array([[40.]], dtype=np.float32), shape),
+            "nexp": np.broadcast_to(
+                np.array([[4]], dtype=np.int16), shape),
+            "maskbits": np.broadcast_to(
+                np.array([[0]], dtype=np.int16), shape),
+        }
+        datasets[band] = d
+    # This matches production: set_data() is called while the comparison
+    # tab has not yet been inserted/shown, and Qt allocates width later.
+    workspace._multiband_ready({
+        "status": "DIAGNOSTIC_NOT_ADOPTED",
+        "datasets": datasets,
+        "missing": {"i": "DR9 north has no i"},
+    })
+    workspace.show()
+    qtbot.waitUntil(
+        lambda: workspace.multiband_comparison._future is None and
+                all(not workspace.multiband_comparison.images[b]
+                        .pixmap().isNull() for b in datasets),
+        timeout=25000)
+    qtbot.wait(100)
+    comparison = workspace.multiband_comparison
+    assert workspace.preview_tabs.currentWidget() is comparison
+    assert all(comparison.views[b].viewport().width() < 550
+               for b in datasets)
+    # Initial automatic Fit all, after Qt layout settles.
+    for band in datasets:
+        view = comparison.views[band]
+        native = comparison.scenes[band].sceneRect()
+        visible = view.mapToScene(view.viewport().rect()).boundingRect()
+        assert visible.adjusted(-2, -2, 2, 2).contains(native), (
+            f"{band}: cropped at startup: viewport={view.viewport().size()}, "
+            f"visible={visible}, native={native}, "
+            f"transform={view.transform().m11()}")
+        assert (view.transform().m11() <=
+                (view.viewport().width() - 4) / shape[1] + 0.001)
+    # Repeat after explicit Fit all and a resize at the actual monitor aspect.
+    comparison.fit_views()
+    workspace.resize(1550, 850)
+    qtbot.wait(100)
+    comparison.fit_views()
+    for band in datasets:
+        view = comparison.views[band]
+        visible = view.mapToScene(view.viewport().rect()).boundingRect()
+        assert visible.adjusted(-2, -2, 2, 2).contains(
+            comparison.scenes[band].sceneRect()), band
+    workspace.close()
+    workspace.fits_explorer.shutdown_renderer()
+    workspace.four_layer_comparison.shutdown_renderer()
+    workspace.multiband_comparison.shutdown_renderer()
+
+
 def test_multiband_faint_log_matches_single_band_transfer_and_is_reversible(
         qtbot):
     from lsbpipe.gui.fits_raster import rgb_for_layer
