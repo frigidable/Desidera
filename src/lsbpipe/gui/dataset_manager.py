@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from PySide6.QtCore import Qt, Signal, QPointF
+from PySide6.QtCore import Qt, Signal, QPointF, QRectF
 from PySide6.QtGui import QBrush, QColor, QPen, QPolygonF, QPainter
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QPushButton,
@@ -23,7 +23,41 @@ SOURCE_COLORS = (
 )
 
 
+def _legacy_quartets(assets: list[dict]) -> tuple[int, int, list[tuple[str, str, str]]]:
+    """Index-presence check, NOT FITS/WCS or scientific completeness.
+
+    IMAGE/INVVAR/NEXP belong to each brick-band, while one MASKBITS
+    may be shared between all bands in the same brick.
+    """
+    bricks = defaultdict(lambda: {"masks": False, "bands": defaultdict(set)})
+    for asset in assets:
+        brick = asset.get("brick")
+        if not brick:
+            continue
+        kind = asset.get("product_kind")
+        if kind == "maskbits":
+            bricks[brick]["masks"] = True
+        elif asset.get("band"):
+            bricks[brick]["bands"][asset["band"]].add(kind)
+    total = complete = 0
+    missing = []
+    for brick, data in sorted(bricks.items()):
+        for band, products in sorted(data["bands"].items()):
+            total += 1
+            required = {"image", "invvar", "nexp"}
+            if not data["masks"]:
+                required.add("maskbits")
+            absent = sorted(required - products)
+            if not absent:
+                complete += 1
+            else:
+                missing.append((brick, band, ", ".join(absent)))
+    return complete, total, missing
+
+
 class _SkyFootprintView(QGraphicsView):
+    resized = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
@@ -34,8 +68,7 @@ class _SkyFootprintView(QGraphicsView):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if not self.scene().sceneRect().isEmpty():
-            self.fitInView(self.scene().sceneRect(), Qt.KeepAspectRatio)
+        self.resized.emit()
 
 
 class DatasetManager(QWidget):
@@ -54,6 +87,9 @@ class DatasetManager(QWidget):
         self.index = None
         self.coverage = None
         self._selected_source_id = None
+        self._selected_asset_id = None
+        self._busy = False
+        self._map_fit_mode = "target"
         self._colors = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -135,10 +171,28 @@ class DatasetManager(QWidget):
         map_panel.setFrameShape(QFrame.StyledPanel)
         map_layout = QVBoxLayout(map_panel)
         map_layout.setContentsMargins(8, 8, 8, 8)
-        map_layout.addWidget(QLabel("SKY FOOTPRINTS · ICRS · north up, east left"))
+        map_tools = QHBoxLayout()
+        map_tools.addWidget(QLabel("SKY FOOTPRINTS · ICRS · N up, E left"), 1)
+        self.fit_target_btn = QPushButton("Target + sky")
+        self.fit_target_btn.setObjectName("dataset_map_fit_target")
+        self.fit_target_btn.setToolTip(
+            "Focus on galaxy field and diagnostic sky annulus, "
+            "which may crop outer parts of a large original FITS frame.")
+        self.fit_target_btn.clicked.connect(
+            lambda: self._set_map_fit_mode("target"))
+        map_tools.addWidget(self.fit_target_btn)
+        self.fit_all_btn = QPushButton("All footprints")
+        self.fit_all_btn.setObjectName("dataset_map_fit_all")
+        self.fit_all_btn.setToolTip(
+            "Fit every inspected original WCS footprint and the target region.")
+        self.fit_all_btn.clicked.connect(
+            lambda: self._set_map_fit_mode("all"))
+        map_tools.addWidget(self.fit_all_btn)
+        map_layout.addLayout(map_tools)
         self.scene = QGraphicsScene(self)
         self.map_view = _SkyFootprintView()
         self.map_view.setScene(self.scene)
+        self.map_view.resized.connect(self._fit_map)
         map_layout.addWidget(self.map_view, 1)
         self.map_status = QLabel(
             "Footprints not checked. Select Inspect WCS footprints to "
@@ -161,12 +215,22 @@ class DatasetManager(QWidget):
         self._draw_coverage()
 
     def bind_project(self, project, index: dict):
+        if (self.project is None or
+                self.project.project_id != project.project_id):
+            self._selected_source_id = None
+            self._selected_asset_id = None
+            self._map_fit_mode = "target"
         self.project = project
         self.set_index(index)
 
     def set_index(self, index: dict):
         self.index = index
         self.coverage = None
+        selected_item = self.tree.currentItem()
+        selected_meta = (
+            selected_item.data(0, Qt.UserRole) if selected_item else None)
+        if selected_meta and selected_meta[0] == "asset":
+            self._selected_asset_id = selected_meta[1]
         self.tree.blockSignals(True)
         self.tree.clear()
         self._colors.clear()
@@ -176,6 +240,8 @@ class DatasetManager(QWidget):
         for a in assets:
             by_source[a["source_id"]].append(a)
         selected_id = self._selected_source_id
+        restore_item = None
+        incomplete_count = 0
         for n, source in enumerate(sources):
             sid = source["source_id"]
             self._colors[sid] = SOURCE_COLORS[n % len(SOURCE_COLORS)]
@@ -185,11 +251,20 @@ class DatasetManager(QWidget):
             children = by_source.get(sid, [])
             bands = ", ".join(sorted({
                 a["band"] for a in children if a.get("band")}))
+            legacy = source.get("provider") == "legacy_surveys"
+            complete, total, missing = (
+                _legacy_quartets(children) if legacy else (0, 0, []))
+            incomplete_count += len(missing)
+            evidence = (
+                f"{complete}/{total} quartets indexed"
+                if legacy and total else
+                "Source unassessed")
             item = QTreeWidgetItem([
                 f"{label} · {len(children)} files",
-                bands or "—",
-                source.get("calibration_status", "UNASSESSED"),
+                bands or "—", evidence,
             ])
+            item.setToolTip(
+                2, "Index presence only, not FITS/WCS or photometric QA.")
             item.setData(0, Qt.UserRole, ("source", sid))
             self.tree.addTopLevelItem(item)
             for asset in sorted(children, key=lambda a: (
@@ -208,19 +283,38 @@ class DatasetManager(QWidget):
                 child.setData(0, Qt.UserRole, ("asset", asset["asset_id"], sid))
                 child.setToolTip(0, str(asset.get("path_ref", {})))
                 item.addChild(child)
-            if selected_id == sid:
-                self.tree.setCurrentItem(item)
+                if asset["asset_id"] == self._selected_asset_id:
+                    restore_item = child
+            for brick, band, absent in missing:
+                warning = QTreeWidgetItem([
+                    f"{brick} / missing {absent}",
+                    band, "NOT INDEXED · no FITS file claim"])
+                warning.setData(0, Qt.UserRole, ("missing", sid))
+                warning.setForeground(0, QBrush(QColor("#E0B66C")))
+                item.addChild(warning)
+                item.setExpanded(True)
+            if selected_id == sid and restore_item is None:
+                restore_item = item
+        if restore_item is None and sources:
+            restore_item = self.tree.topLevelItem(0)
+        if restore_item is not None:
+            self.tree.setCurrentItem(restore_item)
         self.tree.blockSignals(False)
-        if sources and not self.tree.currentItem():
-            self.tree.setCurrentItem(self.tree.topLevelItem(0))
+        self._selected(self.tree.currentItem(), None)
         self.source_summary.setText(
-            f"{len(sources)} source groups · {len(assets)} original files "
-            "· stored evidence only · not automatically adopted"
+            f"{len(sources)} source groups · {len(assets)} registered FITS · "
+            f"{incomplete_count} incomplete indexed brick/band sets · "
+            "FITS/WCS & LSB suitability NOT certified"
             if sources else
             "No indexed sources. Use Index local FITS folder to register "
             "existing Legacy files without copying or downloading.")
-        self.hash_btn.setEnabled(False)
-        self.map_btn.setEnabled(bool(self.project and self.project.field and assets))
+        self.hash_btn.setEnabled(
+            bool(not self._busy and self.tree.currentItem() and
+                 self.tree.currentItem().data(0, Qt.UserRole) and
+                 self.tree.currentItem().data(0, Qt.UserRole)[0] == "asset"))
+        self.map_btn.setEnabled(
+            bool(not self._busy and self.project and
+                 self.project.field and assets))
         self._draw_coverage()
 
     def _selected(self, item, _previous):
@@ -229,8 +323,15 @@ class DatasetManager(QWidget):
             self.hash_btn.setEnabled(False)
             return
         self._selected_source_id = meta[-1]
-        self.hash_btn.setEnabled(meta[0] == "asset")
-        if self.index and meta[0] == "asset":
+        self._selected_asset_id = (
+            meta[1] if meta[0] == "asset" else None)
+        self.hash_btn.setEnabled(not self._busy and meta[0] == "asset")
+        if meta[0] == "missing":
+            self.details.setText(
+                "Incomplete indexed Legacy quartet: this original product "
+                "is not registered locally. Do not run four-layer "
+                "photometric QA until the missing input is supplied.")
+        elif self.index and meta[0] == "asset":
             record = next(
                 (x for x in self.index["assets"] if x["asset_id"] == meta[1]), None)
             if record:
@@ -278,6 +379,7 @@ class DatasetManager(QWidget):
             self.checksumRequested.emit(meta[1])
 
     def set_busy(self, busy: bool):
+        self._busy = bool(busy)
         for button in (
                 self.import_btn, self.external_btn, self.map_btn, self.hash_btn):
             button.setEnabled(not busy)
@@ -293,6 +395,29 @@ class DatasetManager(QWidget):
     def set_coverage(self, result: dict):
         self.coverage = result
         self._draw_coverage()
+
+    def _set_map_fit_mode(self, mode: str):
+        self._map_fit_mode = mode
+        self._fit_map()
+
+    def _fit_map(self):
+        if self.project is None or self.project.field is None:
+            return
+        if min(self.map_view.viewport().width(),
+               self.map_view.viewport().height()) < 30:
+            return
+        width = float(self.project.field.width_arcmin * 60)
+        rad = max(width/2., float(self.project.sky_outer_arcsec),
+                  float(self.project.target_radius_arcsec))
+        # Target mode keeps the whole sky ring visible, without reducing the
+        # galaxy to a tiny dot in a much larger FITS footprint.
+        bounds = (
+            QRectF(-rad * 1.16, -rad * 1.16,
+                   2 * rad * 1.16, 2 * rad * 1.16)
+            if self._map_fit_mode == "target"
+            else self.scene.sceneRect())
+        if not bounds.isEmpty():
+            self.map_view.fitInView(bounds, Qt.KeepAspectRatio)
 
     def _draw_coverage(self):
         self.scene.clear()
@@ -321,36 +446,55 @@ class DatasetManager(QWidget):
             QBrush(QColor("#FFFFFF")))
         cross.setZValue(11)
         if self.coverage is not None:
+            # Distinct IMAGE assets may share exactly the same cutout WCS.
+            # Merge *identical* sky polygons visually within a source, but
+            # retain every original image record and its own band in the
+            # tooltip and header count. Never conflate North/South sources.
+            unique = {}
             for record in self.coverage.get("footprints", []):
-                points = record["points"]
+                points = record.get("points", [])
                 if len(points) < 3:
                     continue
+                signature = (record["source_id"], tuple(
+                    (round(x, 3), round(y, 3)) for x, y in points))
+                if signature not in unique:
+                    unique[signature] = [record]
+                else:
+                    unique[signature].append(record)
+            for group in unique.values():
+                record = group[0]
+                points = record["points"]
                 selected = self._selected_source_id
                 highlight = selected is None or record["source_id"] == selected
                 color = QColor(self._colors.get(record["source_id"], "#81A8CE"))
-                fill = QColor(color)
-                fill.setAlpha(35 if highlight else 7)
+                pen = QPen(
+                    color if highlight else QColor("#637183"),
+                    1.9 if highlight else 1.0)
+                pen.setCosmetic(True)
                 polygon = QGraphicsPolygonItem(
                     QPolygonF([QPointF(*xy) for xy in points]))
-                polygon.setPen(QPen(color if highlight else
-                                    QColor("#596474"),
-                                    1.4 if highlight else 0.5))
-                polygon.setBrush(QBrush(fill))
-                polygon.setZValue(1 if highlight else 0)
+                polygon.setPen(pen)
+                polygon.setBrush(Qt.NoBrush)  # No opaque accumulated fills
+                polygon.setZValue(2 if highlight else 1)
                 label = (record.get("release") or
                          record.get("provider") or "External")
+                bands = ", ".join(sorted({
+                    str(x.get("band") or "unknown") for x in group}))
                 polygon.setToolTip(
                     f"{label} · {record.get('region') or '—'} · "
                     f"{record.get('brick') or 'external'} · "
-                    f"{record.get('band') or '—'} · WCS header only")
+                    f"bands {bands} · {len(group)} original IMAGE files · "
+                    "WCS header only")
                 self.scene.addItem(polygon)
             good = len(self.coverage.get("footprints", []))
             rejected = len(self.coverage.get("rejected", []))
             omitted = self.coverage.get("omitted_count", 0)
             self.map_status.setText(
-                f"Original IMAGE WCS headers: {good} footprints, "
-                f"{rejected} invalid/missing, {omitted} omitted by "
-                "display cap. Geometry only; no valid-pixel or sky evidence.")
+                f"{good} original IMAGE WCS headers · "
+                f"{len(unique)} distinct source outlines · "
+                f"{rejected} invalid/missing · {omitted} omitted · "
+                "geometry only, not usable-pixel coverage. "
+                "Target + sky may crop outer FITS boundaries.")
         else:
             self.map_status.setText(
                 "ICRS target and sky rings shown. FITS sky footprints "
@@ -358,5 +502,4 @@ class DatasetManager(QWidget):
         bounds = self.scene.itemsBoundingRect()
         bounds.adjust(-width*.08, -width*.08, width*.08, width*.08)
         self.scene.setSceneRect(bounds)
-        if self.map_view.viewport().width() > 0:
-            self.map_view.fitInView(bounds, Qt.KeepAspectRatio)
+        self._fit_map()
