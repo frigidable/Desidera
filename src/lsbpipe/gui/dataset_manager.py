@@ -42,6 +42,7 @@ class DatasetManager(QWidget):
     """A view of *registered* source provenance with explicit P0 QA limits."""
 
     registerRequested = Signal(str)
+    externalRequested = Signal(str, str, str)
     coverageRequested = Signal()
     checksumRequested = Signal(str)
     backRequested = Signal()
@@ -82,6 +83,13 @@ class DatasetManager(QWidget):
             "they are; no download and no automatic scientific acceptance.")
         self.import_btn.clicked.connect(self._request_register)
         actions.addWidget(self.import_btn)
+        self.external_btn = QPushButton("Attach external FITS…")
+        self.external_btn.setObjectName("dataset_manager_external")
+        self.external_btn.setToolTip(
+            "Register one existing FITS with an explicit provider and band. "
+            "No copying, calibration assumption, or network access.")
+        self.external_btn.clicked.connect(self._request_external)
+        actions.addWidget(self.external_btn)
         self.map_btn = QPushButton("Inspect WCS footprints")
         self.map_btn.setObjectName("dataset_manager_coverage")
         self.map_btn.setToolTip(
@@ -247,6 +255,22 @@ class DatasetManager(QWidget):
         if root:
             self.registerRequested.emit(root)
 
+    def _request_external(self):
+        from PySide6.QtWidgets import QFileDialog, QInputDialog
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Select existing original FITS", "",
+            "FITS images (*.fits *.fit *.fts *.fits.fz)")
+        if not filename:
+            return
+        provider, accepted = QInputDialog.getText(
+            self, "Observation source", "Survey / facility / instrument:")
+        if not accepted or not provider.strip():
+            return
+        band, accepted = QInputDialog.getText(
+            self, "Passband", "Native filter or passband name:")
+        if accepted and band.strip():
+            self.externalRequested.emit(filename, provider.strip(), band.strip())
+
     def _request_hash(self):
         item = self.tree.currentItem()
         meta = item.data(0, Qt.UserRole) if item else None
@@ -254,9 +278,13 @@ class DatasetManager(QWidget):
             self.checksumRequested.emit(meta[1])
 
     def set_busy(self, busy: bool):
-        for button in (self.import_btn, self.map_btn, self.hash_btn):
+        for button in (
+                self.import_btn, self.external_btn, self.map_btn, self.hash_btn):
             button.setEnabled(not busy)
         if not busy:
+            self.map_btn.setEnabled(bool(
+                self.project and self.project.field and self.index and
+                self.index.get("assets")))
             self.hash_btn.setEnabled(
                 bool(self.tree.currentItem() and
                      self.tree.currentItem().data(0, Qt.UserRole) and
