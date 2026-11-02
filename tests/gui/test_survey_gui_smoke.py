@@ -115,11 +115,12 @@ def test_data_workbench_is_progressive_and_essential_actions_remain_reachable(
     window.data_toggle.click()
     qtbot.wait(20)
     assert window.data_drawer.isVisible()
-    assert window.files.isVisible()
+    assert not window.files.isVisible()
     assert window.files.minimumHeight() >= 148
     assert not window.qa_toggle.isVisible()
     assert not window.qa_widget.isVisible()
     window.files_options.click()
+    assert window.files.isVisible()
     assert window.qa_toggle.isVisible()
     window.qa_toggle.click()
     qtbot.wait(20)
@@ -147,7 +148,7 @@ def test_offline_population_scenarios_and_selection(offline_explorer, state, exp
     assert len(window.manifest["products"]) == 88
     assert len(window._selected()) == expected
     assert window.data_drawer.isVisible()
-    assert window.files.isVisible()
+    assert window.files.isVisible() == (state == "S2")
     if state == "S2":
         assert sum(window.files.isRowHidden(i)
                    for i in range(window.files.rowCount())) > 0
