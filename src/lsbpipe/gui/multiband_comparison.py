@@ -172,7 +172,7 @@ class MultibandComparison(QWidget):
             placeholder = QLabel("Not loaded")
             placeholder.setAlignment(Qt.AlignCenter)
             placeholder.setWordWrap(True)
-            column.addWidget(placeholder)
+            column.addWidget(placeholder, 1)
             grid.addWidget(cell, n // 2, n % 2)
             self.views[band] = view
             self.scenes[band] = scene
