@@ -117,7 +117,7 @@ def cache_catalog(url: str, destination: Path, *, max_bytes: int = 600_000_000) 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temp = destination.with_name(destination.name + ".part")
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "LSBpipe-survey/0.4"})
+        req = urllib.request.Request(url, headers={"User-Agent": "DESIDERA-survey/0.4"})
         with urllib.request.urlopen(req, timeout=90) as remote, temp.open("wb") as out:
             total = 0
             while True:
