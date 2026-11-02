@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QPushButton,
     QTreeWidget, QTreeWidgetItem, QGraphicsScene, QGraphicsView,
     QGraphicsPolygonItem, QGraphicsRectItem, QGraphicsEllipseItem,
-    QHeaderView, QFrame,
+    QHeaderView, QFrame, QComboBox, QTabWidget, QTableWidget,
+    QTableWidgetItem, QAbstractItemView,
 )
 
 
@@ -139,6 +140,7 @@ class DatasetManager(QWidget):
     externalRequested = Signal(str, str, str)
     coverageRequested = Signal()
     checksumRequested = Signal(str)
+    pixelQaRequested = Signal()
     backRequested = Signal()
 
     def __init__(self, parent=None):
@@ -153,6 +155,7 @@ class DatasetManager(QWidget):
         self._map_fit_mode = "target"
         self._colors = {}
         self._source_labels = {}
+        self.pixel_qa_result = None
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(9)
@@ -195,6 +198,14 @@ class DatasetManager(QWidget):
             "coverage, not valid data fraction or photometric quality.")
         self.map_btn.clicked.connect(self.coverageRequested.emit)
         actions.addWidget(self.map_btn)
+        self.pixel_btn = QPushButton("Audit pixel coverage")
+        self.pixel_btn.setObjectName("dataset_manager_pixel_qa")
+        self.pixel_btn.setToolTip(
+            "Read and validate original IMAGE, INVVAR, NEXP, MASKBITS by "
+            "source and band. Compute independent target/sky-annulus "
+            "fractions; no photometric adoption or coaddition.")
+        self.pixel_btn.clicked.connect(self.pixelQaRequested.emit)
+        actions.addWidget(self.pixel_btn)
         self.hash_btn = QPushButton("Verify selected file SHA-256")
         self.hash_btn.setObjectName("dataset_manager_hash")
         self.hash_btn.setToolTip(
@@ -235,6 +246,14 @@ class DatasetManager(QWidget):
         map_layout.setContentsMargins(8, 8, 8, 8)
         map_tools = QHBoxLayout()
         map_tools.addWidget(QLabel("SKY FOOTPRINTS · ICRS · N up, E left"), 1)
+        self.map_source_filter = QComboBox()
+        self.map_source_filter.setObjectName("dataset_manager_map_source_filter")
+        self.map_source_filter.addItem("All sources", "all")
+        self.map_source_filter.setToolTip(
+            "Show both overlapping regional source footprints or choose "
+            "one source alone. Never moves original sky coordinates.")
+        self.map_source_filter.currentIndexChanged.connect(self._draw_coverage)
+        map_tools.addWidget(self.map_source_filter)
         self.fit_target_btn = QPushButton("Target + sky")
         self.fit_target_btn.setObjectName("dataset_map_fit_target")
         self.fit_target_btn.setToolTip(
@@ -270,7 +289,37 @@ class DatasetManager(QWidget):
         self.map_status.setObjectName("dataset_manager_map_status")
         self.map_status.setWordWrap(True)
         map_layout.addWidget(self.map_status)
-        split.addWidget(map_panel)
+        self.right_tabs = QTabWidget()
+        self.right_tabs.setObjectName("dataset_manager_diagnostic_tabs")
+        self.right_tabs.addTab(map_panel, "WCS footprints")
+        qa_panel = QWidget()
+        qa_layout = QVBoxLayout(qa_panel)
+        qa_layout.setContentsMargins(7, 7, 7, 7)
+        self.pixel_qa_description = QLabel(
+            "Run Audit pixel coverage to inspect original FITS by source, "
+            "brick, and filter. Numerical support and bit flags are "
+            "diagnostics, not LSB/PSF/sky readiness.")
+        self.pixel_qa_description.setWordWrap(True)
+        qa_layout.addWidget(self.pixel_qa_description)
+        self.pixel_qa_table = QTableWidget(0, 6)
+        self.pixel_qa_table.setObjectName("dataset_manager_pixel_qa_table")
+        self.pixel_qa_table.setHorizontalHeaderLabels([
+            "Original dataset", "Band", "Target valid triplet",
+            "Sky valid triplet", "Target SATUR/ALLMASK", "Input status"])
+        self.pixel_qa_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch)
+        self.pixel_qa_table.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.Stretch)
+        self.pixel_qa_table.setEditTriggers(
+            QAbstractItemView.NoEditTriggers)
+        qa_layout.addWidget(self.pixel_qa_table, 1)
+        self.pixel_qa_status = QLabel(
+            "Not audited · no original FITS pixel metrics available.")
+        self.pixel_qa_status.setObjectName("dataset_manager_pixel_qa_status")
+        self.pixel_qa_status.setWordWrap(True)
+        qa_layout.addWidget(self.pixel_qa_status)
+        self.right_tabs.addTab(qa_panel, "Pixel coverage QA")
+        split.addWidget(self.right_tabs)
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 4)
         root.addWidget(split, 1)
@@ -303,6 +352,7 @@ class DatasetManager(QWidget):
         new_signature = _footprint_input_signature(index)
         if old_signature != new_signature:
             self.coverage = None
+            self.pixel_qa_result = None
         self.index = index
         selected_item = self.tree.currentItem()
         selected_meta = (
@@ -383,6 +433,15 @@ class DatasetManager(QWidget):
             self.tree.setCurrentItem(restore_item)
         self.tree.blockSignals(False)
         self._selected(self.tree.currentItem(), None)
+        previous_filter = self.map_source_filter.currentData()
+        self.map_source_filter.blockSignals(True)
+        self.map_source_filter.clear()
+        self.map_source_filter.addItem("All sources", "all")
+        for sid, label in self._source_labels.items():
+            self.map_source_filter.addItem(label, sid)
+        pos = self.map_source_filter.findData(previous_filter)
+        self.map_source_filter.setCurrentIndex(max(0, pos))
+        self.map_source_filter.blockSignals(False)
         self.source_summary.setText(
             f"{len(sources)} source groups · {len(assets)} registered FITS · "
             f"{incomplete_count} incomplete indexed brick/band sets · "
@@ -397,6 +456,10 @@ class DatasetManager(QWidget):
         self.map_btn.setEnabled(
             bool(not self._busy and self.project and
                  self.project.field and assets))
+        self.pixel_btn.setEnabled(bool(
+            not self._busy and self.project and self.project.field and
+            any(a.get("product_kind") == "image" for a in assets)))
+        self._render_pixel_qa()
         self._draw_coverage()
 
     def _selected(self, item, _previous):
@@ -463,12 +526,17 @@ class DatasetManager(QWidget):
     def set_busy(self, busy: bool):
         self._busy = bool(busy)
         for button in (
-                self.import_btn, self.external_btn, self.map_btn, self.hash_btn):
+                self.import_btn, self.external_btn, self.map_btn,
+                self.pixel_btn, self.hash_btn):
             button.setEnabled(not busy)
         if not busy:
             self.map_btn.setEnabled(bool(
                 self.project and self.project.field and self.index and
                 self.index.get("assets")))
+            self.pixel_btn.setEnabled(bool(
+                self.project and self.project.field and self.index and
+                any(a.get("product_kind") == "image" for a in
+                    self.index.get("assets", []))))
             self.hash_btn.setEnabled(
                 bool(self.tree.currentItem() and
                      self.tree.currentItem().data(0, Qt.UserRole) and
@@ -477,6 +545,55 @@ class DatasetManager(QWidget):
     def set_coverage(self, result: dict):
         self.coverage = result
         self._draw_coverage()
+
+    def set_pixel_qa(self, report: dict):
+        self.pixel_qa_result = report
+        self._render_pixel_qa()
+        self.right_tabs.setCurrentIndex(1)
+
+    def _render_pixel_qa(self):
+        self.pixel_qa_table.setRowCount(0)
+        report = self.pixel_qa_result
+        if report is None:
+            self.pixel_qa_status.setText(
+                "Not audited · no original FITS pixel metrics available.")
+            return
+        def pct(region, label):
+            value = region.get("fractions", {}).get(label)
+            return f"{100*value:.1f}%" if value is not None else "no pixels"
+        for data in report.get("rows", []):
+            i = self.pixel_qa_table.rowCount()
+            self.pixel_qa_table.insertRow(i)
+            status = data.get("status", "UNKNOWN")
+            if status == "PIXEL_DIAGNOSTIC_NOT_ADOPTED":
+                target = data["regions"]["target"]
+                sky = data["regions"]["sky_annulus"]
+                sat = target["fractions"]["flagged_band_satur"]
+                allflag = target["fractions"]["flagged_band_allmask"]
+                flags = (
+                    f"{100*sat:.1f}% / {100*allflag:.1f}%"
+                    if sat is not None and allflag is not None else "no pixels")
+                cells = [
+                    f"{data['release']}/{data['region']}/{data['brick']}",
+                    data["band"],
+                    pct(target, "numerical_triplet"),
+                    pct(sky, "numerical_triplet"), flags, "DIAGNOSTIC only"]
+            else:
+                cells = [
+                    f"{data.get('release')}/{data.get('region')}/{data.get('brick')}",
+                    str(data.get("band")), "—", "—", "—",
+                    ("Missing: " + ", ".join(data.get("missing", []))
+                     if status == "INCOMPLETE_FILES" else
+                     "Invalid: " + str(data.get("error", status)))]
+            for col, value in enumerate(cells):
+                self.pixel_qa_table.setItem(i, col, QTableWidgetItem(value))
+        self.pixel_qa_status.setText(
+            f"{len(report.get('rows', []))} datasets inspected; "
+            f"{report.get('omitted_quartets', 0)} omitted by resource cap. "
+            "FITS/WCS checked per complete quartet. Fractions are native "
+            "image pixels in target circle / sky annulus. MASKBITS "
+            "flags reported, not automatically rejected. "
+            "No sky, PSF, noise covariance or LSB suitability certification.")
 
     def _set_map_fit_mode(self, mode: str):
         self._map_fit_mode = mode
@@ -534,7 +651,11 @@ class DatasetManager(QWidget):
             # retain every original image record and its own band in the
             # tooltip and header count. Never conflate North/South sources.
             unique = {}
-            for record in self.coverage.get("footprints", []):
+            chosen = self.map_source_filter.currentData()
+            shown = [
+                r for r in self.coverage.get("footprints", [])
+                if chosen in (None, "all", r["source_id"])]
+            for record in shown:
                 points = record.get("points", [])
                 if len(points) < 3:
                     continue
@@ -544,8 +665,7 @@ class DatasetManager(QWidget):
                     unique[signature] = [record]
                 else:
                     unique[signature].append(record)
-            overlaps = _coincident_source_footprints(
-                self.coverage.get("footprints", []))
+            overlaps = _coincident_source_footprints(shown)
             overlapping_ids = {
                 source_id
                 for item in overlaps for source_id in item["source_ids"]}
@@ -603,11 +723,11 @@ class DatasetManager(QWidget):
                 self.map_overlap.setText(
                     "No coincident cross-source WCS contours established "
                     "within the sampled-edge tolerance.")
-            good = len(self.coverage.get("footprints", []))
+            good = len(shown)
             rejected = len(self.coverage.get("rejected", []))
             omitted = self.coverage.get("omitted_count", 0)
             self.map_status.setText(
-                f"{good} original IMAGE WCS headers · "
+                f"{good} shown original IMAGE WCS headers · "
                 f"{len(unique)} distinct source outlines · "
                 f"{rejected} invalid/missing · {omitted} omitted · "
                 "geometry only, not usable-pixel coverage. "
