@@ -527,7 +527,9 @@ def test_science_workbench_is_a_separate_tab_preserving_archive_and_viewer(
     assert w.inspector_tabs.count() == 2
     assert w.inspector_tabs.tabText(0) == "Archive files"
     assert w.inspector_tabs.tabText(1) == "Science QA"
-    assert w.preview_tabs.count() == 3
+    assert w.preview_tabs.count() == 2
+    assert w.preview_tabs.tabText(1) == "FITS Explorer"
+    assert w.preview_tabs.indexOf(w.four_layer_comparison) == -1
     assert w.preview_tabs.currentWidget() is w.sky
     assert w.files.columnCount() == 4
     assert w.save_btn.isEnabled()
@@ -591,28 +593,28 @@ def test_science_qa_never_analyzes_stale_archive_selection(
     core.assert_not_called()
 
 
-def test_local_original_fits_map_opens_in_central_preview_tab(
+def test_static_png_export_does_not_replace_interactive_fits_workspace(
         offline_explorer, tmp_path, qtbot):
     from PySide6.QtGui import QPixmap
     from PySide6.QtCore import Qt
     w = offline_explorer
     apply_offline_state(w, "S3")
-    image = tmp_path/"QA_figure.png"
-    pix = QPixmap(200,100)
+    image = tmp_path / "QA_figure.png"
+    pix = QPixmap(200, 100)
     pix.fill(Qt.white)
     assert pix.save(str(image), "PNG")
     w._science_qa_ready({
-        "action":"figure", "status":"DIAGNOSTIC_NOT_ADOPTED",
-        "summary":"IMAGE / INVVAR / NEXP / MASKBITS",
-        "path":str(image), "is_figure":True,
-        "provenance":("dr9","north",w.hits[0].name,"r")})
+        "action": "figure", "status": "DIAGNOSTIC_NOT_ADOPTED",
+        "summary": "IMAGE / INVVAR / NEXP / MASKBITS",
+        "path": str(image), "is_figure": True,
+        "provenance": ("dr9", "north", w.hits[0].name, "r")})
     qtbot.wait(20)
-    assert w.preview_tabs.currentWidget() is w.qa_image_scroll
-    assert w._qa_pixmap is not None
-    assert w.qa_image.pixmap() is not None
-    assert "LOCAL ORIGINAL FITS" in w.preview_label.text()
-    w.preview_tabs.setCurrentWidget(w.sky)
-    assert "REMOTE PREVIEW" in w.preview_label.text()
+    assert w.preview_tabs.indexOf(w.four_layer_comparison) == -1
+    assert w.preview_tabs.currentWidget() is w.sky
+    assert w._qa_pixmap is None
+    assert "Optional diagnostic PNG exported" in w.message.text()
+    assert w.comparison_btn.isVisible()
+    assert "interactive" in w.comparison_btn.toolTip().lower()
 
 
 def test_science_qa_disables_unsafe_paired_comparison_without_two_roots(
