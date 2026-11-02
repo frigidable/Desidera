@@ -10,7 +10,8 @@ import argparse
 import json
 import os
 from pathlib import Path
-from offline_gui_fixture import offline_legacy_viewer, apply_offline_state
+from offline_gui_fixture import (offline_legacy_viewer, apply_offline_state,
+                                 make_synthetic_fits_view)
 
 # Intentional: this is a deterministic noninteractive CI capture, NOT a
 # replacement for real Windows/on-device Qt WebEngine validation.
@@ -286,6 +287,54 @@ def main():
             finally:
                 window.close()
                 app.processEvents()
+    # Synthetic three-band comparison at a realistic desktop viewport.
+    # This fixture contains NO DESI pixels; it is strictly geometry evidence.
+    with offline_legacy_viewer():
+        window = SurveyExplorer(restore_session=False, launch_remote=False)
+        try:
+            images = {}
+            for band in ("g", "r", "z"):
+                fake = make_synthetic_fits_view()
+                fake["band"] = band
+                fake["source"] = f"DR9 north · 1544p465 · {band}"
+                fake["data"]["image"] = (
+                    fake["data"]["image"] * {"g": 0.75, "r": 1., "z": 1.3}[band])
+                images[band] = fake
+            window._multiband_ready({
+                "status": "DIAGNOSTIC_NOT_ADOPTED",
+                "datasets": images,
+                "missing": {"i": "Synthetic missing band"},
+            })
+            window.preview_label.setText(
+                "SYNTHETIC VISUAL FIXTURE · NO ORIGINAL SURVEY FITS")
+            window.resize(1600, 900)
+            window.show()
+            import time
+            for _ in range(500):
+                app.processEvents()
+                if (window.multiband_comparison._future is None and
+                        all(not window.multiband_comparison.images[b]
+                                .pixmap().isNull() for b in images)):
+                    break
+                time.sleep(0.01)
+            if window.multiband_comparison._future is not None:
+                raise AssertionError("Synthetic multi-band previews did not render")
+            path = outdir / "multiband_synthetic_1600x900.png"
+            shot = window.grab()
+            if not shot.save(str(path), "PNG"):
+                raise RuntimeError(f"Could not capture {path}")
+            reports.append({
+                "state": "S7_multiband_synthetic_not_original",
+                "screenshot": path.name,
+                "screenshot_px": [shot.width(), shot.height()],
+                "screenshot_bytes": path.stat().st_size,
+                "viewer_content": "SYNTHETIC_NOT_SURVEY_FITS",
+                "network_used": False,
+                "scientific_status": "NO_SCIENCE_RESULT",
+            })
+        finally:
+            window.close()
+            app.processEvents()
     index = {
         "evidence_level": "E1_CAPTURED_NOT_VISUALLY_REVIEWED",
         "screens": reports,
@@ -294,6 +343,7 @@ def main():
             "All catalog and product S1–S6 data are synthetic fixtures",
             "S4–S6 are mock UI content; no original FITS are opened",
             "S5 FITS raster is artificial and cannot support scientific conclusions",
+            "S7 band comparison is synthetic and contains no original survey pixels",
             "Offscreen Qt capture cannot verify real monitor / DPI rendering",
             "This job does not certify accessibility or scientific validity",
         ],
