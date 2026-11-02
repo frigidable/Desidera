@@ -8,6 +8,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 from lsbpipe.gui.survey_explorer import SurveyExplorer, _DiagnosticWebPage
+from lsbpipe.gui.target_controller import TargetController
+from lsbpipe.gui.survey_data_controller import SurveyDataController
 
 
 def test_viewer_is_top_level_not_aladin_or_iframe():
@@ -41,10 +43,10 @@ def test_browser_fallback_and_diagnostics():
 
 
 def test_release_region_picker_is_conservative():
-    code = inspect.getsource(SurveyExplorer._preferred_viewer_region)
+    code = inspect.getsource(TargetController.preferred_viewer_region)
     assert "32.375" in code
     assert "return None" in code
-    assert "release in ('dr9', 'dr11')" in code
+    assert 'release in ("dr9", "dr11")' in code
 
 def test_gui_has_zoom_filter_and_explicit_download_confirmation():
     code = inspect.getsource(SurveyExplorer._build_ui)
@@ -61,20 +63,20 @@ def test_gui_has_zoom_filter_and_explicit_download_confirmation():
 
 
 def test_visible_filter_is_not_a_global_selection_mutation():
-    code = inspect.getsource(SurveyExplorer._filter_products)
+    code = inspect.getsource(SurveyDataController._filter_products)
     assert "setRowHidden" in code
     assert "setChecked" not in code
-    assert "isRowHidden" in inspect.getsource(SurveyExplorer._set_visible_selection)
+    assert "isRowHidden" in inspect.getsource(SurveyDataController._set_visible_selection)
 
 
 def test_science_quartet_clears_invisible_selections_and_requires_exact_four():
-    code = inspect.getsource(SurveyExplorer.select_science_quartet)
+    code = inspect.getsource(SurveyDataController.select_science_quartet)
     assert '"image"' in code
     assert '"invvar"' in code
     assert '"nexp"' in code
     assert '"maskbits"' in code
     assert "key in needed" in code
-    assert 'self.files.isRowHidden' not in code
+    assert 'w.files.isRowHidden' not in code
 
 
 def test_local_science_coverage_runs_in_worker():
