@@ -11,7 +11,7 @@ import json
 
 from lsbpipe.surveys.dataset_integrity import (
     KINDS, _expected_paths, _sha256_file, _validate_open_hdus)
-from lsbpipe.surveys.legacy import regions_for_release
+from lsbpipe.surveys.legacy import BRICK_RE, regions_for_release
 from lsbpipe.surveys.task_control import checkpoint
 from .contracts import MaskPolicy, NativeBandFrame
 
@@ -50,7 +50,7 @@ def load_native_legacy_quartet(
         raise ValueError("Invalid survey release/region")
     if band not in ("g", "r", "i", "z") or (region == "north" and band == "i"):
         raise ValueError("Unsupported optical band in this region")
-    if not isinstance(brick, str) or len(brick) != 8:
+    if not isinstance(brick, str) or not BRICK_RE.fullmatch(brick):
         raise ValueError("Invalid native brick")
     # The root must contain <release>/<region>/coadd, not the output folder.
     root = Path(data_root).expanduser().resolve()
