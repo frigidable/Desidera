@@ -400,6 +400,17 @@ class ProjectHub(QMainWindow):
             workspace = SurveyExplorer(
                 restore_session=False, launch_remote=False)
             workspace.attach_object_project(project)
+            from lsbpipe.surveys.operation_journal import interrupted_operations
+            interrupted = interrupted_operations(project.root)
+            if interrupted:
+                workspace.project_status.setText(
+                    f"{len(interrupted)} uncertain prior operation(s) · "
+                    "no automatic replay or science adoption")
+                workspace.message.setText(
+                    "The previous session left unfinished operation records. "
+                    "Inspect the operations/ directory and immutable QA "
+                    "history before using their outputs. Original FITS "
+                    "were not modified by recovery.")
         except (OSError, ValueError, KeyError, RuntimeError) as exc:
             if "workspace" in locals():
                 workspace.close()
