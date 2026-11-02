@@ -37,8 +37,12 @@ class SurveyDataController(QObject):
             w.brick_filter.addItem(
                 f"{release.upper()} · {region} · {brick}",
                 (release, region, brick))
-        index = w.brick_filter.findData(previous)
-        w.brick_filter.setCurrentIndex(max(0, index))
+        index = next((
+            i for i in range(w.brick_filter.count())
+            if w.brick_filter.itemData(i) is not None and
+            tuple(w.brick_filter.itemData(i)) == tuple(previous or ())
+        ), 0)
+        w.brick_filter.setCurrentIndex(index)
         w.brick_filter.blockSignals(False)
 
     def _fill_files(self, *, checked_paths=None):
