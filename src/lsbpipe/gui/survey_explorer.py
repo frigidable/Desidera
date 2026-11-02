@@ -148,7 +148,8 @@ class SurveyExplorer(QMainWindow):
             "Enter ICRS coordinates, then find survey data.")
         self.workflow_hint.setObjectName("workflow_next_step")
         self.workflow_hint.setWordWrap(True)
-        self.workflow_hint.setStyleSheet("color: palette(mid);")
+        self.workflow_hint.setStyleSheet(
+            "color: palette(text); font-size: 12px;")
         panel.addWidget(self.workflow_stage)
         panel.addWidget(self.workflow_hint)
 
@@ -297,7 +298,7 @@ class SurveyExplorer(QMainWindow):
         self.bricks.viewport().installEventFilter(self)
         self.bricks.cellEntered.connect(self._hover_brick_row)
         self.bricks_help = QLabel("Select a brick to work with its files.")
-        self.bricks_help.setStyleSheet("color: palette(mid);")
+        self.bricks_help.setStyleSheet("color: palette(text);")
         self.bricks_help.setWordWrap(True)
         panel.addWidget(self.bricks_help)
         self.bricks_heading.setVisible(False)
@@ -527,7 +528,7 @@ class SurveyExplorer(QMainWindow):
         self.progress_widget.setVisible(False)
         self.message = QLabel("")
         self.message.setWordWrap(True)
-        self.message.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.message.setStyleSheet("color: palette(text); font-size: 11px;")
         self.message.setMaximumHeight(58)
         panel.addWidget(self.message)
 
