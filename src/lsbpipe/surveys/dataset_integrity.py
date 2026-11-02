@@ -22,6 +22,7 @@ from lsbpipe.survey import LEGACY_BITS, _check_wcs_compatible, maskbits_to_uint
 from .coverage import _science_hdu_index
 from .legacy import BrickHit, SkyField, product_for, regions_for_release
 from .local_project import _atomic_json
+from .task_control import OperationCancelled, checkpoint
 
 SCHEMA = "lsbpipe.dataset-audit/1"
 KINDS = ("image", "invvar", "nexp", "maskbits")
@@ -122,12 +123,15 @@ def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
     return rows
 
 
-def _sha256_file(path: Path) -> dict:
+def _sha256_file(path: Path, *, cancel_check=None) -> dict:
+    checkpoint(cancel_check)
     before = path.stat()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
+            checkpoint(cancel_check)
             digest.update(block)
+    checkpoint(cancel_check)
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (
             after.st_size, after.st_mtime_ns):
@@ -175,13 +179,14 @@ def _validate_open_hdus(hdus: dict, band: str):
 
 
 def verify_dataset(data_root: str | Path, entry: dict, *,
-                   hash_inputs: bool = True) -> dict:
+                   hash_inputs: bool = True, cancel_check=None) -> dict:
     """Read all four FITS, verify HDU/WCS/units and conservative numeric gates.
 
     A validated quartet is still DIAGNOSTIC_NOT_ADOPTED. It is not a claim of
     background quality, PSF adequacy or photometric readiness.
     """
     from astropy.io import fits
+    checkpoint(cancel_check)
     root = Path(data_root).expanduser().resolve()
     result = dict(entry)
     if entry["band"] is None:
@@ -202,6 +207,7 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
             numerically_valid = 0
             positive_ivar = positive_nexp = finite_image = saturated = 0
             for start in range(0, image.shape[0], 256):
+                checkpoint(cancel_check)
                 stop = min(start + 256, image.shape[0])
                 finite = np.isfinite(image[start:stop])
                 ivgood = np.isfinite(ivar[start:stop]) & (ivar[start:stop] > 0)
@@ -222,7 +228,7 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
                 info["hdu_index"] = int(indices[kind])
                 info["bunit"] = units[kind]
                 if hash_inputs:
-                    info.update(_sha256_file(file))
+                    info.update(_sha256_file(file, cancel_check=cancel_check))
                 product_info[kind] = info
             result.update({
                 "status": "FITS_WCS_VALIDATED_DIAGNOSTIC",
@@ -240,6 +246,8 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
                     "Original coadd correlated noise is not inferred from INVVAR",
                 ],
             })
+    except OperationCancelled:
+        raise
     except Exception as exc:
         # Corrupt FITS/astropy verification errors are per-dataset failures,
         # not a reason to discard every other independently audited quartet.
@@ -251,7 +259,7 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
 
 
 def _sampled_footprint(data_root: Path, verified: list[dict], field: SkyField,
-                       *, pitch_arcsec: float) -> list[dict]:
+                       *, pitch_arcsec: float, cancel_check=None) -> list[dict]:
     """Nearest-pixel common TAN sky grid, grouped by release/region/band.
 
     This is NOT a resampled science image. Overlaps count once in the union,
@@ -283,10 +291,12 @@ def _sampled_footprint(data_root: Path, verified: list[dict], field: SkyField,
                      dataset["band"])].append(dataset)
     reports = []
     for (release, region, band), entries in sorted(grouped.items()):
+        checkpoint(cancel_check)
         geometric_count = np.zeros(count*count, dtype=np.uint16)
         valid_count = np.zeros(count*count, dtype=np.uint16)
         per_brick = []
         for entry in entries:
+            checkpoint(cancel_check)
             key = (release, region, entry["brick"], band)
             paths = _expected_paths(data_root, key)
             with ExitStack() as stack:
@@ -349,7 +359,8 @@ def _sampled_footprint(data_root: Path, verified: list[dict], field: SkyField,
 
 
 def assert_audited_inputs_unchanged(data_root: str | Path,
-                                    records: list[dict]) -> None:
+                                    records: list[dict], *,
+                                    cancel_check=None) -> None:
     """Fail closed when any verified FITS changed before receipt publication.
 
     A second hash prevents an audit from combining an old verification with
@@ -357,12 +368,14 @@ def assert_audited_inputs_unchanged(data_root: str | Path,
     """
     root = Path(data_root).expanduser().resolve()
     for record in records:
+        checkpoint(cancel_check)
         if record["status"] != "FITS_WCS_VALIDATED_DIAGNOSTIC":
             continue
         for product in record["products"].values():
+            checkpoint(cancel_check)
             file = root / product["relative_path"]
             try:
-                info = _sha256_file(file)
+                info = _sha256_file(file, cancel_check=cancel_check)
             except OSError as exc:
                 raise RuntimeError(
                     f"Verified source disappeared before audit completion: {file}") from exc
@@ -376,20 +389,26 @@ def assert_audited_inputs_unchanged(data_root: str | Path,
 
 def audit_dataset_root(data_root: str | Path, *, field: SkyField | None = None,
                        pitch_arcsec: float = 2.0, max_datasets: int = MAX_DATASETS,
-                       progress=None) -> dict:
+                       progress=None, cancel_check=None) -> dict:
     """Run optional deep FITS/WCS audit and grouped multi-brick screening."""
+    checkpoint(cancel_check)
     root = Path(data_root).expanduser().resolve()
     inventory = discover_dataset_inventory(root)
     if len(inventory) > max_datasets:
         raise ValueError(f"{len(inventory)} datasets exceeds audit limit {max_datasets}")
     records = []
     for i, entry in enumerate(inventory):
+        checkpoint(cancel_check)
         if progress:
             progress((i, len(inventory), entry["dataset_id"]))
-        records.append(verify_dataset(root, entry))
+        records.append(verify_dataset(root, entry, cancel_check=cancel_check))
+    checkpoint(cancel_check)
     groups = _sampled_footprint(
-        root, records, field, pitch_arcsec=pitch_arcsec) if field else []
-    assert_audited_inputs_unchanged(root, records)
+        root, records, field, pitch_arcsec=pitch_arcsec,
+        cancel_check=cancel_check) if field else []
+    assert_audited_inputs_unchanged(
+        root, records, cancel_check=cancel_check)
+    checkpoint(cancel_check)
     failures = sum(e["status"] in ("INVALID_FITS", "EMPTY_FILE",
                                    "INCOMPLETE_FILES", "ORPHAN_MASKBITS")
                    for e in records)
