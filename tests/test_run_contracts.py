@@ -159,6 +159,11 @@ def test_dependency_must_be_existing_unchanged_same_project(tmp_path):
         (stage / "square.json").write_text("derived")
     assert derived["run_contract"]["dependencies"] == [prior["run_id"]]
     (p.root / "qa-runs" / prior["run_id"] / "square.json").write_text("altered")
+    derived_receipt = (p.root / "qa-runs" / derived["run_id"] /
+                       "manifest.json")
+    assert check_run_receipt(
+        derived_receipt, project_id=p.project_id
+    )["state"] == "DEPENDENCY_UNAVAILABLE"
     with pytest.raises(ValueError, match="dependency"):
         with new_qa_run(
                 data_root=root, project_root=p.root, context=ctx,
