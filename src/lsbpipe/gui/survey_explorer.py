@@ -117,6 +117,14 @@ class SurveyExplorer(QMainWindow):
         panel = QVBoxLayout(left)
         panel.setContentsMargins(10, 10, 10, 10)
         panel.setSpacing(8)
+        # Project navigation belongs above the coordinates card, not inside
+        # the target parameters and scientific input controls.
+        self.back_to_projects = QPushButton("← All galaxy projects")
+        self.back_to_projects.setObjectName("workspace_back_to_projects")
+        self.back_to_projects.setAccessibleName("Return to galaxy projects")
+        self.back_to_projects.clicked.connect(self._go_back_to_projects)
+        self.back_to_projects.setVisible(False)
+        panel.addWidget(self.back_to_projects)
 
         target_box = QGroupBox("Target · ICRS")
         target_form = QVBoxLayout(target_box)
@@ -194,11 +202,6 @@ class SurveyExplorer(QMainWindow):
         self.external_btn.clicked.connect(self.open_viewer_in_browser)
         secondary_actions.addWidget(self.external_btn)
         target_form.addLayout(secondary_actions)
-        self.back_to_projects = QPushButton("← All galaxy projects")
-        self.back_to_projects.setObjectName("workspace_back_to_projects")
-        self.back_to_projects.clicked.connect(self._go_back_to_projects)
-        self.back_to_projects.setVisible(False)
-        target_form.addWidget(self.back_to_projects)
         self.open_project_btn = QPushButton("Open existing FITS project…")
         self.open_project_btn.setObjectName("open_existing_local_project")
         self.open_project_btn.setToolTip(
@@ -550,13 +553,17 @@ class SurveyExplorer(QMainWindow):
                     "Object project ready · choose Find data to discover FITS")
                 self.project_status.setText(
                     f"{project.display_name} · target defined · no FITS")
-            self.inspector_tabs.setCurrentWidget(self.science_qa)
+            # A project with no original FITS should open in the survey
+            # Explorer, not an empty local image/Science QA workspace.
+            # Do not load a remote URL implicitly on ordinary reopening:
+            # a new-project wizard may explicitly request that separately.
+            self.inspector_tabs.setCurrentWidget(self.inspector_tabs.widget(0))
+            self.preview_tabs.setCurrentWidget(self.sky)
             self.data_drawer.show()
             self._size_data_drawer()
-            self.preview_tabs.setCurrentWidget(self.fits_explorer)
             self.message.setText(
-                f"Project {project.display_name} opened offline. "
-                "No survey archive search has been performed.")
+                f"Project {project.display_name} opened in Survey Explorer. "
+                "No survey archive search or FITS download has been performed.")
         finally:
             self._restoring_local_project = False
 
