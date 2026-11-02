@@ -44,6 +44,11 @@ def load_multiband_originals(*, directory, field, hit, radii, checkpoint=None):
     for band in BANDS:
         if checkpoint is not None:
             checkpoint()
+        # Release/region restrictions are checked BEFORE building paths:
+        # DR9 North, for example, cannot provide an i-band quartet.
+        if band not in hit.median_exposures:
+            missing[band] = "Band unavailable for selected release / region"
+            continue
         # Check the exact four-product set, without opening any alternate brick
         # or treating catalog availability as local FITS availability.
         candidate = None
@@ -285,6 +290,14 @@ class MultibandComparison(QWidget):
             "individual display stretches · original FITS only · not adopted")
 
     @staticmethod
+    def _scalar(value):
+        """Astropy WCS may return scalar-shaped ndarray across versions."""
+        array = np.asarray(value)
+        if array.size != 1:
+            raise ValueError("WCS did not return a scalar coordinate")
+        return float(array.reshape(-1)[0])
+
+    @staticmethod
     def _pixel_scale(d):
         # WCS pixel scale in degrees per pixel, used for equal angular
         # viewport width; pixel positions are never assumed to coincide.
@@ -307,6 +320,7 @@ class MultibandComparison(QWidget):
         x, y = center.x(), ny - 1 - center.y()
         try:
             ra, dec = d["wcs"].all_pix2world(x, y, 0)
+            ra, dec = self._scalar(ra), self._scalar(dec)
             if not all(math.isfinite(z) for z in (ra, dec)):
                 return
             angular_width = (
@@ -317,6 +331,7 @@ class MultibandComparison(QWidget):
                     continue
                 target = self.views[other_band]
                 tx, ty = other_d["wcs"].all_world2pix(ra, dec, 0)
+                tx, ty = self._scalar(tx), self._scalar(ty)
                 if not all(math.isfinite(z) for z in (tx, ty)):
                     continue
                 scale = (target.viewport().width()
@@ -346,6 +361,7 @@ class MultibandComparison(QWidget):
             self.readout.setText("Outside the original " + band + "-band cutout")
             return
         ra, dec = d["wcs"].all_pix2world(*map(float, pixel), 0)
+        ra, dec = self._scalar(ra), self._scalar(dec)
         readings = []
         for target in BANDS:
             entry = self.datasets.get(target)
@@ -353,6 +369,10 @@ class MultibandComparison(QWidget):
                 readings.append(target + ": unavailable")
                 continue
             xx, yy = entry["wcs"].all_world2pix(ra, dec, 0)
+            xx, yy = self._scalar(xx), self._scalar(yy)
+            if not (math.isfinite(xx) and math.isfinite(yy)):
+                readings.append(target + ": outside")
+                continue
             xi, yi = int(round(xx)), int(round(yy))
             ny, nx = entry["pixel_shape"]
             if not (0 <= xi < nx and 0 <= yi < ny):
