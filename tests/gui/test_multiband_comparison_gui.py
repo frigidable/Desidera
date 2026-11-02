@@ -154,6 +154,11 @@ def test_grz_fit_all_preserves_native_field_and_angular_scale(qtbot):
         displayed = view.mapToScene(
             view.viewport().rect()).boundingRect()
         native = widget.scenes[band].sceneRect()
+        # Virtual margins belong to the VIEW only; all original FITS pixel
+        # and overlay scene coordinates remain in the native 384x384 grid.
+        assert widget.views[band].sceneRect().width() > native.width()
+        assert native.width() == shape[1]
+        assert native.height() == shape[0]
         # Within a 1-pixel numerical allowance, every *native* cutout
         # must be visible when 'Fit all' is requested.
         assert displayed.adjusted(-1, -1, 1, 1).contains(native)
