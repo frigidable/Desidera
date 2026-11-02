@@ -103,3 +103,28 @@ the final visual-design acceptance. A later stage needs:
    P0.5+ algorithms exist; no dead-end fake photometry buttons.
 
 Avoid equating passing synthetic CI with positive real-user UX evidence.
+
+## Post-capture refinement: keep the actual FITS image dominant
+
+A four-state Windows offline screenshot review (initial, archive found,
+science quartet selected, FITS inspection; 1366x768) exposed a spatial
+problem even after the first simplification: left navigation + right
+inspector + the FITS sidebar left too little width for the actual
+galaxy image.
+
+Two refinements follow from that evidence:
+
+- The ordinary Stage 02 archive inspector has **no default 88-row
+  spreadsheet**. It shows a clear four-FITS preset and Download action.
+  A researcher opens **Browse / customize files** to inspect the complete
+  product table, HTTP evidence, file filters and manual selection. The
+  default input selection is empty, never a mass download.
+- Entering **FITS Explorer** or interactive **Four-layer QA** hides the
+  right-hand archive/science inspector. It can be reopened explicitly,
+  but should not automatically squeeze the image every time a local
+  dataset is loaded. Ordinary FITS viewing therefore has the left
+  project/navigation context and a wide central inspection area.
+
+The right inspector retains a readable minimum width when explicitly
+opened. Captured comparison figures are offscreen Qt layout evidence
+only, not proof of ergonomic behavior on real Windows displays.
