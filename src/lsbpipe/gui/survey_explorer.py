@@ -1490,6 +1490,7 @@ class SurveyExplorer(QMainWindow):
         def work(progress):
             results = {}
             for i, entry in enumerate(entries, 1):
+                progress.checkpoint()
                 results[entry["relative_path"]] = probe_product(entry)
                 progress((i, len(entries), entry["relative_path"]))
             return results
@@ -1567,7 +1568,8 @@ class SurveyExplorer(QMainWindow):
         def work(progress):
             return download_manifest(
                 manifest, Path(directory), product_paths=selected,
-                progress=lambda a,b,c: progress((a,b,c)))
+                progress=lambda a,b,c: progress((a,b,c)),
+                cancel_check=progress.checkpoint)
 
         self._start(work, self._receive_download)
 
@@ -1802,7 +1804,8 @@ class SurveyExplorer(QMainWindow):
         def work(progress):
             report = audit_dataset_root(
                 directory, field=field, pitch_arcsec=2.,
-                progress=progress)
+                progress=progress, cancel_check=progress.checkpoint)
+            progress.checkpoint()
             path = save_dataset_audit(
                 report, output_root, project_id=project_id)
             return report, path
