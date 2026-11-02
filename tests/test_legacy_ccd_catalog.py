@@ -96,6 +96,7 @@ def test_real_fits_import_cross_release_receipts_are_idempotent(project, tmp_pat
     assert b["observations_added"] == 0
     assert a["catalogue_receipt_added"]
     assert b["catalogue_receipt_added"]
+    assert a["fits_integrity"] == "NO_EMBEDDED_CHECKSUMS"
     assert a["catalogue_sha256"] == hashlib.sha256(before_catalogue).hexdigest()
     state = read_observation_lineage(project.root)
     assert len(state["catalogue_receipts"]) == 2
@@ -127,6 +128,9 @@ def test_real_fits_import_cross_release_receipts_are_idempotent(project, tmp_pat
      "nonpositive brick overlap"),
     ({"rows": [("decam", 1, "N10", "r", 0, 10, 3, 4),
                ("decam", 1, "N10", "r", 0, 10, 3, 4)]},
+     "Duplicate physical CCD"),
+    ({"rows": [("decam", 1, "N10", "r", 0, 10, 3, 4),
+               ("decam", 1, "N10", "g", 0, 10, 3, 4)]},
      "Duplicate physical CCD"),
     ({"rows": [("decam", 1, "N10", "g", 0, 10, 3, 4)]},
      "No CCD catalogue rows"),
