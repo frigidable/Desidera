@@ -42,12 +42,11 @@ class ScienceQAControls(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(7)
 
-        title = QLabel("Original FITS · Science QA")
+        title = QLabel("Inspect original FITS")
         title.setStyleSheet("font-weight: 600; font-size: 14px;")
         layout.addWidget(title)
         note = QLabel(
-            "Read-only diagnostics of downloaded IMAGE, INVVAR, NEXP "
-            "and MASKBITS. No sky fitting or photometric acceptance.")
+            "Read-only survey images. No photometric results are computed here.")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -81,6 +80,13 @@ class ScienceQAControls(QWidget):
         self.dataset_audit.clicked.connect(
             lambda: self.requested.emit("dataset_audit"))
         layout.addWidget(self.dataset_audit)
+        self.buttons = {}
+        self._add_action(
+            layout, "explore", "Open FITS Explorer",
+            "Inspect original pixels with zoom, WCS coordinates and "
+            "display-only quality masks")
+        self.buttons["explore"].setObjectName("science_action_explore")
+        self.buttons["explore"].setProperty("primaryAction", True)
 
         # Progressive scientific workflow: keep source provenance above,
         # and keep the diagnostics/result below, without mixing the paired
@@ -98,8 +104,6 @@ class ScienceQAControls(QWidget):
             "census": 1, "masks": 1, "compare": 2,
             "compare_layers": 0,
         }
-        self.buttons = {}
-
         inspect_page = QWidget()
         inspect_layout = QVBoxLayout(inspect_page)
         inspect_layout.setContentsMargins(5, 8, 5, 8)
@@ -112,8 +116,6 @@ class ScienceQAControls(QWidget):
         for key, caption, tooltip in (
             ("square", "Check full search square",
              "Instrumental coverage and NEXP over the requested TAN square"),
-            ("explore", "Explore original FITS interactively",
-             "Zoom, pan, layers, ICRS pixel readout and mask warnings"),
             ("compare_layers", "Compare 4 layers interactively",
              "Open a synchronized 2×2 original FITS viewer with live WCS "
              "readout; no PNG or interpolation of science arrays"),
@@ -162,7 +164,17 @@ class ScienceQAControls(QWidget):
             "Exact common WCS pixel centers, masks, NEXP and INVVAR")
         self.steps.addItem(compare_page, self._step_names[2])
         self.steps.setCurrentIndex(0)
+        self.advanced_toggle = QPushButton("Advanced diagnostics")
+        self.advanced_toggle.setObjectName("science_advanced_toggle")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setChecked(False)
+        self.advanced_toggle.setToolTip(
+            "Optional coverage, mask counts, North/South comparison "
+            "and static image export")
+        layout.addWidget(self.advanced_toggle)
         layout.addWidget(self.steps)
+        self.advanced_toggle.toggled.connect(self.steps.setVisible)
+        self.steps.setVisible(False)
         for entry in (self.directory, self.north_directory, self.south_directory):
             entry.textChanged.connect(self._context_edited)
         self.directory.textChanged.connect(self._update_enabled)
@@ -173,8 +185,20 @@ class ScienceQAControls(QWidget):
             "Open completed run records with provenance and explicit "
             "staleness states. Older reports are not automatically accepted.")
         self.history_btn.clicked.connect(self.historyRequested.emit)
-        layout.addWidget(self.history_btn)
-        layout.addWidget(QLabel("Latest diagnostic"))
+        self.result_summary = QLabel("No diagnostic report yet")
+        self.result_summary.setObjectName("science_result_summary")
+        self.result_summary.setWordWrap(True)
+        layout.addWidget(self.result_summary)
+        self.result_toggle = QPushButton("Report details & history")
+        self.result_toggle.setObjectName("science_report_toggle")
+        self.result_toggle.setCheckable(True)
+        self.result_toggle.setChecked(False)
+        layout.addWidget(self.result_toggle)
+        self.report_panel = QWidget()
+        report_layout = QVBoxLayout(self.report_panel)
+        report_layout.setContentsMargins(0, 2, 0, 0)
+        report_layout.setSpacing(5)
+        report_layout.addWidget(self.history_btn)
         self.result = QPlainTextEdit()
         self.result.setObjectName("science_qa_result")
         self.result.setReadOnly(True)
@@ -182,11 +206,11 @@ class ScienceQAControls(QWidget):
         self.result.setPlainText(
             "No scientific QA has been run in this session.\n"
             "The hosted Legacy Viewer is a remote preview only.")
-        layout.addWidget(self.result, 1)
+        report_layout.addWidget(self.result, 1)
         self.open_report = QPushButton("Open saved result")
         self.open_report.setEnabled(False)
         self.open_report.clicked.connect(self._open_last)
-        layout.addWidget(self.open_report)
+        report_layout.addWidget(self.open_report)
         self.open_manifest = QPushButton("View run provenance manifest")
         self.open_manifest.setObjectName("science_open_manifest")
         self.open_manifest.setToolTip(
@@ -194,7 +218,10 @@ class ScienceQAControls(QWidget):
             "original FITS SHA-256, analysis parameters and artifact hash")
         self.open_manifest.setEnabled(False)
         self.open_manifest.clicked.connect(self._open_manifest)
-        layout.addWidget(self.open_manifest)
+        report_layout.addWidget(self.open_manifest)
+        layout.addWidget(self.report_panel)
+        self.result_toggle.toggled.connect(self.report_panel.setVisible)
+        self.report_panel.setVisible(False)
         layout.addStretch()
         self._update_enabled()
 
@@ -306,6 +333,9 @@ class ScienceQAControls(QWidget):
         self.result.setPlainText(
             result["summary"] + "\n\n"
             "Saved locally:\n" + result["path"] + receipt)
+        first_line = result["summary"].splitlines()[0] if result["summary"] else "Completed"
+        self.result_summary.setText(
+            "Diagnostic saved · " + first_line[:115])
         self._last_path = result["path"]
         self._last_manifest_path = manifest
         self.open_manifest.setEnabled(bool(manifest))
@@ -320,6 +350,8 @@ class ScienceQAControls(QWidget):
         self.open_report.setEnabled(False)
         self.open_manifest.setEnabled(False)
         self.result.setPlainText("Scientific QA failed:\n" + error)
+        self.result_summary.setText(
+            "Diagnostic failed · " + error.splitlines()[0][:115])
 
     def clear_result(self):
         self._active_step = None
@@ -333,6 +365,9 @@ class ScienceQAControls(QWidget):
         self.result.setPlainText(
             "Target, brick or band selection changed. Verify original FITS "
             "provenance and rerun this diagnostic to avoid stale results.")
+        if hasattr(self, "result_summary"):
+            self.result_summary.setText(
+                "No current diagnostic · run a check when needed")
 
     def _open_last(self):
         if self._last_path is not None:
