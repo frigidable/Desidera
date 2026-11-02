@@ -634,9 +634,18 @@ class SurveyExplorer(QMainWindow):
         self.preview_tabs.addTab(self.fits_explorer, "FITS Explorer")
         # The four-layer workspace is revealed only when requested. It is a
         # live interactive viewer, not a QPixmap of a previously saved PNG.
-        self.four_layer_comparison = FourLayerComparison(self)
-        self.multiband_comparison = MultibandComparison(self)
-        self.dataset_manager = DatasetManager(self)
+        # Keep optional workspaces owned by the tab host from creation.
+        # Before their first addTab(), parenting them to QMainWindow made
+        # them *visible* at default geometry (0, 0, 100, 30), so their
+        # child buttons painted on top of the project-navigation button.
+        # Inactive workspaces must never be visible or top-level windows.
+        self.four_layer_comparison = FourLayerComparison(self.preview_tabs)
+        self.multiband_comparison = MultibandComparison(self.preview_tabs)
+        self.dataset_manager = DatasetManager(self.preview_tabs)
+        for optional_page in (
+                self.four_layer_comparison, self.multiband_comparison,
+                self.dataset_manager):
+            optional_page.hide()
         self.dataset_manager.registerRequested.connect(
             self._index_dataset_root)
         self.dataset_manager.externalRequested.connect(
@@ -1916,6 +1925,7 @@ class SurveyExplorer(QMainWindow):
             return
         self.preview_tabs.setCurrentWidget(self.fits_explorer)
         self.preview_tabs.removeTab(tab)
+        self.four_layer_comparison.hide()
         self.four_layer_comparison.clear_data()
         self.comparison_btn.setText("Inspect data quality · 4 maps")
 
@@ -1960,6 +1970,7 @@ class SurveyExplorer(QMainWindow):
             return
         self.preview_tabs.setCurrentWidget(self.fits_explorer)
         self.preview_tabs.removeTab(index)
+        self.multiband_comparison.hide()
         self.multiband_comparison.clear_data()
         self.band_compare_btn.setText("Compare bands · g/r/i/z")
 
