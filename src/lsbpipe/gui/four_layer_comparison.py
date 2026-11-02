@@ -69,7 +69,7 @@ class FourLayerComparison(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(5)
         tools = QHBoxLayout()
-        heading = QLabel("Four original FITS layers")
+        heading = QLabel("Data quality · one optical band")
         heading.setStyleSheet("font-weight: 600;")
         tools.addWidget(heading)
         tools.addStretch(1)
@@ -82,6 +82,15 @@ class FourLayerComparison(QWidget):
         self.fit_all.clicked.connect(self.fit_views)
         tools.addWidget(self.fit_all)
         layout.addLayout(tools)
+        guide = QLabel(
+            "IMAGE: recorded flux (nanomaggy) · "
+            "INVVAR: inverse-variance weight · "
+            "NEXP: contributing exposures · "
+            "MASKBITS: survey quality flags. "
+            "These are four maps of ONE filter, not four optical filters.")
+        guide.setWordWrap(True)
+        guide.setObjectName("fits_four_layer_explanation")
+        layout.addWidget(guide)
 
         grid = QGridLayout()
         grid.setSpacing(5)
