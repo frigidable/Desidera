@@ -214,20 +214,84 @@ def read_object_project(root: str | Path) -> ObjectProject:
     return project
 
 
-def _registry_rows() -> list[dict]:
+def _registry_payload() -> dict:
+    """Read optional dismissal state without changing the existing schema."""
     path = library_index_path()
     if not path.is_file():
-        return []
+        return {"schema": REGISTRY_SCHEMA, "projects": [],
+                "dismissed_legacy_roots": []}
     raw = _read_json(path)
     if raw.get("schema") != REGISTRY_SCHEMA or not isinstance(
             raw.get("projects"), list):
         raise ValueError("Unrecognized project registry schema; no overwrite")
-    return raw["projects"]
+    hidden = raw.get("dismissed_legacy_roots", [])
+    if not isinstance(hidden, list) or any(
+            not isinstance(root, str) for root in hidden):
+        raise ValueError("Invalid dismissed legacy project paths; no overwrite")
+    return {**raw, "dismissed_legacy_roots": hidden}
+
+
+def _registry_rows() -> list[dict]:
+    return _registry_payload()["projects"]
+
+
+def forget_recent_project(project_id: str, root: str | Path) -> None:
+    """Remove exactly the selected library entry; NEVER unlink project files.
+
+    Older versions can inject a legacy session pointer into recent_projects
+    without registering it. Such suggestions are suppressed by a registry
+    tombstone instead of deleting their original last-session pointer.
+    """
+    selected_root = str(Path(root).expanduser().resolve())
+    if not selected_root:
+        raise ValueError("A project root is required")
+    legacy_id = "legacy:" + selected_root
+    if project_id != legacy_id:
+        project_id = _project_id(project_id)
+    payload = _registry_payload()
+    rows = payload["projects"]
+    matches = [
+        row for row in rows
+        if isinstance(row, dict) and row.get("project_id") == project_id
+        and isinstance(row.get("root"), str)
+        and str(Path(row["root"]).expanduser().resolve()) == selected_root
+    ]
+    if project_id != legacy_id and not matches:
+        raise ValueError(
+            "Selected project entry is no longer in the library; refresh first")
+    if project_id == legacy_id:
+        # Only allow dismissing the exact synthetic entry produced by
+        # the legacy pointer, not arbitrary user-provided legacy: strings.
+        old = last_project_directory()
+        if old is None:
+            raise ValueError("Legacy suggestion no longer exists")
+        original = old.parent if old.name == "data" else old
+        if str(original.resolve()) != selected_root:
+            raise ValueError("Selected legacy suggestion has changed")
+    kept = [
+        row for row in rows
+        if not (isinstance(row, dict)
+                and row.get("project_id") == project_id
+                and isinstance(row.get("root"), str)
+                and str(Path(row["root"]).expanduser().resolve())
+                == selected_root)
+    ]
+    # A now-missing registered path may also be the old application's
+    # last-session pointer. Keep that suggestion from reappearing.
+    hidden = list(payload["dismissed_legacy_roots"])
+    if selected_root not in hidden:
+        hidden.append(selected_root)
+    _atomic_json(library_index_path(), {
+        **payload, "projects": kept,
+        "dismissed_legacy_roots": hidden,
+    })
 
 
 def recent_projects() -> list[dict]:
     """Registry plus a non-mutating legacy last-project migration suggestion."""
-    rows = _registry_rows()
+    registry = _registry_payload()
+    rows = registry["projects"]
+    hidden = set(registry["dismissed_legacy_roots"])
     items = [
         {**r, "available": project_path(r["root"]).is_file()}
         for r in rows if isinstance(r, dict) and
@@ -237,7 +301,8 @@ def recent_projects() -> list[dict]:
     if old is not None:
         original = old.parent if old.name == "data" else old
         old_key = str(original.resolve())
-        if (not project_path(original).is_file() and
+        if (old_key not in hidden and
+                not project_path(original).is_file() and
                 not any(Path(r["root"]).resolve() == original.resolve()
                         for r in items)):
             items.append({
@@ -260,8 +325,10 @@ def register_object_project(project: ObjectProject) -> None:
     updated.append({
         "project_id": project.project_id, "display_name": project.display_name,
         "root": canonical, "last_opened_at": project.last_opened_at})
+    # Preserve legacy dismissals when later imports/touches rewrite the index.
+    payload = _registry_payload()
     _atomic_json(library_index_path(), {
-        "schema": REGISTRY_SCHEMA, "projects": updated})
+        **payload, "projects": updated})
 
 
 def touch_object_project(project: ObjectProject) -> None:
