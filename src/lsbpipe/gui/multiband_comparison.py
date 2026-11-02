@@ -97,6 +97,18 @@ def load_multiband_originals(*, directory, field, hit, radii, checkpoint=None):
 
 class _BandView(FITSGraphicsView):
     navigationChanged = Signal(object)
+    viewportResized = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Scrollbars obscure the image in narrow three-band layouts.
+        # ScrollHandDrag still moves the viewport at user zoom.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.viewportResized.emit()
 
     def wheelEvent(self, event):
         before = self.transform()
@@ -131,6 +143,7 @@ class MultibandComparison(QWidget):
         self._future = None
         self._generation = 0
         self._closing = False
+        self._fit_queued = False
         self._timer = QTimer(self)
         self._timer.setInterval(30)
         self._timer.timeout.connect(self._poll)
@@ -203,6 +216,7 @@ class MultibandComparison(QWidget):
             view.pointHovered.connect(
                 lambda x, y, b=band: self._inspect(b, x, y))
             view.navigationChanged.connect(self._sync)
+            view.viewportResized.connect(self._queue_fit_for_resize)
             column.addWidget(view, 1)
             placeholder = QLabel("Not loaded")
             placeholder.setAlignment(Qt.AlignCenter)
@@ -305,6 +319,27 @@ class MultibandComparison(QWidget):
             self.band_grid.addWidget(
                 self.cells[band], i // columns, i % columns)
         self.band_grid.invalidate()
+        self._queue_fit_for_resize()
+
+    def _queue_fit_for_resize(self):
+        """Defer fitting until Qt has allocated final three-column geometry."""
+        if self._closing or not self.datasets or self._fit_queued:
+            return
+        # An explicit user zoom is retained when resizing the window.
+        if any(abs(self.views[b]._relative_zoom - 1.) > 1e-6
+               for b in self.datasets):
+            return
+        self._fit_queued = True
+        QTimer.singleShot(0, self._fit_after_layout)
+
+    def _fit_after_layout(self):
+        self._fit_queued = False
+        if self._closing or not self.datasets:
+            return
+        if any(abs(self.views[b]._relative_zoom - 1.) > 1e-6
+               for b in self.datasets):
+            return
+        self.fit_views()
 
     def _make_outlines(self, band):
         d = self.datasets[band]
@@ -395,7 +430,7 @@ class MultibandComparison(QWidget):
                 f"{nx}×{ny} native screen")
             self.preview_info[band].setText(
                 f"{scale_note} · {extent}")
-        self.fit_views()
+        self._queue_fit_for_resize()
         present = ", ".join(b.upper() for b in BANDS if b in self.datasets)
         missing = ", ".join(b.upper() for b in BANDS if b not in self.datasets)
         self.status.setText(
@@ -454,7 +489,7 @@ class MultibandComparison(QWidget):
                 if math.isfinite(scale) and scale > 0:
                     target.resetTransform()
                     target.scale(scale, scale)
-                    target._relative_zoom = 2.  # Preserve focus on resize
+                    target._relative_zoom = source._relative_zoom
                     target.centerOn(tx, other_d["pixel_shape"][0] - 1 - ty)
         except (ValueError, ArithmeticError):
             self.status.setText(
@@ -462,10 +497,72 @@ class MultibandComparison(QWidget):
                 "alignment has been assumed")
 
     def fit_views(self):
-        for band in self.datasets:
-            self.views[band].fit_image()
-        if self.datasets and self.link.isChecked():
-            self._sync(self.views[next(iter(self.datasets))])
+        """Fit complete native cutouts at one angular scale and WCS center.
+
+        The former fit-then-_sync algorithm could magnify target panels
+        after fitting, cropping most of a native frame in narrow 3-column
+        windows. Compute a common screen angular scale that guarantees all
+        rectangular scenes fit, before applying any WCS centering.
+        """
+        if not self.datasets:
+            return
+        # Widget geometry may not be stable until the event loop lays out
+        # dynamic grz columns. Never force a fit while viewports are zero.
+        if any(min(self.views[b].viewport().width(),
+                   self.views[b].viewport().height()) < 32
+               for b in self.datasets):
+            self._queue_fit_for_resize()
+            return
+        if not self.link.isChecked() or len(self.datasets) == 1:
+            for band in self.datasets:
+                self.views[band].fit_image()
+            return
+        try:
+            ref = self.datasets[next(iter(self.datasets))]
+            ref_ny, ref_nx = ref["pixel_shape"]
+            ra, dec = ref["wcs"].all_pix2world(
+                (ref_nx - 1.) / 2., (ref_ny - 1.) / 2., 0)
+            ra, dec = self._scalar(ra), self._scalar(dec)
+            centers = {}
+            min_deg_per_display_pixel = 0.
+            for band, d in self.datasets.items():
+                ny, nx = d["pixel_shape"]
+                xx, yy = d["wcs"].all_world2pix(ra, dec, 0)
+                xx, yy = self._scalar(xx), self._scalar(yy)
+                if not all(math.isfinite(v) for v in (xx, yy)):
+                    raise ValueError("Nonfinite WCS view center")
+                scene_y = ny - 1. - yy
+                centers[band] = (xx, scene_y)
+                view = self.views[band]
+                # Account for an off-center WCS match and retain a small
+                # safety margin for frame edges / pixel item bounds.
+                scene_width = max(nx, 2 * max(xx, nx - xx))
+                scene_height = max(ny, 2 * max(scene_y, ny - scene_y))
+                deg_per_pixel = self._pixel_scale(d)
+                needed = max(
+                    scene_width * deg_per_pixel /
+                    max(1, view.viewport().width() - 14),
+                    scene_height * deg_per_pixel /
+                    max(1, view.viewport().height() - 14))
+                min_deg_per_display_pixel = max(
+                    min_deg_per_display_pixel, needed)
+            if not (math.isfinite(min_deg_per_display_pixel)
+                    and min_deg_per_display_pixel > 0):
+                raise ValueError("Invalid WCS screen scale")
+            for band, d in self.datasets.items():
+                view = self.views[band]
+                scale = self._pixel_scale(d) / min_deg_per_display_pixel
+                view.resetTransform()
+                view.scale(scale, scale)
+                view._relative_zoom = 1.
+                view.centerOn(*centers[band])
+        except (ValueError, ArithmeticError) as exc:
+            # Fail visibly to independent *complete* per-band fitting.
+            for band in self.datasets:
+                self.views[band].fit_image()
+            self.status.setText(
+                f"Common WCS fit unavailable ({exc}); "
+                "individual complete frames fitted instead.")
 
     def _inspect(self, band, x_scene, y_scene):
         d = self.datasets.get(band)
