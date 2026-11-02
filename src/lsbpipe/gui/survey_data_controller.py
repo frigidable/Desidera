@@ -58,7 +58,9 @@ class SurveyDataController(QObject):
             layout.addWidget(check, alignment=Qt.AlignCenter)
             w.files.setCellWidget(row, 0, holder)
             suffix = f"{entry['kind']}-{entry['band']}" if entry["band"] else entry["kind"]
-            name = f"{entry['release'].upper()} {entry['brick']} · {suffix}"
+            name = (
+                f"{entry['release'].upper()} {entry['region']} "
+                f"{entry['brick']} · {suffix}")
             detail = entry["relative_path"] + chr(10) + entry["url"]
             values = (
                 (1, name),
