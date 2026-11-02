@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
-    QInputDialog,
+    QInputDialog, QSplitter,
     QWidget, QDoubleSpinBox, QApplication,
 )
 
@@ -24,157 +24,164 @@ from .survey_explorer import SurveyExplorer
 
 
 class CreateProjectDialog(QDialog):
-    """Three-step wizard; no ICRS position or original FITS required."""
+    """One-page object creation. No network or FITS access."""
+
     def __init__(self, parent=None, *, default_root: Path | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Create galaxy project · LSBpipe")
-        self.setMinimumWidth(500)
+        self.setWindowTitle("New galaxy project · LSBpipe")
+        self.setMinimumWidth(540)
+        self.resize(620, 510)
         self.project = None
-        self.pages = QStackedWidget(self)
+        self.parent_root = default_root or Path.home() / "LSBpipeProjects"
+        self._directory_user_edited = False
+
         self.name = QLineEdit()
         self.name.setObjectName("project_new_name")
-        self.name.setPlaceholderText("Galaxy designation or working name")
+        self.name.setPlaceholderText("e.g. UGC 2162")
         self.ra = QLineEdit()
         self.ra.setObjectName("project_new_ra")
-        self.ra.setPlaceholderText("Optional · ICRS degrees")
+        self.ra.setPlaceholderText("Optional · degrees or hh:mm:ss")
         self.dec = QLineEdit()
         self.dec.setObjectName("project_new_dec")
-        self.dec.setPlaceholderText("Optional · ICRS degrees")
+        self.dec.setPlaceholderText("Optional · degrees or ±dd:mm:ss")
         self.width_arcmin = QDoubleSpinBox()
+        self.width_arcmin.setObjectName("project_new_width")
         self.width_arcmin.setRange(0.1, 120.)
         self.width_arcmin.setValue(5.)
         self.width_arcmin.setSuffix(" arcmin")
         self.directory = QLineEdit()
         self.directory.setObjectName("project_new_root")
-        self.parent_root = default_root or Path.home() / "LSBpipeProjects"
+        self.directory.setPlaceholderText("Local folder for this galaxy")
         self.description = QLabel()
+        self.description.setObjectName("project_new_summary")
         self.description.setWordWrap(True)
 
-        first = QWidget()
-        form = QFormLayout(first)
-        form.addRow(QLabel("Object identity · step 1 of 3"))
-        form.addRow("Project name", self.name)
-        form.addRow("RA", self.ra)
-        form.addRow("Dec", self.dec)
-        form.addRow("Search field", self.width_arcmin)
-        form.addRow(QLabel(
-            "Unknown objects are supported. Leave both coordinates blank "
-            "and specify them before a spatial analysis."))
-        self.pages.addWidget(first)
-        second = QWidget()
-        form2 = QFormLayout(second)
-        form2.addRow(QLabel("Storage · step 2 of 3"))
-        row = QHBoxLayout()
-        row.addWidget(self.directory, 1)
-        browse = QPushButton("Browse…")
-        browse.clicked.connect(self._browse)
-        row.addWidget(browse)
-        form2.addRow("Project directory", row)
-        form2.addRow(QLabel(
-            "Creates metadata only. Existing science FITS can be linked later; "
-            "none are downloaded or modified here."))
-        self.pages.addWidget(second)
-        third = QWidget()
-        v = QVBoxLayout(third)
-        v.addWidget(QLabel("Review · step 3 of 3"))
-        v.addWidget(self.description)
-        v.addStretch()
-        self.pages.addWidget(third)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
+        title = QLabel("Create galaxy project")
+        title.setStyleSheet("font-size: 20px; font-weight: 600")
+        layout.addWidget(title)
+        subtitle = QLabel(
+            "Each galaxy has its own local workspace. Original FITS files "
+            "can be connected later without downloading them again.")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
 
-        self.back = QPushButton("Back")
-        self.back.clicked.connect(self._previous)
-        self.next = QPushButton("Next")
-        self.next.setObjectName("project_wizard_next")
-        self.next.clicked.connect(self._advance)
+        identity = QFormLayout()
+        identity.setVerticalSpacing(10)
+        identity.addRow("Object / project name", self.name)
+        identity.addRow("RA (ICRS)", self.ra)
+        identity.addRow("Dec (ICRS)", self.dec)
+        identity.addRow("Search field", self.width_arcmin)
+        layout.addLayout(identity)
+        note = QLabel(
+            "Coordinates are optional for an unidentified object. "
+            "Provide both RA and Dec to define its sky position.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        layout.addWidget(QLabel("Local project storage"))
+        storage = QHBoxLayout()
+        storage.addWidget(self.directory, 1)
+        browse = QPushButton("Browse…")
+        browse.setObjectName("project_new_browse")
+        browse.clicked.connect(self._browse)
+        storage.addWidget(browse)
+        layout.addLayout(storage)
+        self.description.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.description)
+
+        layout.addStretch(1)
+        buttons = QHBoxLayout()
         self.cancel = QPushButton("Cancel")
         self.cancel.clicked.connect(self.reject)
-        controls = QHBoxLayout()
-        controls.addWidget(self.cancel)
-        controls.addStretch()
-        controls.addWidget(self.back)
-        controls.addWidget(self.next)
-        layout = QVBoxLayout(self)
-        heading = QLabel("New galaxy research project")
-        heading.setStyleSheet("font-weight: 600; font-size: 18px;")
-        layout.addWidget(heading)
-        layout.addWidget(self.pages, 1)
-        layout.addLayout(controls)
+        self.create_btn = QPushButton("Create project")
+        self.create_btn.setObjectName("project_wizard_create")
+        self.create_btn.setDefault(True)
+        self.create_btn.clicked.connect(self._create)
+        buttons.addStretch(1)
+        buttons.addWidget(self.cancel)
+        buttons.addWidget(self.create_btn)
+        layout.addLayout(buttons)
+
         self.name.textChanged.connect(self._suggest_directory)
+        self.name.textChanged.connect(self._update_preview)
+        self.ra.textChanged.connect(self._update_preview)
+        self.dec.textChanged.connect(self._update_preview)
+        self.width_arcmin.valueChanged.connect(self._update_preview)
         self.directory.textEdited.connect(self._note_directory_edit)
-        self._update_controls()
+        self.directory.textChanged.connect(self._update_preview)
+        self._update_preview()
+        self.name.setFocus()
 
     def _suggest_directory(self, _=None):
-        if getattr(self, "_directory_user_edited", False):
+        if self._directory_user_edited:
             return
         value = self.name.text().strip()
         safe = "".join(
             ch if ch.isalnum() or ch in ("_", "-", " ") else "_"
             for ch in value).strip().replace(" ", "_")
         self.directory.setText(str(self.parent_root / safe) if safe else "")
-        
+
     def _note_directory_edit(self, *_):
         self._directory_user_edited = True
 
     def _browse(self):
         folder = QFileDialog.getExistingDirectory(
-            self, "Choose parent folder", str(self.parent_root))
+            self, "Choose parent folder for the new project",
+            str(self.parent_root))
         if folder:
             self._directory_user_edited = True
-            self.directory.setText(str(Path(folder) / (
-                self.name.text().strip().replace(" ", "_") or "NewGalaxy")))
+            leaf = self.name.text().strip().replace(" ", "_") or "NewGalaxy"
+            self.directory.setText(str(Path(folder) / leaf))
 
     def _field(self) -> SkyField | None:
         ra, dec = self.ra.text().strip(), self.dec.text().strip()
         if not ra and not dec:
             return None
         if not ra or not dec:
-            raise ValueError("Provide both RA and Dec or leave both empty")
-        return SkyField(float(ra), float(dec), self.width_arcmin.value())
+            raise ValueError("Provide both RA and Dec or leave both blank")
+        from lsbpipe.gui.target_input import parse_ra_deg, parse_dec_deg
+        return SkyField(parse_ra_deg(ra), parse_dec_deg(dec),
+                        self.width_arcmin.value())
 
-    def _update_controls(self):
-        page = self.pages.currentIndex()
-        self.back.setEnabled(page > 0)
-        self.next.setText("Create project" if page == 2 else "Next")
-        if page == 2:
-            field = self._field()
-            pos = ("Coordinates: not specified yet" if field is None else
-                   f"ICRS: {field.ra_deg:.8f}°, {field.dec_deg:+.8f}°")
-            self.description.setText(
-                f"Object: {self.name.text().strip()}\n{pos}\n"
-                f"Location: {self.directory.text().strip()}\n\n"
-                "The project is created locally. No SIMBAD request, "
-                "survey search or file download is triggered.")
-
-    def _previous(self):
-        self.pages.setCurrentIndex(max(0, self.pages.currentIndex() - 1))
-        self._update_controls()
-
-    def _advance(self):
-        page = self.pages.currentIndex()
+    def _update_preview(self, *_):
+        name = self.name.text().strip()
+        directory = self.directory.text().strip()
         try:
-            if page == 0:
-                name = self.name.text().strip()
-                if not name:
-                    raise ValueError("Enter a galaxy/project name")
-                self._field()
-            if page == 1:
-                folder = self.directory.text().strip()
-                if not folder:
-                    raise ValueError("Choose a project directory")
-                folder = Path(folder).expanduser()
-                if folder.exists() and any(folder.iterdir()):
-                    raise FileExistsError(
-                        "Folder already contains files. Use Import existing project.")
-            if page == 2:
-                self.project = create_object_project(
-                    self.name.text().strip(), self.directory.text().strip(),
-                    field=self._field())
-                self.accept()
-                return
-            self.pages.setCurrentIndex(page + 1)
-            self._update_controls()
+            field = self._field()
+            position = ("Position: not specified (can be added later)"
+                        if field is None else
+                        f"ICRS: {field.ra_deg:.8f}°, {field.dec_deg:+.8f}°")
+        except ValueError as exc:
+            position = f"Check coordinates: {exc}"
+        self.description.setText(
+            f"{position}\n"
+            f"Project directory: {directory or 'not selected'}\n"
+            "Creates local metadata only · no network, download or FITS changes.")
+        self.create_btn.setEnabled(bool(name and directory))
+
+    def _create(self):
+        try:
+            name = self.name.text().strip()
+            if not name:
+                raise ValueError("Enter an object or project name")
+            directory = self.directory.text().strip()
+            if not directory:
+                raise ValueError("Choose a project directory")
+            folder = Path(directory).expanduser()
+            if folder.exists() and any(folder.iterdir()):
+                raise FileExistsError(
+                    "Folder contains existing files. Use Import existing "
+                    "folder in Project Hub to preserve those files.")
+            self.project = create_object_project(
+                name, folder, field=self._field())
         except (ValueError, OSError) as exc:
+            self.description.setText(f"Cannot create project: {exc}")
             QMessageBox.warning(self, "Cannot create project", str(exc))
+            return
+        self.accept()
 
 
 class ProjectHub(QMainWindow):
@@ -185,19 +192,21 @@ class ProjectHub(QMainWindow):
         super().__init__()
         self.setObjectName("lsbpipe_project_hub")
         self.setWindowTitle("LSBpipe · Galaxy Projects")
-        self.resize(960, 650)
+        self.resize(1100, 720)
         self.workspace = None
+
         content = QWidget()
         outer = QVBoxLayout(content)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(16)
+        outer.setContentsMargins(24, 20, 24, 18)
+        outer.setSpacing(14)
+
         heading = QLabel("LSBpipe")
-        heading.setStyleSheet("font-size: 28px; font-weight: 700")
+        heading.setStyleSheet("font-size: 26px; font-weight: 700")
         subheading = QLabel(
-            "Galaxy research projects · local-first, reproducible analysis")
-        subheading.setStyleSheet("font-size: 13px; color: palette(text)")
+            "Galaxy projects · local-first scientific workspace")
         outer.addWidget(heading)
         outer.addWidget(subheading)
+
         actions = QHBoxLayout()
         self.new_btn = QPushButton("New galaxy project")
         self.new_btn.setObjectName("hub_new_project")
@@ -205,49 +214,109 @@ class ProjectHub(QMainWindow):
         self.import_btn = QPushButton("Import existing folder…")
         self.import_btn.setObjectName("hub_import_project")
         self.import_btn.clicked.connect(self._import_dialog)
-        self.continue_btn = QPushButton("Continue selected")
-        self.continue_btn.setObjectName("hub_continue")
-        self.continue_btn.clicked.connect(self._open_selected)
-        self.remove_btn = QPushButton("Remove from recent…")
-        self.remove_btn.setObjectName("hub_remove_recent")
-        self.remove_btn.setToolTip(
-            "Forget only the selected Project Hub entry. No FITS, folders, "
-            "project metadata or scientific reports will be deleted.")
-        self.remove_btn.clicked.connect(self._remove_selected)
         actions.addWidget(self.new_btn)
         actions.addWidget(self.import_btn)
-        actions.addStretch()
-        actions.addWidget(self.continue_btn)
-        actions.addWidget(self.remove_btn)
+        actions.addStretch(1)
         outer.addLayout(actions)
-        outer.addWidget(QLabel("Recent projects"))
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("hub_project_splitter")
+        library = QWidget()
+        left = QVBoxLayout(library)
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(10)
+        left.addWidget(QLabel("Recent galaxies"))
         self.filter = QLineEdit()
         self.filter.setObjectName("hub_project_filter")
-        self.filter.setPlaceholderText("Search name, path or identifier…")
+        self.filter.setClearButtonEnabled(True)
+        self.filter.setPlaceholderText("Search galaxies or folder paths…")
         self.filter.textChanged.connect(self._filter_rows)
-        outer.addWidget(self.filter)
+        left.addWidget(self.filter)
         self.projects = QListWidget()
         self.projects.setObjectName("hub_project_list")
         self.projects.setWordWrap(True)
-        self.projects.setSpacing(6)
+        self.projects.setSpacing(5)
         self.projects.setStyleSheet(
             "QListWidget { border: 1px solid palette(mid); "
-            "border-radius: 10px; padding: 7px; } "
-            "QListWidget::item { padding: 6px; border-radius: 6px; } "
+            "border-radius: 8px; padding: 6px; } "
+            "QListWidget::item { padding: 6px; border-radius: 5px; } "
             "QListWidget::item:selected { background: palette(highlight); "
             "color: palette(highlighted-text); }")
-        self.projects.itemDoubleClicked.connect(lambda _: self._open_selected())
+        self.projects.itemDoubleClicked.connect(
+            lambda _: self._open_selected())
         self.projects.itemSelectionChanged.connect(self._selection_changed)
-        outer.addWidget(self.projects, 1)
+        left.addWidget(self.projects, 1)
+        self.empty_label = QLabel(
+            "No projects yet. Create a galaxy project or import a folder.")
+        self.empty_label.setObjectName("hub_empty_state")
+        self.empty_label.setWordWrap(True)
+        left.addWidget(self.empty_label)
+        library.setMinimumWidth(310)
+        splitter.addWidget(library)
+
+        details = QFrame()
+        details.setObjectName("hub_project_details")
+        details.setFrameShape(QFrame.StyledPanel)
+        right = QVBoxLayout(details)
+        right.setContentsMargins(18, 16, 18, 16)
+        right.setSpacing(12)
+        right.addWidget(QLabel("SELECTED GALAXY"))
+        self.detail_title = QLabel("Choose a project")
+        self.detail_title.setObjectName("hub_detail_title")
+        self.detail_title.setStyleSheet(
+            "font-size: 19px; font-weight: 600")
+        self.detail_title.setWordWrap(True)
+        right.addWidget(self.detail_title)
+        self.detail_status = QLabel()
+        self.detail_status.setObjectName("hub_detail_status")
+        self.detail_status.setWordWrap(True)
+        right.addWidget(self.detail_status)
+        self.detail_meta = QLabel()
+        self.detail_meta.setObjectName("hub_detail_meta")
+        self.detail_meta.setWordWrap(True)
+        self.detail_meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        right.addWidget(self.detail_meta)
+        self.detail_path = QLabel()
+        self.detail_path.setObjectName("hub_detail_path")
+        self.detail_path.setWordWrap(True)
+        self.detail_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        right.addWidget(self.detail_path)
+        self.detail_note = QLabel()
+        self.detail_note.setObjectName("hub_detail_note")
+        self.detail_note.setWordWrap(True)
+        right.addWidget(self.detail_note)
+        right.addStretch(1)
+
+        self.continue_btn = QPushButton("Open project")
+        self.continue_btn.setObjectName("hub_continue")
+        self.continue_btn.clicked.connect(self._open_selected)
+        right.addWidget(self.continue_btn)
+        self.remove_btn = QPushButton("Remove from recent…")
+        self.remove_btn.setObjectName("hub_remove_recent")
+        self.remove_btn.setToolTip(
+            "Forget only the Project Hub entry. Original FITS, directories, "
+            "project metadata and science reports are never deleted.")
+        self.remove_btn.clicked.connect(self._remove_selected)
+        right.addWidget(self.remove_btn)
+        details.setMinimumWidth(300)
+        splitter.addWidget(details)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([650, 420])
+        outer.addWidget(splitter, 1)
+
         self.hint = QLabel(
-            "No project is opened automatically. Choose a recent object, "
-            "create an empty project, or import existing Legacy FITS.")
+            "Projects open offline. Local FITS are read-only; earlier "
+            "diagnostics are not automatically adopted as scientific results.")
         self.hint.setWordWrap(True)
         outer.addWidget(self.hint)
         self.setCentralWidget(content)
         self.refresh()
 
     def refresh(self):
+        prior = self.projects.currentItem()
+        prior_id = (prior.data(Qt.UserRole).get("project_id")
+                    if prior is not None else None)
         self.projects.clear()
         try:
             rows = recent_projects()
@@ -259,58 +328,131 @@ class ProjectHub(QMainWindow):
         for record in rows:
             exists = bool(record["available"])
             name = record.get("display_name") or "Unnamed"
-            state = "On disk" if exists else "Missing · relink required"
+            status = "On disk" if exists else "Missing · relink needed"
             detail = ""
             if exists:
                 try:
                     if record.get("legacy"):
-                        prior = open_local_project(record["root"])
+                        prior_project = open_local_project(record["root"])
                         detail = (
-                            f"Previous-version project · "
-                            f"{prior.field.ra_deg:.6f}°, "
-                            f"{prior.field.dec_deg:+.6f}° · "
-                            "Import on opening")
+                            f"Older project · "
+                            f"{prior_project.field.ra_deg:.6f}°, "
+                            f"{prior_project.field.dec_deg:+.6f}°")
                     else:
                         entry = read_object_project(record["root"])
-                        pos = (f"{entry.field.ra_deg:.6f}°, "
-                           f"{entry.field.dec_deg:+.6f}°"
-                           if entry.field is not None else "Coordinates not set")
-                        dataset = (
-                            f" · {entry.selected_dataset[0].upper()} "
-                            f"{entry.selected_dataset[1]} "
-                            f"{entry.selected_dataset[3]}-band"
-                            if entry.selected_dataset else "")
-                        detail = f"{pos}{dataset}"
+                        detail = (
+                            f"{entry.field.ra_deg:.6f}°, "
+                            f"{entry.field.dec_deg:+.6f}°"
+                            if entry.field is not None else
+                            "Coordinates not specified")
                 except (OSError, ValueError, KeyError, TypeError):
-                    detail = "Manifest requires repair"
+                    detail = "Project metadata needs attention"
             item = QListWidgetItem(
-                f"{name}   ·   {state}\n{detail}\n{record['root']}")
-            item.setSizeHint(QSize(100, 78))
+                f"{name}  ·  {status}\n{detail}")
+            item.setSizeHint(QSize(100, 64))
             item.setData(Qt.UserRole, record)
             item.setToolTip(record["root"])
             self.projects.addItem(item)
-        self._filter_rows()
+        selection = next(
+            (i for i in range(self.projects.count())
+             if self.projects.item(i).data(Qt.UserRole).get("project_id")
+             == prior_id), 0)
         if self.projects.count():
-            self.projects.setCurrentRow(0)
-        self._selection_changed()
+            self.projects.setCurrentRow(selection)
+        self._filter_rows()
 
     def _filter_rows(self):
         query = self.filter.text().strip().casefold()
+        visible = []
         for index in range(self.projects.count()):
             item = self.projects.item(index)
-            item.setHidden(query not in item.text().casefold())
-        # Hiding an already selected QListWidgetItem does not always emit
-        # itemSelectionChanged. Do not leave removal/relink enabled for it.
+            record = item.data(Qt.UserRole)
+            matches = (query in item.text().casefold() or
+                       query in str(record.get("root", "")).casefold() or
+                       query in str(record.get("project_id", "")).casefold())
+            item.setHidden(not matches)
+            if matches:
+                visible.append(index)
+        current = self.projects.currentItem()
+        if current is None or current.isHidden():
+            self.projects.setCurrentRow(visible[0] if visible else -1)
+        self.empty_label.setVisible(not visible)
+        self.empty_label.setText(
+            "No matching galaxies. Clear the search to see all projects."
+            if query and not visible else
+            "No projects yet. Create a galaxy project or import a folder.")
         self._selection_changed()
 
     def _selection_changed(self):
         item = self.projects.currentItem()
-        available = bool(item and not item.isHidden())
-        self.continue_btn.setEnabled(available)
-        self.remove_btn.setEnabled(available and self.workspace is None)
+        record = (item.data(Qt.UserRole)
+                  if item is not None and not item.isHidden() else None)
+        selected = isinstance(record, dict)
+        self.continue_btn.setEnabled(selected)
+        self.remove_btn.setEnabled(selected and self.workspace is None)
         self.continue_btn.setText(
-            "Relink selected…" if available and
-            not item.data(Qt.UserRole)["available"] else "Continue selected")
+            "Relink project…" if selected and not record["available"]
+            else "Open project")
+
+        if not selected:
+            self.detail_title.setText("Choose a galaxy")
+            self.detail_status.setText(
+                "Select an existing project or create a new one.")
+            self.detail_meta.clear()
+            self.detail_path.clear()
+            self.detail_note.clear()
+            return
+        self.detail_title.setText(record.get("display_name") or "Unnamed")
+        self.detail_path.setText(
+            "Project folder:\n" + str(record.get("root", "")))
+        if not record["available"]:
+            self.detail_status.setText("Project folder is missing.")
+            self.detail_meta.setText("The saved project identity is preserved.")
+            self.detail_note.setText(
+                "Relink the moved project folder. No local data are deleted.")
+            return
+        if record.get("legacy"):
+            self.detail_status.setText("Older local project")
+            self.detail_meta.setText("Existing survey data can be imported.")
+            self.detail_note.setText(
+                "Opening creates a project identity without changing "
+                "original survey FITS.")
+            return
+        try:
+            project = read_object_project(record["root"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.detail_status.setText("Project metadata needs attention")
+            self.detail_meta.setText(str(exc))
+            self.detail_note.setText(
+                "Opening will report the error; original files are untouched.")
+            return
+
+        position = (
+            f"ICRS: {project.field.ra_deg:.8f}°, "
+            f"{project.field.dec_deg:+.8f}°\n"
+            f"Search field: {project.field.width_arcmin:g} arcmin"
+            if project.field is not None else
+            "ICRS: not specified yet")
+        if project.selected_dataset:
+            release, region, brick, band = project.selected_dataset
+            dataset = f"{release.upper()} / {region} / {brick} / {band}"
+        else:
+            dataset = "None selected"
+        if project.data_root is None:
+            state = "No saved local FITS link"
+            location = "FITS location: not linked"
+        elif not project.data_root.is_dir():
+            state = "Saved FITS location is unavailable"
+            location = f"FITS location: {project.data_root}"
+        else:
+            state = "Local FITS location linked · integrity not checked"
+            location = f"FITS location: {project.data_root}"
+        self.detail_status.setText(state)
+        self.detail_meta.setText(
+            f"{position}\nSelected dataset: {dataset}\n{location}")
+        self.detail_note.setText(
+            "Opening does not download files or approve previous QA. "
+            "Inspect original FITS and run diagnostics when needed.")
 
     def _remove_selected(self):
         """Forget a recent entry, never delete a research project on disk."""
@@ -348,10 +490,9 @@ class ProjectHub(QMainWindow):
     def _new_project(self):
         dialog = CreateProjectDialog(self)
         if dialog.exec() == QDialog.Accepted and dialog.project is not None:
-            # Completing the new-project wizard is an explicit request to
-            # enter the survey Explorer at the supplied target coordinates.
-            # Do not auto-search bricks or download science FITS.
-            self._enter_project(dialog.project, show_remote=True)
+            # A new object starts offline. The hosted sky preview is an
+            # explicit researcher action inside the workspace.
+            self._enter_project(dialog.project, show_remote=False)
 
     def _import_dialog(self):
         directory = QFileDialog.getExistingDirectory(
