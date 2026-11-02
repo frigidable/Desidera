@@ -442,6 +442,10 @@ class SurveyExplorer(QMainWindow):
         self.save_btn.clicked.connect(self.save)
         advanced_files_layout.addWidget(self.save_btn)
         self.download_btn = QPushButton("Download selected")
+        self.download_btn.setEnabled(False)
+        self.download_btn.setToolTip(
+            "Select a science quartet or individual files first. Nothing "
+            "is selected for download automatically.")
         self.download_btn.clicked.connect(self.download)
         bottom.addWidget(self.download_btn)
         # Footer stays pinned even while product rows scroll.
