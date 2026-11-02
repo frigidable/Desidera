@@ -727,7 +727,7 @@ class DatasetManager(QWidget):
             rejected = len(self.coverage.get("rejected", []))
             omitted = self.coverage.get("omitted_count", 0)
             self.map_status.setText(
-                f"{good} shown original IMAGE WCS headers · "
+                f"{good} {'original' if chosen in (None, 'all') else 'shown original'} IMAGE WCS headers · "
                 f"{len(unique)} distinct source outlines · "
                 f"{rejected} invalid/missing · {omitted} omitted · "
                 "geometry only, not usable-pixel coverage. "
