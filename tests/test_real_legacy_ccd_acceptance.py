@@ -24,8 +24,8 @@ def fixture_catalogue(path: Path) -> Path:
 
 
 def test_official_archive_url():
-    url = archive_url("dr9", "north", "2104p543")
-    assert url.endswith("/dr9/north/coadd/210/2104p543/legacysurvey-2104p543-ccds.fits")
+    url = archive_url("dr9", "north", "2100p542")
+    assert url.endswith("/dr9/north/coadd/210/2100p542/legacysurvey-2100p542-ccds.fits")
     assert url.startswith("https://portal.nersc.gov/")
 
 
