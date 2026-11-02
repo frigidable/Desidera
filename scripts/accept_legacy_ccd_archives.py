@@ -22,7 +22,7 @@ from lsbpipe.surveys.legacy_ccd_catalog import _read_table
 BASE_URL = "https://portal.nersc.gov/cfs/cosmo/data/legacysurvey"
 SAMPLES = (("dr9", "south", "1554p180"),
            ("dr11", "south", "1554p180"),
-           ("dr9", "north", "2104p543"))
+           ("dr9", "north", "2100p542"))
 REQUIRED = frozenset(("camera", "expnum", "ccdname", "filter",
                       "brick_x0", "brick_x1", "brick_y0", "brick_y1"))
 MAX_BYTES = 32 * 1024 * 1024
