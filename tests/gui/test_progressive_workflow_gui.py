@@ -181,3 +181,22 @@ def test_same_brick_across_releases_has_separate_candidate_rows(qtbot):
              if not w.files.isRowHidden(i)]
     assert shown and {e["release"] for e in shown} == {"dr11"}
     assert not w._selected(), "DR selection must not trigger a download"
+
+def test_remote_webengine_isolation_preserves_catalog_discovery(qtbot, monkeypatch):
+    """No Chromium widget is created, yet science FITS selection remains."""
+    from lsbpipe.gui.survey_explorer import SurveyExplorer, _NoWebEngineSky
+    monkeypatch.setenv("DESIDERA_DISABLE_WEBENGINE", "1")
+    with offline_legacy_viewer():
+        w = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(w)
+    w.show()
+    assert isinstance(w.sky, _NoWebEngineSky)
+    assert w.sky.url().isEmpty()
+    apply_offline_state(w, "S1")
+    assert w.manifest is not None
+    assert len(w.manifest["products"]) == w.files.rowCount()
+    assert w.files.isVisible()
+    assert w.sky.url().isEmpty()
+    w.bricks.selectRow(0)
+    assert w.science_btn.isEnabled()
+    assert not w.download_btn.isEnabled()
