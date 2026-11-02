@@ -15,7 +15,7 @@ class RunHistoryDialog(QDialog):
 
     def __init__(self, records: list[dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("LSBpipe · Scientific run history")
+        self.setWindowTitle("DESIDERA · Scientific run history")
         self.setObjectName("science_run_history_dialog")
         self.resize(940, 580)
         self.records = list(records)
