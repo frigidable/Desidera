@@ -60,6 +60,8 @@ def test_data_controller_preserves_hidden_selected_products_and_quartet(
     w.bricks.selectRow(0)
     w._fill_brick_filters()
     w._fill_files()
+    assert w._selected() == set()  # initial download is explicitly opt-in
+    w._set_visible_selection(True)
     assert len(w._selected()) == len(w.manifest["products"])
     all_paths = w._selected()
     w.band_filter.setCurrentText("r")
