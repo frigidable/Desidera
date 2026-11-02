@@ -1534,6 +1534,11 @@ class SurveyExplorer(QMainWindow):
 
     def _preview_tab_changed(self, tab):
         if tab in (1, 2):
+            # Survey downloads and Science QA live in a separate inspector.
+            # Hide it when entering pixel analysis, so 1366px displays keep
+            # adequate width for the actual scientific image.
+            if self.data_drawer.isVisible():
+                self.data_drawer.hide()
             self.preview_label.setText(
                 "Original FITS · read-only")
         else:
