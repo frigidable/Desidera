@@ -266,6 +266,59 @@ def main():
             })
         finally:
             wizard.close()
+        # P0.5b Data Manager: synthetic native WCS headers only.
+        # Never show this screenshot as evidence of real Legacy/HSC coverage.
+        from astropy.io import fits
+        from astropy.wcs import WCS
+        import numpy as np
+        from lsbpipe.gui.dataset_manager import DatasetManager
+        from lsbpipe.surveys.dataset_registry import (
+            register_external_fits, read_dataset_index)
+        from lsbpipe.surveys.dataset_coverage import survey_coverage_footprints
+        from lsbpipe.surveys.object_projects import read_object_project
+        synthetic_project = read_object_project(fixture_root)
+        for n, (provider, band, dx) in enumerate((
+                ("SYNTHETIC HSC", "g", -45.),
+                ("SYNTHETIC CFHT", "r", 50.))):
+            wcs = WCS(naxis=2)
+            wcs.wcs.crpix = [36., 36.]
+            wcs.wcs.cdelt = [-2.5/3600, 2.5/3600]
+            wcs.wcs.crval = [40.096208+dx/3600, 1.22925]
+            wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+            file = outdir / "synthetic-original-headers" / f"{n}-{band}.fits"
+            file.parent.mkdir(exist_ok=True, parents=True)
+            fits.PrimaryHDU(
+                data=np.ones((72, 72), dtype=np.float32),
+                header=wcs.to_header()).writeto(file, overwrite=True)
+            register_external_fits(
+                synthetic_project.root, file,
+                provider=provider, band=band)
+        manager = DatasetManager()
+        try:
+            manager.bind_project(
+                synthetic_project, read_dataset_index(synthetic_project.root))
+            manager.set_coverage(
+                survey_coverage_footprints(synthetic_project.root))
+            for width, height in ((1366, 768), (1600, 900)):
+                manager.resize(width, height)
+                manager.show()
+                for _ in range(8):
+                    app.processEvents()
+                path = outdir / f"dataset_manager_SYNTHETIC_{width}x{height}.png"
+                shot = manager.grab()
+                if shot.isNull() or not shot.save(str(path), "PNG"):
+                    raise RuntimeError(f"Unable to save {path}")
+                reports.append({
+                    "state": "DM1_synthetic_external_wcs_headers",
+                    "screenshot": path.name,
+                    "screenshot_px": [shot.width(), shot.height()],
+                    "screenshot_bytes": path.stat().st_size,
+                    "network_used": False,
+                    "viewer_content": "SYNTHETIC_NOT_SURVEY_COVERAGE",
+                    "scientific_status": "NO_SCIENCE_RESULT",
+                })
+        finally:
+            manager.close()
         assert library_index_path().is_file()
     # Fresh widget instance for every state: no inadvertent selection/resize
     # carryover between screenshots, but all components are real Qt widgets.
