@@ -111,6 +111,9 @@ class SurveyExplorer(QMainWindow):
             "color: palette(highlighted-text); "
             "border: 1px solid palette(highlight); "
             "border-radius: 6px; font-weight: 600; min-height: 31px; } "
+            "QPushButton[primaryAction='true']:disabled { "
+            "background: palette(button); color: palette(mid); "
+            "border: 1px solid palette(mid); } "
             "QPushButton[disclosureAction='true'] { "
             "text-align: left; background: transparent; border: 0px; "
             "padding: 5px 4px; color: palette(text); } "
@@ -446,6 +449,8 @@ class SurveyExplorer(QMainWindow):
         data_panel.addWidget(self.advanced_files)
         self.files_options.toggled.connect(self.advanced_files.setVisible)
         self.advanced_files.setVisible(False)
+        # Anchor the short collapsed workbench at top of the inspector.
+        data_panel.addStretch(1)
         self.qa_toggle.toggled.connect(self.qa_widget.setVisible)
         self.qa_widget.setVisible(False)
 
