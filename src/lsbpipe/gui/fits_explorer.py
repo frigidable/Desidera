@@ -206,14 +206,14 @@ class FITSExplorer(QWidget):
         self.range_info = QLabel("Display limits: automatic · native units")
         self.range_info.setObjectName("fits_display_range_info")
         self.range_info.setWordWrap(True)
-        layout.addWidget(self.range_info)
         self.scale_bar = QLabel()
         self.scale_bar.setObjectName("fits_numeric_colorbar")
         self.scale_bar.setFixedHeight(13)
         self.scale_bar.setToolTip(
             "Color maps to the displayed native-unit limits above. "
             "This is not a calibrated photometric measurement.")
-        layout.addWidget(self.scale_bar)
+        # Range statistics and color scale belong to the optional details
+        # section, leaving only actionable controls on screen by default.
 
         # Separate checkbox widgets retain their existing stable public API.
         self.flags = {}
@@ -233,12 +233,28 @@ class FITSExplorer(QWidget):
                 "Display-only colored overlay; does not change the FITS "
                 "pixels, mask policy or photometric acceptance")
             self.flags[key] = check
-        overlay_group = QGroupBox("Overlays · display only")
-        overlay_layout = QVBoxLayout(overlay_group)
+        layout.addWidget(self.flags["OUTLINES"])
+        self.overlay_toggle = QToolButton()
+        self.overlay_toggle.setObjectName("fits_toggle_mask_overlays")
+        self.overlay_toggle.setText("Mask overlays")
+        self.overlay_toggle.setCheckable(True)
+        self.overlay_toggle.setChecked(False)
+        self.overlay_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.overlay_toggle.setArrowType(Qt.RightArrow)
+        self.overlay_toggle.toggled.connect(
+            lambda expanded: self.overlay_toggle.setArrowType(
+                Qt.DownArrow if expanded else Qt.RightArrow))
+        layout.addWidget(self.overlay_toggle)
+        self.overlay_panel = QWidget()
+        overlay_layout = QVBoxLayout(self.overlay_panel)
+        overlay_layout.setContentsMargins(7, 0, 0, 0)
+        overlay_layout.setSpacing(3)
         for key in ("SATUR", "ALLMASK", "BRIGHT", "MEDIUM", "GALAXY",
-                    "INVALID", "OUTLINES"):
+                    "INVALID"):
             overlay_layout.addWidget(self.flags[key])
-        layout.addWidget(overlay_group)
+        self.overlay_toggle.toggled.connect(self.overlay_panel.setVisible)
+        layout.addWidget(self.overlay_panel)
+        self.overlay_panel.setVisible(False)
         self.color_legend = QLabel(
             "Red: SATUR  ·  Orange: ALLMASK  ·  Purple: BRIGHT  ·  "
             "Amber: MEDIUM  ·  Blue: GALAXY  ·  Magenta: no data. "
@@ -268,8 +284,8 @@ class FITSExplorer(QWidget):
         self.detail_panel = QWidget()
         detail_layout = QVBoxLayout(self.detail_panel)
         detail_layout.setContentsMargins(0, 0, 0, 0)
-        for diagnostic in (self.context, self.render_status,
-                           self.color_legend):
+        for diagnostic in (self.range_info, self.scale_bar, self.context,
+                           self.render_status, self.color_legend):
             detail_layout.addWidget(diagnostic)
         self.detail_toggle.toggled.connect(self.detail_panel.setVisible)
         layout.addWidget(self.detail_panel)
