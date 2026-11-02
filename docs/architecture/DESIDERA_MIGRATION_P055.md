@@ -33,3 +33,23 @@ A/B test use `DESIDERA_WEBENGINE_SOFTWARE=1` before
 `python -m desidera.gui`. This passes Chromium
 `--disable-gpu --disable-gpu-compositing` before PySide6 QtWebEngine
 initialization. Treat it as diagnostic only, not proof of the cause.
+
+## Windows top-left overlay isolation (P0.5.6)
+
+The overlapping translucent controls near the workspace's top-left corner
+are a reported real-machine rendering defect, not a FITS/science problem.
+The original `DESIDERA_WEBENGINE_SOFTWARE=1` switch disables Chromium
+GPU/compositing but may provoke GLES context initialization failures and
+is **not** a proven fix. The new `DESIDERA_DISABLE_WEBENGINE=1` switch
+does not instantiate a `QWebEngineView` at all; the embedded remote tab
+becomes an explicit diagnostic placeholder. It never claims that the hosted
+Viewer loaded. Legacy catalog discovery, archive FITS selection, Dataset
+Manager and local analysis remain enabled; an external browser can still
+open the official Viewer.
+
+Compare screenshots of the exact same galaxy workspace, with and without
+this switch and with no other graphics switches. If artifacts disappear
+without any WebEngine view, embedded Chromium/Qt texture composition is
+implicated; if they remain, inspect overlays/external software/Qt QWidget
+painting before trying GPU or driver changes. It is not necessary to
+reinstall the Python environment or redownload survey FITS.
