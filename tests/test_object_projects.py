@@ -276,3 +276,92 @@ def test_stale_object_dataset_falls_back_to_local_inventory_not_old_selection(
     assert inventory.selected in inventory.complete
     assert inventory.selected != requested
     assert inventory.selected != ("dr9", "south", "0401p012", "r")
+
+
+
+def test_forget_available_project_removes_only_registry_entry(tmp_path):
+    from lsbpipe.surveys.object_projects import forget_recent_project
+    first = create_object_project("UGC 2162", tmp_path / "real")
+    other = create_object_project("Independent dwarf", tmp_path / "other")
+    fits = first.root / "original-image-r.fits.fz"
+    fits.write_bytes(b"unchanged original data")
+    before = (first.root / PROJECT_FILENAME).read_bytes()
+    other_before = (other.root / PROJECT_FILENAME).read_bytes()
+    forget_recent_project(first.project_id, first.root)
+    assert [r["project_id"] for r in recent_projects()] == [other.project_id]
+    assert fits.read_bytes() == b"unchanged original data"
+    assert (first.root / PROJECT_FILENAME).read_bytes() == before
+    assert (other.root / PROJECT_FILENAME).read_bytes() == other_before
+    assert library_index_path().is_file()
+    # Undo by import: same UUID, no copy/download and no data deletion.
+    imported = import_object_project(first.root)
+    assert imported.project_id == first.project_id
+    assert {r["project_id"] for r in recent_projects()} == {
+        first.project_id, other.project_id}
+
+
+def test_forget_missing_project_does_not_touch_moved_original(tmp_path):
+    from lsbpipe.surveys.object_projects import forget_recent_project
+    p = create_object_project("UGC_2162", tmp_path / "old_location")
+    moved = tmp_path / "moved_elsewhere"
+    p.root.rename(moved)
+    assert recent_projects()[0]["available"] is False
+    forget_recent_project(p.project_id, p.root)
+    assert recent_projects() == []
+    assert read_object_project(moved).project_id == p.project_id
+    with pytest.raises(ValueError, match="no longer in the library"):
+        forget_recent_project(p.project_id, p.root)
+
+
+def test_forget_requires_exact_uuid_and_root_without_mutation(tmp_path):
+    from lsbpipe.surveys.object_projects import forget_recent_project
+    from uuid import uuid4
+    a = create_object_project("One", tmp_path / "one")
+    b = create_object_project("Two", tmp_path / "two")
+    old_index = library_index_path().read_bytes()
+    for pid, root in (
+            (str(uuid4()), a.root),
+            (a.project_id, b.root),
+            (a.project_id, tmp_path / "imaginary"),
+            ("not-a-uuid", a.root)):
+        with pytest.raises(ValueError):
+            forget_recent_project(pid, root)
+        assert library_index_path().read_bytes() == old_index
+    assert len(recent_projects()) == 2
+
+
+def test_forget_legacy_suggestion_suppresses_last_session_pointer(tmp_path):
+    from lsbpipe.surveys.local_project import (
+        remember_project_directory, session_pointer_path)
+    from lsbpipe.surveys.object_projects import forget_recent_project
+    legacy = tmp_path / "historic_UGC_2162"
+    _old_folder(legacy)
+    remember_project_directory(legacy)
+    original_pointer = session_pointer_path().read_bytes()
+    suggestion = recent_projects()[0]
+    assert suggestion["legacy"] is True
+    assert suggestion["available"]
+    forget_recent_project(suggestion["project_id"], suggestion["root"])
+    assert recent_projects() == []
+    assert session_pointer_path().read_bytes() == original_pointer
+    assert not (legacy / PROJECT_FILENAME).exists()
+    # A later normal registration must preserve the legacy dismissal.
+    new = create_object_project("New candidate", tmp_path / "new")
+    assert [p["project_id"] for p in recent_projects()] == [new.project_id]
+    assert session_pointer_path().read_bytes() == original_pointer
+    # Explicit import is allowed and makes the same old folder visible.
+    imported = import_object_project(legacy)
+    assert imported.project_id in {
+        p["project_id"] for p in recent_projects()}
+
+
+def test_forget_corrupt_registry_fails_closed(tmp_path):
+    from lsbpipe.surveys.object_projects import forget_recent_project
+    p = create_object_project("Candidate", tmp_path / "candidate")
+    index = library_index_path()
+    index.write_text('{"schema":"foreign","projects":[]}')
+    original = index.read_bytes()
+    with pytest.raises(ValueError, match="registry schema"):
+        forget_recent_project(p.project_id, p.root)
+    assert index.read_bytes() == original
+    assert (p.root / PROJECT_FILENAME).is_file()
