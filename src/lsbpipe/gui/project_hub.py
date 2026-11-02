@@ -246,11 +246,20 @@ class ProjectHub(QMainWindow):
             lambda _: self._open_selected())
         self.projects.itemSelectionChanged.connect(self._selection_changed)
         left.addWidget(self.projects, 1)
+        self.empty_panel = QWidget()
+        self.empty_panel.setObjectName("hub_empty_panel")
+        empty_layout = QVBoxLayout(self.empty_panel)
+        empty_layout.addStretch(1)
         self.empty_label = QLabel(
-            "No projects yet. Create a galaxy project or import a folder.")
+            "No projects yet.\nCreate a galaxy project or import an "
+            "existing folder to begin.")
         self.empty_label.setObjectName("hub_empty_state")
         self.empty_label.setWordWrap(True)
-        left.addWidget(self.empty_label)
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setStyleSheet("font-size: 16px")
+        empty_layout.addWidget(self.empty_label)
+        empty_layout.addStretch(1)
+        left.addWidget(self.empty_panel, 1)
         library.setMinimumWidth(310)
         splitter.addWidget(library)
 
@@ -285,7 +294,6 @@ class ProjectHub(QMainWindow):
         self.detail_note.setObjectName("hub_detail_note")
         self.detail_note.setWordWrap(True)
         right.addWidget(self.detail_note)
-        right.addStretch(1)
 
         self.continue_btn = QPushButton("Open project")
         self.continue_btn.setObjectName("hub_continue")
@@ -298,6 +306,7 @@ class ProjectHub(QMainWindow):
             "project metadata and science reports are never deleted.")
         self.remove_btn.clicked.connect(self._remove_selected)
         right.addWidget(self.remove_btn)
+        right.addStretch(1)
         details.setMinimumWidth(300)
         splitter.addWidget(details)
         splitter.setStretchFactor(0, 3)
@@ -376,11 +385,13 @@ class ProjectHub(QMainWindow):
         current = self.projects.currentItem()
         if current is None or current.isHidden():
             self.projects.setCurrentRow(visible[0] if visible else -1)
-        self.empty_label.setVisible(not visible)
+        self.projects.setVisible(bool(visible))
+        self.empty_panel.setVisible(not visible)
         self.empty_label.setText(
-            "No matching galaxies. Clear the search to see all projects."
+            "No matching galaxies.\nClear the search to see all projects."
             if query and not visible else
-            "No projects yet. Create a galaxy project or import a folder.")
+            "No projects yet.\nCreate a galaxy project or import an "
+            "existing folder to begin.")
         self._selection_changed()
 
     def _selection_changed(self):
