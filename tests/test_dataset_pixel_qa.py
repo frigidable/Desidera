@@ -46,6 +46,9 @@ def make_quartet(root, region="north", band="r", missing=()):
         path = root / product_for(
             hit, kind, None if kind == "maskbits" else band).relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
+        # A brick has ONE shared MASKBITS across all optical bands.
+        if kind == "maskbits" and path.exists():
+            continue
         fits.PrimaryHDU(data=data, header=wcs.to_header()).writeto(path)
     return img, ivar, nexp, mask
 
@@ -60,7 +63,7 @@ def test_original_pixel_coverage_separates_target_annulus_and_mask_flags(
     assert report["status"] == "DIAGNOSTIC_NOT_ADOPTED"
     assert len(report["rows"]) == 1
     row = report["rows"][0]
-    assert row["status"] == "PIXEL_DIAGNOSTIC_NOT_ADOPTED"
+    assert row["status"] == "PIXEL_DIAGNOSTIC_NOT_ADOPTED", row.get("error")
     assert len(row["input_asset_ids"]) == 4
     target = row["regions"]["target"]
     sky = row["regions"]["sky_annulus"]
@@ -89,7 +92,7 @@ def test_missing_south_g_invvar_never_borrows_north_quartet(project):
     report = inspect_pixel_coverage(project.root)
     assert len(report["rows"]) == 2
     by_region = {row["region"]: row for row in report["rows"]}
-    assert by_region["north"]["status"] == "PIXEL_DIAGNOSTIC_NOT_ADOPTED"
+    assert by_region["north"]["status"] == "PIXEL_DIAGNOSTIC_NOT_ADOPTED", by_region["north"].get("error")
     assert by_region["south"]["status"] == "INCOMPLETE_FILES"
     assert by_region["south"]["missing"] == ["invvar"]
     assert "regions" not in by_region["south"]
