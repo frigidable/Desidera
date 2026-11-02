@@ -565,7 +565,8 @@ class SurveyExplorer(QMainWindow):
         self.comparison_btn = QPushButton("Inspect data quality · 4 maps")
         self.comparison_btn.setObjectName("fits_open_four_comparison")
         self.comparison_btn.setToolTip(
-            "For ONE optical band, inspect four complementary diagnostics: "
+            "Interactive 2×2 quality viewer for ONE optical band. "
+            "Inspect four complementary diagnostics: "
             "IMAGE (signal), INVVAR (weight), NEXP (exposure count), "
             "MASKBITS (flags). This is not a comparison of filters.")
         self.comparison_btn.clicked.connect(self._toggle_four_comparison)
