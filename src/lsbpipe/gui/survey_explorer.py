@@ -339,7 +339,8 @@ class SurveyExplorer(QMainWindow):
         self.selected_label = QLabel("0 files selected")
         self.selected_label.setWordWrap(True)
         data_panel.addWidget(self.selected_label)
-        self.science_btn = QPushButton("Science quartet (4 FITS)")
+        self.science_btn = QPushButton("Select science quartet (4 FITS)")
+        self.science_btn.setEnabled(False)
         self.science_btn.setToolTip(
             "Select IMAGE, INVVAR, NEXP and MASKBITS for one selected brick and band")
         self.science_btn.clicked.connect(self.select_science_quartet)
@@ -966,6 +967,8 @@ class SurveyExplorer(QMainWindow):
             has_interactive_image=image_ready)
         self.workflow_stage.setText(cue.title)
         self.workflow_hint.setText(cue.instruction)
+        self.science_btn.setEnabled(
+            selected and bool(has_catalog) and self.thread is None)
         # An empty brick grid is not a meaningful default navigation element.
         has_bricks = bool(self.hits)
         for widget in (self.bricks, self.bricks_heading, self.bricks_help):
