@@ -249,6 +249,7 @@ def test_release_labels_are_unclipped_on_compact_navigation(offline_explorer, qt
     """The release selector uses a full-width form row rather than a split label row."""
     window = offline_explorer
     window.resize(1366, 768)
+    window.target_options.setChecked(True)
     qtbot.wait(30)
     from PySide6.QtCore import QPoint
     nav = window.navigation_scroll.viewport()
