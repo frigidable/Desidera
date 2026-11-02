@@ -1214,6 +1214,7 @@ class SurveyExplorer(QMainWindow):
             hits = discover_bricks(field, releases)
             return hits, build_manifest(field, hits)
 
+        work.operation_name = "survey_search"
         self._start(work, self._receive_search)
 
     def _receive_search(self, result):
@@ -1448,6 +1449,7 @@ class SurveyExplorer(QMainWindow):
                 progress((i, len(entries), entry["relative_path"]))
             return results
 
+        work.operation_name = "http_verify"
         self._start(work, self._receive_verification)
 
     def _receive_verification(self, results):
@@ -1524,6 +1526,7 @@ class SurveyExplorer(QMainWindow):
                 progress=lambda a,b,c: progress((a,b,c)),
                 cancel_check=progress.checkpoint)
 
+        work.operation_name = "download"
         self._start(work, self._receive_download)
 
     def inspect_coverage(self):
@@ -1579,6 +1582,7 @@ class SurveyExplorer(QMainWindow):
             save_coverage(result, destination)
             return result, destination
 
+        job.operation_name = "coverage"
         self._start(job, self._coverage_ready)
 
     def _coverage_ready(self, outcome):
@@ -1711,6 +1715,7 @@ class SurveyExplorer(QMainWindow):
                 f"Found {len(rows)} saved QA receipts; historical input hashes "
                 "not automatically revalidated.")
 
+        job.operation_name = "run_history"
         self._start(
             job, finished,
             on_error=lambda error: QMessageBox.warning(
@@ -1815,6 +1820,7 @@ class SurveyExplorer(QMainWindow):
                 f"FITS audit: {validated}/{total} quartets validated, "
                 "not scientifically adopted.")
 
+        work.operation_name = "dataset_audit"
         self._start(
             work, finished,
             on_error=lambda msg: self.science_qa.show_error(msg)
