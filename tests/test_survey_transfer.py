@@ -127,7 +127,7 @@ def test_cancelled_manifest_keeps_completed_fits_and_does_not_claim_report(
 
     def cancel_after_first():
         steps[0] += 1
-        if steps[0] >= 5:
+        if steps[0] >= 8:
             raise OperationCancelled("stopped")
 
     with pytest.raises(OperationCancelled):
@@ -135,3 +135,7 @@ def test_cancelled_manifest_keeps_completed_fits_and_does_not_claim_report(
             manifest, tmp_path, cancel_check=cancel_after_first)
     assert not list(tmp_path.rglob("*.part"))
     assert not (tmp_path / "download-report.json").exists()
+    # First completed original survives; second unstarted product is absent.
+    existing = list(tmp_path.rglob("*.fits.fz"))
+    assert len(existing) == 1
+    assert existing[0].read_bytes().startswith(b"SIMPLE  =")
