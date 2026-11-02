@@ -85,3 +85,53 @@ def test_batch_report_and_missing_item_rejected(monkeypatch, tmp_path):
     assert (tmp_path/'download-report.json').exists()
     with pytest.raises(ValueError, match='not present'):
         download_manifest(manifest, tmp_path, product_paths={'bad.fits'})
+
+
+def test_cancelled_network_stream_removes_partial_without_publishing(tmp_path, monkeypatch):
+    from lsbpipe.surveys.task_control import OperationCancelled
+    entry = fixture_entry()
+    payload = b"SIMPLE  =" + b" " * (3 * 1024 * 1024)
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout=None: FakeHTTP(payload))
+    checked = [0]
+
+    def cancel_check():
+        checked[0] += 1
+        if checked[0] >= 3:
+            raise OperationCancelled("requested by operator")
+
+    with pytest.raises(OperationCancelled):
+        download_product(entry, tmp_path, cancel_check=cancel_check)
+    output = tmp_path / entry["relative_path"]
+    assert not output.exists()
+    assert not list(tmp_path.rglob("*.part"))
+    # Next attempt may still download the complete original.
+    result = download_product(entry, tmp_path)
+    assert result["state"] == "DOWNLOADED"
+    assert output.read_bytes() == payload
+
+
+def test_cancelled_manifest_keeps_completed_fits_and_does_not_claim_report(
+        tmp_path, monkeypatch):
+    from lsbpipe.surveys.task_control import OperationCancelled
+    hit = BrickHit("dr9", "north", "3599p100", 359.8, .1, 10, 10.25,
+                   {"g": 2, "r": 2, "z": 1})
+    manifest = build_manifest(
+        SkyField(359.97, 10.1), [hit],
+        kinds=("image",), bands=("g", "r"))
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout=None: FakeHTTP(b"SIMPLE  =" + b" " * 83))
+    steps = [0]
+
+    def cancel_after_first():
+        steps[0] += 1
+        if steps[0] >= 5:
+            raise OperationCancelled("stopped")
+
+    with pytest.raises(OperationCancelled):
+        download_manifest(
+            manifest, tmp_path, cancel_check=cancel_after_first)
+    assert not list(tmp_path.rglob("*.part"))
+    assert not (tmp_path / "download-report.json").exists()
