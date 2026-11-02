@@ -1,7 +1,7 @@
 """Stable, URL-based navigation to the official Legacy Survey Sky Viewer.
 
 The hosted Imagine/Leaflet application is a *preview* and is independent of
-LSBpipe's authoritative per-brick product discovery. Its URL is opened as a
+DESIDERA's authoritative per-brick product discovery. Its URL is opened as a
 top-level QtWebEngine page (not iframe) or in the user's browser.
 """
 from __future__ import annotations
