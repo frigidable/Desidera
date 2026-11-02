@@ -240,7 +240,9 @@ def check_run_receipt(manifest_path: str | Path, *,
 
 def discover_run_history(project_root: str | Path, *,
                          data_root: str | Path | None = None,
-                         project_id: str | None = None) -> list[dict]:
+                         project_id: str | None = None,
+                         current_contexts: dict[str, dict] | None = None
+                         ) -> list[dict]:
     """Read completed receipts from project and optional older QA directory.
 
     Stale .partial directories are ignored; no automatic deletion or replay.
@@ -263,8 +265,19 @@ def discover_run_history(project_root: str | Path, *,
             manifest = directory / "manifest.json"
             if not manifest.is_file():
                 continue
-            check = check_run_receipt(manifest, project_id=project_id,
-                                      verify_artifacts=True)
+            # Read action as an untrusted hint; receipt verification below
+            # still validates all structural signatures and artifact hashes.
+            action = None
+            if current_contexts:
+                try:
+                    doc = json.loads(manifest.read_text(encoding="utf-8"))
+                    action = doc.get("context", {}).get("action")
+                except (OSError, ValueError, AttributeError, TypeError):
+                    pass
+            check = check_run_receipt(
+                manifest, project_id=project_id,
+                current_context=(current_contexts or {}).get(action),
+                verify_artifacts=True)
             if check.get("state") == "INVALID_RECEIPT":
                 continue
             unique = (str(manifest.resolve()), check.get("run_id"))
