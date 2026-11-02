@@ -65,7 +65,7 @@ class SurveyExplorer(QMainWindow):
 
     def __init__(self, *, restore_session=True, launch_remote=True):
         super().__init__()
-        self.setWindowTitle("LSBpipe — Legacy Survey Explorer (experimental)")
+        self.setWindowTitle("DESIDERA — Legacy Survey Explorer")
         self.resize(1460, 880)
         self.hits = []
         self.manifest = None
@@ -216,7 +216,7 @@ class SurveyExplorer(QMainWindow):
         for field in (self.ra, self.dec, self.field_width):
             field.textChanged.connect(self._target_edited)
 
-        self.advanced_target_layout.addWidget(QLabel("Data releases"))
+        target_form.addWidget(QLabel("Data releases · select before Find data"))
         releases_container = QWidget()
         releases = QHBoxLayout(releases_container)
         releases.setContentsMargins(0, 0, 0, 0)
@@ -229,7 +229,9 @@ class SurveyExplorer(QMainWindow):
             self.release_boxes[dr] = check
             releases.addWidget(check)
         releases.addStretch(1)
-        self.advanced_target_layout.addWidget(releases_container)
+        target_form.addWidget(releases_container)
+        for checkbox in self.release_boxes.values():
+            checkbox.toggled.connect(self._release_selection_changed)
         actions = QHBoxLayout()
         self.search_btn = QPushButton("Find data")
         self.search_btn.setProperty("primaryAction", True)
@@ -262,7 +264,7 @@ class SurveyExplorer(QMainWindow):
         self.target_options.setCheckable(True)
         self.target_options.setChecked(False)
         self.target_options.setToolTip(
-            "Extra survey releases, clipboard input, remote viewer settings "
+            "Clipboard input, remote viewer settings "
             "and technical project information")
         target_form.addWidget(self.target_options)
         target_form.addWidget(self.advanced_target)
@@ -404,7 +406,10 @@ class SurveyExplorer(QMainWindow):
         self.files.setAlternatingRowColors(True)
         self.files.setMinimumHeight(160)
         self.files.verticalHeader().setVisible(False)
-        advanced_files_layout.addWidget(self.files, 3)
+        # Candidate files are primary workflow content, not an advanced option.
+        # Display immediately after Find data, retaining unverified URL status.
+        data_panel.addWidget(self.files, 3)
+        self.files.hide()
 
         # Advanced local FITS coverage parameters are available on demand;
         # they should not permanently hide the file table's rows.
@@ -448,14 +453,14 @@ class SurveyExplorer(QMainWindow):
         self.qa_btn.clicked.connect(self.inspect_coverage)
         qa_layout.addWidget(self.qa_btn)
         advanced_files_layout.addWidget(self.qa_widget)
-        self.files_options = QPushButton("Browse / customize files")
+        self.files_options = QPushButton("Advanced file filters and checks")
         self.files_options.setProperty("disclosureAction", True)
         self.files_options.setObjectName("archive_advanced_toggle")
         self.files_options.setCheckable(True)
         self.files_options.setChecked(False)
         self.files_options.setToolTip(
-            "Inspect the full archive product table, choose optional "
-            "filters, HTTP checks, coverage settings or manifest export")
+            "The original FITS candidates above remain visible. Show "
+            "optional filters, HTTP checks, QA parameters and manifest export.")
         data_panel.addWidget(self.files_options)
         data_panel.addWidget(self.advanced_files)
         self.files_options.toggled.connect(self.advanced_files.setVisible)
@@ -631,7 +636,7 @@ class SurveyExplorer(QMainWindow):
         from lsbpipe.surveys.dataset_registry import read_dataset_index
         self.dataset_manager.bind_project(project, read_dataset_index(project.root))
         self.setWindowTitle(
-            f"LSBpipe · {project.display_name} · Galaxy Workspace")
+            f"DESIDERA · {project.display_name} · Galaxy Workspace")
         self.open_project_btn.setVisible(False)
         if (project.field is not None and
                 project.data_root is not None and project.data_root.is_dir()):
@@ -1468,6 +1473,27 @@ class SurveyExplorer(QMainWindow):
             self.bar.setValue(done)
             self.message.setText(f"{done}/{total}: {path}")
 
+    def _release_selection_changed(self, _=None):
+        # Changing requested releases invalidates discovery, never the
+        # immutable original FITS or the project's source registry.
+        if getattr(self, "_restoring_local_project", False):
+            return
+        if self.manifest is not None:
+            self.hits = []
+            self.manifest = None
+            self.bricks.setRowCount(0)
+            self.files.setRowCount(0)
+            self.files.hide()
+            self.science_qa.set_selected_hit(None)
+            self.science_btn.setEnabled(False)
+            self._brick_overlay_features = []
+            self._brick_overlay_keys = []
+            self.data_drawer.hide()
+            self.message.setText(
+                "Release selection changed. Run Find data to refresh "
+                "candidate FITS. Local files were not altered.")
+            self._refresh_workflow()
+
     def search(self):
         field = self._validated_field()
         if field is None:
@@ -1485,6 +1511,7 @@ class SurveyExplorer(QMainWindow):
         self.science_qa.set_selected_hit(None)
         self.bricks.setRowCount(0)
         self.files.setRowCount(0)
+        self.files.hide()
         self.message.setText("Finding survey coverage…")
         self._refresh_workflow()
         self.show_viewer()
@@ -1517,14 +1544,19 @@ class SurveyExplorer(QMainWindow):
         self.data_drawer.show()
         self._size_data_drawer()
         self.message.setText(
-            f"{len(hits)} survey bricks found. Choose a brick to continue.")
+            f"{len(hits)} survey bricks; "
+            f"{len(manifest['products'])} candidate archive products. "
+            "Choose a brick and inspect the FITS list. "
+            "URLs remain unverified until explicitly checked.")
         self._refresh_workflow()
 
     def _fill_brick_filters(self):
         return self._data_controller._fill_brick_filters()
 
     def _fill_files(self, *, checked_paths=None):
-        return self._data_controller._fill_files(checked_paths=checked_paths)
+        self._data_controller._fill_files(checked_paths=checked_paths)
+        self.files.setHidden(not bool(
+            self.manifest and self.manifest.get("products")))
 
     def _mark_local_files(self):
         return self._data_controller._mark_local_files()
