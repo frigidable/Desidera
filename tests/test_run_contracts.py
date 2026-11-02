@@ -218,3 +218,27 @@ def test_run_science_qa_publishes_in_project_not_external_data(tmp_path, monkeyp
     assert output["run_contract"]["project_id"] == p.project_id
     assert check_run_receipt(receipt, project_id=p.project_id)["state"] == (
         "RECORDED_NOT_REVALIDATED")
+
+
+
+def test_legacy_dataset_audit_history_remains_distinct_not_current(tmp_path):
+    from lsbpipe.surveys.dataset_integrity import (
+        SCHEMA as AUDIT_SCHEMA, save_dataset_audit)
+    p, root, ctx, inputs = fixture_project(tmp_path)
+    audit = save_dataset_audit({
+        "schema": AUDIT_SCHEMA,
+        "science_status": "DIAGNOSTIC_NOT_ADOPTED",
+        "created_utc": "2026-11-02T10:00:00Z",
+        "datasets": [{"dataset_id": "dr9/south/0401p012/r"}],
+        "multi_brick_groups": [],
+    }, p.root, project_id=p.project_id)
+    rows = discover_run_history(
+        p.root, data_root=root, project_id=p.project_id)
+    assert len(rows) == 1
+    assert rows[0]["manifest_path"] == str(audit)
+    assert rows[0]["action"] == "dataset_audit"
+    assert rows[0]["state"] == "AUDIT_RECORDED_NOT_REVALIDATED"
+    assert rows[0]["dataset"] == "1 inventoried datasets"
+    wrong = discover_run_history(
+        p.root, project_id=str(__import__("uuid").uuid4()))
+    assert wrong[0]["state"] == "PROJECT_MISMATCH"
