@@ -19,7 +19,7 @@ def fixture_catalogue(path: Path) -> Path:
     formats = ("8A", "K", "8A", "1A", "J", "J", "J", "J")
     cols = [fits.Column(name=n, format=f, array=np.array([row[i] for row in data]))
             for i, (n, f) in enumerate(zip(names, formats))]
-    fits.HDUList((fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols))).writeto(path)
+    fits.HDUList([fits.PrimaryHDU(), fits.BinTableHDU.from_columns(cols)]).writeto(path)
     return path
 
 
