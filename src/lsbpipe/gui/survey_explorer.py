@@ -1456,6 +1456,10 @@ class SurveyExplorer(QMainWindow):
             return
         # Load the original quartet once through the existing validated
         # science pathway, rather than generating or parsing a PNG.
+        if self.thread is not None:
+            QMessageBox.information(
+                self, "Busy", "Finish the current operation before comparing.")
+            return
         self._comparison_requested = True
         self.start_science_qa("explore")
 
@@ -1620,6 +1624,9 @@ class SurveyExplorer(QMainWindow):
         No network calls; context is frozen before QThread starts. A stale
         target/brick selection can never be silently analyzed as new data.
         """
+        if action == "compare_layers":
+            self._toggle_four_comparison()
+            return
         if action == "dataset_audit":
             if self.thread is not None:
                 QMessageBox.information(
