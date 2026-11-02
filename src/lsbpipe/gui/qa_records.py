@@ -20,7 +20,7 @@ import subprocess
 import re
 from functools import lru_cache
 
-from .run_contracts import make_run_contract
+from .run_contracts import make_run_contract, check_run_receipt
 from lsbpipe.surveys.legacy import BrickHit, SkyField, product_for
 
 
@@ -166,6 +166,21 @@ def new_qa_run(*, data_root: Path, context: ScienceContext,
         if project_root is not None else Path(data_root).resolve().parent
     ) / "qa-runs"
     output_root.mkdir(parents=True, exist_ok=True)
+
+    def check_dependencies() -> None:
+        for ident in dependencies:
+            candidate = output_root / ident / "manifest.json"
+            result = check_run_receipt(
+                candidate, project_id=context.project_id)
+            if result.get("state") != "RECORDED_NOT_REVALIDATED":
+                raise ValueError(
+                    "Run dependency missing, modified or wrong project: "
+                    f"{ident} ({result.get('state')})")
+
+    # Dependencies are immutable, verified artifact references, not filenames
+    # or user-provided paths. Validation is repeated before publishing.
+    if dependencies:
+        check_dependencies()
     stamp = datetime.now(timezone.utc)
     run_id = f"{stamp:%Y%m%dT%H%M%S%fZ}-{secrets.token_hex(5)}"
     staging = output_root / ("." + run_id + ".partial")
@@ -190,6 +205,8 @@ def new_qa_run(*, data_root: Path, context: ScienceContext,
         }
         yield staging, record
         assert_inputs_unchanged(inputs)
+        if dependencies:
+            check_dependencies()
         record["artifacts"] = {
             file.name: {
                 "sha256_local": _hash_file(file)["sha256_local"],
