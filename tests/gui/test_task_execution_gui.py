@@ -150,3 +150,45 @@ def test_close_while_running_is_blocked_without_destroying_qthread(
     finally:
         release.set()
     qtbot.waitUntil(lambda: w.thread is None, timeout=15000)
+
+
+
+def test_project_switch_is_refused_until_worker_is_safely_finished(
+        qtbot, monkeypatch, tmp_path):
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.surveys.object_projects import create_object_project
+    project = create_object_project(
+        "Active-worker project", tmp_path / "active-worker")
+    with offline_legacy_viewer():
+        hub = ProjectHub()
+        hub._enter_project(project)
+    qtbot.addWidget(hub)
+    qtbot.addWidget(hub.workspace)
+    window = hub.workspace
+    started, release = Event(), Event()
+    notices = []
+    monkeypatch.setattr(
+        "lsbpipe.gui.survey_explorer.QMessageBox.information",
+        lambda *args: notices.append(args))
+    monkeypatch.setattr(
+        "lsbpipe.gui.project_hub.QMessageBox.information",
+        lambda *args: notices.append(args))
+    def work(progress):
+        started.set()
+        release.wait(timeout=3.)
+        progress((1, 1, "finished"))
+        return "done"
+    try:
+        window._start(work, lambda _: None)
+        qtbot.waitUntil(started.is_set, timeout=8000)
+        window._go_back_to_projects()
+        assert hub.workspace is window
+        assert notices
+        assert not hub.isVisible()
+        window._request_stop()
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: window.thread is None, timeout=15000)
+    window._go_back_to_projects()
+    assert hub.workspace is None
+    assert hub.isVisible()
