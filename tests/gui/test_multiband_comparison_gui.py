@@ -11,7 +11,7 @@ pytest.importorskip("astropy")
 from astropy.wcs import WCS
 from PySide6.QtCore import Qt
 from lsbpipe.gui.multiband_comparison import (
-    MultibandComparison, load_multiband_originals, MAX_TOTAL_PIXELS,
+    MultibandComparison, load_multiband_originals,
 )
 from lsbpipe.surveys.legacy import SkyField, BrickHit, product_for
 from scripts.offline_gui_fixture import offline_legacy_viewer
