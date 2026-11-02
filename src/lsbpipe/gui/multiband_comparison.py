@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from .fits_explorer import FITSExplorer, FITSGraphicsView
 from .fits_raster import rgb_for_layer, fits_pixel_from_scene
+from .display_transfer import display_range
 from .multiband_preview import (
     MAX_PREVIEW_SIDE, MAX_NATIVE_BYTES, native_dataset_bytes, display_preview,
 )
@@ -122,6 +123,7 @@ class MultibandComparison(QWidget):
         self.images = {}
         self.outlines = {}
         self.placeholders = {}
+        self.cells = {}
         self.preview_info = {}
         self.preview_factors = {}
         self._executor = ThreadPoolExecutor(
@@ -145,8 +147,28 @@ class MultibandComparison(QWidget):
         self.stretch.setObjectName("fits_multiband_stretch")
         self.stretch.addItem("Standard", "standard")
         self.stretch.addItem("Faint structures", "faint")
+        self.stretch.setCurrentIndex(1)
         self.stretch.currentIndexChanged.connect(self._render)
+        self.stretch.setToolTip(
+            "Display-only percentile limits, independently determined "
+            "for each original optical band.")
         tools.addWidget(self.stretch)
+        self.scaling = QComboBox()
+        self.scaling.setObjectName("fits_multiband_scale")
+        self.scaling.addItem("Log10 · positive", "log")
+        self.scaling.addItem("Asinh · signed", "asinh")
+        self.scaling.addItem("Linear", "linear")
+        self.scaling.setToolTip(
+            "Log10 shows only strictly positive sky-subtracted IMAGE "
+            "pixels; zero and negative samples are black, not missing FITS. "
+            "Asinh and linear retain finite signed pixels. Display only.")
+        self.scaling.currentIndexChanged.connect(self._render)
+        tools.addWidget(self.scaling)
+        self.show_missing = QCheckBox("Show missing bands")
+        self.show_missing.setObjectName("fits_multiband_show_missing")
+        self.show_missing.setChecked(False)
+        self.show_missing.toggled.connect(self._layout_panels)
+        tools.addWidget(self.show_missing)
         self.link = QCheckBox("Link sky position and scale")
         self.link.setObjectName("fits_multiband_link")
         self.link.setChecked(True)
@@ -159,6 +181,7 @@ class MultibandComparison(QWidget):
 
         grid = QGridLayout()
         grid.setSpacing(5)
+        self.band_grid = grid
         for n, band in enumerate(BANDS):
             cell = QFrame()
             cell.setObjectName("fits_multiband_panel_" + band)
@@ -186,6 +209,7 @@ class MultibandComparison(QWidget):
             placeholder.setWordWrap(True)
             column.addWidget(placeholder, 1)
             grid.addWidget(cell, n // 2, n % 2)
+            self.cells[band] = cell
             self.views[band] = view
             self.scenes[band] = scene
             self.images[band] = image
@@ -199,7 +223,8 @@ class MultibandComparison(QWidget):
         layout.addLayout(grid, 1)
         self.readout = QLabel(
             "Hover to compare native flux at the same ICRS position. "
-            "Different band stretches are independent.")
+            "Each band's display limits are independently computed; "
+            "pixel readouts remain original nanomaggy.")
         self.readout.setObjectName("fits_multiband_readout")
         self.readout.setWordWrap(True)
         self.readout.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -252,7 +277,34 @@ class MultibandComparison(QWidget):
             ny, nx = d["pixel_shape"]
             self.scenes[band].setSceneRect(0, 0, nx, ny)
             self._make_outlines(band)
+        self._layout_panels()
         self._render()
+
+    def _layout_panels(self, *_):
+        """Use all available width: grz becomes three adjacent FITS panels.
+
+        A missing i band is reported in status instead of permanently
+        occupying one quarter of the science workspace. Users can opt to
+        show missing tiles explicitly.
+        """
+        present = [b for b in BANDS if b in self.datasets]
+        visible = (list(BANDS) if self.show_missing.isChecked()
+                   else present)
+        if not visible:
+            visible = list(BANDS)
+        columns = (3 if len(visible) == 3 else
+                   2 if len(visible) in (2, 4) else 1)
+        for band in BANDS:
+            self.band_grid.removeWidget(self.cells[band])
+            self.cells[band].setVisible(band in visible)
+        for col in range(4):
+            self.band_grid.setColumnStretch(col, 1 if col < columns else 0)
+        for row in range(4):
+            self.band_grid.setRowStretch(row, 1 if row < math.ceil(len(visible) / columns) else 0)
+        for i, band in enumerate(visible):
+            self.band_grid.addWidget(
+                self.cells[band], i // columns, i % columns)
+        self.band_grid.invalidate()
 
     def _make_outlines(self, band):
         d = self.datasets[band]
@@ -284,18 +336,26 @@ class MultibandComparison(QWidget):
         # in place or reprojected.
         data = dict(self.datasets)
         contrast = self.stretch.currentData()
+        scaling = self.scaling.currentData()
         self._future = self._executor.submit(
-            lambda: {band: self._prepare_overview(d, band, contrast)
-                     for band, d in data.items()})
+            lambda: {band: self._prepare_overview(
+                d, band, contrast, scaling) for band, d in data.items()})
         self._pending_generation = generation
         self.status.setText("Preparing original IMAGE previews · display only")
         self._timer.start()
 
     @staticmethod
-    def _prepare_overview(dataset, band, contrast):
+    def _prepare_overview(dataset, band, contrast, scaling="log"):
         overview, factor = display_preview(dataset["data"]["image"])
-        rgb = rgb_for_layer(overview, "image", band, contrast=contrast)
-        return rgb, factor
+        # Quantitative display limits belong to the SCREEN overview, not to
+        # science photometry. They are independent for each optical band.
+        lo, hi, mode = display_range(
+            overview, "image", contrast=contrast, scaling=scaling)
+        finite_limits = (math.isfinite(lo) and math.isfinite(hi))
+        rgb = rgb_for_layer(
+            overview, "image", band, contrast=contrast, scaling=scaling,
+            limits=(lo, hi) if finite_limits else None)
+        return rgb, factor, lo, hi, mode
 
     def _poll(self):
         future = self._future
@@ -311,7 +371,7 @@ class MultibandComparison(QWidget):
         if not self.datasets:
             return
         self.preview_factors.clear()
-        for band, (rgb, factor) in images.items():
+        for band, (rgb, factor, lo, hi, mode) in images.items():
             if band not in self.datasets:
                 continue
             ny, nx = self.datasets[band]["pixel_shape"]
@@ -324,18 +384,25 @@ class MultibandComparison(QWidget):
             item.setTransform(QTransform.fromScale(
                 nx / preview_x, ny / preview_y))
             self.preview_factors[band] = factor
-            self.preview_info[band].setText(
-                f"Display-only: {preview_x}×{preview_y} px "
-                f"(native {nx}×{ny}, {factor}×{factor} bin)"
+            scale_note = (
+                f"{mode} {lo:.3g}…{hi:.3g} nMgy"
+                if math.isfinite(lo) and math.isfinite(hi)
+                else f"{mode}: no valid positive pixels")
+            extent = (
+                f"{preview_x}×{preview_y} screen / {nx}×{ny} native "
+                f"({factor}×{factor} area mean)"
                 if factor > 1 else
-                f"Native display: {nx}×{ny} px · no binning")
+                f"{nx}×{ny} native screen")
+            self.preview_info[band].setText(
+                f"{scale_note} · {extent}")
         self.fit_views()
         present = ", ".join(b.upper() for b in BANDS if b in self.datasets)
         missing = ", ".join(b.upper() for b in BANDS if b not in self.datasets)
         self.status.setText(
             f"Loaded: {present} · unavailable: {missing or 'none'} · "
-            "area-averaged screen overviews where needed; native FITS "
-            "readout by WCS · display only · not adopted")
+            f"{self.scaling.currentText()} display (independent limits); "
+            "screen area averages where needed; "
+            "native FITS readout by WCS · display only · not adopted")
 
     @staticmethod
     def _scalar(value):
@@ -455,6 +522,7 @@ class MultibandComparison(QWidget):
             self.scenes[band].setSceneRect(0, 0, 0, 0)
             self.views[band].setVisible(True)
             self.placeholders[band].setVisible(False)
+        self._layout_panels()
         self.status.setText("No original bands loaded")
 
     def shutdown_renderer(self):
