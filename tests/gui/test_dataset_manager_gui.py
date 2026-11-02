@@ -278,6 +278,43 @@ def test_overlap_requires_matching_brick_band_and_source(qtbot, project):
     assert _coincident_source_footprints(inputs) == []
 
 
+def test_sha_only_refresh_retains_inspected_wcs_map(qtbot, project):
+    from copy import deepcopy
+    widget = DatasetManager()
+    qtbot.addWidget(widget)
+    original = _legacy_index(project)
+    widget.bind_project(project, original)
+    widget.show()
+    baseline = {
+        "status": "GEOMETRY_ONLY_NOT_ADOPTED",
+        "footprints": [{
+            "source_id": "source-north", "brick": "0401p012",
+            "band": "r", "asset_id": "north-r-image",
+            "release": "dr9", "region": "north",
+            "points": [[-100., -100.], [100., -100.],
+                       [100., 100.], [-100., 100.]],
+        }],
+        "rejected": [], "omitted_count": 0,
+    }
+    widget.set_coverage(baseline)
+    assert "1 original IMAGE WCS headers" in widget.map_status.text()
+    verified = deepcopy(original)
+    for asset in verified["assets"]:
+        if asset["asset_id"] == "north-r-image":
+            asset["sha256"] = "a" * 64
+            asset["checksum_status"] = "FILE_SHA256_VERIFIED"
+    widget.set_index(verified)
+    assert widget.coverage is baseline
+    assert "1 original IMAGE WCS headers" in widget.map_status.text()
+    changed = deepcopy(verified)
+    for asset in changed["assets"]:
+        if asset["asset_id"] == "north-r-image":
+            asset["size_bytes"] = 13579
+    widget.set_index(changed)
+    assert widget.coverage is None
+    assert "not inspected" in widget.map_status.text().lower()
+
+
 def test_sha_verification_preserves_selected_asset_and_refreshes_details(
         qtbot, project):
     widget = DatasetManager()
