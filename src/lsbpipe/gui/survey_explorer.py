@@ -1883,7 +1883,9 @@ class SurveyExplorer(QMainWindow):
             action=action, field=field, hit=hit, band=band,
             directory=directory, north_directory=north, south_directory=south,
             target_radius_arcsec=target, sky_inner_arcsec=inner,
-            sky_outer_arcsec=outer)
+            sky_outer_arcsec=outer,
+            project_id=(self._object_project.project_id
+                        if self._object_project is not None else None))
         ticket = self._qa_generation
         self.inspector_tabs.setCurrentWidget(self.science_qa)
         self.science_qa.clear_result()
@@ -1911,7 +1913,9 @@ class SurveyExplorer(QMainWindow):
                     north_directory=north, south_directory=south,
                     target_radius_arcsec=target,
                     sky_inner_arcsec=inner, sky_outer_arcsec=outer,
-                    context=context)
+                    context=context,
+                    project_root=(self._object_project.root
+                                  if self._object_project is not None else None))
             # Connect errors before the worker starts.
             self._start(
                 job,
@@ -1939,7 +1943,9 @@ class SurveyExplorer(QMainWindow):
             south_directory=self.science_qa.south_directory.text().strip(),
             target_radius_arcsec=self.target_radius.value(),
             sky_inner_arcsec=self.sky_inner.value(),
-            sky_outer_arcsec=self.sky_outer.value())
+            sky_outer_arcsec=self.sky_outer.value(),
+            project_id=(self._object_project.project_id
+                        if self._object_project is not None else None))
 
     def _science_ticket_current(self, *, context, ticket):
         return (ticket == self._qa_generation and
@@ -2019,13 +2025,20 @@ class SurveyExplorer(QMainWindow):
             self.science_qa.clear_result()
             return
         self.science_qa.show_result(result)
+        latest = {
+            "action": result["action"], "path": result["path"],
+            "manifest_path": result.get("manifest_path", ""),
+            "summary": result["summary"],
+            "provenance": list(result["provenance"]),
+            "run_id": result.get("run_id"),
+            "project_id": (self._object_project.project_id
+                           if self._object_project is not None else None),
+        }
         if self._local_project is not None:
-            self._local_project.last_science = {
-                "action": result["action"], "path": result["path"],
-                "manifest_path": result.get("manifest_path", ""),
-                "summary": result["summary"],
-                "provenance": list(result["provenance"])}
-            self._queue_project_save()
+            self._local_project.last_science = latest
+        if self._object_project is not None:
+            self._object_project.last_science = latest
+        self._queue_project_save()
         self.message.setText(
             "Local FITS QA saved (not adopted): " + result["path"])
         if result["is_figure"]:
