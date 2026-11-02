@@ -837,11 +837,26 @@ class SurveyExplorer(QMainWindow):
             return
         path = Path(item.get("path", ""))
         manifest = Path(item.get("manifest_path", ""))
-        qa_dir = project.data_root.parent / "qa-runs"
+        allowed_roots = [project.data_root.parent / "qa-runs"]
+        if self._object_project is not None:
+            allowed_roots.append(self._object_project.root / "qa-runs")
         try:
             if not (path.is_file() and manifest.is_file() and
-                    path.resolve().is_relative_to(qa_dir.resolve()) and
-                    path.parent == manifest.parent):
+                    not path.is_symlink() and not manifest.is_symlink() and
+                    any(manifest.resolve().is_relative_to(q.resolve())
+                        for q in allowed_roots) and
+                    path.parent.resolve() == manifest.parent.resolve()):
+                return
+            from lsbpipe.gui.run_contracts import check_run_receipt
+            current = self._current_science_context(item.get("action", ""))
+            review = check_run_receipt(
+                manifest,
+                project_id=(self._object_project.project_id
+                            if self._object_project is not None else None),
+                current_context=(current.to_dict() if current is not None
+                                 and item.get("action") != "explore" else None))
+            if review["state"] not in ("RECORDED_NOT_REVALIDATED",
+                                        "LEGACY_UNVERIFIED"):
                 return
             record = json.loads(manifest.read_text(encoding="utf-8"))
             context = record.get("context", {})
