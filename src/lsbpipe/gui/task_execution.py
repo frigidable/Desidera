@@ -13,9 +13,9 @@ from typing import Callable
 from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtWidgets import QMessageBox
 
-
-class TaskCancelled(Exception):
-    """Raised at a cooperative checkpoint on the worker thread."""
+# Preserve the public GUI exception while allowing pure scientific modules
+# to propagate cooperative cancellation without importing any Qt bindings.
+from lsbpipe.surveys.task_control import OperationCancelled as TaskCancelled
 
 
 class TaskToken:
