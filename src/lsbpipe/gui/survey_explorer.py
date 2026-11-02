@@ -42,6 +42,7 @@ from lsbpipe.gui.task_execution import (
 from lsbpipe.gui.target_controller import TargetController, TargetTextField
 from lsbpipe.gui.survey_data_controller import SurveyDataController
 from lsbpipe.gui.science_context_controller import ScienceContextController
+from lsbpipe.gui.workflow_ux import workflow_cue
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -95,6 +96,7 @@ class SurveyExplorer(QMainWindow):
         self._data_controller = SurveyDataController(self)
         self._science_context_controller = ScienceContextController(self)
         self._build_ui()
+        self._refresh_workflow()
         if self._restore_session:
             self._restore_last_project()
 
@@ -127,8 +129,19 @@ class SurveyExplorer(QMainWindow):
         self.back_to_projects.clicked.connect(self._go_back_to_projects)
         self.back_to_projects.setVisible(False)
         panel.addWidget(self.back_to_projects)
+        self.workflow_stage = QLabel("01 / 03 · Target")
+        self.workflow_stage.setObjectName("workflow_stage")
+        self.workflow_stage.setStyleSheet(
+            "font-size: 15px; font-weight: 600; padding: 3px 0;")
+        self.workflow_hint = QLabel(
+            "Enter ICRS coordinates, then find survey data.")
+        self.workflow_hint.setObjectName("workflow_next_step")
+        self.workflow_hint.setWordWrap(True)
+        self.workflow_hint.setStyleSheet("color: palette(mid);")
+        panel.addWidget(self.workflow_stage)
+        panel.addWidget(self.workflow_hint)
 
-        target_box = QGroupBox("Target · ICRS")
+        target_box = QGroupBox("Coordinates · ICRS")
         target_form = QVBoxLayout(target_box)
         target_form.setContentsMargins(10, 12, 10, 10)
         target_form.setSpacing(5)
@@ -162,21 +175,26 @@ class SurveyExplorer(QMainWindow):
             target_form.addWidget(caption)
             target_form.addWidget(field)
 
+        self.advanced_target = QWidget()
+        self.advanced_target.setObjectName("target_advanced_options")
+        self.advanced_target_layout = QVBoxLayout(self.advanced_target)
+        self.advanced_target_layout.setContentsMargins(2, 4, 2, 4)
+        self.advanced_target_layout.setSpacing(6)
         self.paste_target_btn = QPushButton("Paste RA + Dec")
         self.paste_target_btn.setToolTip(
             "Paste a pair from the clipboard, e.g. 154.7709 46.4537 "
             "or 10:19:05 +46:27:13")
         self.paste_target_btn.clicked.connect(self.paste_coordinate_pair)
-        target_form.addWidget(self.paste_target_btn)
+        self.advanced_target_layout.addWidget(self.paste_target_btn)
         self.target_hint = QLabel("Decimal degrees, decimal comma or sexagesimal")
         self.target_hint.setObjectName("target_validation_hint")
         self.target_hint.setWordWrap(True)
         self.target_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        target_form.addWidget(self.target_hint)
+        self.advanced_target_layout.addWidget(self.target_hint)
         for field in (self.ra, self.dec, self.field_width):
             field.textChanged.connect(self._target_edited)
 
-        target_form.addWidget(QLabel("Data releases"))
+        self.advanced_target_layout.addWidget(QLabel("Data releases"))
         releases_container = QWidget()
         releases = QHBoxLayout(releases_container)
         releases.setContentsMargins(0, 0, 0, 0)
@@ -189,7 +207,7 @@ class SurveyExplorer(QMainWindow):
             self.release_boxes[dr] = check
             releases.addWidget(check)
         releases.addStretch(1)
-        target_form.addWidget(releases_container)
+        self.advanced_target_layout.addWidget(releases_container)
         actions = QHBoxLayout()
         self.search_btn = QPushButton("Find data")
         self.search_btn.setToolTip("Discover Legacy archive bricks for this ICRS field")
@@ -203,18 +221,29 @@ class SurveyExplorer(QMainWindow):
         self.external_btn = QPushButton("Open in browser")
         self.external_btn.clicked.connect(self.open_viewer_in_browser)
         secondary_actions.addWidget(self.external_btn)
-        target_form.addLayout(secondary_actions)
+        self.advanced_target_layout.addLayout(secondary_actions)
         self.open_project_btn = QPushButton("Open existing FITS project…")
         self.open_project_btn.setObjectName("open_existing_local_project")
         self.open_project_btn.setToolTip(
             "Restore a downloaded Legacy FITS project directly from disk. "
             "No archive search or network download is required.")
         self.open_project_btn.clicked.connect(self._open_project_dialog)
-        target_form.addWidget(self.open_project_btn)
+        self.advanced_target_layout.addWidget(self.open_project_btn)
         self.project_status = QLabel("No local project opened")
         self.project_status.setObjectName("local_project_status")
         self.project_status.setWordWrap(True)
-        target_form.addWidget(self.project_status)
+        self.advanced_target_layout.addWidget(self.project_status)
+        self.target_options = QPushButton("More target options")
+        self.target_options.setObjectName("target_advanced_toggle")
+        self.target_options.setCheckable(True)
+        self.target_options.setChecked(False)
+        self.target_options.setToolTip(
+            "Extra survey releases, clipboard input, remote viewer settings "
+            "and technical project information")
+        target_form.addWidget(self.target_options)
+        target_form.addWidget(self.advanced_target)
+        self.target_options.toggled.connect(self.advanced_target.setVisible)
+        self.advanced_target.setVisible(False)
         panel.addWidget(target_box)
 
         viewer_controls = QHBoxLayout()
@@ -225,8 +254,8 @@ class SurveyExplorer(QMainWindow):
         self.view_mode.addItem("Residual", "resid")
         self.view_mode.currentIndexChanged.connect(self.show_viewer)
         viewer_controls.addWidget(self.view_mode, 2)
-        panel.addLayout(viewer_controls)
-        self.data_toggle = QPushButton("Files and coverage")
+        self.advanced_target_layout.addLayout(viewer_controls)
+        self.data_toggle = QPushButton("02 · Data files")
         self.data_toggle.setAccessibleName("Show or hide file selection and coverage")
         self.data_toggle.setToolTip(
             "Open the download and local FITS coverage workbench")
@@ -245,14 +274,22 @@ class SurveyExplorer(QMainWindow):
         self.bricks.horizontalHeaderItem(3).setToolTip(
             "Median exposures per brick in g, r, i, z; not pixel coverage")
         self.bricks.setMinimumHeight(140)
-        panel.addWidget(QLabel("Release-covered intersecting bricks"))
+        self.bricks_heading = QLabel("Survey bricks")
+        self.bricks_heading.setObjectName("survey_brick_heading")
+        panel.addWidget(self.bricks_heading)
         panel.addWidget(self.bricks, 1)
         self.bricks.cellDoubleClicked.connect(self.preview_brick)
         self.bricks.itemSelectionChanged.connect(self._selected_brick_changed)
         self.bricks.setMouseTracking(True)
         self.bricks.viewport().installEventFilter(self)
         self.bricks.cellEntered.connect(self._hover_brick_row)
-        panel.addWidget(QLabel("Double-click a brick to preview its center"))
+        self.bricks_help = QLabel("Select a brick to work with its files.")
+        self.bricks_help.setStyleSheet("color: palette(mid);")
+        self.bricks_help.setWordWrap(True)
+        panel.addWidget(self.bricks_help)
+        self.bricks_heading.setVisible(False)
+        self.bricks.setVisible(False)
+        self.bricks_help.setVisible(False)
         panel.addStretch(1)
 
         # File selection and coverage are a separate, collapsible task surface.
