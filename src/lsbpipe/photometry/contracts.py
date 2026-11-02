@@ -6,7 +6,7 @@ remain in native coadd units with explicit uncertainty limitations.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 import copy
 import json
 import math
@@ -169,7 +169,7 @@ class NativeBandFrame:
     invvar_nMgy2: np.ndarray = field(repr=False, compare=False)
     nexp: np.ndarray = field(repr=False, compare=False)
     maskbits: np.ndarray = field(repr=False, compare=False)
-    native_wcs: object = field(repr=False, compare=False)
+    native_wcs: InitVar[object]
     release: str = "dr9"
     region: str = "south"
     brick: str = ""
@@ -179,11 +179,12 @@ class NativeBandFrame:
     extra_exclusion: np.ndarray | None = field(
         default=None, repr=False, compare=False)
     # Populated only by __post_init__, not caller-controlled.
+    _wcs: object = field(init=False, repr=False, compare=False)
     _valid: np.ndarray = field(init=False, repr=False, compare=False)
     _reasons: Mapping = field(init=False, repr=False, compare=False)
     _area: float = field(init=False, repr=False, compare=False)
 
-    def __post_init__(self):
+    def __post_init__(self, native_wcs):
         if self.region not in regions_for_release(self.release):
             raise ValueError("Invalid release/region for native coadd")
         if not isinstance(self.brick, str) or not BRICK_RE.fullmatch(self.brick):
@@ -200,10 +201,10 @@ class NativeBandFrame:
             raise ValueError("Four native FITS layers require identical 2D shape")
         if not np.all(np.isfinite(exposures) | np.isnan(exposures)):
             raise ValueError("NEXP must contain finite values or NaN")
-        area = _area_from_wcs(self.native_wcs)
+        area = _area_from_wcs(native_wcs)
         # Only assign a *deep copy* to avoid modifying the input WCS object;
         # use .wcs to obtain another independent copy on every read.
-        copied = copy.deepcopy(self.native_wcs.celestial)
+        copied = copy.deepcopy(native_wcs.celestial)
         _check_wcs_samples(copied, image.shape)
         base_valid, reasons = legacy_validity(
             image, ivar, bits, self.band,
@@ -231,7 +232,7 @@ class NativeBandFrame:
         object.__setattr__(self, "invvar_nMgy2", ivar)
         object.__setattr__(self, "nexp", exposures)
         object.__setattr__(self, "maskbits", bits)
-        object.__setattr__(self, "native_wcs", copied)
+        object.__setattr__(self, "_wcs", copied)
         object.__setattr__(self, "_valid", _immutable(valid, np.bool_))
         object.__setattr__(self, "_reasons", MappingProxyType({
             k: _immutable(v, np.bool_) for k, v in reasons.items()}))
@@ -249,7 +250,7 @@ class NativeBandFrame:
 
     @property
     def wcs(self):
-        return copy.deepcopy(self.native_wcs)
+        return copy.deepcopy(self._wcs)
 
     @property
     def valid(self):
