@@ -418,3 +418,53 @@ def test_pixel_coverage_ui_distinguishes_incomplete_and_valid_bands(
     assert widget.pixel_qa_table.item(0, 6).text() == "4.0% / 1.0%"
     assert "Missing: invvar" in widget.pixel_qa_table.item(1, 7).text()
     assert "not automatically rejected" in widget.pixel_qa_status.text()
+
+
+def test_ccd_import_action_requires_hashed_original_coadd_image(
+        qtbot, project, monkeypatch):
+    """Never enable catalogue import on source row, INVVAR or unhashed IMAGE."""
+    from PySide6.QtWidgets import QFileDialog
+    widget = DatasetManager()
+    qtbot.addWidget(widget)
+    index = _legacy_index(project)
+    for a in index["assets"]:
+        if a["product_kind"] == "image":
+            a["product_family"] = "resampled_coadd"
+    widget.bind_project(project, index)
+    widget.show()
+    source = widget.tree.topLevelItem(0)
+    widget.tree.setCurrentItem(source)
+    assert not widget.ccd_btn.isEnabled()
+    image = next(source.child(i) for i in range(source.childCount())
+                 if source.child(i).text(0).endswith("image"))
+    widget.tree.setCurrentItem(image)
+    assert not widget.ccd_btn.isEnabled()
+    selected_id = image.data(0, 0x0100)[1]
+    updated = _legacy_index(project)
+    for asset in updated["assets"]:
+        if asset["product_kind"] == "image":
+            asset["product_family"] = "resampled_coadd"
+    record = next(x for x in updated["assets"]
+                  if x["asset_id"] == selected_id)
+    record["checksum_status"] = "FILE_SHA256_VERIFIED"
+    record["sha256"] = "a" * 64
+    widget.set_index(updated)
+    assert widget.ccd_btn.isEnabled()
+    requests = []
+    widget.ccdCatalogueRequested.connect(
+        lambda aid, file: requests.append((aid, file)))
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName",
+        lambda *args, **kwargs: (
+            "/tmp/legacysurvey-0401p012-ccds.fits", ""))
+    widget.ccd_btn.click()
+    assert requests == [
+        (selected_id, "/tmp/legacysurvey-0401p012-ccds.fits")]
+    widget.set_busy(True)
+    assert not widget.ccd_btn.isEnabled()
+    widget.set_busy(False)
+    assert widget.ccd_btn.isEnabled()
+    invvar = next(source.child(i) for i in range(source.childCount())
+                  if source.child(i).text(0).endswith("invvar"))
+    widget.tree.setCurrentItem(invvar)
+    assert not widget.ccd_btn.isEnabled()
