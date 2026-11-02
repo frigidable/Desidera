@@ -195,7 +195,7 @@ class ProjectHub(QMainWindow):
         heading.setStyleSheet("font-size: 28px; font-weight: 700")
         subheading = QLabel(
             "Galaxy research projects · local-first, reproducible analysis")
-        subheading.setStyleSheet("font-size: 13px; color: palette(mid)")
+        subheading.setStyleSheet("font-size: 13px; color: palette(text)")
         outer.addWidget(heading)
         outer.addWidget(subheading)
         actions = QHBoxLayout()
