@@ -235,6 +235,10 @@ class MultibandComparison(QWidget):
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid, 1)
+        self.framing_info = QLabel("Field coverage: checking…")
+        self.framing_info.setObjectName("fits_multiband_framing_status")
+        self.framing_info.setWordWrap(True)
+        layout.addWidget(self.framing_info)
         self.readout = QLabel(
             "Hover to compare native flux at the same ICRS position. "
             "Each band's display limits are independently computed; "
@@ -466,6 +470,7 @@ class MultibandComparison(QWidget):
 
     def _sync(self, source):
         if not self.link.isChecked() or len(self.datasets) < 2:
+            self._update_framing()
             return
         band = next((b for b, v in self.views.items() if v is source), None)
         if band not in self.datasets:
@@ -501,6 +506,47 @@ class MultibandComparison(QWidget):
             self.status.setText(
                 "WCS-linked navigation unavailable; no pixel-coordinate "
                 "alignment has been assumed")
+        self._update_framing()
+
+    def _update_framing(self):
+        """Report visible ORIGINAL scene coverage, independent of raster bins.
+
+        This distinguishes intentional wheel zoom from an initial full fit.
+        It does not inspect fitted pixels or alter WCS/native arrays.
+        """
+        if not self.datasets:
+            self.framing_info.setText("Field coverage: no images loaded")
+            return
+        coverages = {}
+        for band, data in self.datasets.items():
+            native = self.scenes[band].sceneRect()
+            view = self.views[band]
+            if native.isEmpty() or min(
+                view.viewport().width(), view.viewport().height()) <= 0:
+                continue
+            visible = view.mapToScene(
+                view.viewport().rect()).boundingRect()
+            intersection = visible.intersected(native)
+            if intersection.isEmpty():
+                fraction = 0.
+            else:
+                fraction = (
+                    intersection.width() * intersection.height()
+                    / (native.width() * native.height()))
+            coverages[band] = max(0., min(1., fraction))
+        if not coverages:
+            self.framing_info.setText(
+                "Field coverage: waiting for viewer layout")
+        elif all(value >= 0.995 for value in coverages.values()):
+            self.framing_info.setText(
+                "Full field · all available original FITS frames visible")
+        else:
+            values = ", ".join(
+                f"{band.upper()} {100 * coverages[band]:.0f}%"
+                for band in BANDS if band in coverages)
+            self.framing_info.setText(
+                f"Zoomed or clipped view · native field visible: {values} "
+                "· press Fit all to restore complete frames")
 
     def fit_views(self):
         """Fit complete native cutouts at one angular scale and WCS center.
@@ -523,6 +569,7 @@ class MultibandComparison(QWidget):
         if not self.link.isChecked() or len(self.datasets) == 1:
             for band in self.datasets:
                 self.views[band].fit_image()
+            self._update_framing()
             return
         try:
             ref = self.datasets[next(iter(self.datasets))]
@@ -570,6 +617,7 @@ class MultibandComparison(QWidget):
             self.status.setText(
                 f"Common WCS fit unavailable ({exc}); "
                 "individual complete frames fitted instead.")
+        self._update_framing()
 
     def _inspect(self, band, x_scene, y_scene):
         d = self.datasets.get(band)
@@ -628,6 +676,7 @@ class MultibandComparison(QWidget):
             self.views[band].setVisible(True)
             self.placeholders[band].setVisible(False)
         self._layout_panels()
+        self.framing_info.setText("Field coverage: no images loaded")
         self.status.setText("No original bands loaded")
 
     def shutdown_renderer(self):
