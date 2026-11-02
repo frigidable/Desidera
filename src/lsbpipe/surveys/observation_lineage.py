@@ -159,7 +159,8 @@ def _validated_observations(record: dict, index: dict) -> None:
             raise ValueError("Catalogue receipt disagrees with indexed coadd")
         expected = (
             f"legacy_brick_ccds:{source['release']}:"
-            f"{source['region']}:{coadd['brick']}:sha256:{sha}")
+            f"{source['region']}:{coadd['brick']}:"
+            f"{coadd['band']}:asset:{coadd['asset_id']}:sha256:{sha}")
         if ref != expected:
             raise ValueError("CCD catalogue reference does not match receipt")
         if (not isinstance(receipt.get("catalogue_path_ref"), dict) or
