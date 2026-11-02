@@ -69,7 +69,7 @@ class _NoWebEngineSky(QLabel):
     """
     def __init__(self):
         super().__init__(
-            "Embedded Legacy Viewer disabled for rendering diagnosis.\\n"
+            "Embedded Legacy Viewer disabled for rendering diagnosis.\n"
             "Find data, inspect candidate FITS, use Data Manager, or "
             "open Legacy Viewer in your browser via More target options.")
         self.setAlignment(Qt.AlignCenter)
