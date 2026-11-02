@@ -449,7 +449,7 @@ def test_new_project_wizard_opens_survey_sky_not_empty_fits(
     assert w.inspector_tabs.currentIndex() == 0
     assert not w.fits_explorer._dataset
     assert w.manifest is None and w.bricks.rowCount() == 0
-    assert "REMOTE PREVIEW" in w.preview_label.text()
+    assert "Sky preview" in w.preview_label.text()
     assert "No survey archive search" not in w.message.text() or (
         w.manifest is None)
     assert w.back_to_projects.isVisible()
