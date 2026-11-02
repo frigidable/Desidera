@@ -191,8 +191,10 @@ def import_legacy_fits(project_root: str | Path, data_root: str | Path) -> dict:
             if existing is not None:
                 if (existing.get("size_bytes") != stat.st_size or
                         existing.get("mtime_ns") != stat.st_mtime_ns):
-                    existing["presence"] = CHECKSUM_CHANGED if existing.get(
-                        "sha256") else "PRESENT_UNVERIFIED"
+                    existing["presence"] = "PRESENT_UNVERIFIED"
+                    existing["checksum_status"] = (
+                        CHECKSUM_CHANGED if existing.get("sha256") else
+                        CHECKSUM_PENDING)
                     existing["fits_status"] = FITS_UNVERIFIED
                     existing["size_bytes"] = stat.st_size
                     existing["mtime_ns"] = stat.st_mtime_ns
@@ -240,7 +242,7 @@ def register_external_fits(
     if not provider.strip() or not band.strip():
         raise ValueError("External provider and passband must be supplied")
     project = _project(project_root)
-    file = Path(file_path).expanduser().resolve()
+    file = Path(file_path).expanduser().absolute()
     if not file.is_file() or file.is_symlink():
         raise FileNotFoundError("External input must be an existing ordinary FITS")
     if not file.name.lower().endswith((".fits", ".fit", ".fits.fz", ".fts")):
