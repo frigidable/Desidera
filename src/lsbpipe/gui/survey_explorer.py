@@ -593,6 +593,8 @@ class SurveyExplorer(QMainWindow):
         self.dataset_manager = DatasetManager(self)
         self.dataset_manager.registerRequested.connect(
             self._index_dataset_root)
+        self.dataset_manager.externalRequested.connect(
+            self._register_external_dataset)
         self.dataset_manager.coverageRequested.connect(
             self._inspect_dataset_footprints)
         self.dataset_manager.checksumRequested.connect(
@@ -757,6 +759,38 @@ class SurveyExplorer(QMainWindow):
                     "Index failed; original FITS remain untouched: " + message)
         self._start(job, finished, on_error=failed,
                     operation_name="dataset_index")
+
+    def _register_external_dataset(self, path: str, provider: str, band: str):
+        project = self._object_project
+        if project is None or self.thread is not None:
+            return
+        from lsbpipe.surveys.dataset_registry import (
+            register_external_fits, read_dataset_index)
+        self.dataset_manager.set_busy(True)
+        self.dataset_manager.source_summary.setText(
+            "Registering external original FITS · calibration unassessed")
+        def job(progress):
+            progress.checkpoint()
+            receipt = register_external_fits(
+                project.root, path, provider=provider, band=band)
+            progress.checkpoint()
+            return receipt, read_dataset_index(project.root)
+        def finished(payload):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is not project:
+                return
+            _, index = payload
+            self.dataset_manager.set_index(index)
+            self.message.setText(
+                f"External {provider}/{band} FITS indexed in place · "
+                "native units, PSF and calibration remain unverified.")
+        def failed(message):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is project:
+                self.dataset_manager.source_summary.setText(
+                    "External FITS not indexed: " + message)
+        self._start(job, finished, on_error=failed,
+                    operation_name="dataset_external_import")
 
     def _inspect_dataset_footprints(self):
         project = self._object_project
