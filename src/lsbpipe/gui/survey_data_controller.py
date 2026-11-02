@@ -46,7 +46,8 @@ class SurveyDataController(QObject):
         for row, entry in enumerate(entries):
             check = QCheckBox()
             check.setChecked(
-                checked_paths is None or entry["relative_path"] in checked_paths)
+                checked_paths is not None
+                and entry["relative_path"] in checked_paths)
             check.toggled.connect(w._update_selection_summary)
             holder = QWidget()
             layout = QHBoxLayout(holder)
@@ -195,7 +196,8 @@ class SurveyDataController(QObject):
     def _update_selection_summary(self, *_):
         w = self.owner
         if not w.manifest:
-            w.selected_label.setText("0 files selected")
+            w.selected_label.setText("No files selected")
+            w.download_btn.setEnabled(False)
             return
         selected = w._selected()
         report = summarize_selection(w.manifest["products"], selected)
@@ -207,6 +209,10 @@ class SurveyDataController(QObject):
         w.selected_label.setText(
             f"{report.selected_files} selected / {visible} shown · "
             f"{report.verified_files} HTTP OK · {sizes}")
+        # Never preselect an entire survey product inventory for a
+        # potentially enormous download: user explicitly chooses a quartet
+        # or specific original FITS products.
+        w.download_btn.setEnabled(bool(selected) and w.thread is None)
         w.selected_label.setToolTip(
             f"{report.unknown_size_files} selected files have unknown sizes; "
             f"{report.missing_files} known HTTP-missing.")
