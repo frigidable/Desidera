@@ -40,6 +40,8 @@ def test_clean_initial_survey_hides_unneeded_elements(qtbot):
     assert w.search_btn.isVisible()
     assert w.center_btn.isVisible()
     assert not w.advanced_target.isVisible()
+    for dr in ("dr9", "dr10", "dr11"):
+        assert w.release_boxes[dr].isVisible()
     assert not w.project_status.isVisible()
     assert not w.bricks.isVisible()
     assert not w.data_drawer.isVisible()
@@ -63,7 +65,8 @@ def test_discovery_moves_to_data_step_without_auto_downloading(qtbot):
     apply_offline_state(w, "S1")
     assert w.workflow_stage.text().startswith("02 / 03")
     assert w.bricks.isVisible()
-    assert not w.files.isVisible()
+    assert w.files.isVisible()
+    assert w.files.rowCount() == len(w.manifest["products"])
     assert w.data_drawer.isVisible()
     assert not w.advanced_files.isVisible()
     assert len(w._selected()) == 0
@@ -118,3 +121,31 @@ def test_busy_indicator_only_visible_while_worker_runs(qtbot):
                     timeout=15000)
     assert not w.progress_widget.isVisible()
     assert not w.bar.isVisible()
+
+def test_release_toggle_invalidates_catalog_without_touching_project_files(qtbot):
+    from lsbpipe.gui.survey_explorer import SurveyExplorer
+    with offline_legacy_viewer():
+        window = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(window)
+    window.show()
+    apply_offline_state(window, "S3")
+    assert window.manifest is not None
+    assert len(window._selected()) == 4
+    assert window.files.isVisible()
+    window.release_boxes["dr10"].setChecked(True)
+    assert window.manifest is None
+    assert window.hits == []
+    assert window.bricks.rowCount() == 0
+    assert window.files.rowCount() == 0
+    assert not window.files.isVisible()
+    assert not window.download_btn.isEnabled() or window._selected() == set()
+    assert "Find data" in window.message.text()
+
+
+def test_desidera_launch_compatibility_aliases():
+    from desidera.cli import main as new_cli
+    from desidera.gui.__main__ import main as new_hub
+    from lsbpipe.cli import main as old_cli
+    from lsbpipe.gui.project_hub import main as old_hub
+    assert new_cli is old_cli
+    assert new_hub is old_hub
