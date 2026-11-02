@@ -24,6 +24,39 @@ jobs:
         run: python -m pip install -e ".[astro,test]"
       - name: Validate acceptance runner without network
         run: python -m pytest -q tests/test_real_legacy_ccd_acceptance.py
+      - name: Inspect actual FITS coordinate ranges and north directory
+        continue-on-error: true
+        shell: bash
+        run: |
+          python - <<'PY'
+          from urllib.request import urlopen
+          from io import BytesIO
+          import re
+          from astropy.io import fits
+          base = "https://portal.nersc.gov/cfs/cosmo/data/legacysurvey"
+          for rel in ("dr9", "dr11"):
+              url = f"{base}/{rel}/south/coadd/155/1554p180/legacysurvey-1554p180-ccds.fits"
+              try:
+                  with urlopen(url, timeout=40) as response:
+                      content = response.read()
+                  with fits.open(BytesIO(content)) as hdus:
+                      table = next(h for h in hdus if isinstance(h, fits.BinTableHDU))
+                      print(rel, "ROWS", len(table.data), flush=True)
+                      for col in ("BRICK_X0","BRICK_X1","BRICK_Y0","BRICK_Y1"):
+                          a = table.data[col]
+                          print(rel, col, "MIN", int(min(a)), "MAX", int(max(a)),
+                                "NEGATIVE", sum(int(v < 0) for v in a), flush=True)
+              except Exception as exc:
+                  print(rel, "DIAGNOSTIC_ERROR", repr(exc), flush=True)
+          url = f"{base}/dr9/north/coadd/210/"
+          try:
+              with urlopen(url, timeout=40) as response:
+                  html = response.read().decode("utf-8", "replace")
+              print("NORTH_DIRECTORY", url, "FIRST_LINKS",
+                    re.findall(r'href=["\\\']([^"\\\']+)', html)[:60], flush=True)
+          except Exception as exc:
+              print("NORTH_DIRECTORY_ERROR", repr(exc), flush=True)
+          PY
       - name: Fetch official DR9 DR11 original FITS and audit
         run: python scripts/accept_legacy_ccd_archives.py --report-dir real-ccd-evidence
       - name: Preserve actual evidence even when audit fails
