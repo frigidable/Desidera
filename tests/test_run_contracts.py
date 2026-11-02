@@ -199,7 +199,11 @@ def test_run_science_qa_publishes_in_project_not_external_data(tmp_path, monkeyp
                         lambda *a, **k: report)
     monkeypatch.setattr(square_coverage, "save_square_coverage",
                         lambda *a: a[-1].write_text('{"status":"diagnostic"}'))
-    amended = replace(ctx, directory=str(data_root))
+    amended = ScienceContext.capture(
+        action="square", field=FIELD, hit=HIT, band="r",
+        directory=data_root, project_id=p.project_id,
+        target_radius_arcsec=35., sky_inner_arcsec=65.,
+        sky_outer_arcsec=110.)
     output = run_science_qa(
         "square", field=FIELD, hit=HIT, band="r",
         directory=data_root, context=amended, project_root=p.root)
