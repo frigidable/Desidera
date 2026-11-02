@@ -1,4 +1,4 @@
-"""Strict, locale-friendly target entry for the LSBpipe GUI.
+"""Strict, locale-friendly target entry for the DESIDERA GUI.
 
 Parsing is independent of Qt and network access. RA decimal input is in
 DEGREES; colon/hms RA is in hours. Field width is always returned in
