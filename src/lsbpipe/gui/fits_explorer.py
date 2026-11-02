@@ -299,7 +299,7 @@ class FITSExplorer(QWidget):
         self.view.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.viewport_hint = QLabel(
-            "Original FITS · wheel zoom · drag to pan · hover for ICRS")
+            "No FITS loaded · select a brick and choose Open FITS Explorer")
         self.viewport_hint.setObjectName("fits_viewport_hint")
         self.viewport_hint.setWordWrap(True)
         image_layout.addWidget(self.viewport_hint)
@@ -354,6 +354,8 @@ class FITSExplorer(QWidget):
         self.pixel_info.setText(
             "The selected field or band changed. Reload the original FITS.")
         self.context.setText("No local science data loaded.")
+        self.viewport_hint.setText(
+            "No FITS loaded · select a brick and choose Open FITS Explorer")
         self.scene.setSceneRect(0, 0, 0, 0)
         self.render_status.setText("No original FITS render loaded.")
         self.scale_bar.clear()
@@ -377,6 +379,8 @@ class FITSExplorer(QWidget):
                 "viewer limit; select a narrower field. Tiled mode is pending.")
         self.clear_data()
         self._dataset = dataset
+        self.viewport_hint.setText(
+            "Wheel to zoom · drag to pan · hover for original FITS values")
         ny, nx = shape
         self.scene.setSceneRect(0, 0, nx, ny)
         self.context.setText(
