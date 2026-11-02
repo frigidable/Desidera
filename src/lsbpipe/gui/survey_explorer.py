@@ -300,7 +300,12 @@ class SurveyExplorer(QMainWindow):
         data_panel.setSpacing(6)
 
         # A vertical inspector should not behave like a wide spreadsheet.
-        data_panel.addWidget(QLabel("Archive product set"))
+        data_panel.addWidget(QLabel("Files from the Legacy Surveys"))
+        self.advanced_files = QWidget()
+        self.advanced_files.setObjectName("archive_advanced_options")
+        advanced_files_layout = QVBoxLayout(self.advanced_files)
+        advanced_files_layout.setContentsMargins(0, 4, 0, 4)
+        advanced_files_layout.setSpacing(6)
         self.profile = QComboBox()
         self.profile.addItems([
             "Standard: image, invvar, maskbits, nexp, Tractor",
@@ -309,10 +314,10 @@ class SurveyExplorer(QMainWindow):
             QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.profile.setMinimumContentsLength(13)
         self.profile.currentIndexChanged.connect(self._apply_profile)
-        data_panel.addWidget(self.profile)
+        advanced_files_layout.addWidget(self.profile)
         self.verify_btn = QPushButton("Check selected URLs")
         self.verify_btn.clicked.connect(self.verify)
-        data_panel.addWidget(self.verify_btn)
+        advanced_files_layout.addWidget(self.verify_btn)
 
         filters = QHBoxLayout()
         self.brick_filter = QComboBox()
@@ -323,13 +328,13 @@ class SurveyExplorer(QMainWindow):
         self.band_filter.addItems(["All bands", "g", "r", "i", "z"])
         self.band_filter.currentIndexChanged.connect(self._filter_products)
         filters.addWidget(self.band_filter, 1)
-        data_panel.addLayout(filters)
+        advanced_files_layout.addLayout(filters)
         self.kind_filter = QComboBox()
         self.kind_filter.addItems(
             ["All products", "image", "invvar", "maskbits", "nexp",
              "tractor", "psfsize", "depth", "galdepth", "model"])
         self.kind_filter.currentIndexChanged.connect(self._filter_products)
-        data_panel.addWidget(self.kind_filter)
+        advanced_files_layout.addWidget(self.kind_filter)
 
         self.selected_label = QLabel("0 files selected")
         self.selected_label.setWordWrap(True)
@@ -347,12 +352,12 @@ class SurveyExplorer(QMainWindow):
         self.clear_visible_btn = QPushButton("Clear visible")
         self.clear_visible_btn.clicked.connect(lambda: self._set_visible_selection(False))
         selection_actions.addWidget(self.clear_visible_btn)
-        data_panel.addLayout(selection_actions)
+        advanced_files_layout.addLayout(selection_actions)
         self.clear_all_btn = QPushButton("Clear all (including hidden)")
         self.clear_all_btn.setToolTip(
             "Deselect every file, including entries hidden by the current filters")
         self.clear_all_btn.clicked.connect(self._clear_all_selection)
-        data_panel.addWidget(self.clear_all_btn)
+        advanced_files_layout.addWidget(self.clear_all_btn)
 
         self.files = QTableWidget(0, 4)
         self.files.setAccessibleName(
@@ -383,7 +388,7 @@ class SurveyExplorer(QMainWindow):
         self.qa_toggle.setChecked(False)
         self.qa_toggle.setToolTip(
             "Show circular source and sky-ring radii for local FITS diagnostics")
-        data_panel.addWidget(self.qa_toggle)
+        advanced_files_layout.addWidget(self.qa_toggle)
         self.qa_widget = QWidget()
         qa_layout = QVBoxLayout(self.qa_widget)
         qa_layout.setContentsMargins(0, 0, 0, 0)
@@ -417,14 +422,25 @@ class SurveyExplorer(QMainWindow):
             "Analyse downloaded IMAGE, INVVAR, NEXP and MASKBITS")
         self.qa_btn.clicked.connect(self.inspect_coverage)
         qa_layout.addWidget(self.qa_btn)
-        data_panel.addWidget(self.qa_widget)
+        advanced_files_layout.addWidget(self.qa_widget)
+        self.files_options = QPushButton("Advanced file options")
+        self.files_options.setObjectName("archive_advanced_toggle")
+        self.files_options.setCheckable(True)
+        self.files_options.setChecked(False)
+        self.files_options.setToolTip(
+            "Optional HTTP verification, survey file filters, "
+            "custom selection, coverage radii and manifest export")
+        data_panel.addWidget(self.files_options)
+        data_panel.addWidget(self.advanced_files)
+        self.files_options.toggled.connect(self.advanced_files.setVisible)
+        self.advanced_files.setVisible(False)
         self.qa_toggle.toggled.connect(self.qa_widget.setVisible)
         self.qa_widget.setVisible(False)
 
         bottom = QHBoxLayout()
         self.save_btn = QPushButton("Save manifest")
         self.save_btn.clicked.connect(self.save)
-        bottom.addWidget(self.save_btn)
+        advanced_files_layout.addWidget(self.save_btn)
         self.download_btn = QPushButton("Download selected")
         self.download_btn.clicked.connect(self.download)
         bottom.addWidget(self.download_btn)
@@ -470,6 +486,7 @@ class SurveyExplorer(QMainWindow):
         # Progress remains visible even when the data drawer is closed.
         self.bar = QProgressBar()
         self.bar.setValue(0)
+        self.bar.setVisible(False)
         progress_controls = QHBoxLayout()
         progress_controls.addWidget(self.bar, 1)
         self.stop_task_btn = QPushButton("Request stop")
@@ -480,9 +497,15 @@ class SurveyExplorer(QMainWindow):
             "thread is forcibly terminated; completed receipts are preserved.")
         self.stop_task_btn.clicked.connect(self._request_stop)
         progress_controls.addWidget(self.stop_task_btn)
-        panel.addLayout(progress_controls)
-        self.message = QLabel("Ready")
+        self.progress_widget = QWidget()
+        self.progress_widget.setObjectName("workflow_task_progress")
+        self.progress_widget.setLayout(progress_controls)
+        panel.addWidget(self.progress_widget)
+        self.progress_widget.setVisible(False)
+        self.message = QLabel("")
         self.message.setWordWrap(True)
+        self.message.setStyleSheet("color: palette(mid); font-size: 11px;")
+        self.message.setMaximumHeight(58)
         panel.addWidget(self.message)
 
         self.sky = QWebEngineView()
@@ -600,8 +623,9 @@ class SurveyExplorer(QMainWindow):
             # a new-project wizard may explicitly request that separately.
             self.inspector_tabs.setCurrentWidget(self.inspector_tabs.widget(0))
             self.preview_tabs.setCurrentWidget(self.sky)
-            self.data_drawer.show()
-            self._size_data_drawer()
+            # No catalog and no local FITS: do not occupy a third of the
+            # viewport with an empty advanced archive inspector.
+            self.data_drawer.hide()
             self.message.setText(
                 f"Project {project.display_name} opened in Survey Explorer. "
                 "No survey archive search or FITS download has been performed.")
