@@ -14,7 +14,7 @@ from PySide6.QtGui import QPixmap, QColor, QPen, QPainterPath
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QComboBox, QCheckBox, QFrame, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsPathItem,
+    QGraphicsPathItem, QGraphicsScene,
 )
 
 from .fits_explorer import FITSExplorer, FITSGraphicsView
@@ -32,7 +32,6 @@ def load_multiband_originals(*, directory, field, hit, radii, checkpoint=None):
     release/region. The full read happens in a GUI-owned background worker.
     """
     from .qa_records import original_quartet
-    from .science_workflows import science_data_root
     from .fits_raster import prepare_fits_explorer
     from pathlib import Path
 
