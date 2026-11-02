@@ -293,7 +293,7 @@ class WorkspaceTaskController(QObject):
         w.progress_widget.setVisible(False)
         w.bar.setVisible(False)
         w.search_btn.setEnabled(True)
-        w.download_btn.setEnabled(True)
+        w.download_btn.setEnabled(bool(w._selected()))
         w.verify_btn.setEnabled(True)
         w.qa_btn.setEnabled(True)
         w.science_qa.set_busy(False)
