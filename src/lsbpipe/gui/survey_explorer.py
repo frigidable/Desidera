@@ -34,6 +34,7 @@ from lsbpipe.gui.target_input import (
 from lsbpipe.gui.qa_workbench import ScienceQAControls
 from lsbpipe.gui.fits_explorer import FITSExplorer
 from lsbpipe.gui.four_layer_comparison import FourLayerComparison
+from lsbpipe.gui.multiband_comparison import MultibandComparison, load_multiband_originals
 from lsbpipe.gui.fits_raster import prepare_fits_explorer
 from lsbpipe.gui.science_workflows import run_science_qa as run_science_qa_backend
 from lsbpipe.gui.qa_records import ScienceContext
@@ -553,11 +554,20 @@ class SurveyExplorer(QMainWindow):
         self.preview_label.setAccessibleName("Remote image provenance warning")
         heading_row = QHBoxLayout()
         heading_row.addWidget(self.preview_label, 1)
-        self.comparison_btn = QPushButton("Compare 4 layers")
+        self.band_compare_btn = QPushButton("Compare bands · g/r/i/z")
+        self.band_compare_btn.setObjectName("fits_open_band_comparison")
+        self.band_compare_btn.setToolTip(
+            "Compare original IMAGE in all locally available optical bands "
+            "for the selected brick. WCS-linked sky navigation; no resampling, "
+            "PSF matching or photometric color measurement.")
+        self.band_compare_btn.clicked.connect(self._toggle_multiband)
+        heading_row.addWidget(self.band_compare_btn)
+        self.comparison_btn = QPushButton("Inspect data quality · 4 maps")
         self.comparison_btn.setObjectName("fits_open_four_comparison")
         self.comparison_btn.setToolTip(
-            "Open an interactive 2×2 comparison of original IMAGE, INVVAR, "
-            "NEXP and MASKBITS. No PNG is used for this workspace.")
+            "For ONE optical band, inspect four complementary diagnostics: "
+            "IMAGE (signal), INVVAR (weight), NEXP (exposure count), "
+            "MASKBITS (flags). This is not a comparison of filters.")
         self.comparison_btn.clicked.connect(self._toggle_four_comparison)
         heading_row.addWidget(self.comparison_btn)
         preview_layout.addLayout(heading_row)
@@ -569,6 +579,7 @@ class SurveyExplorer(QMainWindow):
         # The four-layer workspace is revealed only when requested. It is a
         # live interactive viewer, not a QPixmap of a previously saved PNG.
         self.four_layer_comparison = FourLayerComparison(self)
+        self.multiband_comparison = MultibandComparison(self)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -993,6 +1004,7 @@ class SurveyExplorer(QMainWindow):
         for widget in (self.bricks, self.bricks_heading, self.bricks_help):
             widget.setVisible(has_bricks)
         self.comparison_btn.setVisible(bool(local_available or image_ready))
+        self.band_compare_btn.setVisible(bool(local_available))
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
             else "Data & diagnostics")
@@ -1534,13 +1546,18 @@ class SurveyExplorer(QMainWindow):
         self._comparison_requested = False
         if hasattr(self, "four_layer_comparison"):
             self.four_layer_comparison.clear_data()
+        if hasattr(self, "multiband_comparison"):
+            self.multiband_comparison.clear_data()
         if (hasattr(self, "comparison_btn") and
                 self.preview_tabs.indexOf(self.four_layer_comparison) >= 0):
             self._close_four_comparison()
+        if (hasattr(self, "multiband_comparison") and
+                self.preview_tabs.indexOf(self.multiband_comparison) >= 0):
+            self._close_multiband()
         self._refresh_workflow()
 
     def _preview_tab_changed(self, tab):
-        if tab in (1, 2):
+        if tab != 0:
             # Survey downloads and Science QA live in a separate inspector.
             # Hide it when entering pixel analysis, so 1366px displays keep
             # adequate width for the actual scientific image.
@@ -1559,7 +1576,7 @@ class SurveyExplorer(QMainWindow):
         self.preview_tabs.setCurrentWidget(self.fits_explorer)
         self.preview_tabs.removeTab(tab)
         self.four_layer_comparison.clear_data()
-        self.comparison_btn.setText("Compare 4 layers")
+        self.comparison_btn.setText("Inspect data quality · 4 maps")
 
     def _open_four_comparison(self, dataset):
         if not self._qa_context_current(dataset):
@@ -1572,9 +1589,9 @@ class SurveyExplorer(QMainWindow):
             return
         if self.preview_tabs.indexOf(self.four_layer_comparison) < 0:
             self.preview_tabs.addTab(
-                self.four_layer_comparison, "Four-layer QA")
+                self.four_layer_comparison, "Data quality · 4 maps")
         self.preview_tabs.setCurrentWidget(self.four_layer_comparison)
-        self.comparison_btn.setText("Close comparison")
+        self.comparison_btn.setText("Close data quality")
         self.message.setText(
             "Interactive IMAGE / INVVAR / NEXP / MASKBITS comparison. "
             "Zoom, pan and hover on original FITS pixels.")
@@ -1595,6 +1612,94 @@ class SurveyExplorer(QMainWindow):
             return
         self._comparison_requested = True
         self.start_science_qa("explore")
+
+    def _close_multiband(self):
+        index = self.preview_tabs.indexOf(self.multiband_comparison)
+        if index < 0:
+            return
+        self.preview_tabs.setCurrentWidget(self.fits_explorer)
+        self.preview_tabs.removeTab(index)
+        self.multiband_comparison.clear_data()
+        self.band_compare_btn.setText("Compare bands · g/r/i/z")
+
+    def _toggle_multiband(self):
+        """Inspect all locally available original bands for ONE selected brick.
+
+        The worker performs a read-only FITS/WCS check on each complete
+        quartet. Missing filters remain missing. No catalogue or HTTP call.
+        """
+        if self.preview_tabs.indexOf(self.multiband_comparison) >= 0:
+            self._close_multiband()
+            return
+        if self.thread is not None:
+            QMessageBox.information(
+                self, "Operation running", "Finish the active task first.")
+            return
+        if not self._brick_result_matches_target():
+            QMessageBox.warning(
+                self, "Select a current brick",
+                "Choose a brick belonging to the current ICRS target.")
+            return
+        row = self.bricks.currentRow()
+        if not (self.bricks.selectedItems() and 0 <= row < len(self.hits)):
+            QMessageBox.information(
+                self, "Select a brick",
+                "Select the exact release / region / brick to compare.")
+            return
+        field = self._validated_field()
+        if field is None:
+            return
+        directory = self.science_qa.directory.text().strip()
+        if not directory:
+            QMessageBox.information(
+                self, "Choose original FITS",
+                "Select a local FITS directory before comparing bands.")
+            return
+        hit = self.hits[row]
+        radii = (self.target_radius.value(), self.sky_inner.value(),
+                 self.sky_outer.value())
+        if not 0 < radii[0] <= radii[1] < radii[2] <= 1200:
+            QMessageBox.warning(self, "Invalid aperture radii",
+                                "Check target and sky-ring radii.")
+            return
+        context = self._current_science_context("multiband_display")
+        if context is None:
+            return
+        ticket = self._qa_generation
+        self.message.setText(
+            "Loading local g/r/i/z FITS for WCS-linked comparison…")
+        def job(progress):
+            return load_multiband_originals(
+                directory=directory, field=field, hit=hit, radii=radii,
+                checkpoint=progress.checkpoint)
+        self._start(
+            job,
+            lambda result: self._deliver_science_result(
+                result, context=context, ticket=ticket,
+                callback=self._multiband_ready),
+            on_error=lambda message: self._deliver_multiband_error(
+                message, context=context, ticket=ticket))
+
+    def _deliver_multiband_error(self, message, *, context, ticket):
+        if self._science_ticket_current(context=context, ticket=ticket):
+            self.message.setText(
+                "Could not compare original filters: " + message)
+
+    def _multiband_ready(self, result):
+        try:
+            self.multiband_comparison.set_data(result)
+        except (ValueError, RuntimeError) as exc:
+            self.message.setText("Multi-band display rejected: " + str(exc))
+            return
+        if self.preview_tabs.indexOf(self.multiband_comparison) < 0:
+            self.preview_tabs.addTab(
+                self.multiband_comparison, "Compare optical bands")
+        self.preview_tabs.setCurrentWidget(self.multiband_comparison)
+        self.band_compare_btn.setText("Close band comparison")
+        self.message.setText(
+            "Read-only native optical bands. Linked by ICRS/WCS; "
+            "no color calibration, PSF matching or adopted photometry.")
+        self._refresh_workflow()
 
     def _review_science_history(self):
         """Read prior completed receipts without performing a new science run."""
@@ -1967,6 +2072,7 @@ class SurveyExplorer(QMainWindow):
             self._closing_task_ui = True
             self.fits_explorer.shutdown_renderer()
             self.four_layer_comparison.shutdown_renderer()
+            self.multiband_comparison.shutdown_renderer()
             super().closeEvent(event)
 
 
