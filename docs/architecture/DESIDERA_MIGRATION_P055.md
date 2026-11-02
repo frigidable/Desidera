@@ -80,3 +80,24 @@ Qt paint artifacts from native or third-party overlays. The inference is
 diagnostic rather than proof; Qt native windows are sometimes rendered
 differently depending on platform and grab semantics. No diagnostic files
 are written into a galaxy project or research-data folder.
+
+## Root cause confirmed by user-supplied Qt/native captures (P0.5.6c)
+
+Both `qt_widget_corner.png` and `native_window_corner.png` show the
+translucent controls over Back to Projects. The accompanying
+`ui_diagnostic.json` proves that three optional science views were
+visible at the workspace's exact origin with the default `100×30` size:
+`FourLayerComparison`, `MultibandComparison` and `DatasetManager`.
+Their child controls intersect the same top-left rectangle; for example,
+`fits_multiband_stretch`, `fits_four_fit_all` and several Data Manager
+buttons. Qt hit testing confirms the real Back to Projects button remains
+underneath. This rules out the embedded WebEngine page as the origin.
+
+**Fix**: Construct the optional pages with `preview_tabs` as their owner
+instead of `QMainWindow`, and explicitly hide them until
+`QTabWidget.addTab()`. Close actions explicitly hide removed pages as well.
+Regression tests cover both startup and open/close/reopen lifecycle.
+The scientific FITS pipeline and the project's persisted data are unchanged.
+
+Retain no-WebEngine and capture switches as opt-in troubleshooting only.
+Normal DESIDERA launches should use the usual accelerated remote map.
