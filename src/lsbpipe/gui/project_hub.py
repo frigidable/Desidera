@@ -629,7 +629,9 @@ class ProjectHub(QMainWindow):
             return
         self.workspace = workspace
         workspace.returnToProjects.connect(self._return_from_workspace)
-        workspace.show()
+        # Windowed maximized mode retains OS taskbar and title bar.
+        # Do not use frameless/full-screen presentation.
+        workspace.showMaximized()
         self.hide()
         self.projectOpened.emit(project.project_id)
 
@@ -654,5 +656,5 @@ class ProjectHub(QMainWindow):
 def main():
     app = QApplication.instance() or QApplication([])
     hub = ProjectHub()
-    hub.show()
+    hub.showMaximized()
     return app.exec()
