@@ -42,7 +42,7 @@ def test_window_resizes_without_losing_core_widgets(offline_explorer, qtbot, wid
     assert window.centralWidget() is not None
     assert window.search_btn.isVisible()
     assert window.sky.isVisible()
-    assert window.bricks.isVisible()
+    assert not window.bricks.isVisible()  # no irrelevant empty brick grid
     assert not window.data_drawer.isVisible()
     actual = window.size()
     screen = window.screen()
@@ -93,6 +93,8 @@ def test_filtering_does_not_silently_deselect_hidden_files(offline_explorer):
         entry("maskbits.fits", "maskbits", None),
     ]}
     window._fill_files()
+    assert window._selected() == set()  # no implicit bulk download
+    window._set_visible_selection(True)
     assert window._selected() == {
         "r-image.fits", "g-image.fits", "maskbits.fits",
     }
@@ -115,8 +117,10 @@ def test_data_workbench_is_progressive_and_essential_actions_remain_reachable(
     assert window.data_drawer.isVisible()
     assert window.files.isVisible()
     assert window.files.minimumHeight() >= 148
-    assert window.qa_toggle.isVisible()
+    assert not window.qa_toggle.isVisible()
     assert not window.qa_widget.isVisible()
+    window.files_options.click()
+    assert window.qa_toggle.isVisible()
     window.qa_toggle.click()
     qtbot.wait(20)
     assert window.qa_widget.isVisible()
@@ -129,11 +133,12 @@ def test_data_workbench_is_progressive_and_essential_actions_remain_reachable(
     qtbot.wait(20)
     assert not window.data_drawer.isVisible()
     assert window.message.isVisible()
-    assert window.bar.isVisible()
+    assert not window.bar.isVisible()
+    assert not window.progress_widget.isVisible()
 
 
 @pytest.mark.parametrize("state,expected", [
-    ("S1", 88), ("S2", 88), ("S3", 4)
+    ("S1", 0), ("S2", 0), ("S3", 4)
 ])
 def test_offline_population_scenarios_and_selection(offline_explorer, state, expected):
     window = offline_explorer
@@ -169,6 +174,7 @@ def test_navigation_scroll_keeps_dense_controls_accessible(offline_explorer, qtb
 def test_selection_can_explicitly_clear_hidden_and_visible_products(offline_explorer):
     window = offline_explorer
     apply_offline_state(window, "S1")
+    window._set_visible_selection(True)
     assert len(window._selected()) == 88
     window.band_filter.setCurrentText("r")
     window.kind_filter.setCurrentText("image")
@@ -448,7 +454,7 @@ def test_redundant_viewer_controls_and_summary_removed(offline_explorer):
     assert not hasattr(w, "diagnostic_btn")
     assert not hasattr(w, "web_scale")
     assert not hasattr(w, "summary")
-    assert w.bricks.isVisible()
+    assert not w.bricks.isVisible()
 
 
 def test_brick_selection_preserves_embedded_viewer_zoom_and_native_browser_fallback(offline_explorer):
@@ -533,7 +539,7 @@ def test_science_workbench_is_a_separate_tab_preserving_archive_and_viewer(
     assert w.preview_tabs.currentWidget() is w.sky
     assert w.files.columnCount() == 4
     assert w.save_btn.isEnabled()
-    assert w.download_btn.isEnabled()
+    assert not w.download_btn.isEnabled()
     assert not w.science_qa.buttons["square"].isEnabled()
     assert not w.science_qa.buttons["compare"].isEnabled()
     apply_offline_state(w, "S3")
@@ -613,7 +619,7 @@ def test_static_png_export_does_not_replace_interactive_fits_workspace(
     assert w.preview_tabs.currentWidget() is w.sky
     assert w._qa_pixmap is None
     assert "Optional diagnostic PNG exported" in w.message.text()
-    assert w.comparison_btn.isVisible()
+    assert not w.comparison_btn.isVisible()  # no local quartet yet
     assert "interactive" in w.comparison_btn.toolTip().lower()
 
 
@@ -711,6 +717,10 @@ def test_science_workflow_groups_inspect_masks_and_dr9_comparison(
     w.inspector_tabs.setCurrentWidget(w.science_qa)
     qa = w.science_qa
     assert qa.steps.count() == 3
+    assert not qa.steps.isVisible()
+    assert qa.buttons["explore"].isVisible()
+    qa.advanced_toggle.click()
+    assert qa.steps.isVisible()
     assert qa.steps.currentIndex() == 0
     assert qa.buttons["square"].isVisible()
     assert qa.buttons["explore"].isVisible()
