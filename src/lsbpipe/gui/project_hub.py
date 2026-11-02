@@ -348,7 +348,10 @@ class ProjectHub(QMainWindow):
     def _new_project(self):
         dialog = CreateProjectDialog(self)
         if dialog.exec() == QDialog.Accepted and dialog.project is not None:
-            self._enter_project(dialog.project)
+            # Completing the new-project wizard is an explicit request to
+            # enter the survey Explorer at the supplied target coordinates.
+            # Do not auto-search bricks or download science FITS.
+            self._enter_project(dialog.project, show_remote=True)
 
     def _import_dialog(self):
         directory = QFileDialog.getExistingDirectory(
@@ -437,7 +440,7 @@ class ProjectHub(QMainWindow):
         except (OSError, ValueError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open project", str(exc))
 
-    def _enter_project(self, project):
+    def _enter_project(self, project, *, show_remote=False):
         if self.workspace is not None:
             return
         try:
@@ -445,6 +448,14 @@ class ProjectHub(QMainWindow):
             workspace = SurveyExplorer(
                 restore_session=False, launch_remote=False)
             workspace.attach_object_project(project)
+            if show_remote and project.field is not None:
+                # The user explicitly created a target; display the original
+                # remote Sky Explorer, not a vacant FITS panel. Reopening an
+                # existing project remains offline unless requested.
+                workspace.preview_tabs.setCurrentWidget(workspace.sky)
+                workspace.inspector_tabs.setCurrentWidget(
+                    workspace.inspector_tabs.widget(0))
+                workspace.show_viewer()
             from lsbpipe.surveys.operation_journal import interrupted_operations
             interrupted = interrupted_operations(project.root)
             if interrupted:
