@@ -216,8 +216,10 @@ def inspect_brick_ccd_catalog(
     region = source["region"]
     brick = asset["brick"]
     # Exact input digest participates in catalogue provenance identity.
+    # The one per-brick CCD table is deliberately reused for g/r/i/z;
+    # receipts are scoped to the exact registered image asset and band.
     ref = (f"legacy_brick_ccds:{release}:{region}:{brick}:"
-           f"sha256:{sha}")
+           f"{asset['band']}:asset:{coadd_asset_id}:sha256:{sha}")
     return {
         "catalogue_reference": ref,
         "catalogue_path_ref": _path_reference(file, project.root),
