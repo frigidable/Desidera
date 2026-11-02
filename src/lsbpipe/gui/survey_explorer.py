@@ -39,6 +39,7 @@ from lsbpipe.gui.qa_records import ScienceContext
 from lsbpipe.gui.task_execution import (
     TaskWorker, TaskDispatch, TaskToken, WorkspaceTaskController)
 from lsbpipe.gui.target_controller import TargetController, TargetTextField
+from lsbpipe.gui.survey_data_controller import SurveyDataController
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -88,6 +89,7 @@ class SurveyExplorer(QMainWindow):
         self._project_save_timer.timeout.connect(self._save_project_state)
         self._task_controller = WorkspaceTaskController(self)
         self._target_controller = TargetController(self)
+        self._data_controller = SurveyDataController(self)
         self._build_ui()
         if self._restore_session:
             self._restore_last_project()
@@ -1143,197 +1145,41 @@ class SurveyExplorer(QMainWindow):
         self.message.setText(f"{len(manifest['products'])} candidate files")
 
     def _fill_brick_filters(self):
-        previous = self.brick_filter.currentText()
-        self.brick_filter.blockSignals(True)
-        self.brick_filter.clear()
-        self.brick_filter.addItem("All bricks")
-        for brick in sorted({hit.name for hit in self.hits}):
-            self.brick_filter.addItem(brick)
-        index = self.brick_filter.findText(previous)
-        self.brick_filter.setCurrentIndex(max(0, index))
-        self.brick_filter.blockSignals(False)
+        return self._data_controller._fill_brick_filters()
 
     def _fill_files(self, *, checked_paths=None):
-        """Compact row identity, full provenance on hover, persistent selection."""
-        entries = self.manifest["products"] if self.manifest else []
-        self.files.setRowCount(len(entries))
-        for row, entry in enumerate(entries):
-            check = QCheckBox()
-            check.setChecked(
-                checked_paths is None or entry["relative_path"] in checked_paths)
-            check.toggled.connect(self._update_selection_summary)
-            holder = QWidget()
-            layout = QHBoxLayout(holder)
-            layout.setContentsMargins(1, 0, 1, 0)
-            layout.addWidget(check, alignment=Qt.AlignCenter)
-            self.files.setCellWidget(row, 0, holder)
-            suffix = f"{entry['kind']}-{entry['band']}" if entry["band"] else entry["kind"]
-            name = f"{entry['release'].upper()} {entry['brick']} · {suffix}"
-            detail = entry["relative_path"] + chr(10) + entry["url"]
-            values = (
-                (1, name),
-                (2, self._short_http_evidence(entry["evidence"])),
-                (3, "—"))
-            for col, value in values:
-                item = QTableWidgetItem(str(value))
-                item.setToolTip(detail + chr(10) + f"Status: {entry['evidence']}")
-                self.files.setItem(row, col, item)
-        self._filter_products()
-        self._mark_local_files()
+        return self._data_controller._fill_files(checked_paths=checked_paths)
 
     def _mark_local_files(self):
-        """Annotate local evidence separately from remote HTTP verification."""
-        project = self._local_project
-        if project is None or self.manifest is None:
-            return
-        for row, entry in enumerate(self.manifest["products"]):
-            path = entry["relative_path"]
-            local = project.data_root / path
-            if path in project.on_disk and local.is_file():
-                mib = local.stat().st_size / 1048576.
-                self.files.item(row, 3).setText(f"{mib:.0f}")
-                self.files.item(row, 3).setToolTip(
-                    f"LOCAL PRESENT · {local} · {mib:.2f} MiB. "
-                    "Existence is not a science/remote integrity check.")
-                name = self.files.item(row, 1)
-                name.setToolTip(name.toolTip() + "\nLOCAL PRESENT (unverified)")
-            else:
-                name = self.files.item(row, 1)
-                name.setToolTip(name.toolTip() + "\nNOT FOUND in active local project")
-        complete = sum(project.complete.values())
-        self.project_status.setText(
-            f"LOCAL · {project.root.name} · {len(project.on_disk)} original "
-            f"products on disk · {complete}/{len(project.complete)} "
-            "complete band quartets (not scientifically verified)")
+        return self._data_controller._mark_local_files()
 
     @staticmethod
     def _short_http_evidence(evidence):
-        return {
-            "HTTP_OK": "OK", "HTTP_MISSING": "404",
-            "HTTP_ERROR": "ERR", "HTTP_UNVERIFIED": "?", 
-            "UNVERIFIED_URL": "?",
-        }.get(evidence, "?")
+        return SurveyDataController.short_http_evidence(evidence)
 
     def _is_visible_product(self, entry):
-        return matching_product(
-            entry,
-            brick=self.brick_filter.currentText(),
-            band=self.band_filter.currentText(),
-            kind=self.kind_filter.currentText())
+        return self._data_controller._is_visible_product(entry)
 
     def _filter_products(self, *_):
-        if self.manifest is None:
-            return
-        for row, entry in enumerate(self.manifest["products"]):
-            self.files.setRowHidden(row, not self._is_visible_product(entry))
-        self._update_selection_summary()
+        return self._data_controller._filter_products()
 
     def _set_visible_selection(self, checked: bool):
-        if self.manifest is None:
-            return
-        for row in range(self.files.rowCount()):
-            if not self.files.isRowHidden(row):
-                self.files.cellWidget(
-                    row, 0).findChild(QCheckBox).setChecked(checked)
-        self._update_selection_summary()
+        return self._data_controller._set_visible_selection(checked)
 
     def select_science_quartet(self):
-        """Prepare *exactly* four primary science products for a brick and band.
-
-        Explicitly clears the whole manifest selection, not just visible
-        rows, so choosing one science bundle cannot accidentally leave 80
-        unrelated files selected.
-        """
-        if self.manifest is None:
-            return
-        row = self.bricks.currentRow()
-        if not (0 <= row < len(self.hits)):
-            QMessageBox.information(
-                self, "Select a brick",
-                "Select one release/region brick row above first.")
-            return
-        hit = self.hits[row]
-        bands = tuple(hit.median_exposures)
-        if not bands:
-            QMessageBox.warning(self, "No band", "No optical bands listed.")
-            return
-        default = bands.index("r") if "r" in bands else 0
-        band, ok = QInputDialog.getItem(
-            self, "Science quartet", "Band:", list(bands), default, False)
-        if not ok:
-            return
-        needed = {
-            (hit.release, hit.region, hit.name, "image", band),
-            (hit.release, hit.region, hit.name, "invvar", band),
-            (hit.release, hit.region, hit.name, "nexp", band),
-            (hit.release, hit.region, hit.name, "maskbits", None)}
-        available = {
-            (e["release"],e["region"],e["brick"],e["kind"],e["band"])
-            for e in self.manifest["products"]}
-        if not needed.issubset(available):
-            QMessageBox.warning(
-                self, "Incomplete manifest",
-                "Not all four products are in the current download profile.")
-            return
-        for i, entry in enumerate(self.manifest["products"]):
-            key = (entry["release"],entry["region"],entry["brick"],
-                   entry["kind"],entry["band"])
-            self.files.cellWidget(
-                i,0).findChild(QCheckBox).setChecked(key in needed)
-        self._update_selection_summary()
-        self.message.setText(
-            f"Science quartet selected: {hit.release.upper()} "
-            f"{hit.region} {hit.name} {band}-band. "
-            "Verify URLs before downloading.")
+        return self._data_controller.select_science_quartet()
 
     def _clear_all_selection(self):
-        """Explicitly deselect visible AND hidden products."""
-        if self.manifest is None:
-            return
-        for row in range(self.files.rowCount()):
-            self.files.cellWidget(
-                row, 0).findChild(QCheckBox).setChecked(False)
-        self._update_selection_summary()
-        self.message.setText(
-            "All products deselected, including hidden rows. "
-            "Use Select visible or Science quartet to choose download files.")
+        return self._data_controller._clear_all_selection()
 
     def _selected(self):
-        if not self.manifest:
-            return set()
-        return {
-            self.manifest["products"][row]["relative_path"]
-            for row in range(self.files.rowCount())
-            if self.files.cellWidget(row, 0).findChild(QCheckBox).isChecked()
-        }
+        return self._data_controller._selected()
 
     def _update_selection_summary(self, *_):
-        if not self.manifest:
-            self.selected_label.setText("0 files selected")
-            return
-        selected = self._selected()
-        report = summarize_selection(self.manifest["products"], selected)
-        visible = sum(not self.files.isRowHidden(row)
-                      for row in range(self.files.rowCount()))
-        sizes = (f"{report.known_mib:.1f} MiB confirmed + unknown"
-                 if report.unknown_size_files else
-                 f"{report.known_mib:.1f} MiB")
-        self.selected_label.setText(
-            f"{report.selected_files} selected / {visible} shown · "
-            f"{report.verified_files} HTTP OK · {sizes}")
-        self.selected_label.setToolTip(
-            f"{report.unknown_size_files} selected files have unknown sizes; "
-            f"{report.missing_files} known HTTP-missing.")
+        return self._data_controller._update_selection_summary()
 
     def _apply_profile(self, _=None):
-        if self.manifest is None:
-            return
-        previous_selection = self._selected()
-        from lsbpipe.surveys.legacy import build_manifest, DEFAULT_PRODUCTS
-        kinds = DEFAULT_PRODUCTS if self.profile.currentIndex() == 0 else (
-            DEFAULT_PRODUCTS + ("psfsize", "depth", "galdepth", "model"))
-        self.manifest = build_manifest(self._field(), self.hits, kinds=kinds)
-        self._fill_files(checked_paths=previous_selection)
+        return self._data_controller._apply_profile()
 
     def verify(self):
         if not self.manifest:
