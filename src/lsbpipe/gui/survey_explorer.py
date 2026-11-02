@@ -40,6 +40,7 @@ from lsbpipe.gui.task_execution import (
     TaskWorker, TaskDispatch, TaskToken, WorkspaceTaskController)
 from lsbpipe.gui.target_controller import TargetController, TargetTextField
 from lsbpipe.gui.survey_data_controller import SurveyDataController
+from lsbpipe.gui.science_context_controller import ScienceContextController
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -90,6 +91,7 @@ class SurveyExplorer(QMainWindow):
         self._task_controller = WorkspaceTaskController(self)
         self._target_controller = TargetController(self)
         self._data_controller = SurveyDataController(self)
+        self._science_context_controller = ScienceContextController(self)
         self._build_ui()
         if self._restore_session:
             self._restore_last_project()
@@ -1680,30 +1682,11 @@ class SurveyExplorer(QMainWindow):
                     message, context=context, ticket=ticket))
 
     def _current_science_context(self, action):
-        if not self._brick_result_matches_target():
-            return None
-        row = self.bricks.currentRow()
-        if not (self.bricks.selectedItems() and 0 <= row < len(self.hits)):
-            return None
-        try:
-            field = self._field()
-        except ValueError:
-            return None
-        return ScienceContext.capture(
-            action=action, field=field, hit=self.hits[row],
-            band=self.science_qa.current_band(),
-            directory=self.science_qa.directory.text().strip(),
-            north_directory=self.science_qa.north_directory.text().strip(),
-            south_directory=self.science_qa.south_directory.text().strip(),
-            target_radius_arcsec=self.target_radius.value(),
-            sky_inner_arcsec=self.sky_inner.value(),
-            sky_outer_arcsec=self.sky_outer.value(),
-            project_id=(self._object_project.project_id
-                        if self._object_project is not None else None))
+        return self._science_context_controller.current(action)
 
     def _science_ticket_current(self, *, context, ticket):
-        return (ticket == self._qa_generation and
-                self._current_science_context(context.action) == context)
+        return self._science_context_controller.ticket_current(
+            context=context, ticket=ticket)
 
     def _deliver_science_result(self, result, *, context, ticket, callback):
         if not self._science_ticket_current(context=context, ticket=ticket):
@@ -1742,25 +1725,7 @@ class SurveyExplorer(QMainWindow):
             "Interactive original-FITS view loaded: " + dataset["source"])
 
     def _qa_context_current(self, dataset):
-        try:
-            field = self._field()
-        except ValueError:
-            return False
-        saved_field = dataset["field"]
-        if any(abs(a-b) > 1e-9 for a,b in (
-                (field.ra_deg, saved_field.ra_deg),
-                (field.dec_deg, saved_field.dec_deg),
-                (field.width_arcmin, saved_field.width_arcmin))):
-            return False
-        row = self.bricks.currentRow()
-        if not (self.bricks.selectedItems() and
-                0 <= row < len(self.hits)):
-            return False
-        h = self.hits[row]
-        identity = (
-            f"{h.release.upper()} {h.region} · {h.name} · "
-            f"{self.science_qa.current_band()}")
-        return dataset["source"] == identity
+        return self._science_context_controller.raster_current(dataset)
 
     def _science_qa_ready(self, result):
         if not self._brick_result_matches_target():
