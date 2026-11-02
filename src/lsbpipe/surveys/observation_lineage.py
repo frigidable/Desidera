@@ -177,6 +177,7 @@ def _validated_observations(record: dict, index: dict) -> None:
         by_reference[ref] = receipt
     keys = set()
     locators = {}
+    ccd_bands = {}
     for item in contributions:
         if not isinstance(item, dict):
             raise ValueError("Malformed lineage contribution")
@@ -191,6 +192,10 @@ def _validated_observations(record: dict, index: dict) -> None:
             raise ValueError("Lineage source does not match indexed asset")
         if item.get("band") != asset.get("band"):
             raise ValueError("Lineage band does not match indexed asset")
+        previous_band = ccd_bands.setdefault(oid, item.get("band"))
+        if previous_band != item.get("band"):
+            raise ValueError(
+                "Same physical CCD cannot be assigned conflicting filters")
         ref = item.get("catalogue_reference")
         locator = item.get("record_locator")
         if not isinstance(ref, str) or not ref.strip() or (
