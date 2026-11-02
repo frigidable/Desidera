@@ -159,3 +159,38 @@ benchmarks and real UGC 2162 FITS validation remain future gates.
 **P0.4 is incrementally hardened; it is not yet an independently certified
 full GUI refactor.** Additional controllers for target, survey and science
 workflows will follow after the worker lifecycle is stable on CI.
+
+
+## P0.4.2 — controller boundary refactor
+
+The former `SurveyExplorer` now delegates three coherent responsibilities
+while preserving its established public methods and Qt signal wiring:
+
+- `gui.target_controller.TargetController`: strict ICRS `SkyField` reading,
+  invalid-entry feedback, coordinate-pair clipboard insertion and conservative
+  North/South hosted-preview region. `TargetTextField` moved alongside it,
+  while remaining re-exported from `gui.survey_explorer`.
+- `gui.survey_data_controller.SurveyDataController`: source-product table,
+  file filters, local-versus-remote evidence, complete quartet selection and
+  checked-path selection. Visible-only filtering must NEVER mutate hidden
+  selected products. Choosing a quartet explicitly selects exactly
+  IMAGE, INVVAR, NEXP and MASKBITS, clearing unrelated hidden selections.
+- `gui.science_context_controller.ScienceContextController`: frozen
+  `ScienceContext` capture with project UUID and checks for stale selection,
+  parameters and FITS raster identity. No file writes or science computations.
+
+`SurveyExplorer` keeps compatibility forwarding methods: `_field`,
+`_validated_field`, `_target_edited`, `paste_coordinate_pair`,
+`_preferred_viewer_region`, `_fill_files`, `_filter_products`,
+`_selected`, `select_science_quartet`, `_current_science_context`,
+`_science_ticket_current` and `_qa_context_current`.
+
+This is functional separation, not numerical science or visual redesign.
+Tests inspecting old source method bodies now inspect the correct
+controller implementation. Real Qt tests also verify the behavioral
+invariants and reopen several isolated galaxy workspaces.
+
+Multiple successful open/close cycles are NOT an RSS/VRAM/QtWebEngine
+leak acceptance test; real Windows high-DPI, original large DR9 FITS
+and forced process termination remain outstanding. Additional GUI
+workflow extraction and deterministic science API contracts are next.
