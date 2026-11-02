@@ -1341,8 +1341,14 @@ class SurveyExplorer(QMainWindow):
             self._selected_brick_changed()
 
     def _selected_brick_changed(self):
-        """Highlight selected brick without reloading the hosted map."""
+        """Highlight the selected survey brick and filter the FITS inventory."""
         row = self.bricks.currentRow()
+        if self.bricks.selectedItems() and 0 <= row < len(self.hits):
+            hit = self.hits[row]
+            data_key = (hit.release, hit.region, hit.name)
+            idx = self.brick_filter.findData(data_key)
+            if idx >= 0:
+                self.brick_filter.setCurrentIndex(idx)
         if hasattr(self, "science_qa"):
             chosen = (self.hits[row]
                       if self.bricks.selectedItems() and
