@@ -1523,7 +1523,7 @@ class SurveyExplorer(QMainWindow):
                 "Original FITS · read-only")
         else:
             self.preview_label.setText(
-                "Sky preview · not calibrated FITS"
+                "Sky preview · not calibrated FITS")
 
     def _close_four_comparison(self):
         tab = self.preview_tabs.indexOf(self.four_layer_comparison)
