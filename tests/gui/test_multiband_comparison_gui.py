@@ -132,6 +132,33 @@ def test_multiband_loader_missing_bands_are_not_downloaded(
     assert data["status"] == "DIAGNOSTIC_NOT_ADOPTED"
 
 
+def test_bad_band_is_reported_without_discarding_other_fits(
+        tmp_path, monkeypatch):
+    from lsbpipe.gui import fits_raster
+    field = SkyField(40.096208, 1.22925, 5.)
+    hit = BrickHit("dr9", "north", "0401p012", 0, 0, 0, 0,
+                   {"g": 1, "r": 1})
+    for band in ("g", "r"):
+        for kind in ("image", "invvar", "nexp", "maskbits"):
+            product = product_for(
+                hit, kind, None if kind == "maskbits" else band)
+            path = tmp_path / "data" / product.relative_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"original placeholder")
+
+    def fake_loader(*, band, **kwargs):
+        if band == "r":
+            raise ValueError("Mismatched WCS in r quartet")
+        return dataset(band)
+
+    monkeypatch.setattr(fits_raster, "prepare_fits_explorer", fake_loader)
+    result = load_multiband_originals(
+        directory=tmp_path, field=field, hit=hit, radii=(30., 60., 90.))
+    assert list(result["datasets"]) == ["g"]
+    assert "Mismatched WCS" in result["missing"]["r"]
+    assert "Band unavailable" in result["missing"]["i"]
+
+
 def test_multiband_workspace_on_demand_and_context_invalidation(
         qtbot, monkeypatch):
     from lsbpipe.gui.survey_explorer import SurveyExplorer
