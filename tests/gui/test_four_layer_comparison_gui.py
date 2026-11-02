@@ -77,6 +77,8 @@ def test_four_layer_native_views_zoom_pan_hover_without_png(qtbot):
         lambda: compare._future is None and all(
             not compare.images[k].pixmap().isNull()
             for k, _ in compare.LAYERS), timeout=10000)
+    assert "not four optical filters" in compare.findChild(
+        type(compare.status), "fits_four_layer_explanation").text()
     assert set(compare.views) == {"image", "invvar", "nexp", "maskbits"}
     assert all(compare.views[k].scene() is compare.scenes[k]
                for k in compare.views)
@@ -109,7 +111,7 @@ def test_four_layer_workspace_is_on_demand_and_closable(qtbot, monkeypatch):
     workspace.comparison_btn.click()
     assert workspace.preview_tabs.count() == 3
     assert workspace.preview_tabs.tabText(1) == "FITS Explorer"
-    assert workspace.preview_tabs.tabText(2) == "Four-layer QA"
+    assert workspace.preview_tabs.tabText(2) == "Data quality · 4 maps"
     assert workspace.preview_tabs.currentWidget() is workspace.four_layer_comparison
     qtbot.waitUntil(
         lambda: workspace.four_layer_comparison._future is None and
