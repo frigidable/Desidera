@@ -197,6 +197,7 @@ class WorkspaceTaskController(QObject):
     def start(self, action, finished, on_error=None, *,
               operation_name="background"):
         w = self.owner
+        operation_name = getattr(action, "operation_name", operation_name)
         if w.thread is not None:
             QMessageBox.information(
                 w, "Busy", "Another survey operation is running.")
