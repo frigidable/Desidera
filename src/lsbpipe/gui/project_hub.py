@@ -16,6 +16,7 @@ from lsbpipe.surveys.legacy import SkyField
 from lsbpipe.surveys.object_projects import (
     create_object_project, import_object_project, read_object_project,
     recent_projects, relink_object_project, touch_object_project,
+    forget_recent_project,
 )
 from lsbpipe.surveys.local_project import open_local_project
 from lsbpipe.gui.target_input import parse_coordinate_pair
@@ -207,10 +208,17 @@ class ProjectHub(QMainWindow):
         self.continue_btn = QPushButton("Continue selected")
         self.continue_btn.setObjectName("hub_continue")
         self.continue_btn.clicked.connect(self._open_selected)
+        self.remove_btn = QPushButton("Remove from recent…")
+        self.remove_btn.setObjectName("hub_remove_recent")
+        self.remove_btn.setToolTip(
+            "Forget only the selected Project Hub entry. No FITS, folders, "
+            "project metadata or scientific reports will be deleted.")
+        self.remove_btn.clicked.connect(self._remove_selected)
         actions.addWidget(self.new_btn)
         actions.addWidget(self.import_btn)
         actions.addStretch()
         actions.addWidget(self.continue_btn)
+        actions.addWidget(self.remove_btn)
         outer.addLayout(actions)
         outer.addWidget(QLabel("Recent projects"))
         self.filter = QLineEdit()
@@ -296,9 +304,43 @@ class ProjectHub(QMainWindow):
         item = self.projects.currentItem()
         available = bool(item and not item.isHidden())
         self.continue_btn.setEnabled(available)
+        self.remove_btn.setEnabled(available and self.workspace is None)
         self.continue_btn.setText(
             "Relink selected…" if available and
             not item.data(Qt.UserRole)["available"] else "Continue selected")
+
+    def _remove_selected(self):
+        """Forget a recent entry, never delete a research project on disk."""
+        if self.workspace is not None:
+            return
+        item = self.projects.currentItem()
+        if item is None or item.isHidden():
+            return
+        record = item.data(Qt.UserRole)
+        if not isinstance(record, dict):
+            return
+        name = record.get("display_name") or "Unnamed"
+        root = record["root"]
+        response = QMessageBox.question(
+            self, "Remove from recent projects?",
+            f"Remove this entry from the LSBpipe recent-project list?\n\n"
+            f"Project: {name}\n"
+            f"Location: {root}\n\n"
+            "Only the list entry will be removed. The directory, original "
+            "FITS files, project metadata and science reports will NOT "
+            "be deleted. You can import the project again at any time.",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+        if response != QMessageBox.Yes:
+            return
+        try:
+            forget_recent_project(record["project_id"], root)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            QMessageBox.warning(
+                self, "Could not remove recent project", str(exc))
+            return
+        self.refresh()
+        self.hint.setText(
+            f"Removed {name} from Recent projects. No files were deleted.")
 
     def _new_project(self):
         dialog = CreateProjectDialog(self)
