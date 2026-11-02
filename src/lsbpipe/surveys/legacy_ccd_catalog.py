@@ -122,10 +122,11 @@ def _read_table(file: Path, band: str) -> tuple[list[dict], int, dict]:
             if bx1 <= bx0 or by1 <= by0:
                 raise ValueError(
                     f"CCD row {index} has nonpositive brick overlap")
-            key = (camera, expnum, ccdname.upper(), filter_name)
+            key = (camera, expnum, ccdname.upper())
             if key in seen:
                 raise ValueError(
-                    f"Duplicate physical CCD in catalogue, row {index}")
+                    f"Duplicate physical CCD or conflicting filter in "
+                    f"catalogue, row {index}")
             seen.add(key)
             if filter_name == band:
                 rows.append({
@@ -139,22 +140,27 @@ def _read_table(file: Path, band: str) -> tuple[list[dict], int, dict]:
         if not rows:
             raise ValueError(
                 f"No CCD catalogue rows in requested band {band}")
-        checksum_states = []
+        checked_fields = 0
+        total_fields = 2 * len(hdul)
         for hdu in hdul:
             if "CHECKSUM" in hdu.header:
                 if hdu.verify_checksum() != 1:
                     raise ValueError("Invalid FITS CHECKSUM")
-                checksum_states.append("CHECKSUM_VALID")
+                checked_fields += 1
             if "DATASUM" in hdu.header:
                 if hdu.verify_datasum() != 1:
                     raise ValueError("Invalid FITS DATASUM")
-                checksum_states.append("DATASUM_VALID")
+                checked_fields += 1
+        integrity = (
+            "NO_EMBEDDED_CHECKSUMS" if checked_fields == 0 else
+            "ALL_EMBEDDED_CHECKSUM_FIELDS_VALID" if checked_fields == total_fields
+            else "PARTIAL_EMBEDDED_CHECKSUM_FIELDS_VALID")
         extra = {
             "bintable_hdu": number, "catalogue_rows": len(table.data),
             "filter_counts": band_counts,
-            "fits_integrity": (
-                "FITS_CHECKSUM_VERIFIED" if checksum_states
-                else "FITS_NO_EMBEDDED_CHECKSUM"),
+            "fits_integrity": integrity,
+            "embedded_checksum_fields_present": checked_fields,
+            "embedded_checksum_fields_possible": total_fields,
         }
     return rows, len(rows), extra
 
