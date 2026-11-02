@@ -26,6 +26,8 @@ def hub(qtbot):
 def test_launcher_is_empty_and_never_opens_viewer_on_first_launch(hub):
     assert hub.objectName() == "lsbpipe_project_hub"
     assert hub.projects.count() == 0
+    assert hub.empty_panel.isVisible()
+    assert not hub.projects.isVisible()
     assert hub.workspace is None
     assert not hub.continue_btn.isEnabled()
     assert hub.new_btn.isEnabled()
@@ -159,6 +161,8 @@ def test_hub_filter_selects_first_visible_project_and_shows_empty_state(
     hub.filter.setText("alpha")
     assert hub.continue_btn.isEnabled()
     assert "Alpha" in hub.detail_title.text()
+    assert hub.projects.isVisible()
+    assert not hub.empty_panel.isVisible()
     hub.filter.setText("does-not-exist")
     assert not hub.continue_btn.isEnabled()
     assert not hub.remove_btn.isEnabled()
