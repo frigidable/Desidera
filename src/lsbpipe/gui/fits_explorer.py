@@ -379,6 +379,8 @@ class FITSExplorer(QWidget):
                 "viewer limit; select a narrower field. Tiled mode is pending.")
         self.clear_data()
         self._dataset = dataset
+        self.pixel_info.setText(
+            "Hover over the image for ICRS and original FITS pixel values.")
         self.viewport_hint.setText(
             "Wheel to zoom · drag to pan · hover for original FITS values")
         ny, nx = shape
