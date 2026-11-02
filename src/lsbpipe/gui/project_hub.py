@@ -490,7 +490,7 @@ class ProjectHub(QMainWindow):
         """Forward a card activation only for the currently selected project."""
         item = self.projects.currentItem()
         record = item.data(Qt.UserRole) if item is not None else None
-        if (self.workspace is None and not item.isHidden()
+        if (self.workspace is None and item is not None and not item.isHidden()
                 and isinstance(record, dict)
                 and record.get("project_id") == project_id):
             self._open_selected()
