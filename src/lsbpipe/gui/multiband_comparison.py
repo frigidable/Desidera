@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import math
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, Signal, QPointF
+from PySide6.QtCore import Qt, QTimer, Signal, QPointF, QRectF
 from PySide6.QtGui import QPixmap, QColor, QPen, QPainterPath, QTransform
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
@@ -289,7 +289,13 @@ class MultibandComparison(QWidget):
                     "\nNo substitution from another dataset")
                 continue
             ny, nx = d["pixel_shape"]
+            # The QGraphicsScene retains the exact native FITS cutout.
+            # QGraphicsView needs a scrollable *virtual* margin around it:
+            # otherwise Qt silently ignores centerOn() for images smaller
+            # than the viewport and WCS centers drift between filters.
             self.scenes[band].setSceneRect(0, 0, nx, ny)
+            self.views[band].setSceneRect(
+                QRectF(-nx / 2., -ny / 2., 2. * nx, 2. * ny))
             self._make_outlines(band)
         self._layout_panels()
         self._render()
@@ -618,6 +624,7 @@ class MultibandComparison(QWidget):
                 self.scenes[band].removeItem(item)
             self.outlines[band].clear()
             self.scenes[band].setSceneRect(0, 0, 0, 0)
+            self.views[band].setSceneRect(QRectF())
             self.views[band].setVisible(True)
             self.placeholders[band].setVisible(False)
         self._layout_panels()
