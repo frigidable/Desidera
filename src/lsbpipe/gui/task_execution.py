@@ -134,7 +134,7 @@ class TaskDispatch(QObject):
                 self.terminal_outcome = "COMPLETED"
             except Exception as exc:
                 self.terminal_outcome = "FAILED"
-                logging.exception("LSBpipe GUI completion callback failed")
+                logging.exception("DESIDERA GUI completion callback failed")
                 self._show_failure(f"{type(exc).__name__}: {exc}")
         finally:
             self._acknowledge_terminal()
@@ -145,7 +145,7 @@ class TaskDispatch(QObject):
             try:
                 self.error_callback(message)
             except Exception:
-                logging.exception("LSBpipe GUI error callback failed")
+                logging.exception("DESIDERA GUI error callback failed")
         QMessageBox.warning(self.owner_window, "Survey operation failed", message)
 
     @Slot(str)
