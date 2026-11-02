@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from itertools import combinations
+import json
 import math
 
 from PySide6.QtCore import Qt, Signal, QPointF, QRectF
@@ -96,6 +97,23 @@ def _coincident_source_footprints(records: list[dict],
         entry["bands"].sort()
     return sorted(matches.values(), key=lambda x: (
         x["brick"], x["source_ids"]))
+
+
+def _footprint_input_signature(index: dict):
+    """Track WCS-relevant file identity, not checksum-verification progress.
+
+    An already inspected map is kept across SHA receipt/UI refresh when
+    native IMAGE paths and disk metadata have not changed. Reindexing
+    images or editing project coordinates explicitly invalidates the map.
+    This signature is NOT a substitute for a cryptographic file recheck.
+    """
+    return tuple(sorted(
+        (str(asset.get("asset_id")),
+         str(asset.get("size_bytes")),
+         str(asset.get("mtime_ns")),
+         json.dumps(asset.get("path_ref", {}), sort_keys=True))
+        for asset in index.get("assets", [])
+        if asset.get("product_kind") == "image"))
 
 
 class _SkyFootprintView(QGraphicsView):
@@ -268,16 +286,24 @@ class DatasetManager(QWidget):
 
     def bind_project(self, project, index: dict):
         if (self.project is None or
-                self.project.project_id != project.project_id):
+                self.project.project_id != project.project_id or
+                self.project.field != project.field):
             self._selected_source_id = None
             self._selected_asset_id = None
             self._map_fit_mode = "target"
+            self.coverage = None
+            self.index = None
         self.project = project
         self.set_index(index)
 
     def set_index(self, index: dict):
+        old_signature = (
+            _footprint_input_signature(self.index)
+            if self.index is not None else None)
+        new_signature = _footprint_input_signature(index)
+        if old_signature != new_signature:
+            self.coverage = None
         self.index = index
-        self.coverage = None
         selected_item = self.tree.currentItem()
         selected_meta = (
             selected_item.data(0, Qt.UserRole) if selected_item else None)
