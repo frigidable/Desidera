@@ -325,3 +325,28 @@ def test_blank_manual_display_limits_are_auto_not_float_conversion_error(
     explorer._apply_display_range()
     assert "Enter both numeric" in explorer.range_info.text()
     assert "image" not in explorer._manual_ranges
+
+
+
+def test_explicit_render_shutdown_drops_late_result_and_refuses_reuse(
+        explorer, qtbot):
+    dataset = synthetic_dataset()
+    size = 550
+    dataset["data"] = {
+        kind: np.resize(values, (size, size)).copy()
+        for kind, values in dataset["data"].items()
+    }
+    dataset["previews"] = {}
+    dataset["pixel_shape"] = (size, size)
+    explorer.set_dataset(dataset)
+    assert explorer._render_future is not None
+    explorer.shutdown_renderer()
+    explorer.shutdown_renderer()
+    assert explorer._renderer_closed
+    assert explorer._dataset is None
+    assert not explorer._render_timer.isActive()
+    explorer._poll_render()
+    explorer._request_render()
+    assert not explorer._render_timer.isActive()
+    with pytest.raises(RuntimeError, match="shut down"):
+        explorer.set_dataset(synthetic_dataset())
