@@ -77,7 +77,7 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
             f"{state} viewer insufficient at {width}x{height}: "
             f"{viewer_share:.1%} (minimum 55%)")
     visible_table_height = 0
-    if state not in ("S0", "S4", "S5", "S6"):
+    if state == "S2":  # explicit advanced file table
         table_bounds = _bounds(window.files, window)
         viewport_bounds = _bounds(window.data_scroll.viewport(), window)
         visible_table_height = max(
@@ -96,7 +96,7 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
             raise AssertionError(
                 f"{state} Download selected action is not reachable "
                 f"within the {width}x{height} window: {primary}")
-    if state in ("S4", "S5", "S6"):
+    if state in ("S4", "S6"):
         if window.inspector_tabs.currentWidget() is not window.science_qa:
             raise AssertionError("Science QA tab not selected")
         if not window.science_qa.result_summary.isVisible():
@@ -121,6 +121,9 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
                 raise AssertionError(
                     "Separate original North/South inputs are unreachable")
     if state == "S5":
+        if window.data_drawer.isVisible():
+            raise AssertionError(
+                "FITS viewer should not be squeezed by archive controls")
         if window.preview_tabs.currentWidget() is not window.fits_explorer:
             raise AssertionError("S5 native FITS Explorer is not visible")
         if not window.fits_explorer.layer.isVisible():
