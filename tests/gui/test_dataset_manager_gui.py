@@ -337,3 +337,80 @@ def test_sha_verification_preserves_selected_asset_and_refreshes_details(
     assert "a" * 64 in widget.details.text()
     assert "Calculating" not in widget.details.text()
     assert widget.hash_btn.isEnabled()
+
+
+def test_source_filter_switches_coincident_geometry_without_moving_sky(
+        qtbot, project):
+    from PySide6.QtWidgets import QGraphicsPolygonItem
+    widget = DatasetManager()
+    qtbot.addWidget(widget)
+    index = _legacy_index(project)
+    widget.bind_project(project, index)
+    widget.resize(1200, 800)
+    widget.show()
+    points = [[-200, -200], [200, -200], [200, 200], [-200, 200]]
+    rows = [
+        {"asset_id": f"{source['region']}-r-image",
+         "source_id": source["source_id"],
+         "brick": "0401p012", "band": "r",
+         "release": "dr9", "region": source["region"],
+         "points": points} for source in index["sources"]]
+    widget.set_coverage({
+        "status": "GEOMETRY_ONLY_NOT_ADOPTED",
+        "footprints": rows, "rejected": [], "omitted_count": 0})
+    def outlines():
+        return [o for o in widget.scene.items()
+                if isinstance(o, QGraphicsPolygonItem)]
+    assert len(outlines()) == 2
+    south_id = next(s["source_id"] for s in index["sources"]
+                    if s["region"] == "south")
+    widget.map_source_filter.setCurrentIndex(
+        widget.map_source_filter.findData(south_id))
+    assert len(outlines()) == 1
+    assert "1 shown original IMAGE WCS headers" in widget.map_status.text()
+    assert "No coincident" in widget.map_overlap.text()
+    assert outlines()[0].polygon().at(0).x() == points[0][0]
+    widget.map_source_filter.setCurrentIndex(0)
+    assert len(outlines()) == 2
+    assert "Coincident sampled" in widget.map_overlap.text()
+
+
+def test_pixel_coverage_ui_distinguishes_incomplete_and_valid_bands(
+        qtbot, project):
+    widget = DatasetManager()
+    qtbot.addWidget(widget)
+    widget.bind_project(project, _legacy_index(project))
+    widget.resize(1200, 800)
+    widget.show()
+    calls = []
+    widget.pixelQaRequested.connect(lambda: calls.append("qa"))
+    assert widget.pixel_btn.isEnabled()
+    widget.pixel_btn.click()
+    assert calls == ["qa"]
+    report = {
+        "status": "DIAGNOSTIC_NOT_ADOPTED", "omitted_quartets": 0,
+        "rows": [
+            {"release": "dr9", "region": "north",
+             "brick": "0401p012", "band": "r",
+             "status": "PIXEL_DIAGNOSTIC_NOT_ADOPTED",
+             "regions": {
+                 "target": {
+                     "sampled_pixels": 100,
+                     "fractions": {
+                         "numerical_triplet": .82,
+                         "flagged_band_satur": .04,
+                         "flagged_band_allmask": .01}},
+                 "sky_annulus": {
+                     "sampled_pixels": 500,
+                     "fractions": {"numerical_triplet": .93}}}},
+            {"release": "dr9", "region": "south",
+             "brick": "0401p012", "band": "g",
+             "status": "INCOMPLETE_FILES", "missing": ["invvar"]}]}
+    widget.set_pixel_qa(report)
+    assert widget.right_tabs.currentIndex() == 1
+    assert widget.pixel_qa_table.rowCount() == 2
+    assert widget.pixel_qa_table.item(0, 2).text() == "82.0%"
+    assert widget.pixel_qa_table.item(0, 3).text() == "93.0%"
+    assert widget.pixel_qa_table.item(0, 4).text() == "4.0% / 1.0%"
+    assert "Missing: invvar" in widget.pixel_qa_table.item(1, 5).text()
+    assert "not automatically rejected" in widget.pixel_qa_status.text()
