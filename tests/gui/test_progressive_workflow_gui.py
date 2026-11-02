@@ -169,13 +169,13 @@ def test_same_brick_across_releases_has_separate_candidate_rows(qtbot):
     assert w.files.isVisible()
     assert len(manifest["products"]) > 4
     w.bricks.selectRow(0)
-    assert w.brick_filter.currentData() == (
+    assert tuple(w.brick_filter.currentData()) == (
         dr9.release, dr9.region, dr9.name)
     shown = [manifest["products"][i] for i in range(w.files.rowCount())
              if not w.files.isRowHidden(i)]
     assert shown and {e["release"] for e in shown} == {"dr9"}
     w.bricks.selectRow(1)
-    assert w.brick_filter.currentData() == (
+    assert tuple(w.brick_filter.currentData()) == (
         dr11.release, dr11.region, dr11.name)
     shown = [manifest["products"][i] for i in range(w.files.rowCount())
              if not w.files.isRowHidden(i)]
