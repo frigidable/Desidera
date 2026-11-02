@@ -148,7 +148,8 @@ def test_offline_population_scenarios_and_selection(offline_explorer, state, exp
     assert len(window.manifest["products"]) == 88
     assert len(window._selected()) == expected
     assert window.data_drawer.isVisible()
-    assert window.files.isVisible() == (state == "S2")
+    assert window.files.isVisible()
+    assert window.files.rowCount() == len(window.manifest["products"])
     if state == "S2":
         assert sum(window.files.isRowHidden(i)
                    for i in range(window.files.rowCount())) > 0
