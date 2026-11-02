@@ -11,7 +11,7 @@ Official DR9 MASKBITS semantics: https://www.legacysurvey.org/dr9/bitmasks/
 from __future__ import annotations
 
 from contextlib import ExitStack
-import math
+from lsbpipe.survey import maskbits_to_uint
 
 import numpy as np
 from .dataset_registry import read_dataset_index, resolve_asset_path
@@ -117,8 +117,7 @@ def _one_quartet(root, assets, project, band, callback):
             ex = np.asarray(nexp[top:bottom])
             # Preserve high bits of signed int16 MASKBITS (do not treat
             # negative two's-complement values as absent flags).
-            bits = np.asarray(maskbits[top:bottom]).astype(np.uint16).astype(
-                np.uint32)
+            bits = maskbits_to_uint(np.asarray(maskbits[top:bottom]))
             finite = np.isfinite(img)
             ivgood = np.isfinite(iv) & (iv > 0)
             exgood = np.isfinite(ex) & (ex > 0)
