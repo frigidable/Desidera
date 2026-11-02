@@ -251,6 +251,21 @@ def import_brick_ccd_catalog(
     preflight = inspect_brick_ccd_catalog(
         project_root, coadd_asset_id=coadd_asset_id,
         catalogue_file=catalogue_file)
+    # Do not persist a report if the catalogue was replaced after preflight.
+    file = Path(catalogue_file).expanduser().absolute()
+    current = hashlib.sha256()
+    with file.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            current.update(chunk)
+    if current.hexdigest() != preflight["catalogue_sha256"]:
+        raise RuntimeError("CCD catalogue content changed after inspection")
+    # Another process may also have changed/reindexed the source image.
+    source_asset = next((a for a in read_dataset_index(project_root)["assets"]
+                         if a["asset_id"] == coadd_asset_id), None)
+    if (source_asset is None or source_asset.get("sha256") !=
+            preflight["coadd_sha256"] or
+            source_asset.get("checksum_status") != CHECKSUM_VERIFIED):
+        raise RuntimeError("Coadd asset provenance changed during CCD import")
     previous = read_observation_lineage(project_root)
     for receipt in previous.get("catalogue_receipts", []):
         if (receipt["coadd_asset_id"] == coadd_asset_id and
