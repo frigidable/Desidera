@@ -49,7 +49,13 @@ def make_quartet(root, region="north", band="r", missing=()):
         # A brick has ONE shared MASKBITS across all optical bands.
         if kind == "maskbits" and path.exists():
             continue
-        fits.PrimaryHDU(data=data, header=wcs.to_header()).writeto(path)
+        if kind == "maskbits":
+            # Official Legacy optical MASKBITS live in HDU1 (WISE follows).
+            fits.HDUList([fits.PrimaryHDU(),
+                          fits.ImageHDU(data=data, header=wcs.to_header())]
+                         ).writeto(path)
+        else:
+            fits.PrimaryHDU(data=data, header=wcs.to_header()).writeto(path)
     return img, ivar, nexp, mask
 
 
