@@ -28,13 +28,16 @@ class SurveyDataController(QObject):
 
     def _fill_brick_filters(self):
         w = self.owner
-        previous = w.brick_filter.currentText()
+        previous = w.brick_filter.currentData()
         w.brick_filter.blockSignals(True)
         w.brick_filter.clear()
-        w.brick_filter.addItem("All bricks")
-        for brick in sorted({hit.name for hit in w.hits}):
-            w.brick_filter.addItem(brick)
-        index = w.brick_filter.findText(previous)
+        w.brick_filter.addItem("All bricks", None)
+        for release, region, brick in sorted({
+                (hit.release, hit.region, hit.name) for hit in w.hits}):
+            w.brick_filter.addItem(
+                f"{release.upper()} · {region} · {brick}",
+                (release, region, brick))
+        index = w.brick_filter.findData(previous)
         w.brick_filter.setCurrentIndex(max(0, index))
         w.brick_filter.blockSignals(False)
 
@@ -96,9 +99,12 @@ class SurveyDataController(QObject):
 
     def _is_visible_product(self, entry):
         w = self.owner
+        dataset = w.brick_filter.currentData()
+        if dataset is not None and (
+                entry["release"], entry["region"], entry["brick"]) != tuple(dataset):
+            return False
         return matching_product(
-            entry,
-            brick=w.brick_filter.currentText(),
+            entry, brick="All bricks",
             band=w.band_filter.currentText(),
             kind=w.kind_filter.currentText())
 
@@ -206,10 +212,12 @@ class SurveyDataController(QObject):
         sizes = (f"{report.known_mib:.1f} MiB confirmed + unknown"
                  if report.unknown_size_files else
                  f"{report.known_mib:.1f} MiB")
+        selection = (
+            f"{report.selected_files} selected · " + sizes
+            if report.selected_files else
+            "0 selected · choose a quartet or individual FITS")
         w.selected_label.setText(
-            f"{report.selected_files} selected · "
-            + (sizes if report.selected_files else
-               "select a science quartet or individual files"))
+            selection + f" · {visible} candidate files shown (URLs unverified)")
         # Never preselect an entire survey product inventory for a
         # potentially enormous download: user explicitly chooses a quartet
         # or specific original FITS products.
