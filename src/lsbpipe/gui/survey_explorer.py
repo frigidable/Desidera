@@ -1491,6 +1491,8 @@ class SurveyExplorer(QMainWindow):
             self.bricks.setRowCount(0)
             self.files.setRowCount(0)
             self.files.hide()
+            self.download_btn.setEnabled(False)
+            self.selected_label.setText("0 selected · run Find data")
             self.science_qa.set_selected_hit(None)
             self.science_btn.setEnabled(False)
             self._brick_overlay_features = []
