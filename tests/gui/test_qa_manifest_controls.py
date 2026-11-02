@@ -51,3 +51,37 @@ def test_failed_or_legacy_qa_cannot_open_stale_science_manifest(qtbot):
     assert view.open_report.isEnabled()
     assert not view.open_manifest.isEnabled()
     assert "Run ID" not in view.result.toPlainText()
+
+
+
+def test_scientific_run_history_button_emits_and_dialog_is_read_only(qtbot, tmp_path):
+    from lsbpipe.gui.run_history_dialog import RunHistoryDialog
+    view = ScienceQAControls()
+    qtbot.addWidget(view)
+    events = []
+    view.historyRequested.connect(lambda: events.append("open"))
+    assert view.history_btn.isEnabled()
+    view.history_btn.click()
+    assert events == ["open"]
+    folder = tmp_path / "qa-runs" / "20261102T090000000000Z-abcdef1234"
+    folder.mkdir(parents=True)
+    manifest = folder / "manifest.json"
+    manifest.write_text('{"schema":"legacy-only"}', encoding="utf-8")
+    records = [{
+        "run_id": folder.name, "action": "square",
+        "dataset": "dr9/south/0401p012/r",
+        "state": "RECORDED_NOT_REVALIDATED",
+        "created_at_utc": "2026-11-02T09:00:00Z",
+        "manifest_path": str(manifest),
+        "reason": "No current local original-FITS hash comparison",
+    }]
+    dialog = RunHistoryDialog(records)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.table.rowCount() == 1
+    assert "RECORDED_NOT_REVALIDATED" in (
+        dialog.table.item(0, 3).text())
+    assert "not automatically" not in dialog.details.toPlainText().lower() or (
+        "not" in dialog.details.toPlainText().lower())
+    assert dialog.open_manifest.isEnabled()
+    assert dialog.details.isReadOnly()
