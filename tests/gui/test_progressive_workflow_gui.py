@@ -200,3 +200,52 @@ def test_remote_webengine_isolation_preserves_catalog_discovery(qtbot, monkeypat
     w.bricks.selectRow(0)
     assert w.science_btn.isEnabled()
     assert not w.download_btn.isEnabled()
+
+def test_optional_science_pages_do_not_paint_over_navigation(qtbot):
+    """Regression for the reported top-left ghost FITS/Data Manager controls.
+
+    Before their first addTab, the three constructed QWidget pages were
+    visible, sized 100x30 at workspace (0,0) because their parent was the
+    QMainWindow itself. Hidden pages must remain invisible until activated,
+    including across removal/reopening.
+    """
+    from lsbpipe.gui.survey_explorer import SurveyExplorer
+    from PySide6.QtCore import QPoint
+    from PySide6.QtWidgets import QApplication
+    with offline_legacy_viewer():
+        w = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(w)
+    w.show()
+    w.back_to_projects.show()
+    qtbot.wait(50)
+    pages = (w.four_layer_comparison, w.multiband_comparison,
+             w.dataset_manager)
+    for page in pages:
+        assert w.preview_tabs.indexOf(page) == -1
+        assert page.parent() is w.preview_tabs
+        assert not page.isVisible()
+        assert not any(child.isVisible() for child
+                       in page.findChildren(type(w.back_to_projects)))
+    # The navigation button owns its own top-left hit-testing surface.
+    hit = QApplication.widgetAt(w.mapToGlobal(QPoint(65, 35)))
+    assert hit is w.back_to_projects
+
+    tab = w.preview_tabs.addTab(w.multiband_comparison, "Compare optical bands")
+    w.preview_tabs.setCurrentIndex(tab)
+    assert w.multiband_comparison.isVisible()
+    w._close_multiband()
+    assert w.preview_tabs.indexOf(w.multiband_comparison) == -1
+    assert not w.multiband_comparison.isVisible()
+
+    tab = w.preview_tabs.addTab(w.four_layer_comparison, "Data quality")
+    w.preview_tabs.setCurrentIndex(tab)
+    assert w.four_layer_comparison.isVisible()
+    w._close_four_comparison()
+    assert w.preview_tabs.indexOf(w.four_layer_comparison) == -1
+    assert not w.four_layer_comparison.isVisible()
+
+    tab = w.preview_tabs.addTab(w.dataset_manager, "Data Manager")
+    w.preview_tabs.setCurrentIndex(tab)
+    assert w.dataset_manager.isVisible()
+    w.preview_tabs.setCurrentWidget(w.sky)
+    assert not w.dataset_manager.isVisible()
