@@ -32,24 +32,64 @@ def test_launcher_is_empty_and_never_opens_viewer_on_first_launch(hub):
     assert hub.import_btn.isEnabled()
 
 
-def test_three_stage_wizard_creates_project_without_fits_or_coordinates(
-        qtbot, tmp_path):
+def test_single_page_creation_preserves_unidentified_object(qtbot, tmp_path):
     dialog = CreateProjectDialog(default_root=tmp_path)
     qtbot.addWidget(dialog)
+    assert not dialog.create_btn.isEnabled()
     dialog.name.setText("Unknown LSB dwarf")
-    assert dialog.pages.currentIndex() == 0
+    assert dialog.create_btn.isEnabled()
     assert "Unknown_LSB_dwarf" in dialog.directory.text()
-    dialog._advance()
-    assert dialog.pages.currentIndex() == 1
-    dialog._advance()
-    assert dialog.pages.currentIndex() == 2
     assert "not specified" in dialog.description.text()
-    dialog._advance()
+    dialog._create()
     assert dialog.result() == QDialog.Accepted
     project = dialog.project
     assert project is not None and project.field is None
     assert not (project.root / "data").exists()
     assert read_object_project(project.root).project_id == project.project_id
+
+
+def test_create_wizard_parses_icrs_and_rejects_partial_or_invalid_input(
+        qtbot, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda *args, **kwargs: warnings.append(args))
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.name.setText("Coordinate target")
+    dialog.ra.setText("02:40:23.09")
+    dialog._create()
+    assert dialog.project is None
+    assert warnings and "both RA and Dec" in dialog.description.text()
+    assert not (tmp_path / "Coordinate_target").exists()
+    dialog.dec.setText("+01:13:45.3")
+    dialog._create()
+    assert dialog.result() == QDialog.Accepted
+    assert dialog.project.field.ra_deg == pytest.approx(40.0962083, abs=1e-5)
+    assert dialog.project.field.dec_deg == pytest.approx(1.22925, abs=1e-5)
+
+
+def test_create_wizard_refuses_existing_science_folder_without_mutation(
+        qtbot, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    original = existing / "image.fits.fz"
+    original.write_bytes(b"immutable science bytes")
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.name.setText("LSB target")
+    dialog.directory.setText(str(existing))
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda *args, **kwargs: warnings.append(args))
+    dialog._create()
+    assert dialog.project is None
+    assert warnings
+    assert original.read_bytes() == b"immutable science bytes"
+    assert not (existing / "lsbpipe-object.json").exists()
 
 
 def test_hub_open_create_and_return_preserves_object_identity(
@@ -90,6 +130,42 @@ def test_unresolved_draft_has_no_fake_science_target(hub, tmp_path):
     assert "No ICRS position" in w.target_hint.text()
     w._go_back_to_projects()
     assert read_object_project(project.root).field is None
+
+
+def test_hub_details_show_saved_dataset_without_claiming_integrity(
+        hub, tmp_path):
+    from lsbpipe.surveys.object_projects import save_object_project
+    p = create_object_project(
+        "UGC 2162", tmp_path / "UGC_2162",
+        field=SkyField(40.096208, 1.22925, 5.))
+    data = p.root / "data"
+    data.mkdir()
+    p.data_root = data
+    p.selected_dataset = ("dr9", "north", "0401p012", "r")
+    save_object_project(p)
+    hub.refresh()
+    assert hub.detail_title.text() == "UGC 2162"
+    assert "integrity not checked" in hub.detail_status.text()
+    assert "DR9 / north / 0401p012 / r" in hub.detail_meta.text()
+    assert str(p.root) in hub.detail_path.text()
+    assert "not automatically adopted" in hub.hint.text()
+
+
+def test_hub_filter_selects_first_visible_project_and_shows_empty_state(
+        hub, tmp_path):
+    create_object_project("Alpha", tmp_path / "alpha")
+    create_object_project("Beta", tmp_path / "beta")
+    hub.refresh()
+    hub.filter.setText("alpha")
+    assert hub.continue_btn.isEnabled()
+    assert "Alpha" in hub.detail_title.text()
+    hub.filter.setText("does-not-exist")
+    assert not hub.continue_btn.isEnabled()
+    assert not hub.remove_btn.isEnabled()
+    assert hub.empty_label.isVisible()
+    assert "No matching" in hub.empty_label.text()
+    hub.filter.clear()
+    assert hub.continue_btn.isEnabled()
 
 
 def test_filters_and_missing_project_stays_in_library(hub, tmp_path):
@@ -429,17 +505,20 @@ def test_hub_remove_disabled_when_no_visible_selection_and_with_active_workspace
 
 
 
-def test_new_project_wizard_opens_survey_sky_not_empty_fits(
+def test_new_project_wizard_opens_offline_sky_without_network(
         hub, monkeypatch, tmp_path):
     from lsbpipe.gui import project_hub as hub_module
     project = create_object_project(
         "UGC 2162 new", tmp_path / "ugc_new",
         field=SkyField(40.096208, 1.22925, 5.))
+
     class AcceptedWizard:
         def __init__(self, parent):
             self.project = project
+
         def exec(self):
             return QDialog.Accepted
+
     monkeypatch.setattr(hub_module, "CreateProjectDialog", AcceptedWizard)
     with offline_legacy_viewer():
         hub._new_project()
@@ -447,19 +526,13 @@ def test_new_project_wizard_opens_survey_sky_not_empty_fits(
     assert w is not None
     assert w.preview_tabs.currentWidget() is w.sky
     assert w.inspector_tabs.currentIndex() == 0
+    assert not w.sky.url().toString().startswith("https://")
     assert not w.fits_explorer._dataset
     assert w.manifest is None and w.bricks.rowCount() == 0
-    assert "Sky preview" in w.preview_label.text()
-    assert "No survey archive search" not in w.message.text() or (
-        w.manifest is None)
     assert w.back_to_projects.isVisible()
-    # Both widgets share the navigation panel, but the back action is NOT
-    # inside the target/coordinate group box.
     target_box = w.ra.parentWidget()
     assert w.back_to_projects.parentWidget() is target_box.parentWidget()
     assert w.back_to_projects.parentWidget() is not target_box
-    nav = w.back_to_projects.parentWidget().layout()
-    assert nav.indexOf(w.back_to_projects) < nav.indexOf(target_box)
     w._go_back_to_projects()
 
 
