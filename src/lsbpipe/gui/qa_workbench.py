@@ -19,6 +19,7 @@ class ScienceQAControls(QWidget):
     """UI state only; all expensive science work is handled by main worker."""
 
     requested = Signal(str)
+    historyRequested = Signal()
     contextChanged = Signal()
 
     def __init__(self, parent=None):
@@ -161,6 +162,13 @@ class ScienceQAControls(QWidget):
             entry.textChanged.connect(self._context_edited)
         self.directory.textChanged.connect(self._update_enabled)
 
+        self.history_btn = QPushButton("Review saved scientific runs…")
+        self.history_btn.setObjectName("science_run_history")
+        self.history_btn.setToolTip(
+            "Open completed run records with provenance and explicit "
+            "staleness states. Older reports are not automatically accepted.")
+        self.history_btn.clicked.connect(self.historyRequested.emit)
+        layout.addWidget(self.history_btn)
         layout.addWidget(QLabel("Latest diagnostic"))
         self.result = QPlainTextEdit()
         self.result.setObjectName("science_qa_result")
