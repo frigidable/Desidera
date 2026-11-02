@@ -78,6 +78,7 @@ def _safe_original_file(root, asset):
 def _one_quartet(root, assets, project, band, callback):
     from astropy.io import fits
     from astropy.coordinates import SkyCoord
+    from astropy.wcs.utils import proj_plane_pixel_area
     import astropy.units as u
     files = {kind: _safe_original_file(root, record)
              for kind, record in assets.items()}
@@ -94,6 +95,10 @@ def _one_quartet(root, assets, project, band, callback):
         if image.size > MAX_PIXEL_QA_PIXELS:
             raise ValueError("Original FITS exceeds bounded pixel-QA resource limit")
         metrics = _metrics_template()
+        local_pixel_area = (
+            abs(float(proj_plane_pixel_area(wcs.celestial))) * 3600.**2)
+        if not math.isfinite(local_pixel_area) or local_pixel_area <= 0:
+            raise ValueError("Cannot estimate FITS native angular pixel area")
         center = SkyCoord(project.field.ra_deg * u.deg,
                           project.field.dec_deg * u.deg, frame="icrs")
         target = float(project.target_radius_arcsec)
@@ -155,7 +160,15 @@ def _one_quartet(root, assets, project, band, callback):
     normalized = {}
     for name, m in metrics.items():
         denominator = m["sampled_pixels"]
+        expected_area = (
+            math.pi * target**2 if name == "target"
+            else math.pi * (sky_outer**2 - sky_inner**2))
+        expected_pixels = expected_area / local_pixel_area
         normalized[name] = {
+            "approximate_geometric_footprint_fraction": (
+                min(1., denominator / expected_pixels)
+                if expected_pixels > 0 else None),
+            "approximate_full_region_pixels": expected_pixels,
             "sampled_pixels": denominator,
             "fractions": {
                 key: _float_fraction(value, denominator)
@@ -166,7 +179,8 @@ def _one_quartet(root, assets, project, band, callback):
             "shape": [ny, nx], "regions": normalized,
             "input_asset_ids": {
                 kind: record["asset_id"] for kind, record in assets.items()},
-            "flags_are_individual_counts_not_default_rejection": True}
+            "flags_are_individual_counts_not_default_rejection": True,
+            "geometric_fraction_is_approximate": True}
 
 
 def inspect_pixel_coverage(project_root, *, max_quartets=MAX_PIXEL_QA_QUARTETS,
@@ -235,7 +249,10 @@ def inspect_pixel_coverage(project_root, *, max_quartets=MAX_PIXEL_QA_QUARTETS,
         "policy": (
             "Fractions are per native WCS-selected target and annulus pixels. "
             "Finite IMAGE, positive INVVAR/NEXP, and each MASKBITS condition "
-            "are reported separately. A bit flag is NOT automatically rejected. "
+            "are reported separately; sampled-pixel denominators are within "
+            "the original footprint. Approximate complete-annulus coverage "
+            "uses local FITS pixel area, not an exact polygon integral. "
+            "A bit flag is NOT automatically rejected. "
             "No sky-background, PSF, pixel covariance, SBF, or photometric "
             "suitability certification; original FITS remain unchanged."),
     }
