@@ -36,7 +36,8 @@ from lsbpipe.gui.fits_explorer import FITSExplorer
 from lsbpipe.gui.fits_raster import prepare_fits_explorer
 from lsbpipe.gui.science_workflows import run_science_qa as run_science_qa_backend
 from lsbpipe.gui.qa_records import ScienceContext
-from lsbpipe.gui.task_execution import TaskWorker, TaskDispatch, TaskToken
+from lsbpipe.gui.task_execution import (
+    TaskWorker, TaskDispatch, TaskToken, WorkspaceTaskController)
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -136,6 +137,7 @@ class SurveyExplorer(QMainWindow):
         self._project_save_timer.setSingleShot(True)
         self._project_save_timer.setInterval(250)
         self._project_save_timer.timeout.connect(self._save_project_state)
+        self._task_controller = WorkspaceTaskController(self)
         self._build_ui()
         if self._restore_session:
             self._restore_last_project()
@@ -1168,99 +1170,18 @@ class SurveyExplorer(QMainWindow):
 
     def _start(self, action, finished, on_error=None, *,
                operation_name="background"):
-        """One active worker; optional crash journal for object projects."""
-        if self.thread is not None:
-            QMessageBox.information(
-                self, "Busy", "Another survey operation is running.")
-            return
-        if self._object_project is not None:
-            from lsbpipe.surveys.operation_journal import start_operation
-            try:
-                self._operation_journal_path = start_operation(
-                    self._object_project.root, self._object_project.project_id,
-                    operation_name)
-            except (OSError, ValueError) as exc:
-                QMessageBox.warning(
-                    self, "Cannot journal operation",
-                    "No background work was started: " + str(exc))
-                return
-        else:
-            self._operation_journal_path = None
-        self._task_serial += 1
-        token = TaskToken()
-        self._active_task_token = token
-        self.search_btn.setEnabled(False)
-        self.download_btn.setEnabled(False)
-        self.verify_btn.setEnabled(False)
-        self.qa_btn.setEnabled(False)
-        self.stop_task_btn.setEnabled(True)
-        self.science_qa.set_busy(True)
-        thread = QThread(self)
-        worker = TaskWorker(action, token=token)
-        dispatch = TaskDispatch(self, finished, on_error, token)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.completed.connect(dispatch.deliver_completed, Qt.QueuedConnection)
-        worker.failed.connect(dispatch.deliver_failed, Qt.QueuedConnection)
-        worker.cancelled.connect(dispatch.deliver_cancelled, Qt.QueuedConnection)
-        worker.progress.connect(dispatch.deliver_progress, Qt.QueuedConnection)
-        worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        # Keep dispatch alive until after worker shutdown. No callback can
-        # outlive its owning workspace or cross into a newer job.
-        thread.finished.connect(thread.deleteLater)
-        # A queued worker terminal slot may arrive AFTER QThread.finished.
-        # Dispatch survives until both signals are delivered on GUI thread.
-        thread.finished.connect(
-            dispatch.on_thread_finished, Qt.QueuedConnection)
-        self._task_dispatch = dispatch
-        self.worker = worker
-        self.thread = thread
-        thread.start()
+        """Compatibility wrapper; worker lifecycle belongs to controller."""
+        return self._task_controller.start(
+            action, finished, on_error, operation_name=operation_name)
 
     def _request_stop(self):
-        token = self._active_task_token
-        if self.thread is None or token is None:
-            return
-        token.request_cancel()
-        self.thread.requestInterruption()
-        if self._operation_journal_path is not None:
-            from lsbpipe.surveys.operation_journal import request_stop
-            try:
-                request_stop(self._operation_journal_path)
-            except (OSError, ValueError) as exc:
-                self.project_status.setText(
-                    f"Stop requested but journal write failed: {exc}")
-        self.stop_task_btn.setEnabled(False)
-        self.message.setText(
-            "Stop requested. Waiting for a safe checkpoint; the running "
-            "operation may finish writing an immutable report before stopping.")
+        return self._task_controller.request_stop()
 
     @Slot()
     def _idle(self):
-        # QObject slot is dispatched on the GUI thread, never via a Python
-        # lambda that Qt could invoke on QThread's worker thread.
-        if self._operation_journal_path is not None:
-            from lsbpipe.surveys.operation_journal import finish_operation
-            try:
-                finish_operation(
-                    self._operation_journal_path,
-                    self._task_dispatch.terminal_outcome
-                    if self._task_dispatch is not None else "IGNORED")
-            except (OSError, ValueError) as exc:
-                self.project_status.setText(
-                    f"Operation finished; journal is uncertain: {exc}")
-        self._operation_journal_path = None
-        self.thread = None
-        self.worker = None
-        self._task_dispatch = None
-        self._active_task_token = None
-        self.stop_task_btn.setEnabled(False)
-        self.search_btn.setEnabled(True)
-        self.download_btn.setEnabled(True)
-        self.verify_btn.setEnabled(True)
-        self.qa_btn.setEnabled(True)
-        self.science_qa.set_busy(False)
+        # This callback is invoked only after the GUI terminal delivery
+        # and QThread shutdown have both been acknowledged.
+        return self._task_controller.idle()
 
     def _progress(self, item):
         if isinstance(item, tuple):
