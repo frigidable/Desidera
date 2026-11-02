@@ -16,7 +16,11 @@ import json
 import os
 import secrets
 import shutil
+import subprocess
+import re
+from functools import lru_cache
 
+from .run_contracts import make_run_contract
 from lsbpipe.surveys.legacy import BrickHit, SkyField, product_for
 
 
@@ -44,6 +48,7 @@ class ScienceContext:
     directory: str
     north_directory: str
     south_directory: str
+    project_id: str | None = None
 
     @classmethod
     def capture(cls, *, action: str, field: SkyField, hit: BrickHit,
@@ -52,7 +57,8 @@ class ScienceContext:
                 south_directory: str | Path = "",
                 target_radius_arcsec: float = 35.,
                 sky_inner_arcsec: float = 65.,
-                sky_outer_arcsec: float = 110.):
+                sky_outer_arcsec: float = 110.,
+                project_id: str | None = None):
         return cls(
             action=action, release=hit.release, region=hit.region,
             brick=hit.name, band=band, ra_deg=float(field.ra_deg),
@@ -63,6 +69,7 @@ class ScienceContext:
             directory=_path_identity(directory),
             north_directory=_path_identity(north_directory),
             south_directory=_path_identity(south_directory),
+            project_id=project_id,
         )
 
     def to_dict(self) -> dict:
@@ -127,15 +134,37 @@ def _version() -> str:
         return "unknown-local-source"
 
 
+@lru_cache(maxsize=1)
+def _git_revision() -> str | None:
+    """Current source revision when available; no network or shell execution."""
+    revision = os.environ.get("LSBPIPE_BUILD_COMMIT") or os.environ.get("GITHUB_SHA")
+    if revision and re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+        return revision.lower()
+    try:
+        checked = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=Path(__file__).resolve().parent, shell=False,
+            capture_output=True, text=True, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = checked.stdout.strip().lower()
+    return value if (checked.returncode == 0 and
+                     re.fullmatch(r"[0-9a-f]{40}", value)) else None
+
+
 @contextmanager
 def new_qa_run(*, data_root: Path, context: ScienceContext,
-               inputs: dict):
+               inputs: dict, project_root: Path | None = None,
+               dependencies: tuple[str, ...] = ()):
     """Stage artifacts privately and publish the *whole* run on success.
 
     On errors, remove staging but preserve every earlier result. An
     incomplete run never appears as a completed QA record.
     """
-    output_root = Path(data_root).resolve().parent / "qa-runs"
+    output_root = (
+        Path(project_root).expanduser().resolve()
+        if project_root is not None else Path(data_root).resolve().parent
+    ) / "qa-runs"
     output_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc)
     run_id = f"{stamp:%Y%m%dT%H%M%S%fZ}-{secrets.token_hex(5)}"
@@ -150,6 +179,10 @@ def new_qa_run(*, data_root: Path, context: ScienceContext,
             "science_status": "DIAGNOSTIC_NOT_ADOPTED",
             "lsbpipe_version": _version(),
             "context": context.to_dict(),
+            "run_contract": make_run_contract(
+                context=context.to_dict(), inputs=inputs,
+                project_id=context.project_id,
+                dependencies=dependencies, code_revision=_git_revision()),
             "input_fingerprint_type": (
                 "local SHA-256; no authoritative remote digest supplied"),
             "input_original_fits": inputs,
