@@ -224,6 +224,8 @@ class WorkspaceTaskController(QObject):
         w.verify_btn.setEnabled(False)
         w.qa_btn.setEnabled(False)
         w.stop_task_btn.setEnabled(True)
+        w.progress_widget.setVisible(True)
+        w.bar.setVisible(True)
         w.science_qa.set_busy(True)
 
         thread = QThread(w)
@@ -288,6 +290,8 @@ class WorkspaceTaskController(QObject):
         w._task_dispatch = None
         w._active_task_token = None
         w.stop_task_btn.setEnabled(False)
+        w.progress_widget.setVisible(False)
+        w.bar.setVisible(False)
         w.search_btn.setEnabled(True)
         w.download_btn.setEnabled(True)
         w.verify_btn.setEnabled(True)
