@@ -2106,6 +2106,11 @@ class SurveyExplorer(QMainWindow):
                 self.returnToProjects.emit()
                 event.ignore()
                 return
+            # Children are hidden on QMainWindow.close(), but QWidget
+            # closeEvent is not guaranteed on child FITSExplorer. Shut down
+            # its executor explicitly before the parent can be destroyed.
+            self._closing_task_ui = True
+            self.fits_explorer.shutdown_renderer()
             super().closeEvent(event)
 
 
