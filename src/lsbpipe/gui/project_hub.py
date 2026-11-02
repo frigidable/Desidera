@@ -299,6 +299,9 @@ class ProjectHub(QMainWindow):
         for index in range(self.projects.count()):
             item = self.projects.item(index)
             item.setHidden(query not in item.text().casefold())
+        # Hiding an already selected QListWidgetItem does not always emit
+        # itemSelectionChanged. Do not leave removal/relink enabled for it.
+        self._selection_changed()
 
     def _selection_changed(self):
         item = self.projects.currentItem()
