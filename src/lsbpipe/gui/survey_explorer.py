@@ -65,7 +65,7 @@ class SurveyExplorer(QMainWindow):
 
     def __init__(self, *, restore_session=True, launch_remote=True):
         super().__init__()
-        self.setWindowTitle("DESIDERA — Legacy Survey Explorer")
+        self.setWindowTitle("DESIDERA — Legacy Survey Explorer (experimental)")
         self.resize(1460, 880)
         self.hits = []
         self.manifest = None
