@@ -65,6 +65,7 @@ def explorer(qtbot):
 def test_layer_switch_and_native_wcs_pixel_readout(explorer, qtbot):
     data = synthetic_dataset()
     explorer.set_dataset(data)
+    assert "Hover over the image" in explorer.pixel_info.text()
     assert explorer.layer.currentData() == "image"
     assert explorer.scene.sceneRect().width() == 8
     assert explorer.scene.sceneRect().height() == 6
