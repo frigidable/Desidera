@@ -206,6 +206,78 @@ def test_map_merges_only_identical_geometry_within_each_source(
     assert widget.map_view.transform().m11() > full_scale
 
 
+def test_cross_source_wcs_coincidence_is_geometry_only(qtbot, project):
+    """Same DR9 North/South sky footprint cannot imply independence."""
+    from lsbpipe.gui.dataset_manager import _coincident_source_footprints
+    from PySide6.QtGui import QPen
+    from PySide6.QtWidgets import QGraphicsPolygonItem
+    index = _legacy_index(project)
+    widget = DatasetManager()
+    qtbot.addWidget(widget)
+    widget.bind_project(project, index)
+    widget.resize(1300, 820)
+    widget.show()
+    records = []
+    box = [[-210., -210.], [210., -210.],
+           [210., 210.], [-210., 210.]]
+    for src in index["sources"]:
+        for band in ("g", "r", "z"):
+            records.append({
+                "source_id": src["source_id"],
+                "asset_id": f"{src['region']}-{band}-image",
+                "provider": src["provider"],
+                "region": src["region"], "release": src["release"],
+                "brick": "0401p012", "band": band,
+                "points": box,
+            })
+    pairs = _coincident_source_footprints(records)
+    assert len(pairs) == 1
+    assert pairs[0]["bands"] == ["g", "r", "z"]
+    assert pairs[0]["source_ids"] == ["source-north", "source-south"]
+    assert pairs[0]["max_offset_arcsec"] == pytest.approx(0.)
+    widget.set_coverage({
+        "status": "GEOMETRY_ONLY_NOT_ADOPTED",
+        "footprints": records, "rejected": [], "omitted_count": 0})
+    outlines = [
+        item for item in widget.scene.items()
+        if isinstance(item, QGraphicsPolygonItem)]
+    assert len(outlines) == 2
+    assert "Coincident sampled WCS edges" in widget.map_overlap.text()
+    assert "independent exposures" in widget.map_overlap.text()
+    assert "north" in widget.map_overlap.text()
+    assert "south" in widget.map_overlap.text()
+    assert "north" in widget.map_legend.text()
+    assert "south" in widget.map_legend.text()
+    assert all(len(item.pen().dashPattern()) == 2
+               for item in outlines)
+    assert outlines[0].pen().dashOffset() != outlines[1].pen().dashOffset()
+    assert "2 distinct source outlines" in widget.map_status.text()
+    assert "6 original IMAGE WCS headers" in widget.map_status.text()
+
+    # One band with a different footprint must never be counted as
+    # coincident by source name, coadd release or physical proximity alone.
+    altered = [dict(row, points=[p[:] for p in row["points"]])
+               for row in records]
+    changed = next(r for r in altered if r["region"] == "south"
+                   and r["band"] == "r")
+    changed["points"][0][0] += 3.0
+    pair = _coincident_source_footprints(altered)
+    assert len(pair) == 1
+    assert pair[0]["bands"] == ["g", "z"]
+
+
+def test_overlap_requires_matching_brick_band_and_source(qtbot, project):
+    from lsbpipe.gui.dataset_manager import _coincident_source_footprints
+    p = [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]
+    inputs = [
+        {"source_id": "a", "brick": "0401p012", "band": "g", "points": p},
+        {"source_id": "b", "brick": "0400p012", "band": "g", "points": p},
+        {"source_id": "c", "brick": "0401p012", "band": "z", "points": p},
+        {"source_id": "a", "brick": "0401p012", "band": "r", "points": p},
+    ]
+    assert _coincident_source_footprints(inputs) == []
+
+
 def test_sha_verification_preserves_selected_asset_and_refreshes_details(
         qtbot, project):
     widget = DatasetManager()
