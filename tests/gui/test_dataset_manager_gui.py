@@ -396,12 +396,14 @@ def test_pixel_coverage_ui_distinguishes_incomplete_and_valid_bands(
              "regions": {
                  "target": {
                      "sampled_pixels": 100,
+                     "approximate_geometric_footprint_fraction": .72,
                      "fractions": {
                          "numerical_triplet": .82,
                          "flagged_band_satur": .04,
                          "flagged_band_allmask": .01}},
                  "sky_annulus": {
                      "sampled_pixels": 500,
+                     "approximate_geometric_footprint_fraction": .85,
                      "fractions": {"numerical_triplet": .93}}}},
             {"release": "dr9", "region": "south",
              "brick": "0401p012", "band": "g",
@@ -409,8 +411,10 @@ def test_pixel_coverage_ui_distinguishes_incomplete_and_valid_bands(
     widget.set_pixel_qa(report)
     assert widget.right_tabs.currentIndex() == 1
     assert widget.pixel_qa_table.rowCount() == 2
-    assert widget.pixel_qa_table.item(0, 2).text() == "82.0%"
-    assert widget.pixel_qa_table.item(0, 3).text() == "93.0%"
-    assert widget.pixel_qa_table.item(0, 4).text() == "4.0% / 1.0%"
-    assert "Missing: invvar" in widget.pixel_qa_table.item(1, 5).text()
+    assert widget.pixel_qa_table.item(0, 2).text() == "~72.0%"
+    assert widget.pixel_qa_table.item(0, 3).text() == "~85.0%"
+    assert widget.pixel_qa_table.item(0, 4).text() == "82.0%"
+    assert widget.pixel_qa_table.item(0, 5).text() == "93.0%"
+    assert widget.pixel_qa_table.item(0, 6).text() == "4.0% / 1.0%"
+    assert "Missing: invvar" in widget.pixel_qa_table.item(1, 7).text()
     assert "not automatically rejected" in widget.pixel_qa_status.text()
