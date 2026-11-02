@@ -98,18 +98,28 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
                 f"within the {width}x{height} window: {primary}")
     if state in ("S4", "S5", "S6"):
         if window.inspector_tabs.currentWidget() is not window.science_qa:
-            raise AssertionError("S4 Science QA tab not selected")
-        if not window.science_qa.result.isVisible():
-            raise AssertionError("S4 Science QA result text clipped/hidden")
-        expected = "compare" if state == "S6" else "square"
-        if not window.science_qa.buttons[expected].isVisible():
-            raise AssertionError(
-                f"{state} Science QA action {expected!r} unreachable")
-        if state == "S6" and (
-                not window.science_qa.north_directory.isVisible() or
-                not window.science_qa.south_directory.isVisible()):
-            raise AssertionError(
-                "S6 separate original North/South input fields are hidden")
+            raise AssertionError("Science QA tab not selected")
+        if not window.science_qa.result_summary.isVisible():
+            raise AssertionError("Current QA outcome summary is not reachable")
+        # Extra diagnostics and full receipts are intentionally behind
+        # explicit disclosure. S4/S6 capture the expanded scientific mode,
+        # while S5 captures the uncluttered ordinary FITS inspection.
+        if state in ("S4", "S6"):
+            window.science_qa.advanced_toggle.setChecked(True)
+            window.science_qa.result_toggle.setChecked(True)
+            for _ in range(3):
+                app.processEvents()
+            if not window.science_qa.result.isVisible():
+                raise AssertionError("Expanded QA report was not reachable")
+            expected = "compare" if state == "S6" else "square"
+            if not window.science_qa.buttons[expected].isVisible():
+                raise AssertionError(
+                    f"{state} expanded QA action {expected!r} unreachable")
+            if state == "S6" and (
+                    not window.science_qa.north_directory.isVisible() or
+                    not window.science_qa.south_directory.isVisible()):
+                raise AssertionError(
+                    "Separate original North/South inputs are unreachable")
     if state == "S5":
         if window.preview_tabs.currentWidget() is not window.fits_explorer:
             raise AssertionError("S5 native FITS Explorer is not visible")
