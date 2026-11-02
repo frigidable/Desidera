@@ -1346,7 +1346,11 @@ class SurveyExplorer(QMainWindow):
         if self.bricks.selectedItems() and 0 <= row < len(self.hits):
             hit = self.hits[row]
             data_key = (hit.release, hit.region, hit.name)
-            idx = self.brick_filter.findData(data_key)
+            idx = next((
+                i for i in range(self.brick_filter.count())
+                if self.brick_filter.itemData(i) is not None and
+                tuple(self.brick_filter.itemData(i)) == data_key
+            ), -1)
             if idx >= 0:
                 self.brick_filter.setCurrentIndex(idx)
         if hasattr(self, "science_qa"):
