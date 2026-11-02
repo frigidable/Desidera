@@ -148,6 +148,13 @@ def import_legacy_fits(project_root: str | Path, data_root: str | Path) -> dict:
     root = Path(data_root).expanduser().resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"Original data directory not found: {root}")
+    # Legacy projects store original downloads either at the object root
+    # or under its data/ child. Accept either folder selection without moving
+    # files, while storing the exact resolved original asset location.
+    if not any((root / release).is_dir()
+               for release in ("dr9", "dr10", "dr11")) and (
+                   root / "data").is_dir():
+        root = (root / "data").resolve()
     inventory = discover_dataset_inventory(root)
     registry = read_dataset_index(project.root)
     source_by_key = {s.get("import_key"): s for s in registry["sources"]}
