@@ -33,6 +33,7 @@ from lsbpipe.gui.target_input import (
     parse_ra_deg, parse_dec_deg, parse_width_arcmin, parse_coordinate_pair)
 from lsbpipe.gui.qa_workbench import ScienceQAControls
 from lsbpipe.gui.fits_explorer import FITSExplorer
+from lsbpipe.gui.dataset_manager import DatasetManager
 from lsbpipe.gui.four_layer_comparison import FourLayerComparison
 from lsbpipe.gui.multiband_comparison import MultibandComparison, load_multiband_originals
 from lsbpipe.gui.fits_raster import prepare_fits_explorer
@@ -141,6 +142,14 @@ class SurveyExplorer(QMainWindow):
         self.back_to_projects.clicked.connect(self._go_back_to_projects)
         self.back_to_projects.setVisible(False)
         panel.addWidget(self.back_to_projects)
+        self.dataset_manager_btn = QPushButton("Data Manager · local sources")
+        self.dataset_manager_btn.setObjectName("workspace_open_dataset_manager")
+        self.dataset_manager_btn.setToolTip(
+            "Inspect all local observational sources, bricks and filters "
+            "before configuring scientific analysis. No network requests.")
+        self.dataset_manager_btn.clicked.connect(self._open_dataset_manager)
+        self.dataset_manager_btn.setVisible(False)
+        panel.addWidget(self.dataset_manager_btn)
         self.workflow_stage = QLabel("01 / 03 · Target")
         self.workflow_stage.setObjectName("workflow_stage")
         self.workflow_stage.setStyleSheet(
@@ -581,6 +590,15 @@ class SurveyExplorer(QMainWindow):
         # live interactive viewer, not a QPixmap of a previously saved PNG.
         self.four_layer_comparison = FourLayerComparison(self)
         self.multiband_comparison = MultibandComparison(self)
+        self.dataset_manager = DatasetManager(self)
+        self.dataset_manager.registerRequested.connect(
+            self._index_dataset_root)
+        self.dataset_manager.coverageRequested.connect(
+            self._inspect_dataset_footprints)
+        self.dataset_manager.checksumRequested.connect(
+            self._hash_dataset_asset)
+        self.dataset_manager.backRequested.connect(
+            self._leave_dataset_manager)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -605,6 +623,9 @@ class SurveyExplorer(QMainWindow):
             raise TypeError("Workspace requires an object-project record")
         self._object_project = project
         self.back_to_projects.setVisible(True)
+        self.dataset_manager_btn.setVisible(True)
+        from lsbpipe.surveys.dataset_registry import read_dataset_index
+        self.dataset_manager.bind_project(project, read_dataset_index(project.root))
         self.setWindowTitle(
             f"LSBpipe · {project.display_name} · Galaxy Workspace")
         self.open_project_btn.setVisible(False)
@@ -667,6 +688,133 @@ class SurveyExplorer(QMainWindow):
         finally:
             self._restoring_local_project = False
         self._refresh_workflow()
+
+    def _open_dataset_manager(self):
+        """Navigate to the object's observational inventory, never online."""
+        project = self._object_project
+        if project is None:
+            QMessageBox.information(
+                self, "Galaxy project required",
+                "Create or open a galaxy project before using Data Manager.")
+            return
+        from lsbpipe.surveys.dataset_registry import read_dataset_index
+        try:
+            index = read_dataset_index(project.root)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "Cannot read dataset index", str(exc))
+            return
+        self.dataset_manager.bind_project(project, index)
+        if self.preview_tabs.indexOf(self.dataset_manager) < 0:
+            self.preview_tabs.addTab(self.dataset_manager, "Data Manager")
+        self.preview_tabs.setCurrentWidget(self.dataset_manager)
+        self.data_drawer.hide()
+        # First encounter with a legacy project performs an offline *index*
+        # of its known original FITS tree, not a download or science adoption.
+        # Existing source indexes are never rebuilt implicitly.
+        if (not index["sources"] and project.data_root is not None
+                and project.data_root.is_dir()):
+            self._index_dataset_root(str(project.data_root))
+
+    def _leave_dataset_manager(self):
+        if self.fits_explorer._dataset is not None:
+            self.preview_tabs.setCurrentWidget(self.fits_explorer)
+        else:
+            self.preview_tabs.setCurrentWidget(self.sky)
+
+    def _index_dataset_root(self, directory: str):
+        project = self._object_project
+        if project is None:
+            return
+        if self.thread is not None:
+            self.message.setText("Finish the active task before indexing FITS.")
+            return
+        from lsbpipe.surveys.dataset_registry import (
+            import_legacy_fits, read_dataset_index)
+        self.dataset_manager.set_busy(True)
+        self.dataset_manager.source_summary.setText(
+            "Scanning original local Legacy FITS paths · no network or data changes")
+        def job(progress):
+            progress.checkpoint()
+            result = import_legacy_fits(project.root, directory)
+            progress.checkpoint()
+            return result, read_dataset_index(project.root)
+        def finished(payload):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is not project:
+                self.message.setText("Older project inventory result ignored.")
+                return
+            result, index = payload
+            self.dataset_manager.set_index(index)
+            self.message.setText(
+                f"Indexed {result['assets_total']} local FITS file entries "
+                f"from {result['sources_total']} source groups. "
+                "Originals read-only; FITS/WCS and photometric quality unverified.")
+        def failed(message):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is project:
+                self.message.setText("Dataset indexing failed: " + message)
+                self.dataset_manager.source_summary.setText(
+                    "Index failed; original FITS remain untouched: " + message)
+        self._start(job, finished, on_error=failed,
+                    operation_name="dataset_index")
+
+    def _inspect_dataset_footprints(self):
+        project = self._object_project
+        if project is None or self.thread is not None:
+            return
+        from lsbpipe.surveys.dataset_coverage import survey_coverage_footprints
+        self.dataset_manager.set_busy(True)
+        self.dataset_manager.map_status.setText(
+            "Reading original FITS WCS headers · geometry only")
+        def job(progress):
+            return survey_coverage_footprints(
+                project.root, checkpoint=progress.checkpoint)
+        def finished(result):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is not project:
+                return
+            self.dataset_manager.set_coverage(result)
+            self.message.setText(
+                f"Coverage: {len(result['footprints'])} header footprints, "
+                f"{len(result['rejected'])} failed headers; no quality adoption.")
+        def failed(message):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is project:
+                self.dataset_manager.map_status.setText(
+                    "Cannot inspect original FITS geometry: " + message)
+        self._start(job, finished, on_error=failed,
+                    operation_name="dataset_wcs_footprints")
+
+    def _hash_dataset_asset(self, asset_id: str):
+        project = self._object_project
+        if project is None or self.thread is not None:
+            return
+        from lsbpipe.surveys.dataset_registry import (
+            verify_asset_checksum, read_dataset_index)
+        self.dataset_manager.set_busy(True)
+        self.dataset_manager.details.setText(
+            "Calculating original-file SHA-256 · no FITS modification")
+        def job(progress):
+            progress.checkpoint()
+            receipt = verify_asset_checksum(project.root, asset_id)
+            progress.checkpoint()
+            return receipt, read_dataset_index(project.root)
+        def finished(payload):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is not project:
+                return
+            receipt, index = payload
+            self.dataset_manager.set_index(index)
+            self.message.setText(
+                f"SHA-256 checked for {receipt['asset_id']}; "
+                "this is not FITS/photometric science validation.")
+        def failed(message):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is project:
+                self.dataset_manager.details.setText(
+                    "File SHA-256 verification failed: " + message)
+        self._start(job, finished, on_error=failed,
+                    operation_name="dataset_file_checksum")
 
     def _go_back_to_projects(self):
         if self.thread is not None:
@@ -1565,7 +1713,9 @@ class SurveyExplorer(QMainWindow):
             if self.data_drawer.isVisible():
                 self.data_drawer.hide()
             self.preview_label.setText(
-                "Original FITS · read-only")
+                "Data Manager · offline observational provenance"
+                if self.preview_tabs.currentWidget() is self.dataset_manager
+                else "Original FITS · read-only")
         else:
             self.preview_label.setText(
                 "Sky preview · not calibrated FITS")
