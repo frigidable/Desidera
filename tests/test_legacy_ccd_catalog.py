@@ -224,3 +224,28 @@ def test_single_multiband_brick_catalog_indexes_distinct_g_r_coadds(
     assert compare_coadd_lineage(
         project.root, images["dr9"], g_image)["status"] == (
             "NO_SHARED_REGISTERED_IDS_NOT_CERTIFIED")
+
+
+def test_archive_edge_coordinates_outside_pixel_grid_but_clipped_overlap_valid(
+        project, tmp_path):
+    """Actual DR9/DR11 tables contain e.g. BRICK_X0=-10 and X1=3612."""
+    images = add_original_coadds(project)
+    file = make_catalog(tmp_path, rows=[
+        ("decam", 574299, "N10", "r", -10, 3612, -8, 3607),
+    ])
+    receipt = import_brick_ccd_catalog(
+        project.root, coadd_asset_id=images["dr9"], catalogue_file=file)
+    assert receipt["selected_ccd_count"] == 1
+
+
+def test_archive_edge_coordinates_with_no_clipped_overlap_rejected(
+        project, tmp_path):
+    """A CCD footprint wholly outside the actual brick cannot contribute."""
+    images = add_original_coadds(project)
+    file = make_catalog(tmp_path, rows=[
+        ("decam", 574299, "N10", "r", -20, -1, 2, 25),
+    ])
+    with pytest.raises(ValueError, match="nonpositive brick overlap"):
+        import_brick_ccd_catalog(
+            project.root, coadd_asset_id=images["dr9"], catalogue_file=file)
+    assert not lineage_path(project.root).exists()
