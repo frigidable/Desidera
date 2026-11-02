@@ -58,6 +58,28 @@ def test_header_only_geometry_from_actual_fits_not_brick_name(project, tmp_path)
     assert (p1.read_bytes(), p2.read_bytes()) == before
 
 
+def test_compressed_fits_extension_has_real_header_wcs_geometry(
+        project, tmp_path):
+    """Legacy survey files are commonly compressed FITS, not plain .fits."""
+    w = WCS(naxis=2)
+    w.wcs.crpix = [35., 40.]
+    w.wcs.cdelt = [-.262/3600., .262/3600.]
+    w.wcs.crval = [40.096208, 1.22925]
+    w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    path = tmp_path / "compressed_image.fits.fz"
+    image = np.ones((80, 70), dtype=np.int16)
+    fits.HDUList([
+        fits.PrimaryHDU(),
+        fits.CompImageHDU(data=image, header=w.to_header(),
+                          compression_type="RICE_1"),
+    ]).writeto(path)
+    register_external_fits(project.root, path, provider="Test DECam", band="r")
+    response = survey_coverage_footprints(project.root)
+    assert len(response["footprints"]) == 1
+    assert not response["rejected"]
+    assert response["footprints"][0]["native_shape"] == [80, 70]
+
+
 def test_invalid_fits_and_no_wcs_are_reported_not_mapped(project, tmp_path):
     bad = tmp_path / "corrupt.fits"
     bad.write_bytes(b"NOT_A_FITS")
