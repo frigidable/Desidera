@@ -96,6 +96,7 @@ def apply_offline_state(window, state: str):
         window.band_filter.setCurrentText("r")
         window.kind_filter.setCurrentText("image")
         assert len(window._selected()) == 0  # filters never change selection
+        window.files_options.setChecked(True)  # explicit advanced products view
         return
     if state in ("S3", "S4", "S5", "S6"):
         window.bricks.selectRow(0)
