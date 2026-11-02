@@ -117,6 +117,7 @@ class SurveyExplorer(QMainWindow):
         self.thread = None
         self._task_dispatch = None
         self._active_task_token = None
+        self._operation_journal_path = None
         self._closing_task_ui = False
         self._task_serial = 0
         self._brick_overlay_features = []
@@ -1165,14 +1166,27 @@ class SurveyExplorer(QMainWindow):
             QMessageBox.information(self, "Legacy Viewer status", chr(10).join(lines))
         self.sky.page().runJavaScript(probe, done)
 
-    def _start(self, action, finished, on_error=None):
-        """One active GUI worker. Callbacks only run in GUI-owned Qt slots."""
+    def _start(self, action, finished, on_error=None, *,
+               operation_name="background"):
+        """One active worker; optional crash journal for object projects."""
         if self.thread is not None:
             QMessageBox.information(
                 self, "Busy", "Another survey operation is running.")
             return
+        if self._object_project is not None:
+            from lsbpipe.surveys.operation_journal import start_operation
+            try:
+                self._operation_journal_path = start_operation(
+                    self._object_project.root, self._object_project.project_id,
+                    operation_name)
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(
+                    self, "Cannot journal operation",
+                    "No background work was started: " + str(exc))
+                return
+        else:
+            self._operation_journal_path = None
         self._task_serial += 1
-        serial = self._task_serial
         token = TaskToken()
         self._active_task_token = token
         self.search_btn.setEnabled(False)
@@ -1210,6 +1224,13 @@ class SurveyExplorer(QMainWindow):
             return
         token.request_cancel()
         self.thread.requestInterruption()
+        if self._operation_journal_path is not None:
+            from lsbpipe.surveys.operation_journal import request_stop
+            try:
+                request_stop(self._operation_journal_path)
+            except (OSError, ValueError) as exc:
+                self.project_status.setText(
+                    f"Stop requested but journal write failed: {exc}")
         self.stop_task_btn.setEnabled(False)
         self.message.setText(
             "Stop requested. Waiting for a safe checkpoint; the running "
@@ -1219,6 +1240,17 @@ class SurveyExplorer(QMainWindow):
     def _idle(self):
         # QObject slot is dispatched on the GUI thread, never via a Python
         # lambda that Qt could invoke on QThread's worker thread.
+        if self._operation_journal_path is not None:
+            from lsbpipe.surveys.operation_journal import finish_operation
+            try:
+                finish_operation(
+                    self._operation_journal_path,
+                    self._task_dispatch.terminal_outcome
+                    if self._task_dispatch is not None else "IGNORED")
+            except (OSError, ValueError) as exc:
+                self.project_status.setText(
+                    f"Operation finished; journal is uncertain: {exc}")
+        self._operation_journal_path = None
         self.thread = None
         self.worker = None
         self._task_dispatch = None
