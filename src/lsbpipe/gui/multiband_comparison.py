@@ -62,10 +62,18 @@ def load_multiband_originals(*, directory, field, hit, radii, checkpoint=None):
             continue
         # Delegate actual scientific WCS/shape/validity checks to the existing
         # FITS loader, not to this display-only comparison.
-        dataset = prepare_fits_explorer(
-            directory=candidate, field=field, hit=hit, band=band,
-            target_radius_arcsec=radii[0], sky_inner_arcsec=radii[1],
-            sky_outer_arcsec=radii[2])
+        try:
+            dataset = prepare_fits_explorer(
+                directory=candidate, field=field, hit=hit, band=band,
+                target_radius_arcsec=radii[0], sky_inner_arcsec=radii[1],
+                sky_outer_arcsec=radii[2])
+        except (OSError, ValueError) as exc:
+            # One corrupt/incompatible band should be identified and
+            # excluded, not presented as valid or block other valid bands.
+            missing[band] = (
+                "Local quartet failed FITS/WCS validation: "
+                f"{type(exc).__name__}: {exc}")
+            continue
         pixels = int(np.prod(dataset["pixel_shape"]))
         total += pixels
         if total > MAX_TOTAL_PIXELS:
@@ -221,7 +229,9 @@ class MultibandComparison(QWidget):
             self.placeholders[band].setVisible(d is None)
             if d is None:
                 self.placeholders[band].setText(
-                    band.upper() + " unavailable locally · no substitution")
+                    band.upper() + ": " +
+                    self.missing.get(band, "Unavailable locally") +
+                    "\nNo substitution from another dataset")
                 continue
             ny, nx = d["pixel_shape"]
             self.scenes[band].setSceneRect(0, 0, nx, ny)
