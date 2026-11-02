@@ -192,3 +192,75 @@ def test_project_switch_is_refused_until_worker_is_safely_finished(
     window._go_back_to_projects()
     assert hub.workspace is None
     assert hub.isVisible()
+
+
+@pytest.mark.parametrize("thread_first", [True, False])
+def test_terminal_and_thread_end_both_acknowledged_before_idle(
+        qtbot, thread_first):
+    from PySide6.QtCore import QObject
+    from lsbpipe.gui.task_execution import TaskDispatch
+    class Owner(QObject):
+        def __init__(self):
+            super().__init__()
+            self._closing_task_ui = False
+            self._active_task_token = None
+            self.idle_calls = 0
+
+        def _idle(self):
+            self.idle_calls += 1
+
+    owner = Owner()
+    token = TaskToken()
+    owner._active_task_token = token
+    results = []
+    adapter = TaskDispatch(owner, results.append, None, token)
+    if thread_first:
+        adapter.on_thread_finished()
+        assert owner.idle_calls == 0
+        adapter.deliver_completed("delivered")
+    else:
+        adapter.deliver_completed("delivered")
+        assert owner.idle_calls == 0
+        adapter.on_thread_finished()
+    assert results == ["delivered"]
+    assert adapter.terminal_outcome == "COMPLETED"
+    assert owner.idle_calls == 1
+    adapter.on_thread_finished()
+    assert owner.idle_calls == 1
+
+
+def test_object_workspace_worker_journal_reopens_with_crash_warning(
+        qtbot, tmp_path):
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.surveys.object_projects import create_object_project, read_object_project
+    from lsbpipe.surveys.operation_journal import (
+        interrupted_operations, start_operation)
+    p = create_object_project("NGC 2146sat", tmp_path / "NGC2146sat")
+    with offline_legacy_viewer():
+        hub = ProjectHub()
+        hub._enter_project(p)
+    qtbot.addWidget(hub)
+    window = hub.workspace
+    done = []
+    window._start(lambda progress: "ok", done.append,
+                  operation_name="dataset_audit")
+    qtbot.waitUntil(
+        lambda: window.thread is None and done == ["ok"], timeout=15000)
+    assert interrupted_operations(p.root) == []
+    journals = list((p.root / "operations").glob("*.json"))
+    assert len(journals) == 1
+    import json
+    assert json.loads(journals[0].read_text())["state"] == "COMPLETED"
+    # Emulate a previous process dying with an active job; no manual
+    # flag flips or changes to original datasets are required.
+    stale = start_operation(p.root, p.project_id, "download")
+    window._go_back_to_projects()
+    assert hub.workspace is None
+    with offline_legacy_viewer():
+        hub._enter_project(read_object_project(p.root))
+    reopened = hub.workspace
+    assert reopened is not None
+    assert "uncertain prior operation" in reopened.project_status.text()
+    assert len(interrupted_operations(p.root)) == 1
+    assert stale.is_file()
+    reopened._go_back_to_projects()
