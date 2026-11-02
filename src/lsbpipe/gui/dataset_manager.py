@@ -117,6 +117,17 @@ def _footprint_input_signature(index: dict):
         if asset.get("product_kind") == "image"))
 
 
+def _pixel_input_signature(index: dict):
+    """Provenance that can invalidate counts, independent of SHA receipts."""
+    return tuple(sorted(
+        (str(a.get("asset_id")), str(a.get("size_bytes")),
+         str(a.get("mtime_ns")),
+         json.dumps(a.get("path_ref", {}), sort_keys=True))
+        for a in index.get("assets", [])
+        if a.get("product_kind") in (
+            "image", "invvar", "nexp", "maskbits")))
+
+
 class _SkyFootprintView(QGraphicsView):
     resized = Signal()
 
@@ -341,6 +352,7 @@ class DatasetManager(QWidget):
             self._selected_asset_id = None
             self._map_fit_mode = "target"
             self.coverage = None
+            self.pixel_qa_result = None
             self.index = None
         self.project = project
         self.set_index(index)
@@ -352,6 +364,10 @@ class DatasetManager(QWidget):
         new_signature = _footprint_input_signature(index)
         if old_signature != new_signature:
             self.coverage = None
+        old_pixel_signature = (
+            _pixel_input_signature(self.index)
+            if self.index is not None else None)
+        if old_pixel_signature != _pixel_input_signature(index):
             self.pixel_qa_result = None
         self.index = index
         selected_item = self.tree.currentItem()
