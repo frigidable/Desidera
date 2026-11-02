@@ -109,8 +109,9 @@ class ScienceQAControls(QWidget):
         inspect_layout.setContentsMargins(5, 8, 5, 8)
         inspect_layout.setSpacing(6)
         intro = QLabel(
-            "Screen the full search square, then inspect the four original "
-            "FITS layers with WCS and display-only mask overlays.")
+            "Screen the search square, or inspect quality maps for ONE band: "
+            "IMAGE, INVVAR, NEXP and MASKBITS. Optical g/r/i/z comparison "
+            "is available in the FITS viewer toolbar.")
         intro.setWordWrap(True)
         inspect_layout.addWidget(intro)
         for key, caption, tooltip in (
@@ -121,7 +122,7 @@ class ScienceQAControls(QWidget):
              "readout; no PNG or interpolation of science arrays"),
             ("figure", "Export static PNG (optional)",
              "Save a diagnostic report image as an optional file; not the "
-             "interactive Four-layer QA workspace"),
+             "interactive single-band quality-map workspace"),
         ):
             self._add_action(inspect_layout, key, caption, tooltip)
         self.steps.addItem(inspect_page, self._step_names[0])
