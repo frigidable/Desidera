@@ -464,6 +464,7 @@ class SurveyExplorer(QMainWindow):
         # Footer stays pinned even while product rows scroll.
         self.data_drawer = QDockWidget("Archive files · coverage QA", self)
         self.data_drawer.setObjectName("science_data_drawer")
+        self.data_drawer.setMinimumWidth(278)
         self.data_drawer.setAllowedAreas(Qt.RightDockWidgetArea)
         self.data_drawer.setFeatures(
             QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable)
