@@ -255,6 +255,17 @@ def register_external_fits(
     if not file.name.lower().endswith((".fits", ".fit", ".fits.fz", ".fts")):
         raise ValueError("Unsupported external FITS filename")
     registry = read_dataset_index(project.root)
+    file_ref = _path_ref(file, project.root)
+    for existing in registry["assets"]:
+        if (existing.get("path_ref") == file_ref and
+                existing.get("band") == band.strip() and
+                any(source["source_id"] == existing["source_id"] and
+                    source.get("provider") == provider.strip()
+                    for source in registry["sources"])):
+            # Reattaching the same original is idempotent; keep provenance
+            # and SHA-256 receipts instead of creating duplicate assets.
+            return {"source_id": existing["source_id"],
+                    "asset_id": existing["asset_id"]}
     source = {
         "source_id": str(uuid.uuid4()),
         "import_key": None,
