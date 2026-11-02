@@ -9,9 +9,8 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Callable
 
-from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot, QUrl, QTimer, QEvent
+from PySide6.QtCore import QThread, Qt, Signal, Slot, QUrl, QTimer, QEvent
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QLineEdit,
@@ -37,6 +36,7 @@ from lsbpipe.gui.fits_explorer import FITSExplorer
 from lsbpipe.gui.fits_raster import prepare_fits_explorer
 from lsbpipe.gui.science_workflows import run_science_qa as run_science_qa_backend
 from lsbpipe.gui.qa_records import ScienceContext
+from lsbpipe.gui.task_execution import TaskWorker, TaskDispatch, TaskToken
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -49,64 +49,6 @@ class _DiagnosticWebPage(QWebEnginePage):
         self.recent_console.append(
             f"{str(level)}: {message} ({source_id}:{line_number})")
         del self.recent_console[:-20]
-
-
-class TaskWorker(QObject):
-    completed = Signal(object)
-    progress = Signal(object)
-    failed = Signal(str)
-    finished = Signal()
-
-    def __init__(self, task: Callable):
-        super().__init__()
-        self.task = task
-
-    @Slot()
-    def run(self):
-        try:
-            self.completed.emit(self.task(self.progress.emit))
-        except Exception as exc:
-            self.failed.emit(f'{type(exc).__name__}: {exc}')
-        finally:
-            self.finished.emit()
-
-
-class _TaskDispatch(QObject):
-    """Deliver Python callbacks only on the thread owning the GUI QObject.
-
-    Plain functions/lambdas connected directly to worker signals can execute
-    on the worker thread under PySide6. GUI widgets and QMessageBox must never
-    be touched from that thread (QTextDocument/QBasicTimer native crash).
-    """
-
-    def __init__(self, owner: "SurveyExplorer", completed: Callable,
-                 on_error: Callable | None):
-        super().__init__(owner)
-        self._owner = owner
-        self._completed = completed
-        self._on_error = on_error
-
-    @Slot(object)
-    def deliver_completed(self, value):
-        try:
-            self._completed(value)
-        except Exception as exc:
-            logging.exception("LSBpipe GUI completion callback failed")
-            self.deliver_failed(f"{type(exc).__name__}: {exc}")
-
-    @Slot(str)
-    def deliver_failed(self, message: str):
-        self._owner.message.setText(message)
-        if self._on_error is not None:
-            try:
-                self._on_error(message)
-            except Exception:
-                logging.exception("LSBpipe GUI error callback failed")
-        QMessageBox.warning(self._owner, "Survey operation failed", message)
-
-    @Slot(object)
-    def deliver_progress(self, value):
-        self._owner._progress(value)
 
 
 class TargetTextField(QLineEdit):
@@ -174,6 +116,9 @@ class SurveyExplorer(QMainWindow):
         self.worker = None
         self.thread = None
         self._task_dispatch = None
+        self._active_task_token = None
+        self._closing_task_ui = False
+        self._task_serial = 0
         self._brick_overlay_features = []
         self._brick_overlay_keys = []
         self._qa_pixmap = None
@@ -526,7 +471,17 @@ class SurveyExplorer(QMainWindow):
         # Progress remains visible even when the data drawer is closed.
         self.bar = QProgressBar()
         self.bar.setValue(0)
-        panel.addWidget(self.bar)
+        progress_controls = QHBoxLayout()
+        progress_controls.addWidget(self.bar, 1)
+        self.stop_task_btn = QPushButton("Request stop")
+        self.stop_task_btn.setObjectName("survey_request_stop")
+        self.stop_task_btn.setEnabled(False)
+        self.stop_task_btn.setToolTip(
+            "Cooperative stop: tasks check between safe steps. No worker "
+            "thread is forcibly terminated; completed receipts are preserved.")
+        self.stop_task_btn.clicked.connect(self._request_stop)
+        progress_controls.addWidget(self.stop_task_btn)
+        panel.addLayout(progress_controls)
         self.message = QLabel("Ready")
         self.message.setWordWrap(True)
         panel.addWidget(self.message)
@@ -1211,41 +1166,61 @@ class SurveyExplorer(QMainWindow):
         self.sky.page().runJavaScript(probe, done)
 
     def _start(self, action, finished, on_error=None):
+        """One active GUI worker. Callbacks only run in GUI-owned Qt slots."""
         if self.thread is not None:
-            QMessageBox.information(self, "Busy", "Another survey operation is running.")
+            QMessageBox.information(
+                self, "Busy", "Another survey operation is running.")
             return
+        self._task_serial += 1
+        serial = self._task_serial
+        token = TaskToken()
+        self._active_task_token = token
         self.search_btn.setEnabled(False)
         self.download_btn.setEnabled(False)
         self.verify_btn.setEnabled(False)
         self.qa_btn.setEnabled(False)
+        self.stop_task_btn.setEnabled(True)
         self.science_qa.set_busy(True)
         thread = QThread(self)
-        worker = TaskWorker(action)
-        # The receiver is a QObject created in the main thread. Its decorated
-        # slots force queued cross-thread delivery even for Python closures.
-        # Keep it alive until QThread.finished, never until worker.finished:
-        # pending completion/progress events may still be in the GUI queue.
-        dispatch = _TaskDispatch(self, finished, on_error)
+        worker = TaskWorker(action, token=token)
+        dispatch = TaskDispatch(self, finished, on_error, token)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.completed.connect(dispatch.deliver_completed, Qt.QueuedConnection)
         worker.failed.connect(dispatch.deliver_failed, Qt.QueuedConnection)
+        worker.cancelled.connect(dispatch.deliver_cancelled, Qt.QueuedConnection)
         worker.progress.connect(dispatch.deliver_progress, Qt.QueuedConnection)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+        # Keep dispatch alive until after worker shutdown. No callback can
+        # outlive its owning workspace or cross into a newer job.
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(dispatch.deleteLater)
-        thread.finished.connect(self._idle)
+        thread.finished.connect(lambda: self._idle(serial))
         self._task_dispatch = dispatch
         self.worker = worker
         self.thread = thread
         thread.start()
 
-    @Slot()
-    def _idle(self):
+    def _request_stop(self):
+        token = self._active_task_token
+        if self.thread is None or token is None:
+            return
+        token.request_cancel()
+        self.thread.requestInterruption()
+        self.stop_task_btn.setEnabled(False)
+        self.message.setText(
+            "Stop requested. Waiting for a safe checkpoint; the running "
+            "operation may finish writing an immutable report before stopping.")
+
+    def _idle(self, serial=None):
+        if serial is not None and serial != self._task_serial:
+            return
         self.thread = None
         self.worker = None
         self._task_dispatch = None
+        self._active_task_token = None
+        self.stop_task_btn.setEnabled(False)
         self.search_btn.setEnabled(True)
         self.download_btn.setEnabled(True)
         self.verify_btn.setEnabled(True)
