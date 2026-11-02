@@ -597,6 +597,8 @@ class SurveyExplorer(QMainWindow):
             self._register_external_dataset)
         self.dataset_manager.coverageRequested.connect(
             self._inspect_dataset_footprints)
+        self.dataset_manager.pixelQaRequested.connect(
+            self._inspect_dataset_pixel_coverage)
         self.dataset_manager.checksumRequested.connect(
             self._hash_dataset_asset)
         self.dataset_manager.backRequested.connect(
@@ -818,6 +820,33 @@ class SurveyExplorer(QMainWindow):
                     "Cannot inspect original FITS geometry: " + message)
         self._start(job, finished, on_error=failed,
                     operation_name="dataset_wcs_footprints")
+
+    def _inspect_dataset_pixel_coverage(self):
+        project = self._object_project
+        if project is None or self.thread is not None:
+            return
+        from lsbpipe.surveys.dataset_pixel_qa import inspect_pixel_coverage
+        self.dataset_manager.set_busy(True)
+        self.dataset_manager.pixel_qa_status.setText(
+            "Validating original FITS/WCS and counting target/sky pixels…")
+        def job(progress):
+            return inspect_pixel_coverage(
+                project.root, checkpoint_fn=progress.checkpoint)
+        def finished(report):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is not project:
+                return
+            self.dataset_manager.set_pixel_qa(report)
+            self.message.setText(
+                f"Pixel coverage diagnostic: {len(report['rows'])} independent "
+                "datasets; no science/photometric adoption.")
+        def failed(message):
+            self.dataset_manager.set_busy(False)
+            if self._object_project is project:
+                self.dataset_manager.pixel_qa_status.setText(
+                    "Pixel coverage diagnostic failed: " + message)
+        self._start(job, finished, on_error=failed,
+                    operation_name="dataset_pixel_coverage")
 
     def _hash_dataset_asset(self, asset_id: str):
         project = self._object_project
