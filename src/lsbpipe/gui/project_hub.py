@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+    QMenu,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
     QInputDialog, QSplitter,
@@ -219,7 +220,13 @@ class ProjectHub(QMainWindow):
         self._preview_timer.timeout.connect(self._finish_preview)
         self._rgb_future = None
         self._rgb_project_id = None
+        self._rgb_request_key = None
         self._rgb_errors = {}
+        self._rgb_attempted = set()
+        self._rgb_auto_timer = QTimer(self)
+        self._rgb_auto_timer.setSingleShot(True)
+        self._rgb_auto_timer.setInterval(650)
+        self._rgb_auto_timer.timeout.connect(self._automatic_rgb_for_selection)
         self._rgb_timer = QTimer(self)
         self._rgb_timer.setInterval(100)
         self._rgb_timer.timeout.connect(self._finish_rgb_preview)
@@ -377,6 +384,48 @@ class ProjectHub(QMainWindow):
             "project metadata and science reports are never deleted.")
         self.remove_btn.clicked.connect(self._remove_selected)
         right.addWidget(self.remove_btn)
+
+        # Keep one primary Open project action inside the passport. Secondary
+        # operations live in two compact menus rather than six full-width rows.
+        menu_row = QHBoxLayout()
+        menu_row.setSpacing(8)
+        self.catalogues_menu_btn = QPushButton("Catalogues  ▾")
+        self.catalogues_menu_btn.setObjectName("hub_catalogues_menu")
+        self.catalogues_menu = QMenu(self.catalogues_menu_btn)
+        self.simbad_action = self.catalogues_menu.addAction("SIMBAD identity…")
+        self.ned_action = self.catalogues_menu.addAction("NED identity…")
+        self.simbad_action.triggered.connect(
+            lambda _checked=False: self._open_knowledge())
+        self.ned_action.triggered.connect(
+            lambda _checked=False: self._open_ned())
+        self.catalogues_menu_btn.setMenu(self.catalogues_menu)
+        menu_row.addWidget(self.catalogues_menu_btn, 1)
+
+        self.tools_menu_btn = QPushButton("Project tools  ▾")
+        self.tools_menu_btn.setObjectName("hub_project_tools_menu")
+        self.tools_menu = QMenu(self.tools_menu_btn)
+        self.local_preview_action = self.tools_menu.addAction(
+            "Regenerate local FITS preview")
+        self.rgb_action = self.tools_menu.addAction(
+            "Refresh colour preview")
+        self.tools_menu.addSeparator()
+        self.config_action = self.tools_menu.addAction(
+            "Analysis configurations…")
+        self.tools_menu.addSeparator()
+        self.remove_action = self.tools_menu.addAction(
+            "Remove from recent…")
+        self.local_preview_action.triggered.connect(
+            lambda _checked=False: self._regenerate_preview())
+        self.rgb_action.triggered.connect(
+            lambda _checked=False: self._fetch_rgb_preview(manual=True))
+        self.config_action.triggered.connect(
+            lambda _checked=False: self._open_configurations())
+        self.remove_action.triggered.connect(
+            lambda _checked=False: self._remove_selected())
+        self.tools_menu_btn.setMenu(self.tools_menu)
+        menu_row.addWidget(self.tools_menu_btn, 1)
+        right.addLayout(menu_row)
+
         # Integrate the reviewed compact passport without removing the
         # independently reviewed SIMBAD/configuration actions.
         self.galaxy_card = GalaxyDetailCard()
@@ -385,7 +434,9 @@ class ProjectHub(QMainWindow):
         for old_widget in (
             self.detail_heading, self.detail_title, self.detail_status,
             self.detail_meta, self.detail_path, self.detail_note,
-            self.continue_btn,
+            self.continue_btn, self.preview_btn, self.rgb_btn,
+            self.knowledge_btn, self.ned_btn, self.config_btn,
+            self.remove_btn,
         ):
             old_widget.hide()
         details.setMinimumWidth(300)
@@ -490,6 +541,8 @@ class ProjectHub(QMainWindow):
         self._selection_changed()
 
     def _selection_changed(self):
+        # Delayed request applies only to the currently stable selection.
+        self._rgb_auto_timer.stop()
         item = self.projects.currentItem()
         record = (item.data(Qt.UserRole)
                   if item is not None and not item.isHidden() else None)
@@ -512,8 +565,17 @@ class ProjectHub(QMainWindow):
             except (ValueError, OSError, KeyError, TypeError):
                 pass
         self.rgb_btn.setEnabled(allow_rgb and self._rgb_future is None)
-        error = (self._rgb_errors.get(record["project_id"], "")
-                 if selected else "")
+        self.rgb_action.setEnabled(allow_rgb and self._rgb_future is None)
+        self.local_preview_action.setEnabled(
+            can_preview and self._preview_future is None)
+        self.catalogues_menu_btn.setEnabled(can_preview)
+        self.tools_menu_btn.setEnabled(selected and self.workspace is None)
+        self.simbad_action.setEnabled(can_preview)
+        self.ned_action.setEnabled(can_preview)
+        self.config_action.setEnabled(can_preview)
+        self.remove_action.setEnabled(selected and self.workspace is None)
+        key = self._rgb_request_for_record(record) if allow_rgb else None
+        error = self._rgb_errors.get(key, "") if key else ""
         self.rgb_feedback.setText(
             "Colour preview unavailable: " + error
             + " · local FITS preview retained." if error else "")
@@ -521,6 +583,11 @@ class ProjectHub(QMainWindow):
         self.remove_btn.setEnabled(selected and self.workspace is None)
         if can_preview and card is not None:
             self._auto_preview_selected(record, card)
+            if (allow_rgb and card.preview_source != "REMOTE_LEGACY_RGB"
+                    and key not in self._rgb_attempted
+                    and self._rgb_future is None
+                    and os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") != "1"):
+                self._rgb_auto_timer.start()
         self.knowledge_btn.setEnabled(
             selected and self.workspace is None and
             bool(record.get("available")) and not bool(record.get("legacy")))
@@ -663,41 +730,67 @@ class ProjectHub(QMainWindow):
         self._preview_errors.pop(record["project_id"], None)
         self._start_preview(record)
 
-    def _fetch_rgb_preview(self):
-        """Only a direct button click can initiate a remote RGB request."""
+    def _rgb_request_for_record(self, record):
+        if not isinstance(record, dict):
+            return None
+        try:
+            request = request_for_project(
+                read_object_project(record["root"]))
+            return record["project_id"], request["url"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _automatic_rgb_for_selection(self):
+        record = self._selected_preview_record()
+        key = self._rgb_request_for_record(record)
+        if (key is None or key in self._rgb_attempted
+                or self._rgb_future is not None
+                or os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") == "1"):
+            return
+        card = self.galaxy_card.snapshot
+        if (card is None or card.project_id != record["project_id"]
+                or card.preview_source == "REMOTE_LEGACY_RGB"):
+            return
+        self._fetch_rgb_preview(manual=False)
+
+    def _fetch_rgb_preview(self, *, manual=True):
+        """Automatically fetch one stable selection, or explicitly refresh."""
         record = self._selected_preview_record()
         if record is None or self._rgb_future is not None:
             return
-        try:
-            request_for_project(read_object_project(record["root"]))
-        except (OSError, ValueError, TypeError, KeyError) as exc:
-            self._rgb_errors[record["project_id"]] = str(exc)
-            self._selection_changed()
+        key = self._rgb_request_for_record(record)
+        if key is None or (not manual and key in self._rgb_attempted):
             return
+        self._rgb_auto_timer.stop()
+        self._rgb_attempted.add(key)
         self._rgb_project_id = record["project_id"]
-        self._rgb_errors.pop(self._rgb_project_id, None)
+        self._rgb_request_key = key
+        self._rgb_errors.pop(key, None)
         self._rgb_future = _RGB_POOL.submit(
             fetch_remote_rgb_preview, record["root"])
         self.rgb_btn.setEnabled(False)
+        self.rgb_action.setEnabled(False)
         self.rgb_feedback.setText(
-            "Requesting official Legacy Surveys RGB cutout…")
+            "Loading colour preview from Legacy Surveys…")
         self.rgb_feedback.setVisible(True)
         self._rgb_timer.start()
 
     def _finish_rgb_preview(self):
         if self._rgb_future is None or not self._rgb_future.done():
             return
-        completed, project_id = self._rgb_future, self._rgb_project_id
+        completed, key = self._rgb_future, self._rgb_request_key
         self._rgb_future = None
         self._rgb_project_id = None
+        self._rgb_request_key = None
         self._rgb_timer.stop()
         try:
             completed.result()
-            self._rgb_errors.pop(project_id, None)
+            self._rgb_errors.pop(key, None)
         except Exception as exc:
-            self._rgb_errors[project_id] = (
+            self._rgb_errors[key] = (
                 f"{type(exc).__name__}: {exc}")
-        # A changed selection never inherits another galaxy's preview.
+        # A different currently selected galaxy may now be queued, never
+        # mistaken for the completed task's project or source coordinates.
         self._selection_changed()
 
     def _open_card_project(self, project_id: str):
