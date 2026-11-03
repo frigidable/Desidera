@@ -25,6 +25,9 @@ from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
 from lsbpipe.photometry.psf_holdout_qa import (
     heldout_signed_residual, summarize_signed_holdouts,
 )
+from lsbpipe.photometry.psf_star_quality import (
+    assess_psf_star_cutout, assess_sample_widths,
+)
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -62,6 +65,9 @@ class PSF0Config:
     # Reviewed identifiers are fixed before model fitting. Holdouts cannot
     # be manually removed to improve the QA score.
     excluded_training_star_ids: tuple[str, ...] = ()
+    # DAO fallback is explicitly diagnostic; strict Gaia mode needs a
+    # verified, release-matched, locally saved original Tractor table.
+    star_catalog_policy: str = "dao_diagnostic"
 
     def __post_init__(self):
         floats = (self.guessed_fwhm_pix, self.detection_sigma,
@@ -95,6 +101,8 @@ class PSF0Config:
             raise ValueError("PSF-0 currently supports only a native-grid EPSF; oversampling requires separate calibration")
         if self.max_star_gradient_sigma <= 0:
             raise ValueError("Gradient rejection threshold must be positive")
+        if self.star_catalog_policy not in ("dao_diagnostic", "gaia_strict"):
+            raise ValueError("Unknown PSF star-catalogue selection policy")
         excluded = self.excluded_training_star_ids
         if (not isinstance(excluded, tuple) or
                 any(not isinstance(key, str) or
@@ -123,6 +131,10 @@ class PSF0Star:
     cutout_rms_nMgy: float
     gradient_sigma_span: float
     role: str
+    gaia_source_id: int | None = None
+    gaia_g_mag: float | None = None
+    image_axis_ratio: float | None = None
+    image_core_sigma_pix: float | None = None
 
     def __post_init__(self):
         if self.role not in ("train", "holdout"):
@@ -343,6 +355,7 @@ def build_empirical_coadd_psf(
     target_icrs_deg: tuple[float, float],
     target_protection_arcsec: float,
     config: PSF0Config | None = None,
+    catalog_matcher=None,
 ) -> PSF0Result:
     """Build an exploratory native-grid ePSF from independent local star cutouts.
 
@@ -355,6 +368,16 @@ def build_empirical_coadd_psf(
     cfg = config if config is not None else PSF0Config()
     if not isinstance(cfg, PSF0Config):
         raise TypeError("Expected PSF0Config")
+    if cfg.star_catalog_policy == "gaia_strict":
+        from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
+        if not isinstance(catalog_matcher, TractorGaiaMatcher):
+            raise ValueError(
+                "GAIA_STRICT_REQUIRES_NATIVE_DR11_TRACTOR: "
+                "download/verify the same-brick Tractor catalogue in GUI")
+        if catalog_matcher.dataset_id != frame.dataset_id:
+            raise ValueError("Gaia catalogue does not match exact native FITS band")
+    elif catalog_matcher is not None:
+        raise ValueError("DAO diagnostic cannot silently consume Gaia catalogue")
     try:
         import photutils
         import astropy
@@ -408,9 +431,17 @@ def build_empirical_coadd_psf(
         rejected[reason] = rejected.get(reason, 0)+1
     accepted = []
     cutouts = {}
-    max_candidates = max(cfg.max_training_stars*5, 100)
+    max_candidates = (
+        len(candidates) if cfg.star_catalog_policy == "gaia_strict"
+        else max(cfg.max_training_stars*5, 100))
     # Sort by brightness for capping, then spatially sort/split below.
     for ix, (x, y, peak) in enumerate(candidates[:max_candidates]):
+        identity = None
+        if catalog_matcher is not None:
+            identity, failure = catalog_matcher.match(x, y, band=frame.band)
+            if failure is not None:
+                reject(failure)
+                continue
         if len(neighbors.query_ball_point([x,y], r=cfg.min_neighbor_separation_pix)) != 1:
             reject("NEIGHBOR_WITHIN_ISOLATION_RADIUS")
             continue
@@ -418,6 +449,14 @@ def build_empirical_coadd_psf(
         if cause:
             reject(cause)
             continue
+        if identity is not None:
+            shape = assess_psf_star_cutout(
+                data_cut, fwhm_guess_pix=cfg.guessed_fwhm_pix)
+            if not shape["accepted"]:
+                reject(shape["reason"])
+                continue
+            data_cut["star_identity"] = identity
+            data_cut["shape_qa"] = shape
         star_id = f"star-{ix+1:04d}"
         ra, dec = frame.wcs.all_pix2world(x, y, 0)
         if not np.isfinite(ra) or not np.isfinite(dec):
@@ -429,6 +468,23 @@ def build_empirical_coadd_psf(
         if len(accepted) >= cfg.max_training_stars + max(
                 cfg.min_holdout_stars, cfg.max_training_stars//(cfg.holdout_every-1)):
             break
+    width_qa = None
+    if catalog_matcher is not None:
+        # Compare each core with the field's own Gaia-confirmed seeing
+        # distribution, avoiding the guessed detection FWHM as truth.
+        width_qa = assess_sample_widths([
+            (entry[0], entry[-1]["shape_qa"]) for entry in accepted])
+        if width_qa is not None:
+            compact = []
+            for entry in accepted:
+                sigma = entry[-1]["shape_qa"]["sigma_eff_pix"]
+                ratio = sigma / width_qa["reference_core_sigma_pix"]
+                if not (width_qa["min_relative_core_sigma"] <= ratio <=
+                        width_qa["max_relative_core_sigma"]):
+                    reject("GAIA_STELLAR_CORE_SIZE_OUTLIER")
+                    continue
+                compact.append(entry)
+            accepted = compact
     # Prevent the brightest section of one brick monopolizing the holdout.
     accepted.sort(key=lambda t: (int(t[2]//(cfg.cutout_size_pix*2)),
                                  int(t[1]//(cfg.cutout_size_pix*2)), t[1], t[0]))
@@ -464,9 +520,16 @@ def build_empirical_coadd_psf(
             f"training stars; minimum is {cfg.min_train_stars}")
     def metadata(entry, role):
         ident, x, y, ra, dec, peak, c = entry
-        return PSF0Star(ident, x, y, ra, dec, c["peak_nMgy"],
-                        c["sky_nMgy"], c["rms_nMgy"],
-                        c["gradient_sigma_span"], role)
+        identity = c.get("star_identity") or {}
+        shape = c.get("shape_qa") or {}
+        return PSF0Star(
+            ident, x, y, ra, dec, c["peak_nMgy"],
+            c["sky_nMgy"], c["rms_nMgy"],
+            c["gradient_sigma_span"], role,
+            gaia_source_id=identity.get("gaia_source_id"),
+            gaia_g_mag=identity.get("gaia_g_mag"),
+            image_axis_ratio=shape.get("axis_ratio"),
+            image_core_sigma_pix=shape.get("sigma_eff_pix"))
     train = tuple(metadata(v, "train") for v in training_entries)
     holdout = tuple(metadata(v, "holdout") for v in holdout_entries)
     epsf_stars = []
@@ -584,6 +647,8 @@ def build_empirical_coadd_psf(
         review_stars.append({
             "star_id": entry[0],
             "role": ("excluded" if entry[0] in excluded_ids else "train"),
+            "gaia": (c.get("star_identity") or {}),
+            "shape_qa": (c.get("shape_qa") or {}),
             "x_pix": float(entry[1]), "y_pix": float(entry[2]),
             "ra_deg": float(entry[3]), "dec_deg": float(entry[4]),
             "cutout": c["image"].copy(),
@@ -599,10 +664,27 @@ def build_empirical_coadd_psf(
         "status": "RESEARCHER_REVIEW_NOT_SCIENCE_ADOPTED",
         "guessed_fwhm_pix": cfg.guessed_fwhm_pix,
         "min_train_stars": cfg.min_train_stars,
+        "catalog_policy": cfg.star_catalog_policy,
+        "catalog_sha256": (
+            catalog_matcher.source_sha256 if catalog_matcher else None),
         "excluded_training_star_ids": tuple(cfg.excluded_training_star_ids),
         "stars": review_stars,
     }
     negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
+    selection_catalog_qa = {
+        "policy": cfg.star_catalog_policy,
+        "gaia_strict": catalog_matcher is not None,
+        "catalog_source_sha256": (
+            catalog_matcher.source_sha256 if catalog_matcher else None),
+        "catalog_path": (
+            catalog_matcher.source_path if catalog_matcher else None),
+        "n_tractor_primary_sources": (
+            len(catalog_matcher.rows) if catalog_matcher else None),
+        "image_moment_width_reference": width_qa,
+        "n_train_gaia_matched": sum(s.gaia_source_id is not None for s in train),
+        "n_holdout_gaia_matched": sum(s.gaia_source_id is not None for s in holdout),
+        "psf_star_cleanliness_certified": False,
+    }
     # Even when the signed kernel fails the negative-mass gate, preserve
     # independent holdout residual evidence. Fit amplitudes only in cores;
     # *never* clip the signed rejected model to manufacture a pass.
@@ -630,6 +712,7 @@ def build_empirical_coadd_psf(
             "negative_absolute_mass_fraction": negative_fraction,
             "blocking_threshold_fraction": .025,
             "psf_recipe": asdict(cfg),
+            "catalog_selection_qa": selection_catalog_qa,
             "reviewed_excluded_training_ids": list(cfg.excluded_training_star_ids),
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
@@ -689,7 +772,11 @@ def build_empirical_coadd_psf(
                      "SOURCE_HASHES_NOT_VERIFIED")
         source_hashes = {}
     else:
-        digest = sha256(json.dumps(source_hashes, sort_keys=True,
+        selection_sources = dict(source_hashes)
+        if catalog_matcher is not None:
+            selection_sources["tractor_dr11_gaia"] = (
+                catalog_matcher.source_sha256)
+        digest = sha256(json.dumps(selection_sources, sort_keys=True,
                                    separators=(",", ":")).encode("utf8")).hexdigest()
         selection_id = sha256(json.dumps(
             [(s.star_id, s.x_pix, s.y_pix, s.role) for s in train+holdout],
@@ -712,6 +799,7 @@ def build_empirical_coadd_psf(
                   else "DECAM")
     # FWHM here is only the guessed finder width, NOT measured EPSF FWHM.
     metrics = {
+        "catalog_selection_qa": selection_catalog_qa,
         "holdout_median_abs_core_residual_over_peak": med_core_resid,
         "holdout_diagnostics": checks,
         "epsf_negative_mass_fraction_before_clipping": negative_fraction,
