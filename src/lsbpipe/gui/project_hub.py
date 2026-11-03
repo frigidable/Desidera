@@ -22,6 +22,8 @@ from lsbpipe.surveys.object_projects import (
 from lsbpipe.surveys.local_project import open_local_project
 from lsbpipe.gui.target_input import parse_coordinate_pair
 from .survey_explorer import SurveyExplorer
+from .galaxy_cards import GalaxyDetailCard
+from .galaxy_card_model import snapshot_from_record
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
 from .analysis_configurations_dialog import AnalysisConfigurationsDialog
 from lsbpipe.surveys.galaxy_knowledge import latest_simbad_confirmation
@@ -225,6 +227,7 @@ class ProjectHub(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setObjectName("hub_project_splitter")
+        self.splitter = splitter
         library = QWidget()
         left = QVBoxLayout(library)
         left.setContentsMargins(0, 0, 0, 0)
@@ -269,11 +272,12 @@ class ProjectHub(QMainWindow):
 
         details = QFrame()
         details.setObjectName("hub_project_details")
-        details.setFrameShape(QFrame.StyledPanel)
+        details.setFrameShape(QFrame.NoFrame)
         right = QVBoxLayout(details)
-        right.setContentsMargins(18, 16, 18, 16)
+        right.setContentsMargins(0, 0, 0, 0)
         right.setSpacing(12)
-        right.addWidget(QLabel("SELECTED GALAXY"))
+        self.detail_heading = QLabel("SELECTED GALAXY")
+        right.addWidget(self.detail_heading)
         self.detail_title = QLabel("Choose a project")
         self.detail_title.setObjectName("hub_detail_title")
         self.detail_title.setStyleSheet(
@@ -324,12 +328,22 @@ class ProjectHub(QMainWindow):
             "project metadata and science reports are never deleted.")
         self.remove_btn.clicked.connect(self._remove_selected)
         right.addWidget(self.remove_btn)
-        right.addStretch(1)
+        # Integrate the reviewed compact passport without removing the
+        # independently reviewed SIMBAD/configuration actions.
+        self.galaxy_card = GalaxyDetailCard()
+        right.insertWidget(0, self.galaxy_card, 1)
+        self.galaxy_card.openRequested.connect(self._open_card_project)
+        for old_widget in (
+            self.detail_heading, self.detail_title, self.detail_status,
+            self.detail_meta, self.detail_path, self.detail_note,
+            self.continue_btn,
+        ):
+            old_widget.hide()
         details.setMinimumWidth(300)
         splitter.addWidget(details)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([650, 420])
+        splitter.setStretchFactor(0, 48)
+        splitter.setStretchFactor(1, 52)
+        splitter.setSizes([480, 540])
         outer.addWidget(splitter, 1)
 
         self.hint = QLabel(
@@ -417,6 +431,10 @@ class ProjectHub(QMainWindow):
         record = (item.data(Qt.UserRole)
                   if item is not None and not item.isHidden() else None)
         selected = isinstance(record, dict)
+        self.galaxy_card.set_snapshot(
+            snapshot_from_record(record) if selected else None)
+        self.galaxy_card.open_button.setEnabled(
+            selected and self.workspace is None)
         self.continue_btn.setEnabled(selected)
         self.remove_btn.setEnabled(selected and self.workspace is None)
         self.knowledge_btn.setEnabled(
@@ -496,6 +514,15 @@ class ProjectHub(QMainWindow):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             note += f"\nKnowledge evidence unavailable or corrupt: {exc}"
         self.detail_note.setText(note)
+
+    def _open_card_project(self, project_id: str):
+        """Activate the currently selected original project by immutable ID."""
+        item = self.projects.currentItem()
+        record = item.data(Qt.UserRole) if item is not None else None
+        if (self.workspace is None and item is not None and not item.isHidden()
+                and isinstance(record, dict)
+                and record.get("project_id") == project_id):
+            self._open_selected()
 
     def _remove_selected(self):
         """Forget a recent entry, never delete a research project on disk."""
