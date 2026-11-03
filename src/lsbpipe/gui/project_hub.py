@@ -28,6 +28,7 @@ from .galaxy_cards import GalaxyDetailCard
 from .galaxy_card_model import snapshot_from_record
 from .card_previews import build_local_preview, has_local_image_source
 from lsbpipe.surveys.galaxy_passport_readiness import inspect_passport_readiness
+from lsbpipe.surveys.galaxy_passport_audit import inspect_saved_dataset_audit
 from .remote_card_previews import fetch_remote_rgb_preview, request_for_project
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
 from .ned_knowledge_dialog import NedKnowledgeDialog
@@ -497,6 +498,17 @@ class ProjectHub(QMainWindow):
                             status = f"FITS {stage.file_count}/4"
                         elif stage.code == "FOUR_ORIGINAL_FITS_PRESENT_UNVERIFIED":
                             status = "FITS 4/4 · QA pending"
+                            if entry.last_dataset_audit:
+                                audit = inspect_saved_dataset_audit(entry)
+                                if audit.state == "AUDIT_RECORDED_STAT_MATCH":
+                                    status = "FITS 4/4 · prior WCS QA"
+                                elif audit.state in (
+                                        "AUDIT_SELECTION_STALE",
+                                        "AUDIT_INPUTS_CHANGED",
+                                        "AUDIT_EVIDENCE_UNAVAILABLE"):
+                                    status = "FITS 4/4 · QA needs rerun"
+                                elif audit.state == "AUDIT_REPORTED_ISSUE":
+                                    status = "FITS 4/4 · prior QA issue"
                         search_identifiers.extend(entry.aliases)
                         try:
                             knowledge = load_galaxy_knowledge(

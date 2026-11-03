@@ -14,6 +14,9 @@ from lsbpipe.surveys.local_project import open_local_project
 from lsbpipe.surveys.galaxy_passport_readiness import (
     PassportReadiness, inspect_passport_readiness,
 )
+from lsbpipe.surveys.galaxy_passport_audit import (
+    SavedAuditEvidence, inspect_saved_dataset_audit,
+)
 from .card_previews import inspect_cached_preview
 from .remote_card_previews import inspect_cached_remote_preview
 from lsbpipe.surveys.object_projects import read_object_project
@@ -47,6 +50,7 @@ class GalaxyCardSnapshot:
     ned_status: str = "NOT_QUERIED"
     knowledge_error: str = ""
     readiness: PassportReadiness | None = None
+    audit: SavedAuditEvidence | None = None
 
     def matches(self, search: str) -> bool:
         query = search.casefold().strip()
@@ -112,6 +116,7 @@ def snapshot_from_record(
             )
         project = read_project(root)
         readiness = inspect_passport_readiness(project)
+        audit = inspect_saved_dataset_audit(project)
         dataset = (
             " / ".join(str(part) for part in project.selected_dataset)
             if project.selected_dataset else "Not selected"
@@ -178,6 +183,7 @@ def snapshot_from_record(
             ned_status=ned_status,
             knowledge_error=knowledge_error,
             readiness=readiness,
+            audit=audit,
         )
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         return GalaxyCardSnapshot(
