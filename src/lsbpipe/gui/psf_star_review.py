@@ -166,6 +166,24 @@ class PSFStarReviewDialog(QDialog):
                 f"ICRS {star['ra_deg']:.7f}°, {star['dec_deg']:.7f}°"
                 " · source pixels are not changed")
             box.addWidget(label)
+            gaia = star.get("gaia") or {}
+            shape = star.get("shape_qa") or {}
+            if gaia.get("gaia_source_id") is not None:
+                gmag = gaia.get("gaia_g_mag")
+                mag_text = f"G={gmag:.2f}" if gmag is not None else "G unknown"
+                ratio = shape.get("axis_ratio")
+                axis_text = (f"core axis ratio {ratio:.2f}"
+                             if ratio is not None else "core shape unavailable")
+                identity = QLabel(
+                    f"Gaia DR3 {gaia['gaia_source_id']} · {mag_text} · "
+                    f"{axis_text} · separation "
+                    f"{gaia.get('match_offset_pix', 0):.2f} px")
+                identity.setWordWrap(True)
+                identity.setToolTip(
+                    "Gaia identity and Tractor PSF fit screened. These "
+                    "are preliminary criteria, not clean-cutout certification.")
+                identity.setObjectName("psf0_gaia_identity_" + sid)
+                box.addWidget(identity)
             plots = QHBoxLayout()
             observed = np.asarray(star["cutout"], dtype=float)
             model = np.asarray(star["model"], dtype=float)
