@@ -46,7 +46,8 @@ def test_no_dataset_is_normal_state_not_error_message(qtbot, tmp_path):
     assert card.snapshot.project_id == project.project_id
     assert card.snapshot.readiness.code == "DATASET_NOT_SELECTED"
     assert "No survey dataset selected" in card.fits.text()
-    assert "find data" in card.open_button.text()
+    assert card.open_button.text() == "Open project"
+    assert "find data" in card.open_button.toolTip()
     assert "Why identify this galaxy?" in card.catalogue_help.text()
     assert card.catalogue_help.isVisible()
     assert not card.literature.isVisible()
@@ -122,18 +123,25 @@ def test_confirmed_catalogues_supply_scoped_literature_not_adopted_science(
     assert "NAME Leo P" in card.catalogue.text()
     assert "PGC1 5065058 NED001" in card.catalogue.text()
     assert card.catalogue.text().count('<a href=') == 2
-    assert "NED classification: G (galaxy)" in card.literature.text()
+    assert "Type (NED)" in card.literature.text()
+    assert "G · galaxy" in card.literature.text()
     assert "0.0008806092" in card.literature.text()
-    assert "2026ApJ...997..271M" in card.literature.text()
+    assert "2026ApJ...997..271M" not in card.literature.text()
+    assert "2026ApJ...997..271M" in card.catalogue_provenance.text()
     assert "not adopted" in card.literature.text()
     assert "6.02" in card.cross_catalogue.text()
     assert card.literature.isVisible()
     assert not card.catalogue_help.isVisible()
     assert "Survey selected" in card.fits.text()
-    assert "get original FITS" in card.open_button.text()
+    assert card.open_button.text() == "Open project"
+    assert "get original FITS" in card.open_button.toolTip()
     assert "No image yet" in card.preview.text()
     assert card.details_panel.isVisible() is False
+    assert not card.cross_catalogue.isVisible()
+    assert not card.observation_explanation.isVisible()
     card.details_toggle.click()
+    assert card.cross_catalogue.isVisible()
+    assert card.observation_explanation.isVisible()
     assert "Separation from project centre" in (
         card.catalogue_provenance.text())
     assert read_object_project(project.root).field == project.field

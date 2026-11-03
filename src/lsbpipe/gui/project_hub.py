@@ -391,7 +391,7 @@ class ProjectHub(QMainWindow):
         # operations live in two compact menus rather than six full-width rows.
         menu_row = QHBoxLayout()
         menu_row.setSpacing(8)
-        self.catalogues_menu_btn = QPushButton("Catalogues  ▾")
+        self.catalogues_menu_btn = QPushButton("Catalogues")
         self.catalogues_menu_btn.setObjectName("hub_catalogues_menu")
         self.catalogues_menu = QMenu(self.catalogues_menu_btn)
         self.simbad_action = self.catalogues_menu.addAction("SIMBAD identity…")
@@ -403,7 +403,7 @@ class ProjectHub(QMainWindow):
         self.catalogues_menu_btn.setMenu(self.catalogues_menu)
         menu_row.addWidget(self.catalogues_menu_btn, 1)
 
-        self.tools_menu_btn = QPushButton("Project tools  ▾")
+        self.tools_menu_btn = QPushButton("Project tools")
         self.tools_menu_btn.setObjectName("hub_project_tools_menu")
         self.tools_menu = QMenu(self.tools_menu_btn)
         self.local_preview_action = self.tools_menu.addAction(

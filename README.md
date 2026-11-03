@@ -74,6 +74,14 @@ a descriptive coordinate difference and unadopted NED redshift.
 Automated cross-catalogue identity reconciliation, positional TAP search,
 and comprehensive literature measurements remain future work.
 
+The Galaxy Projects passport now keeps its default view **brief**:
+compact source-labelled literature facts, observation presence, and a
+historical FITS/WCS QA status. Longer warnings, literature refcodes,
+coordinate differences and saved receipt provenance remain available
+under **Sources & QA details**. The primary action is simply
+**Open project**, with the suggested step in its tooltip. See
+`docs/architecture/COMPACT_GALAXY_PASSPORT_P10I.md`.
+
 Galaxy Projects now shows a **source-aware scientific passport**. It
 explains why linking SIMBAD and NED is useful, displays only saved and
 confirmed catalogue identities and optional NED object-type/redshift claims

@@ -144,18 +144,24 @@ class GalaxyDetailCard(QFrame):
         body.addWidget(self.catalogue_help)
         self.catalogue_help.hide()
 
-        self.literature_heading = QLabel("LITERATURE · EXTERNAL VALUES")
+        self.literature_heading = QLabel("PUBLISHED VALUES · NED")
         self.literature_heading.setObjectName("galaxy_card_section")
         body.addWidget(self.literature_heading)
         self.literature = _metadata("")
         self.literature.setObjectName("galaxy_card_literature")
         self.literature.setTextInteractionFlags(Qt.TextSelectableByMouse)
         body.addWidget(self.literature)
+        self.literature.setStyleSheet(
+            "QLabel#galaxy_card_literature {"
+            "background: palette(alternate-base);"
+            "border: 1px solid palette(mid);"
+            "border-radius: 6px; padding: 10px; }")
         self.cross_catalogue = _metadata("")
         self.cross_catalogue.setObjectName("galaxy_card_catalogue_offset")
-        body.addWidget(self.cross_catalogue)
+        # Coordinate disagreement is scientific provenance, not a long
+        # default-card warning: render it in the expandable evidence view.
 
-        observations = QLabel("OBSERVATIONS")
+        observations = QLabel("OBSERVATION DATA")
         observations.setObjectName("galaxy_card_section")
         body.addWidget(observations)
         self.dataset = _metadata("No dataset selected", selectable=True)
@@ -167,9 +173,8 @@ class GalaxyDetailCard(QFrame):
         self.observation_explanation = _metadata("")
         self.observation_explanation.setObjectName(
             "galaxy_card_observation_explanation")
-        body.addWidget(self.observation_explanation)
-
-        self.qa_heading = QLabel("SAVED DATASET QA")
+        # Exact source/coverage caveats belong in the expanded evidence.
+        self.qa_heading = QLabel("FITS/WCS CHECK")
         self.qa_heading.setObjectName("galaxy_card_section")
         body.addWidget(self.qa_heading)
         self.qa_status = _metadata("")
@@ -177,7 +182,6 @@ class GalaxyDetailCard(QFrame):
         body.addWidget(self.qa_status)
         self.qa_note = _metadata("")
         self.qa_note.setObjectName("galaxy_card_qa_note")
-        body.addWidget(self.qa_note)
         self.qa_heading.hide()
         self.qa_status.hide()
         self.qa_note.hide()
@@ -194,7 +198,7 @@ class GalaxyDetailCard(QFrame):
         self.next_step_title.hide()
         self.next_step.hide()
 
-        self.details_toggle = QPushButton("Catalogue & project details  ▾")
+        self.details_toggle = QPushButton("Sources & QA details  ▾")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
         self.details_toggle.setCheckable(True)
         self.details_toggle.setChecked(False)
@@ -214,6 +218,18 @@ class GalaxyDetailCard(QFrame):
             "galaxy_card_catalogue_provenance")
         self.catalogue_provenance.setTextFormat(Qt.PlainText)
         extended.addWidget(self.catalogue_provenance)
+        extended.addWidget(self.cross_catalogue)
+        self.cross_catalogue.hide()
+        observation_title = QLabel("OBSERVATION EVIDENCE")
+        observation_title.setObjectName("galaxy_card_section")
+        extended.addWidget(observation_title)
+        extended.addWidget(self.observation_explanation)
+        self.observation_explanation.hide()
+        audit_title = QLabel("FITS/WCS AUDIT DETAILS")
+        audit_title.setObjectName("galaxy_card_section")
+        extended.addWidget(audit_title)
+        extended.addWidget(self.qa_note)
+        self.qa_note.hide()
         self.audit_receipt_note = _metadata("", selectable=True)
         self.audit_receipt_note.setObjectName("galaxy_card_audit_provenance")
         extended.addWidget(self.audit_receipt_note)
@@ -261,8 +277,8 @@ class GalaxyDetailCard(QFrame):
     def _details_toggled(self, checked: bool):
         self.details_panel.setVisible(checked)
         self.details_toggle.setText(
-            "Hide catalogue & project details  ▴" if checked
-            else "Catalogue & project details  ▾")
+            "Hide sources & QA details  ▴" if checked
+            else "Sources & QA details  ▾")
 
     def _set_preview_side(self, side: int):
         """Square preview, responsive down to the 300 px narrow inspector."""
@@ -381,46 +397,43 @@ class GalaxyDetailCard(QFrame):
             providers = {entry.provider for entry in catalogues}
             if not providers:
                 self.catalogue_help.setText(
-                    "Why identify this galaxy? Confirm a SIMBAD/NED match "
-                    "to connect published names, source references and "
-                    "comparable catalogue values to this project. "
-                    "Use Catalogues ▾ to review candidates; no scientific "
-                    "results or ICRS coordinates are adopted automatically.")
+                    "Why identify this galaxy? SIMBAD connects names and "
+                    "literature; NED provides published galaxy properties. "
+                    "Use Catalogues to confirm a match; no science is adopted.")
                 self.catalogue_help.show()
             elif "SIMBAD" not in providers:
                 self.catalogue_help.setText(
-                    "SIMBAD is not linked yet. Confirm a match to connect "
-                    "literature names and bibliography to this project.")
+                    "Link SIMBAD for alternative names and literature references.")
                 self.catalogue_help.show()
             elif "NED" not in providers:
                 self.catalogue_help.setText(
-                    "NED is not linked yet. Confirm a match to review "
-                    "published extragalactic properties with source references.")
+                    "Link NED for sourced extragalactic properties.")
                 self.catalogue_help.show()
             ned = next((entry for entry in catalogues
                         if entry.provider == "NED"), None)
             if ned is not None and (ned.object_type or ned.redshift is not None):
                 literature = []
                 if ned.object_type:
-                    meaning = " (galaxy)" if ned.object_type == "G" else ""
+                    meaning = " · galaxy" if ned.object_type == "G" else ""
                     literature.append(
-                        f"NED classification: {ned.object_type}{meaning}")
+                        f"Type (NED)   {ned.object_type}{meaning}")
                 if ned.redshift is not None:
                     literature.append(
-                        f"NED heliocentric z = {ned.redshift:.7g} "
-                        f"· refcode {ned.redshift_refcode or 'unspecified'}")
-                literature.append(
-                    "External catalogue statements · not adopted as "
-                    "DESIDERA measurements or distance estimates.")
+                        f"Heliocentric z (NED)   {ned.redshift:.7g}")
+                literature.append("Published catalogue values · not adopted")
                 self.literature.setText("\n".join(literature))
+                self.literature.setToolTip(
+                    "Source: NED ObjectLookup. Measurement/refcode details "
+                    "are in Sources & QA details; redshift is not a "
+                    "distance estimate or adopted DESIDERA result.")
                 self.literature_heading.show()
                 self.literature.show()
             if snapshot.provider_offset_arcsec is not None:
                 self.cross_catalogue.setText(
-                    f"SIMBAD–NED positions differ by "
+                    f"SIMBAD–NED position difference: "
                     f"{snapshot.provider_offset_arcsec:.2f}″. "
-                    "Compare sources in details; this does not establish "
-                    "a wrong identification.")
+                    "Different centres or source definitions may contribute; "
+                    "this comparison does not verify or reject identity.")
                 self.cross_catalogue.show()
 
         project_state = (
@@ -431,12 +444,21 @@ class GalaxyDetailCard(QFrame):
         self.open_button.setText(
             "Relink project…" if not snapshot.available else "Open project")
         if snapshot.readiness is not None:
-            self.fits.setText(snapshot.readiness.observation_label)
+            self.fits.setText(
+                "Original FITS: 4/4 present" if
+                snapshot.readiness.code ==
+                "FOUR_ORIGINAL_FITS_PRESENT_UNVERIFIED"
+                else snapshot.readiness.observation_label)
+            self.fits.setToolTip(snapshot.readiness.explanation)
             self.observation_explanation.setText(
                 snapshot.readiness.explanation)
             self.observation_explanation.show()
             self.next_step.setText(snapshot.readiness.next_action_label)
-            self.open_button.setText(snapshot.readiness.next_action_label)
+            self.open_button.setText("Open project")
+            self.open_button.setToolTip(
+                "Suggested: " + snapshot.readiness.next_action_label
+                + ". Opens the existing project workspace; no QA or "
+                "scientific result is automatically adopted.")
         elif not snapshot.available:
             self.next_step.setText("Relink the project folder to continue.")
 
@@ -447,7 +469,20 @@ class GalaxyDetailCard(QFrame):
             if snapshot.readiness.code not in (
                     "TARGET_NOT_SET", "DATASET_NOT_SELECTED"):
                 self.qa_heading.show()
-                self.qa_status.setText(audit.label)
+                short_labels = {
+                    "AUDIT_RECORDED_STAT_MATCH":
+                        "Prior FITS/WCS diagnostic · metadata unchanged",
+                    "AUDIT_INPUTS_CHANGED":
+                        "Saved audit needs rerun · files changed",
+                    "AUDIT_SELECTION_STALE":
+                        "Saved audit needs rerun · selection changed",
+                    "AUDIT_EVIDENCE_UNAVAILABLE":
+                        "Saved audit needs rerun · evidence unavailable",
+                    "AUDIT_REPORTED_ISSUE":
+                        "Prior audit reported an issue",
+                }
+                self.qa_status.setText(
+                    short_labels.get(audit.state, audit.label))
                 self.qa_status.show()
                 self.qa_status.setToolTip(audit.explanation)
                 if audit.state != "NO_SAVED_AUDIT":
@@ -462,13 +497,15 @@ class GalaxyDetailCard(QFrame):
                 if (audit.state == "AUDIT_RECORDED_STAT_MATCH"
                         and snapshot.readiness.code ==
                         "FOUR_ORIGINAL_FITS_PRESENT_UNVERIFIED"):
-                    self.open_button.setText(
-                        "Open project · review saved FITS/WCS QA")
+                    self.open_button.setToolTip(
+                        "Suggested: review saved FITS/WCS QA in the project. "
+                        + audit.explanation)
                 elif audit.state in (
                         "AUDIT_SELECTION_STALE", "AUDIT_INPUTS_CHANGED",
                         "AUDIT_EVIDENCE_UNAVAILABLE"):
-                    self.open_button.setText(
-                        "Open project · rerun dataset QA")
+                    self.open_button.setToolTip(
+                        "Suggested: rerun dataset QA in the project. "
+                        + audit.explanation)
 
         self.aliases.setVisible(bool(snapshot.aliases))
         self.aliases.setText("Also known as: " + ", ".join(snapshot.aliases))
