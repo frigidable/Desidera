@@ -86,6 +86,7 @@ class TractorGaiaMatcher:
         points = np.array(points, copy=True)
         points.setflags(write=False)
         object.__setattr__(self, "pixel_positions", points)
+        object.__setattr__(self, "_tree", cKDTree(points))
 
     def match(self, x, y, *, band):
         """Return Gaia-confirmed unforced PSF source, or explicit refusal."""
@@ -94,13 +95,14 @@ class TractorGaiaMatcher:
         if not self.rows:
             return None, "TRACTOR_NO_NATIVE_SOURCES"
         positions = self.pixel_positions
-        offsets = np.hypot(positions[:, 0]-x, positions[:, 1]-y)
-        near = np.flatnonzero(offsets <= self.match_radius_pix)
+        near = self._tree.query_ball_point(
+            [float(x), float(y)], r=self.match_radius_pix)
         if len(near) == 0:
             return None, "NO_TRACTOR_SOURCE_AT_DAO_CENTROID"
         if len(near) != 1:
             return None, "AMBIGUOUS_TRACTOR_CROSSMATCH"
-        row = self.rows[int(near[0])]
+        index = int(near[0])
+        row = self.rows[index]
         if row["ref_cat"] != "G3" or row["ref_id"] <= 0:
             return None, "NOT_GAIA_DR3"
         if row["type"] != "PSF":
@@ -121,7 +123,8 @@ class TractorGaiaMatcher:
             "gaia_source_id": row["ref_id"],
             "tractor_objid": row["objid"],
             "tractor_type": row["type"],
-            "match_offset_pix": float(offsets[int(near[0])]),
+            "match_offset_pix": float(np.hypot(
+                positions[index, 0]-x, positions[index, 1]-y)),
             "gaia_g_mag": row["gaia_g_mag"],
             "catalog_sha256_local": self.source_sha256,
             "is_clean_psf_proven": False,
