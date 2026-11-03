@@ -35,7 +35,8 @@ def test_shared_sky_circle_moves_to_corresponding_pixels_on_mirrored_wcs():
     assert a.sum() > 5 and b.sum() > 5
     y1, x1 = np.unravel_index(a.argmax(), a.shape)
     y2, x2 = np.unravel_index(b.argmax(), b.shape)
-    assert x1 > 25 and x2 < 25
+    # RA increases toward negative FITS x for the first (mirrored sky) WCS.
+    assert x1 < 25 and x2 > 25
     assert abs(y1-y2) <= 1
     assert not np.array_equal(a, b)
 
