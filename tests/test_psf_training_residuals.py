@@ -71,3 +71,46 @@ def test_unvalidated_train_residuals_do_not_claim_chi_square():
             ("star-0001",None,None,None,None,None,{
                 **entry[-1],"weights":np.zeros((51,51)),
             }),model,guessed_fwhm_pix=4.8)
+
+
+def test_brightness_coupling_audit_blocks_highly_flux_ordered_outliers():
+    from lsbpipe.photometry.psf_training_residuals import (
+        brightness_bias_audit)
+    # Reproduces the *failure mode* observed in the real Leo P QA:
+    # residual-score systematically increases with PSF amplitude.
+    scores=[{
+        "star_id":f"star-{i+1:04d}",
+        "amplitude_nMgy_diagnostic":float(i+1),
+        "score":float(i+1)/6. + 0.03*(i%3),
+    } for i in range(40)]
+    result=brightness_bias_audit(scores,("star-0039","star-0040"))
+    assert result["score_amplitude_spearman_rho"] > .99
+    assert result["auto_trim_blocked"] is True
+    assert result["status"] == "BRIGHTNESS_ASSOCIATION_BLOCKS_AUTO_TRIM"
+    assert result["median_amplitude_proposed_remove_nMgy"] > (
+        result["median_amplitude_remaining_nMgy"])
+    assert result["scores_use_training_stars_in_their_own_ePSF"] is True
+
+
+def test_neighbor_profile_outlier_is_not_dismissed_due_to_brightness():
+    from lsbpipe.photometry.psf_training_residuals import (
+        brightness_bias_audit)
+    # At constant model amplitude, rank correlation is uninformative;
+    # a real profile outlier may still be provisionally removed.
+    scores=[{
+        "star_id":f"star-{i+1:04d}",
+        "amplitude_nMgy_diagnostic":10.,
+        "score":9. if i==11 else 1.+.04*(i%5),
+    } for i in range(20)]
+    result=brightness_bias_audit(scores,("star-0012",))
+    assert result["auto_trim_blocked"] is False
+    assert result["score_amplitude_spearman_rho"] is None
+
+
+def test_brightness_coupling_guard_requires_positive_finite_amplitudes():
+    from lsbpipe.photometry.psf_training_residuals import (
+        brightness_bias_audit)
+    with pytest.raises(ValueError,match="amplitude"):
+        brightness_bias_audit([{"star_id":"star-0001",
+                                "amplitude_nMgy_diagnostic":-1.,
+                                "score":3.}])
