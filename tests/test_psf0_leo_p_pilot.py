@@ -186,6 +186,13 @@ def test_explicit_manual_psf_star_exclusions_persist_without_modifying_fits(
     again = commit_psf0_manual_review(reviewed, explicitly_confirmed=True)
     assert again == str(receipt_path)
     assert list(receipt_path.parent.glob("review-*.json")) == [receipt_path]
+    recovered = run_gui_psf0(
+        p.root, band="r", config=config, protection_arcsec=12.)
+    assert recovered["saved_manual_review"]["excluded_training_star_ids"] == (
+        selected,)
+    assert recovered["saved_manual_review"]["auto_applied"] is False
+    assert {star.star_id for star in recovered["result"].training} == {
+        star.star_id for star in first["result"].training}
     with originals["image"].open("ab") as changed:
         changed.write(b"external source modification")
     with pytest.raises(ValueError, match="Original FITS changed"):
