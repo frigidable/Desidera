@@ -183,7 +183,7 @@ class SurveyExplorer(QMainWindow):
         self.dataset_manager_btn.clicked.connect(self._open_dataset_manager)
         self.dataset_manager_btn.setVisible(False)
         panel.addWidget(self.dataset_manager_btn)
-        self.photometry_btn = QPushButton("Photometry · preparation")
+        self.photometry_btn = QPushButton("Photometry · PSF workspace")
         self.photometry_btn.setObjectName("workspace_open_photometry")
         self.photometry_btn.setToolTip(
             "Open the separate scientific photometry screen for this galaxy. "
