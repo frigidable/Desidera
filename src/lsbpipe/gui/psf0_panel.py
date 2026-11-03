@@ -198,6 +198,10 @@ class PSF0Panel(QGroupBox):
         self.band.blockSignals(False)
         self._update_buttons()
 
+    def _parameters_changed(self, *_):
+        if self._preview is not None:
+            self._band_changed()
+
     def _band_changed(self, *_):
         # Changing filter invalidates any earlier successful kernel.
         self._preview = None
