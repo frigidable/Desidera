@@ -818,6 +818,12 @@ class SurveyExplorer(QMainWindow):
                 protection_arcsec=radius, progress=progress)
 
         def finished(payload):
+            if payload.get("status") == "PSF0_QUALITY_REJECTED_NOT_ADOPTED":
+                panel.show_quality_rejection(payload)
+                self.message.setText(
+                    f"PSF-0 {band} REJECTED by scientific QA. "
+                    "Inspect negative ringing and candidate stars in Photometry.")
+                return
             panel.show_result(payload)
             self.message.setText(
                 f"PSF-0 {band} completed as EXPERIMENTAL_NOT_ADOPTED. "
