@@ -126,10 +126,10 @@ class PSF0Panel(QGroupBox):
             "Contrast-stretched diagnostic discrete kernel, NOT measured "
             "seeing or a calibrated wide-angle PSF.")
         details.addWidget(self.kernel_view, 0)
-        self.stars = QTableWidget(0, 5)
+        self.stars = QTableWidget(0, 6)
         self.stars.setObjectName("psf0_star_audit")
         self.stars.setHorizontalHeaderLabels(
-            ["Role", "X (pix)", "Y (pix)", "Cutout sky", "Gradient/RMS"])
+            ["Star ID", "Role", "X (pix)", "Y (pix)", "Cutout sky", "Gradient/RMS"])
         self.stars.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.stars.verticalHeader().setVisible(False)
         self.stars.setSelectionMode(QAbstractItemView.NoSelection)
@@ -326,10 +326,15 @@ class PSF0Panel(QGroupBox):
         self.stars.setRowCount(len(rows))
         for index, (star, role) in enumerate(rows):
             for col, label in enumerate((
+                    str(star.get("star_id", "unknown")),
                     role, f"{star['x_pix']:.2f}", f"{star['y_pix']:.2f}",
                     f"{star['cutout_sky_nMgy']:.4g}",
                     f"{star['gradient_sigma_span']:.2f}")):
-                self.stars.setItem(index, col, QTableWidgetItem(label))
+                cell = QTableWidgetItem(label)
+                if "ra_deg" in star and "dec_deg" in star:
+                    cell.setToolTip(
+                        f"ICRS RA={star['ra_deg']:.7f}°, Dec={star['dec_deg']:.7f}°")
+                self.stars.setItem(index, col, cell)
         signed = diagnostic.get("signed_kernel_qa", {})
         annuli = signed.get("annuli", {})
         breakdown = []
@@ -429,10 +434,13 @@ class PSF0Panel(QGroupBox):
         self.stars.setRowCount(len(rows))
         for i, star in enumerate(rows):
             for j, text in enumerate((
-                    star.role, f"{star.x_pix:.2f}", f"{star.y_pix:.2f}",
-                    f"{star.cutout_sky_nMgy:.4g}",
+                    star.star_id, star.role, f"{star.x_pix:.2f}",
+                    f"{star.y_pix:.2f}", f"{star.cutout_sky_nMgy:.4g}",
                     f"{star.gradient_sigma_span:.2f}")):
-                self.stars.setItem(i, j, QTableWidgetItem(text))
+                item = QTableWidgetItem(text)
+                item.setToolTip(
+                    f"ICRS RA={star.ra_deg:.7f}°, Dec={star.dec_deg:.7f}°")
+                self.stars.setItem(i, j, item)
         self.qa.setPlainText(
             "Scientific limits:\n" + "\n".join(f"• {f}" for f in result.flags)
             + "\n\nRejected star counts: " + str(result.rejected_reasons)
