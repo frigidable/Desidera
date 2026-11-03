@@ -25,6 +25,43 @@ LEO_P_CENTER = (155.438012, 18.088025)
 BANDS = ("g", "r", "i", "z")
 KINDS = ("image", "invvar", "nexp", "maskbits")
 
+# Controlled single-factor, preregistered diagnostic alternatives. All
+# experiments are non-adopted. Their stellar samples can differ when the
+# isolation footprint changes; no inferred "best PSF" from these outputs.
+PSF0_DIAGNOSTIC_EXPERIMENTS = {
+    "baseline": {
+        "label": "Baseline · 31 px, sky 10–15, 8 iterations",
+        "kwargs": {},
+    },
+    "outer_sky": {
+        "label": "Extended cutouts · 51 px, sky 19–24",
+        "kwargs": {
+            "cutout_size_pix": 51,
+            "sky_annulus_inner_pix": 19.,
+            "sky_annulus_outer_pix": 24.,
+            "min_neighbor_separation_pix": 55.,
+        },
+    },
+    "wing_smoothing_off": {
+        "label": "Disable final wing smoothing · 31 px",
+        "kwargs": {"wing_smoothing": False},
+    },
+    "longer_convergence": {
+        "label": "Extended convergence · 16 iterations",
+        "kwargs": {"max_iterations": 16},
+    },
+}
+
+
+def psf0_experiment_recipe(guessed_fwhm_pix: float, experiment: str) -> PSF0Config:
+    if experiment not in PSF0_DIAGNOSTIC_EXPERIMENTS:
+        raise ValueError("Unknown controlled PSF-0 diagnostic experiment")
+    return PSF0Config(
+        guessed_fwhm_pix=float(guessed_fwhm_pix),
+        **PSF0_DIAGNOSTIC_EXPERIMENTS[experiment]["kwargs"])
+
+
+
 
 def _leo_p_project(project_root):
     """Use existing UUID and saved source identity, never a guessed folder."""
