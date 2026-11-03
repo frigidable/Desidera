@@ -109,9 +109,11 @@ class GalaxyDetailCard(QFrame):
         detail.addWidget(knowledge_header)
         self.catalogue = _metadata("No user-confirmed catalogue identity")
         self.catalogue.setObjectName("galaxy_card_catalogue")
+        self.catalogue.setTextFormat(Qt.PlainText)
         detail.addWidget(self.catalogue)
         self.catalogue_provenance = _metadata("", selectable=True)
         self.catalogue_provenance.setObjectName("galaxy_card_catalogue_provenance")
+        self.catalogue_provenance.setTextFormat(Qt.PlainText)
         detail.addWidget(self.catalogue_provenance)
 
         observation = QLabel("OBSERVATIONS")
@@ -178,36 +180,60 @@ class GalaxyDetailCard(QFrame):
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
         self.dataset.setText(f"Dataset: {snapshot.dataset}")
-        catalogue = snapshot.catalogue_identity
+        catalogues = snapshot.catalogue_identities or (
+            (snapshot.catalogue_identity,) if snapshot.catalogue_identity else ())
         self.catalogue_provenance.hide()
         if snapshot.knowledge_status == "EVIDENCE_ERROR":
             self.catalogue.setText("Catalogue evidence requires inspection")
             self.catalogue_provenance.setText(
-                "Stored SIMBAD evidence is invalid or unreadable: "
+                "Stored catalogue evidence is invalid or unreadable: "
                 + snapshot.knowledge_error)
             self.catalogue_provenance.show()
-        elif catalogue is not None:
-            self.catalogue.setText(
-                f"{catalogue.provider}: {catalogue.main_id} · "
-                "user-confirmed association")
-            offset = catalogue.project_offset_arcsec
-            difference = (
-                f"Separation from project centre: {offset:.3f} arcsec. "
-                if offset is not None else
-                "Project position unavailable for comparison. ")
-            self.catalogue_provenance.setText(
-                f"Catalogue ICRS: {catalogue.ra_deg:.8f}°, "
-                f"{catalogue.dec_deg:+.8f}°. "
-                + difference
-                + "Project coordinates unchanged. "
-                + f"Evidence: {catalogue.confirmation_sha256[:12]}. "
-                + "Catalogue association, not a scientific measurement.")
+        elif catalogues:
+            self.catalogue.setText("\n".join(
+                f"{entry.provider}: {entry.main_id} · "
+                "user-confirmed association"
+                + (f" · type: {entry.object_type}" if entry.object_type else "")
+                for entry in catalogues))
+            details = []
+            for entry in catalogues:
+                difference = (
+                    f"Separation from project centre: "
+                    f"{entry.project_offset_arcsec:.3f} arcsec. "
+                    if entry.project_offset_arcsec is not None else
+                    "Project position unavailable for comparison. ")
+                note = (
+                    f"{entry.provider} ICRS: {entry.ra_deg:.8f}°, "
+                    f"{entry.dec_deg:+.8f}°. "
+                    + difference
+                    + f"Evidence: {entry.confirmation_sha256[:12]}. ")
+                if entry.provider == "NED" and entry.redshift is not None:
+                    note += (f"NED catalogue heliocentric z: "
+                             f"{entry.redshift:.7g} "
+                             f"(refcode: {entry.redshift_refcode or 'unspecified'}; "
+                             "unadopted). ")
+                details.append(note)
+            if snapshot.provider_offset_arcsec is not None:
+                details.append(
+                    f"SIMBAD–NED positions differ by "
+                    f"{snapshot.provider_offset_arcsec:.3f} arcsec. "
+                    "This is a descriptive comparison, not an automatic "
+                    "source reconciliation. ")
+            details.append(
+                "Project coordinates unchanged. Catalogue associations and "
+                "literature values are not adopted scientific measurements.")
+            self.catalogue_provenance.setText("\n".join(details))
             self.catalogue_provenance.show()
         elif snapshot.knowledge_status == "UNVERIFIED_CANDIDATES_ONLY":
             self.catalogue.setText(
-                "SIMBAD candidates stored · no identity confirmed")
+                "SIMBAD candidates stored · no identity confirmed"
+                + (f" · NED: {snapshot.ned_status}"
+                   if snapshot.ned_status != "NOT_QUERIED" else ""))
         else:
-            self.catalogue.setText("No user-confirmed catalogue identity")
+            self.catalogue.setText(
+                "No user-confirmed catalogue identity"
+                + (f" · NED: {snapshot.ned_status}"
+                   if snapshot.ned_status != "NOT_QUERIED" else ""))
         project_state = (
             "On disk" if snapshot.available else "Missing · relink required"
         )

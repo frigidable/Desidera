@@ -67,7 +67,12 @@ identity evidence as immutable local receipts. The Project Hub passport
 displays a confirmed SIMBAD association and its ICRS offset **offline**,
 without altering the project's target coordinates, source FITS or science
 results. Requests can switch between approved Strasbourg and Harvard mirrors.
-NED integration and detailed literature measurements are not yet implemented.
+NED ObjectLookup is separately available through
+**Galaxy Knowledge · NED…**. It keeps independent source receipts and requires
+explicit user confirmation; the passport can show both SIMBAD and NED with
+a descriptive coordinate difference and unadopted NED redshift.
+Automated cross-catalogue identity reconciliation, positional TAP search,
+and comprehensive literature measurements remain future work.
 
 See `docs/architecture/GALAXY_KNOWLEDGE_READ_MODEL_P10A.md` for the
 catalogue-evidence/read-model contract and local Windows pilot.

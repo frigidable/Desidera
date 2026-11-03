@@ -25,6 +25,7 @@ from .survey_explorer import SurveyExplorer
 from .galaxy_cards import GalaxyDetailCard
 from .galaxy_card_model import snapshot_from_record
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
+from .ned_knowledge_dialog import NedKnowledgeDialog
 from .analysis_configurations_dialog import AnalysisConfigurationsDialog
 from lsbpipe.surveys.galaxy_knowledge import latest_simbad_confirmation
 from lsbpipe.surveys.knowledge_summary import load_galaxy_knowledge
@@ -315,6 +316,13 @@ class ProjectHub(QMainWindow):
             "requires explicit Search and cannot change target coordinates.")
         self.knowledge_btn.clicked.connect(self._open_knowledge)
         right.addWidget(self.knowledge_btn)
+        self.ned_btn = QPushButton("Galaxy Knowledge · NED…")
+        self.ned_btn.setObjectName("hub_knowledge_ned")
+        self.ned_btn.setToolTip(
+            "Open saved NED evidence offline; remote ObjectLookup is "
+            "opt-in and never modifies project coordinates or science.")
+        self.ned_btn.clicked.connect(self._open_ned)
+        right.addWidget(self.ned_btn)
         self.config_btn = QPushButton("Analysis configurations…")
         self.config_btn.setObjectName("hub_analysis_configurations")
         self.config_btn.setToolTip(
@@ -456,6 +464,9 @@ class ProjectHub(QMainWindow):
             selected and self.workspace is None and
             bool(record.get("available")) and not bool(record.get("legacy")))
         self.config_btn.setEnabled(
+            selected and self.workspace is None and
+            bool(record.get("available")) and not bool(record.get("legacy")))
+        self.ned_btn.setEnabled(
             selected and self.workspace is None and
             bool(record.get("available")) and not bool(record.get("legacy")))
         self.continue_btn.setText(
@@ -657,6 +668,21 @@ class ProjectHub(QMainWindow):
         except (OSError, ValueError, TypeError, KeyError) as exc:
             QMessageBox.warning(
                 self, "Cannot open analysis configurations", str(exc))
+
+    def _open_ned(self):
+        item = self.projects.currentItem()
+        if item is None or item.isHidden() or self.workspace is not None:
+            return
+        record = item.data(Qt.UserRole)
+        if (not isinstance(record, dict) or not record.get("available")
+                or record.get("legacy")):
+            return
+        try:
+            dialog = NedKnowledgeDialog(record["root"], self)
+            dialog.exec()
+            self.refresh()
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            QMessageBox.warning(self, "Cannot open NED Knowledge", str(exc))
 
     def _open_knowledge(self):
         item = self.projects.currentItem()

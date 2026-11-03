@@ -4,8 +4,8 @@ Identity assertions are separate from the immutable object-project UUID and
 accepted ICRS target. Only explicit user-confirmed catalogue associations are
 shown as identities; unconfirmed cone-search neighbours are never aliases.
 
-This P10a adapter currently reads SIMBAD receipts. Future NED adapters must
-have their own independently verified source receipts and explicit adoption.
+SIMBAD and NED have separate verified evidence receipts. Neither provider's
+coordinates, aliases or measurements automatically overwrite the project.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from .galaxy_knowledge import (
     read_simbad_snapshot,
 )
 from .object_projects import ObjectProject, read_object_project
+from .ned_knowledge import latest_ned_confirmation, latest_ned_snapshot, read_ned_snapshot
 
 NO_CONFIRMATION = "NO_CONFIRMED_IDENTITY"
 CANDIDATES_ONLY = "UNVERIFIED_CANDIDATES_ONLY"
@@ -39,6 +40,9 @@ class CatalogueIdentity:
     matched_id: str
     endpoint_host: str | None
     status: str = USER_CONFIRMED
+    object_type: str = ""
+    redshift: float | None = None
+    redshift_refcode: str = ""
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,8 @@ class GalaxyKnowledgeSummary:
     status: str
     identities: tuple[CatalogueIdentity, ...] = ()
     cached_candidate_count: int = 0
+    ned_status: str = "NOT_QUERIED"
+    provider_offset_arcsec: float | None = None
 
     @property
     def confirmed_ids(self) -> tuple[str, ...]:
@@ -61,6 +67,65 @@ def _distance_arcsec(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
         math.cos(a) * math.cos(b) * math.sin(dra / 2) ** 2
     )
     return math.degrees(2 * math.asin(math.sqrt(min(1., max(0., h))))) * 3600
+
+
+def _include_ned(project: ObjectProject, summary: GalaxyKnowledgeSummary):
+    """Append independently confirmed NED identity without reconciling claims."""
+    query = latest_ned_snapshot(project.root)
+    receipt = latest_ned_confirmation(project.root)
+    if receipt is None:
+        return GalaxyKnowledgeSummary(
+            project_id=summary.project_id, status=summary.status,
+            identities=summary.identities,
+            cached_candidate_count=summary.cached_candidate_count,
+            ned_status=query[1]["status"] if query else "NOT_QUERIED",
+        )
+
+    original = read_ned_snapshot(project.root, receipt["snapshot_sha256"])
+    candidate = receipt["candidate"]
+    if original.get("candidate") != candidate:
+        raise ValueError("NED confirmation differs from its query evidence")
+    name = candidate.get("main_id")
+    if not isinstance(name, str) or not name.strip() or len(name) > 256:
+        raise ValueError("Invalid confirmed NED name")
+    ra, dec = float(candidate["ra_deg"]), float(candidate["dec_deg"])
+    if not (math.isfinite(ra) and math.isfinite(dec) and
+            0 <= ra < 360 and -90 <= dec <= 90):
+        raise ValueError("Invalid confirmed NED ICRS position")
+    redshift = candidate.get("redshift") or {}
+    z = redshift.get("value")
+    if z is not None:
+        z = float(z)
+        if not math.isfinite(z):
+            raise ValueError("NED redshift is non-finite")
+    project_offset = (
+        _distance_arcsec(project.field.ra_deg, project.field.dec_deg, ra, dec)
+        if project.field else None)
+    identity = CatalogueIdentity(
+        provider="NED", main_id=name, ra_deg=ra, dec_deg=dec,
+        project_offset_arcsec=project_offset,
+        confirmed_at_utc=receipt["confirmed_at_utc"],
+        confirmation_sha256=_digest(receipt),
+        query_snapshot_sha256=receipt["snapshot_sha256"],
+        coordinate_bibcode=candidate.get("position_refcode") or "",
+        matched_id="", endpoint_host="ned.ipac.caltech.edu",
+        object_type=candidate.get("object_type") or "",
+        redshift=z, redshift_refcode=redshift.get("refcode") or "",
+    )
+    separation = None
+    if summary.identities:
+        simbad = next((x for x in summary.identities
+                       if x.provider == "SIMBAD"), None)
+        if simbad:
+            separation = _distance_arcsec(
+                simbad.ra_deg, simbad.dec_deg, ra, dec)
+    return GalaxyKnowledgeSummary(
+        project_id=summary.project_id, status=USER_CONFIRMED,
+        identities=summary.identities + (identity,),
+        cached_candidate_count=summary.cached_candidate_count,
+        ned_status="USER_CONFIRMED_CATALOGUE_IDENTITY",
+        provider_offset_arcsec=separation,
+    )
 
 
 def load_galaxy_knowledge(
@@ -80,11 +145,11 @@ def load_galaxy_knowledge(
     count = len(latest_query[1]["candidates"]) if latest_query else 0
     receipt = latest_simbad_confirmation(project.root)
     if receipt is None:
-        return GalaxyKnowledgeSummary(
+        return _include_ned(project, GalaxyKnowledgeSummary(
             project_id=project.project_id,
             status=CANDIDATES_ONLY if latest_query else NO_CONFIRMATION,
             cached_candidate_count=count,
-        )
+        ))
 
     if (receipt.get("status") != USER_CONFIRMED or
             receipt.get("coordinate_adoption") is not False or
@@ -133,7 +198,7 @@ def load_galaxy_knowledge(
         matched_id=str(receipt["candidate"].get("matched_id") or ""),
         endpoint_host=host,
     )
-    return GalaxyKnowledgeSummary(
+    return _include_ned(project, GalaxyKnowledgeSummary(
         project_id=project.project_id, status=USER_CONFIRMED,
         identities=(identity,), cached_candidate_count=count,
-    )
+    ))
