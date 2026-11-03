@@ -79,7 +79,7 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     panel = window.photometry_workspace.psf0_panel
     assert window.preview_tabs.currentWidget() is window.photometry_workspace
     assert panel.run_btn.isEnabled()
-    assert panel.experiment.count() == 4
+    assert panel.experiment.count() == 5
     assert panel.experiment.currentData() == "baseline"
     assert panel.band.currentData() == "r"
     assert panel.protection.value() == pytest.approx(90.)
