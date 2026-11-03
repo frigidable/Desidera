@@ -137,6 +137,24 @@ class GalaxyDetailCard(QFrame):
         hero_row.addWidget(identity, 1)
         body.addWidget(hero)
 
+        # Explain what catalogue confirmation unlocks before any link exists.
+        # This is informational; it never sends network requests on display.
+        self.catalogue_help = _metadata("")
+        self.catalogue_help.setObjectName("galaxy_card_catalogue_help")
+        body.addWidget(self.catalogue_help)
+        self.catalogue_help.hide()
+
+        self.literature_heading = QLabel("LITERATURE · EXTERNAL VALUES")
+        self.literature_heading.setObjectName("galaxy_card_section")
+        body.addWidget(self.literature_heading)
+        self.literature = _metadata("")
+        self.literature.setObjectName("galaxy_card_literature")
+        self.literature.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        body.addWidget(self.literature)
+        self.cross_catalogue = _metadata("")
+        self.cross_catalogue.setObjectName("galaxy_card_catalogue_offset")
+        body.addWidget(self.cross_catalogue)
+
         observations = QLabel("OBSERVATIONS")
         observations.setObjectName("galaxy_card_section")
         body.addWidget(observations)
@@ -146,6 +164,18 @@ class GalaxyDetailCard(QFrame):
         self.fits = _metadata("FITS: not inspected")
         self.fits.setObjectName("galaxy_card_fits")
         body.addWidget(self.fits)
+        self.observation_explanation = _metadata("")
+        self.observation_explanation.setObjectName(
+            "galaxy_card_observation_explanation")
+        body.addWidget(self.observation_explanation)
+
+        next_title = QLabel("NEXT STEP")
+        next_title.setObjectName("galaxy_card_section")
+        body.addWidget(next_title)
+        self.next_step_title = next_title
+        self.next_step = _metadata("")
+        self.next_step.setObjectName("galaxy_card_next_step")
+        body.addWidget(self.next_step)
 
         self.details_toggle = QPushButton("Catalogue & project details  ▾")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
@@ -223,6 +253,7 @@ class GalaxyDetailCard(QFrame):
             self._update_preview()
 
     def set_snapshot(self, snapshot: GalaxyCardSnapshot | None) -> None:
+        previous_id = self.snapshot.project_id if self.snapshot else None
         self.snapshot = snapshot
         self._pixmap = None
         self.open_button.setEnabled(snapshot is not None)
@@ -237,6 +268,13 @@ class GalaxyDetailCard(QFrame):
             self.aliases.hide()
             self.catalogue.setText("No galaxy selected")
             self.catalogue_provenance.hide()
+            self.catalogue_help.hide()
+            self.literature_heading.hide()
+            self.literature.hide()
+            self.cross_catalogue.hide()
+            self.observation_explanation.hide()
+            self.next_step_title.hide()
+            self.next_step.hide()
             self.last_opened.hide()
             self.path.clear()
             self.note.hide()
@@ -244,7 +282,17 @@ class GalaxyDetailCard(QFrame):
 
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
+        self.next_step.show()
+        if (previous_id != snapshot.project_id
+                and snapshot.knowledge_status != "EVIDENCE_ERROR"):
+            self.details_toggle.setChecked(False)
         self.dataset.setText(f"Dataset: {snapshot.dataset}")
+        self.literature_heading.hide()
+        self.literature.hide()
+        self.cross_catalogue.hide()
+        self.catalogue_help.hide()
+        self.next_step_title.show()
+        self.observation_explanation.hide()
         catalogues = snapshot.catalogue_identities or (
             (snapshot.catalogue_identity,) if snapshot.catalogue_identity else ())
         self.catalogue_provenance.hide()
@@ -296,18 +344,72 @@ class GalaxyDetailCard(QFrame):
             self.catalogue_provenance.show()
         elif snapshot.knowledge_status == "UNVERIFIED_CANDIDATES_ONLY":
             self.catalogue.setText(
-                "SIMBAD candidates stored · no identity confirmed"
-                + (f" · NED: {snapshot.ned_status}"
-                   if snapshot.ned_status != "NOT_QUERIED" else ""))
+                "Catalogue candidates found · no identity confirmed")
         else:
-            self.catalogue.setText(
-                "No user-confirmed catalogue identity"
-                + (f" · NED: {snapshot.ned_status}"
-                   if snapshot.ned_status != "NOT_QUERIED" else ""))
+            self.catalogue.setText("Not yet linked to SIMBAD or NED")
+
+        if snapshot.knowledge_status != "EVIDENCE_ERROR":
+            providers = {entry.provider for entry in catalogues}
+            if not providers:
+                self.catalogue_help.setText(
+                    "Why identify this galaxy? Confirm a SIMBAD/NED match "
+                    "to connect published names, source references and "
+                    "comparable catalogue values to this project. "
+                    "Use Catalogues ▾ to review candidates; no scientific "
+                    "results or ICRS coordinates are adopted automatically.")
+                self.catalogue_help.show()
+            elif "SIMBAD" not in providers:
+                self.catalogue_help.setText(
+                    "SIMBAD is not linked yet. Confirm a match to connect "
+                    "literature names and bibliography to this project.")
+                self.catalogue_help.show()
+            elif "NED" not in providers:
+                self.catalogue_help.setText(
+                    "NED is not linked yet. Confirm a match to review "
+                    "published extragalactic properties with source references.")
+                self.catalogue_help.show()
+            ned = next((entry for entry in catalogues
+                        if entry.provider == "NED"), None)
+            if ned is not None and (ned.object_type or ned.redshift is not None):
+                literature = []
+                if ned.object_type:
+                    meaning = " (galaxy)" if ned.object_type == "G" else ""
+                    literature.append(
+                        f"NED classification: {ned.object_type}{meaning}")
+                if ned.redshift is not None:
+                    literature.append(
+                        f"NED heliocentric z = {ned.redshift:.7g} "
+                        f"· refcode {ned.redshift_refcode or 'unspecified'}")
+                literature.append(
+                    "External catalogue statements · not adopted as "
+                    "DESIDERA measurements or distance estimates.")
+                self.literature.setText("\n".join(literature))
+                self.literature_heading.show()
+                self.literature.show()
+            if snapshot.provider_offset_arcsec is not None:
+                self.cross_catalogue.setText(
+                    f"SIMBAD–NED positions differ by "
+                    f"{snapshot.provider_offset_arcsec:.2f}″. "
+                    "Compare sources in details; this does not establish "
+                    "a wrong identification.")
+                self.cross_catalogue.show()
+
         project_state = (
             "On disk" if snapshot.available else "Missing · relink required"
         )
         self.fits.setText(f"{project_state} · {snapshot.fits_status}")
+        self.next_step.setText("Open the project to review its current data.")
+        self.open_button.setText(
+            "Relink project…" if not snapshot.available else "Open project")
+        if snapshot.readiness is not None:
+            self.fits.setText(snapshot.readiness.observation_label)
+            self.observation_explanation.setText(
+                snapshot.readiness.explanation)
+            self.observation_explanation.show()
+            self.next_step.setText(snapshot.readiness.next_action_label)
+            self.open_button.setText(snapshot.readiness.next_action_label)
+        elif not snapshot.available:
+            self.next_step.setText("Relink the project folder to continue.")
         self.aliases.setVisible(bool(snapshot.aliases))
         self.aliases.setText("Also known as: " + ", ".join(snapshot.aliases))
         self.last_opened.setVisible(bool(snapshot.last_opened))
@@ -315,11 +417,8 @@ class GalaxyDetailCard(QFrame):
         self.path.setText("Project folder: " + str(snapshot.root))
         self.note.setVisible(bool(snapshot.note))
         self.note.setText(snapshot.note)
-        self.open_button.setText(
-            "Relink project…" if not snapshot.available else "Open project"
-        )
         self.preview.setPixmap(QPixmap())
-        self.preview.setText("No cached local preview")
+        self.preview.setText("No image yet")
         self.preview_note.hide()
         if snapshot.preview_source == "REMOTE_LEGACY_RGB":
             tooltip = ("Legacy Surveys Viewer RGB cutout; display only. "
@@ -339,6 +438,8 @@ class GalaxyDetailCard(QFrame):
             if not image.isNull():
                 self._pixmap = image
                 self._update_preview()
+        if snapshot.thumbnail is None:
+            tooltip += " Link local FITS or select a dataset to obtain a preview."
         self.preview.setToolTip(tooltip)
 
     def _update_preview(self) -> None:

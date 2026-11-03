@@ -44,7 +44,7 @@ def test_passport_replaces_right_labels_without_replacing_left_list(hub, tmp_pat
     assert hub.galaxy_card.snapshot.project_id == p.project_id
     assert hub.galaxy_card.name.text() == "UGC 2162"
     assert "40.096208" in hub.galaxy_card.coordinates.text()
-    assert hub.galaxy_card.preview.text() == "No cached local preview"
+    assert hub.galaxy_card.preview.text() == "No image yet"
     assert hub.galaxy_card.open_button.isVisible()
     assert not hub.continue_btn.isVisible()
     assert not hub.remove_btn.isVisible()
@@ -84,7 +84,8 @@ def test_passport_shows_dataset_qa_caveat_and_survives_legacy_widgets(
     save_object_project(p)
     hub.refresh()
     assert "dr11 / south / 1554p180 / r" in hub.galaxy_card.dataset.text()
-    assert "integrity not checked" in hub.galaxy_card.fits.text()
+    assert "No original FITS found" in hub.galaxy_card.fits.text()
+    assert "get original FITS" in hub.galaxy_card.open_button.text()
     assert "integrity not checked" in hub.detail_status.text()
     assert read_object_project(p.root).selected_dataset == p.selected_dataset
 

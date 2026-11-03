@@ -56,10 +56,13 @@ def test_passport_identity_search_and_offline_reopen(qtbot, tmp_path):
         hub = ProjectHub()
     qtbot.addWidget(hub)
     hub.show()
-    assert "No user-confirmed" in hub.galaxy_card.catalogue.text()
+    assert "Not yet linked to SIMBAD or NED" in hub.galaxy_card.catalogue.text()
+    assert "Why identify this galaxy?" in hub.galaxy_card.catalogue_help.text()
 
     d = store_simbad_snapshot(p.root, _evidence())
-    assert "No user-confirmed" in hub.galaxy_card.catalogue.text()
+    assert "Not yet linked to SIMBAD or NED" in hub.galaxy_card.catalogue.text()
+    # Saving an unconfirmed query cannot turn its candidates into links.
+    assert "<a " not in hub.galaxy_card.catalogue.text()
     confirm_simbad_identity(p.root, d, "NAME Leo P")
     hub.refresh()
     assert "NAME Leo P" in hub.galaxy_card.catalogue.text()

@@ -27,6 +27,7 @@ from .survey_explorer import SurveyExplorer
 from .galaxy_cards import GalaxyDetailCard
 from .galaxy_card_model import snapshot_from_record
 from .card_previews import build_local_preview, has_local_image_source
+from lsbpipe.surveys.galaxy_passport_readiness import inspect_passport_readiness
 from .remote_card_previews import fetch_remote_rgb_preview, request_for_project
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
 from .ned_knowledge_dialog import NedKnowledgeDialog
@@ -469,7 +470,7 @@ class ProjectHub(QMainWindow):
         for record in rows:
             exists = bool(record["available"])
             name = record.get("display_name") or "Unnamed"
-            status = "On disk" if exists else "Missing · relink needed"
+            status = "Project saved" if exists else "Missing · relink needed"
             detail = ""
             search_identifiers = []
             if exists:
@@ -482,6 +483,20 @@ class ProjectHub(QMainWindow):
                             f"{prior_project.field.dec_deg:+.6f}°")
                     else:
                         entry = read_object_project(record["root"])
+                        stage = inspect_passport_readiness(entry)
+                        if stage.code == "DATASET_NOT_SELECTED":
+                            status = "Select survey data"
+                        elif stage.code == "TARGET_NOT_SET":
+                            status = "Set coordinates"
+                        elif stage.code in ("DATA_ROOT_NOT_LINKED",
+                                            "NO_MATCHING_ORIGINAL_FITS"):
+                            status = "Original FITS needed"
+                        elif stage.code == "DATA_ROOT_MISSING":
+                            status = "Data path unavailable"
+                        elif stage.code == "INCOMPLETE_ORIGINAL_FITS":
+                            status = f"FITS {stage.file_count}/4"
+                        elif stage.code == "FOUR_ORIGINAL_FITS_PRESENT_UNVERIFIED":
+                            status = "FITS 4/4 · QA pending"
                         search_identifiers.extend(entry.aliases)
                         try:
                             knowledge = load_galaxy_knowledge(
@@ -566,8 +581,16 @@ class ProjectHub(QMainWindow):
                 pass
         self.rgb_btn.setEnabled(allow_rgb and self._rgb_future is None)
         self.rgb_action.setEnabled(allow_rgb and self._rgb_future is None)
+        source_for_local = False
+        if can_preview:
+            try:
+                source_for_local = has_local_image_source(
+                    read_object_project(record["root"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
         self.local_preview_action.setEnabled(
-            can_preview and self._preview_future is None)
+            can_preview and source_for_local
+            and self._preview_future is None)
         self.catalogues_menu_btn.setEnabled(can_preview)
         self.tools_menu_btn.setEnabled(selected and self.workspace is None)
         self.simbad_action.setEnabled(can_preview)
@@ -682,17 +705,22 @@ class ProjectHub(QMainWindow):
     def _auto_preview_selected(self, record, card):
         if card.thumbnail is not None or self._preview_future is not None:
             return
-        project_id = record.get("project_id")
-        if project_id in self._preview_errors:
-            self.galaxy_card.preview.setText(
-                "Local preview failed: " + self._preview_errors[project_id]
-                + ". Use Regenerate local FITS preview to retry.")
-            return
         try:
             project = read_object_project(record["root"])
             if not has_local_image_source(project):
+                # No local IMAGE source is a normal state of a new galaxy
+                # project, not an error. Never show a prior exception here.
+                self._preview_errors.pop(record.get("project_id"), None)
                 return
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return
+        project_id = record.get("project_id")
+        if project_id in self._preview_errors:
+            self.galaxy_card.preview.setText("Preview unavailable")
+            self.galaxy_card.preview.setToolTip(
+                "Preview generation failed; diagnostics: "
+                + self._preview_errors[project_id]
+                + ". Use Project tools to retry when original FITS exist.")
             return
         self._start_preview(record)
 
@@ -726,6 +754,16 @@ class ProjectHub(QMainWindow):
     def _regenerate_preview(self):
         record = self._selected_preview_record()
         if record is None or self._preview_future is not None:
+            return
+        try:
+            if not has_local_image_source(read_object_project(record["root"])):
+                self.galaxy_card.preview.setText("No local FITS preview")
+                self.galaxy_card.preview.setToolTip(
+                    "Select a dataset and obtain its original IMAGE FITS first.")
+                return
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.galaxy_card.preview.setToolTip(
+                f"Cannot inspect local IMAGE source: {exc}")
             return
         self._preview_errors.pop(record["project_id"], None)
         self._start_preview(record)
