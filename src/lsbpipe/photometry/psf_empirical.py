@@ -50,6 +50,7 @@ class PSF0Config:
     holdout_every: int = 5
     max_training_stars: int = 75
     max_iterations: int = 8
+    wing_smoothing: bool = True
     psf_oversampling: int = 1
     max_star_gradient_sigma: float = 6.
     seed: int = 20261103
@@ -80,6 +81,8 @@ class PSF0Config:
                 type(self.max_iterations) is not int or not 2 <= self.max_iterations <= 25 or
                 type(self.seed) is not int):
             raise ValueError("Invalid deterministic star split/build settings")
+        if type(self.wing_smoothing) is not bool:
+            raise ValueError("Experimental wing smoothing policy must be Boolean")
         if self.psf_oversampling != 1:
             raise ValueError("PSF-0 currently supports only a native-grid EPSF; oversampling requires separate calibration")
         if self.max_star_gradient_sigma <= 0:
@@ -440,9 +443,23 @@ def build_empirical_coadd_psf(
     # Retain explicit installed-version/solver policy information: photutils
     # 3.1 changed default smoothing and centroid-fit box behavior. Merely
     # hashing the Desidera recipe is not enough to reproduce this model.
-    builder = EPSFBuilder(
-        oversampling=1, shape=(cfg.cutout_size_pix, cfg.cutout_size_pix),
-        maxiters=cfg.max_iterations, progress_bar=False)
+    # photutils <3.1 has no wing_smoothing setting. Preserve the library
+    # baseline on old versions; fail clearly rather than ignoring an
+    # explicit A/B request for disabled wide-wing smoothing.
+    import inspect
+    kwargs = {
+        "oversampling": 1,
+        "shape": (cfg.cutout_size_pix, cfg.cutout_size_pix),
+        "maxiters": cfg.max_iterations,
+        "progress_bar": False,
+    }
+    if "wing_smoothing" in inspect.signature(EPSFBuilder).parameters:
+        kwargs["wing_smoothing"] = cfg.wing_smoothing
+    elif not cfg.wing_smoothing:
+        raise RuntimeError(
+            "The wing-smoothing A/B test requires photutils >=3.1 "
+            "with EPSFBuilder wing_smoothing support")
+    builder = EPSFBuilder(**kwargs)
     fitted = builder(EPSFStars(epsf_stars))
     solver_diagnostics = {
         "photutils_version": str(photutils.__version__),
@@ -454,6 +471,12 @@ def build_empirical_coadd_psf(
             getattr(builder, "fit_shape", "LIBRARY_DEFAULT_NOT_REPORTED")),
         "fit_shape_final_if_reported": str(
             getattr(fitted, "fit_shape", "NOT_REPORTED")),
+        "wing_smoothing_requested": cfg.wing_smoothing,
+        "wing_smoothing_explicitly_set": "wing_smoothing" in kwargs,
+        "max_iterations_requested": cfg.max_iterations,
+        "iterations_performed_if_reported": (
+            int(fitted.iterations)
+            if getattr(fitted, "iterations", None) is not None else None),
         "converged_if_reported": (
             bool(fitted.converged) if hasattr(fitted, "converged") else None),
         "final_converged_fraction_if_reported": (
@@ -477,6 +500,7 @@ def build_empirical_coadd_psf(
             "reason_code": "STRONG_NEGATIVE_EPSF_RINGING",
             "negative_absolute_mass_fraction": negative_fraction,
             "blocking_threshold_fraction": .025,
+            "psf_recipe": asdict(cfg),
             "signed_kernel_qa": signed_diagnostics,
             "solver_diagnostics": solver_diagnostics,
             # An unaltered rejected model can be visualized in the GUI, but
