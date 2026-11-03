@@ -228,3 +228,59 @@ def test_photutils31_wing_smoothing_ab_is_executed_and_audited():
     assert all("iteration" in step for step in history)
     assert len(history) <= 25
     assert "converged_if_reported" in solver
+
+
+def test_manual_training_star_review_recomputes_without_touching_holdouts():
+    from dataclasses import replace
+    from lsbpipe.photometry.psf_empirical import PSF0QualityError
+
+    frame = fake_frame()
+    base = PSF0Config(
+        min_train_stars=6, min_holdout_stars=2,
+        max_training_stars=30, min_neighbor_separation_pix=32.)
+    def run(cfg):
+        try:
+            outcome = build_empirical_coadd_psf(
+                frame, target_icrs_deg=LEO_P,
+                target_protection_arcsec=13., config=cfg)
+            return outcome.training, outcome.holdout, outcome.review_snapshot
+        except PSF0QualityError as exc:
+            from types import SimpleNamespace
+            train = [SimpleNamespace(**star) for star in
+                     exc.diagnostics["training"]]
+            holdout = [SimpleNamespace(**star) for star in
+                       exc.diagnostics["holdout"]]
+            return train, holdout, exc.review_snapshot
+
+    train0, holdout0, review0 = run(base)
+    assert review0["schema"] == "desidera.psf0-star-review-in-memory/1"
+    assert len(review0["stars"]) == len(train0)
+    assert all(s["cutout"].shape == (31, 31) for s in review0["stars"])
+    assert all(s["model"].shape == s["cutout"].shape
+               for s in review0["stars"])
+    to_remove = train0[0].star_id
+    excluded_cfg = replace(base, excluded_training_star_ids=(to_remove,))
+    train1, holdout1, review1 = run(excluded_cfg)
+    assert len(train1) == len(train0)-1
+    assert {s.star_id for s in holdout0} == {s.star_id for s in holdout1}
+    assert to_remove not in {s.star_id for s in train1}
+    assert {s["star_id"] for s in review1["stars"]} == {
+        s["star_id"] for s in review0["stars"]}
+    assert next(s for s in review1["stars"]
+                if s["star_id"] == to_remove)["role"] == "excluded"
+    assert base.digest != excluded_cfg.digest
+    with pytest.raises(ValueError, match="training sample|protected holdouts"):
+        build_empirical_coadd_psf(
+            frame, target_icrs_deg=LEO_P, target_protection_arcsec=13.,
+            config=replace(base, excluded_training_star_ids=(
+                holdout0[0].star_id,)))
+
+
+def test_manual_exclusion_recipe_rejects_malformed_or_duplicated_ids():
+    from dataclasses import replace
+    with pytest.raises(ValueError, match="sorted, unique"):
+        PSF0Config(excluded_training_star_ids=("star-0001", "star-0001"))
+    with pytest.raises(ValueError, match="sorted, unique"):
+        PSF0Config(excluded_training_star_ids=("star-2",))
+    with pytest.raises(ValueError, match="sorted, unique"):
+        PSF0Config(excluded_training_star_ids=("star-0003", "star-0002"))
