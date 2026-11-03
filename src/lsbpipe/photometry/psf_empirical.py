@@ -794,6 +794,21 @@ def build_empirical_coadd_psf(
         "stars": review_stars,
     }
     negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
+    sky_sample_qa = {
+        "per_star": [{
+            "star_id":entry[0],
+            "role":("train" if entry[0] in
+                    {e[0] for e in training_entries} else
+                    "holdout" if entry[0] in
+                    {e[0] for e in holdout_entries} else
+                    "excluded"),
+            **entry[-1].get("sky_qa", {}),
+        } for entry in original_training_entries+holdout_entries],
+        "ring_starts_inside_four_assumed_fwhm": (
+            cfg.sky_annulus_inner_pix < 4*cfg.guessed_fwhm_pix),
+        "coadd_sky_and_psf_wings_jointly_fitted":False,
+        "sky_correlation_uncertainty_calibrated":False,
+    }
     selection_catalog_qa = {
         "policy": cfg.star_catalog_policy,
         "gaia_strict": catalog_matcher is not None,
@@ -842,6 +857,7 @@ def build_empirical_coadd_psf(
             "blocking_threshold_fraction": .025,
             "psf_recipe": asdict(cfg),
             "catalog_selection_qa": selection_catalog_qa,
+            "sky_sample_qa": sky_sample_qa,
             "training_residual_screening_history": outlier_history,
             "reviewed_excluded_training_ids": list(cfg.excluded_training_star_ids),
             "signed_kernel_qa": signed_diagnostics,
@@ -885,6 +901,9 @@ def build_empirical_coadd_psf(
         "CORE_PSF_ONLY_EXTENDED_WINGS_UNVALIDATED",
         "SPATIAL_REPRESENTATIVITY_NOT_VALIDATED",
         "CORRELATED_COADD_NOISE_UNMODELED",
+        ("SKY_ANNULUS_INSIDE_4X_GUESSED_FWHM_WING_RISK"
+         if cfg.sky_annulus_inner_pix < 4*cfg.guessed_fwhm_pix
+         else "STELLAR_WINGS_NOT_ESTIMATED_IN_SKY_FIT"),
         ("PSF_STAR_IDENTITIES_NOT_GAIA_VERIFIED"
          if catalog_matcher is None else
          "GAIA_IDENTITIES_VERIFIED_CUTOUT_CLEANLINESS_UNCALIBRATED"),
@@ -932,6 +951,7 @@ def build_empirical_coadd_psf(
     # FWHM here is only the guessed finder width, NOT measured EPSF FWHM.
     metrics = {
         "catalog_selection_qa": selection_catalog_qa,
+        "sky_sample_qa": sky_sample_qa,
         "training_residual_screening_history": outlier_history,
         "holdout_median_abs_core_residual_over_peak": med_core_resid,
         "holdout_diagnostics": checks,
