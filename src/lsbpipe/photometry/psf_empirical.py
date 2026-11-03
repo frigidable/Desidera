@@ -10,6 +10,7 @@ SBF-grade PSF. In particular, small-cutout EPSFs do not constrain wings.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping
 from hashlib import sha256
 import json
 import math
@@ -180,7 +181,7 @@ def _verified_source_hashes(frame):
     info = frame.source_evidence
     hashes = info.get("local_hashes", {})
     if (info.get("hash_provenance") != "LOCAL_SHA256_NOT_REMOTE_AUTHENTICITY"
-            or info.get("synthetic", False) or not isinstance(hashes, dict)
+            or info.get("synthetic", False) or not isinstance(hashes, Mapping)
             or set(hashes) != {"image", "invvar", "nexp", "maskbits"}
             or any(not isinstance(v, str) or len(v) != 64 or
                    any(char not in "0123456789abcdef" for char in v)
