@@ -144,3 +144,49 @@ def test_gui_preview_refuses_export_after_original_fits_changed(tmp_path, monkey
     with pytest.raises(ValueError, match="changed since PSF build"):
         save_gui_psf0(preview)
     assert not (project.root/"analyses"/"psf-pilots").exists()
+
+
+def test_explicit_manual_psf_star_exclusions_persist_without_modifying_fits(
+        tmp_path, monkeypatch):
+    from dataclasses import replace
+    import json
+    from lsbpipe.photometry.psf_gui_backend import (
+        run_gui_psf0, commit_psf0_manual_review)
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path/"session"))
+    p = _project(tmp_path)
+    originals = _synthetic_legacy_files(p)
+    contents = {kind:path.read_bytes() for kind,path in originals.items()}
+    config = PSF0Config(
+        max_training_stars=30, min_train_stars=6, min_holdout_stars=2)
+    first = run_gui_psf0(
+        p.root, band="r", config=config, protection_arcsec=12.)
+    assert first["status"] == "EXPERIMENTAL_PSF_NOT_ADOPTED"
+    selected = first["star_review"]["stars"][0]["star_id"]
+    reviewed = run_gui_psf0(
+        p.root, band="r",
+        config=replace(config, excluded_training_star_ids=(selected,)),
+        protection_arcsec=12.)
+    assert reviewed["status"] == "EXPERIMENTAL_PSF_NOT_ADOPTED"
+    assert len(reviewed["result"].training) == len(first["result"].training)-1
+    assert {s.star_id for s in reviewed["result"].holdout} == {
+        s.star_id for s in first["result"].holdout}
+    with pytest.raises(ValueError, match="explicitly applied"):
+        commit_psf0_manual_review(reviewed)
+    assert not (p.root/"analyses").exists()
+    receipt_path = Path(commit_psf0_manual_review(
+        reviewed, explicitly_confirmed=True))
+    assert receipt_path.is_file()
+    receipt = json.loads(receipt_path.read_text("utf-8"))
+    assert receipt["status"] == "MANUAL_SELECTION_NOT_PSF_ADOPTION"
+    assert receipt["science_adopted"] is False
+    assert receipt["excluded_training_star_ids"] == [selected]
+    assert receipt["holdout_protected"] is True
+    assert all(originals[kind].read_bytes()==data
+               for kind, data in contents.items())
+    again = commit_psf0_manual_review(reviewed, explicitly_confirmed=True)
+    assert again == str(receipt_path)
+    assert list(receipt_path.parent.glob("review-*.json")) == [receipt_path]
+    with originals["image"].open("ab") as changed:
+        changed.write(b"external source modification")
+    with pytest.raises(ValueError, match="Original FITS changed"):
+        commit_psf0_manual_review(reviewed, explicitly_confirmed=True)
