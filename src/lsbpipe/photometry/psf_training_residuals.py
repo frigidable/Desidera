@@ -116,6 +116,24 @@ def brightness_bias_audit(rows, proposed_ids=(), *,
     ids = tuple(r["star_id"] for r in rows)
     if len(ids) != len(set(ids)):
         raise ValueError("Duplicate training-star identity")
+    # An unscorable fit must not be assigned an invented model
+    # amplitude. The automatic decision is blocked for the *entire*
+    # iteration; the source remains available to manual visual QA.
+    unscorable = sorted(
+        r["star_id"] for r in rows
+        if r.get("metric") == "UNSCORABLE_TRAIN_STAR")
+    if unscorable:
+        return {
+            "status":"UNSCORABLE_STARS_BLOCK_AUTO_TRIM",
+            "n_scored":len(rows),
+            "unscorable_star_ids":unscorable,
+            "proposed_remove_ids":list(sorted(proposed_ids)),
+            "score_amplitude_spearman_rho":None,
+            "guard_threshold_abs_rho":float(strong_correlation_limit),
+            "auto_trim_blocked":True,
+            "correlation_is_not_causal":True,
+            "scores_use_training_stars_in_their_own_ePSF":True,
+        }
     try:
         amps = np.array([
             float(r["amplitude_nMgy_diagnostic"]) for r in rows])
