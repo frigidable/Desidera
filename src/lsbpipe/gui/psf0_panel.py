@@ -272,6 +272,42 @@ class PSF0Panel(QGroupBox):
         self.summary.setText("No PSF saved or adopted. Original FITS unchanged.")
         self._update_buttons()
 
+    def show_quality_rejection(self, payload: dict):
+        """Rejected ePSF: inspect stars and failure metrics without a kernel."""
+        self._preview = None
+        self.kernel_view.setPixmap(QPixmap())
+        self.kernel_view.setText("REJECTED ePSF · no kernel accepted")
+        self.status.setText(
+            "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
+        diagnostic = payload.get("diagnostics", {})
+        negative = diagnostic.get("negative_absolute_mass_fraction")
+        if negative is not None:
+            self.summary.setText(
+                f"Negative absolute ePSF mass: {negative:.2%} "
+                f"(experimental limit {diagnostic.get('blocking_threshold_fraction', .025):.2%}); "
+                f"training stars {diagnostic.get('n_train', 0)}, "
+                f"holdout stars {diagnostic.get('n_holdout', 0)}. "
+                "Review the source selection and local backgrounds.")
+        else:
+            self.summary.setText("Provisional PSF rejected before adoption.")
+        rows = [(item, "train") for item in diagnostic.get("training", [])]
+        rows += [(item, "holdout") for item in diagnostic.get("holdout", [])]
+        self.stars.setRowCount(len(rows))
+        for index, (star, role) in enumerate(rows):
+            for col, label in enumerate((
+                    role, f"{star['x_pix']:.2f}", f"{star['y_pix']:.2f}",
+                    f"{star['cutout_sky_nMgy']:.4g}",
+                    f"{star['gradient_sigma_span']:.2f}")):
+                self.stars.setItem(index, col, QTableWidgetItem(label))
+        self.qa.setPlainText(
+            payload.get("reason", "PSF reconstruction quality failure")
+            + "\n\nRejected candidates: "
+            + str(diagnostic.get("rejected_reasons", {}))
+            + "\n\n"
+            + "\n".join(diagnostic.get("notes", []))
+            + "\n\nNo invalid PSF kernel or photometric measurement was saved.")
+        self._update_buttons()
+
     def show_result(self, preview: dict):
         if (self._project_root is None or
                 str(self._project_root) != str(preview["project_root"])):
