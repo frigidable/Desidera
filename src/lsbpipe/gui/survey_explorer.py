@@ -674,6 +674,10 @@ class SurveyExplorer(QMainWindow):
             self._leave_photometry)
         self.photometry_workspace.sourcesRequested.connect(
             self._open_dataset_manager)
+        self.photometry_workspace.psf0RunRequested.connect(
+            self._run_project_psf0)
+        self.photometry_workspace.psf0SaveRequested.connect(
+            self._save_project_psf0)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -785,6 +789,78 @@ class SurveyExplorer(QMainWindow):
             self.preview_tabs.addTab(self.photometry_workspace, "Photometry")
         self.preview_tabs.setCurrentWidget(self.photometry_workspace)
         self.data_drawer.hide()
+
+    def _run_project_psf0(self, request):
+        """Dispatch genuine Leo P native-band ePSF in the existing GUI thread pool."""
+        from lsbpipe.photometry.psf_empirical import PSF0Config
+        from lsbpipe.photometry.psf_gui_backend import run_gui_psf0
+
+        panel = self.photometry_workspace.psf0_panel
+        if self.thread is not None:
+            panel.status.setText("Another workspace task is active. "
+                                 "Finish or stop it before starting PSF-0.")
+            return
+        if self._object_project is None or request.get("project_root") != str(self._object_project.root):
+            panel.show_failure("Leo P project identity changed before PSF dispatch")
+            return
+        try:
+            config = PSF0Config(guessed_fwhm_pix=float(request["fwhm_pix"]))
+            band = str(request["band"])
+            radius = float(request["target_protection_arcsec"])
+            root = str(self._object_project.root)
+        except (ValueError, TypeError, KeyError) as exc:
+            panel.show_failure(f"Invalid PSF-0 settings: {exc}")
+            return
+
+        def run(progress):
+            return run_gui_psf0(
+                root, band=band, config=config,
+                protection_arcsec=radius, progress=progress)
+
+        def finished(payload):
+            panel.show_result(payload)
+            self.message.setText(
+                f"PSF-0 {band} completed as EXPERIMENTAL_NOT_ADOPTED. "
+                "Review holdout stars and QA before saving a diagnostic.")
+
+        def failed(message):
+            panel.show_failure(message)
+
+        self._start(run, finished, failed, operation_name="psf0-preview")
+        if self.thread is not None:
+            panel.set_busy(True, "PSF-0 running on saved original FITS. "
+                           "No science result will be adopted.")
+
+    def _save_project_psf0(self, preview):
+        """User requested an immutable derivative; recheck original FITS first."""
+        from lsbpipe.photometry.psf_gui_backend import save_gui_psf0
+
+        panel = self.photometry_workspace.psf0_panel
+        if self.thread is not None:
+            panel.status.setText("Another workspace task is active; save was not started.")
+            return
+        if self._object_project is None or (
+                preview.get("project_root") != str(self._object_project.root)):
+            panel.status.setText(
+                "Project changed since PSF preview. Rerun before diagnostic export.")
+            return
+
+        def run(progress):
+            return save_gui_psf0(preview, progress=progress)
+
+        def finished(path):
+            panel.show_saved(path)
+            self.message.setText("Immutable, non-adopted PSF-0 diagnostic saved: " + path)
+
+        def failed(message):
+            panel.status.setText(
+                "Could not save diagnostic; preview is still experimental.")
+            panel.qa.appendPlainText("\nDiagnostic export failed: " + message)
+
+        self._start(run, finished, failed, operation_name="psf0-export")
+        if self.thread is not None:
+            panel.set_busy(True, "Verifying original FITS SHA-256 before "
+                           "explicit diagnostic export.")
 
     def _leave_photometry(self):
         if self.fits_explorer._dataset is not None:
@@ -1376,8 +1452,8 @@ class SurveyExplorer(QMainWindow):
         if photometry_active:
             self.workflow_stage.setText("03 / 04 · Photometry")
             self.workflow_hint.setText(
-                "Read-only input preparation. No photometric science run "
-                "is implemented or adopted on this screen.")
+                "Experimental PSF-0 preview available for saved Leo P FITS; "
+                "no sky, galaxy photometry or science adoption.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
             else "Data & diagnostics")
@@ -1620,7 +1696,10 @@ class SurveyExplorer(QMainWindow):
     def _idle(self):
         # This callback is invoked only after the GUI terminal delivery
         # and QThread shutdown have both been acknowledged.
-        return self._task_controller.idle()
+        result = self._task_controller.idle()
+        if hasattr(self, "photometry_workspace"):
+            self.photometry_workspace.psf0_panel.set_busy(False)
+        return result
 
     def _progress(self, item):
         if isinstance(item, tuple):
@@ -2001,7 +2080,7 @@ class SurveyExplorer(QMainWindow):
             self.preview_label.setText(
                 "Data Manager · offline observational provenance"
                 if self.preview_tabs.currentWidget() is self.dataset_manager
-                else ("Photometry · preparation only · no measurements"
+                else ("Photometry · PSF-0 diagnostic · no adopted measurements"
                       if self.preview_tabs.currentWidget() is self.photometry_workspace
                       else "Original FITS · read-only"))
         else:
