@@ -18,6 +18,14 @@ https://ned.ipac.caltech.edu/Documents/Guides/Interface/ObjectLookup
   `Preferred.Redshift`, refcodes, and `Aliases` are separate NED statements.
 - Only `ResultCode=3` with finite valid positions can be confirmed; even
   then a user must make the association explicitly.
+- **Freshness caveat:** ObjectLookup is an independently documented NED
+  name-interpreter endpoint, not the newly published May 2026 VOTable
+  `NED::API/OverviewOfObject` API. The official deprecation warning does
+  not establish that ObjectLookup sees the latest 2026 catalogue ingestion.
+  P10b therefore treats all returned identifiers/positions/redshifts as
+  external unadopted evidence and does not claim release freshness. A
+  further acceptance stage must validate records against the new 2026 API
+  before publishing scientific parameters.
 - Unknown API major versions, unknown statuses, invalid positions,
   malformed schema or excessive response sizes fail closed. No automatic
   fallback to the deprecated `/cgi-bin/objsearch` services.
