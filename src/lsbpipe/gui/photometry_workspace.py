@@ -234,7 +234,7 @@ class PhotometryWorkspace(QWidget):
                 item.setToolTip(value)
                 self.table.setItem(index, column, item)
         self.blocker.setText(
-            "Scientific state: PSF0_DIAGNOSTIC_NOT_ADOPTED. "
+            "Science state: NOT_MEASURED_NOT_ADOPTED. PSF-0 remains diagnostic. "
             "The source table checks saved paths only. Building a PSF preview "
             "validates real FITS/WCS and performs an experimental stellar fit, "
             "but PSF wings/spatial representation, galaxy sky, correlated "
