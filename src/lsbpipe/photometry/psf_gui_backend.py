@@ -9,7 +9,11 @@ the saved Galaxy Workspace *default band*.
 from __future__ import annotations
 
 from hashlib import sha256
+from dataclasses import replace
+import json
 import math
+import os
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -151,6 +155,8 @@ def run_gui_psf0(
             "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
             "reason": str(exc),
             "diagnostics": exc.diagnostics,
+            "star_review": exc.review_snapshot,
+            "source_hashes": dict(frame.source_evidence.get("local_hashes", {})),
             "project_id": snapshot["project_id"],
             "project_root": snapshot["project_root"],
             "dataset": snapshot["dataset"],
@@ -159,6 +165,8 @@ def run_gui_psf0(
     return {
         "status": "EXPERIMENTAL_PSF_NOT_ADOPTED",
         "result": result,
+        "star_review": result.review_snapshot,
+        "source_hashes": dict(result.source_hashes),
         "project_id": snapshot["project_id"],
         "project_root": snapshot["project_root"],
         "dataset": snapshot["dataset"],
