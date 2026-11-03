@@ -42,7 +42,7 @@ def test_selected_but_empty_data_root_requires_original_files(tmp_path):
     status = inspect_passport_readiness(project(tmp_path))
     assert status.code == "NO_MATCHING_ORIGINAL_FITS"
     assert status.missing_kinds == ("image", "invvar", "nexp", "maskbits")
-    assert "no original FITS" in status.observation_label.lower()
+    assert "no original fits" in status.observation_label.lower()
     assert status.expected_count == 4
 
 
