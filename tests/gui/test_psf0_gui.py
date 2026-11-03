@@ -86,6 +86,8 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     assert "7.50%" in panel.summary.text()
     assert "Strong negative EPSF ringing" in panel.qa.toPlainText()
     assert panel.stars.rowCount() == 1
+    assert panel.stars.columnCount() == 6
+    assert panel.stars.horizontalHeaderItem(0).text() == "Star ID"
     assert panel.kernel_view.pixmap() is not None
     assert not panel.kernel_view.pixmap().isNull()
     assert "Intermediate" in panel.qa.toPlainText()
