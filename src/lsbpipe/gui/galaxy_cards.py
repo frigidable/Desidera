@@ -125,6 +125,9 @@ class GalaxyDetailCard(QFrame):
         self.catalogue = _metadata("No confirmed catalogue identity")
         self.catalogue.setObjectName("galaxy_card_catalogue")
         self.catalogue.setTextFormat(Qt.PlainText)
+        self.catalogue.setToolTip(
+            "Only user-confirmed catalogue identities. External evidence "
+            "does not change project coordinates or adopt measurements.")
         identity_col.addWidget(self.catalogue)
         identity_col.addStretch(1)
         hero_row.addWidget(identity, 1)
@@ -250,7 +253,7 @@ class GalaxyDetailCard(QFrame):
             self.details_toggle.setChecked(True)
         elif catalogues:
             self.catalogue.setText("\n".join(
-                f"{entry.provider}  ·  {entry.main_id}"
+                f"{entry.provider}: {entry.main_id}"
                 for entry in catalogues))
             details = []
             for entry in catalogues:
