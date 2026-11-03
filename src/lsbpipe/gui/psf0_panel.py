@@ -7,13 +7,15 @@ effects occur in this widget itself.
 """
 from __future__ import annotations
 
+import json
 import numpy as np
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit, QPushButton,
+    QAbstractItemView, QApplication, QComboBox, QDoubleSpinBox,
+    QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QPlainTextEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -32,6 +34,7 @@ class PSF0Panel(QGroupBox):
         self._project_root = None
         self._snapshot = None
         self._preview = None
+        self._qa_payload = None
         self._busy = False
 
         layout = QVBoxLayout(self)
@@ -90,6 +93,13 @@ class PSF0Panel(QGroupBox):
             "again and save an immutable non-adopted PSF derivative.")
         self.save_btn.clicked.connect(self._request_save)
         actions.addWidget(self.save_btn)
+        self.copy_qa_btn = QPushButton("Copy QA report")
+        self.copy_qa_btn.setObjectName("psf0_copy_qa")
+        self.copy_qa_btn.setToolTip(
+            "Copies the scientific result/rejection and star audit to the "
+            "clipboard; no invalid PSF is saved or adopted.")
+        self.copy_qa_btn.clicked.connect(self._copy_qa)
+        actions.addWidget(self.copy_qa_btn)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -152,6 +162,7 @@ class PSF0Panel(QGroupBox):
 
     def refresh_sources(self):
         self._preview = None
+        self._qa_payload = None
         self.save_btn.setEnabled(False)
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
@@ -201,12 +212,13 @@ class PSF0Panel(QGroupBox):
         self._update_buttons()
 
     def _parameters_changed(self, *_):
-        if self._preview is not None:
+        if self._preview is not None or self._qa_payload is not None:
             self._band_changed()
 
     def _band_changed(self, *_):
-        # Changing filter invalidates any earlier successful kernel.
+        # Changing filter invalidates any earlier science and rejection QA.
         self._preview = None
+        self._qa_payload = None
         self.save_btn.setEnabled(False)
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
@@ -226,6 +238,7 @@ class PSF0Panel(QGroupBox):
         self.band.setEnabled(not self._busy)
         self.fwhm.setEnabled(not self._busy)
         self.protection.setEnabled(not self._busy)
+        self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
 
     def set_busy(self, state: bool, message: str = ""):
         self._busy = bool(state)
@@ -237,6 +250,7 @@ class PSF0Panel(QGroupBox):
         if self._project_root is None or self._busy or self.band.currentData() is None:
             return
         self._preview = None
+        self._qa_payload = None
         self.save_btn.setEnabled(False)
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
@@ -257,6 +271,7 @@ class PSF0Panel(QGroupBox):
 
     def show_failure(self, error: str):
         self._preview = None
+        self._qa_payload = None
         self.save_btn.setEnabled(False)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("Rejected ePSF · no kernel adopted")
@@ -275,10 +290,24 @@ class PSF0Panel(QGroupBox):
         self._update_buttons()
 
     def show_quality_rejection(self, payload: dict):
-        """Rejected ePSF: inspect stars and failure metrics without a kernel."""
+        """Rejected ePSF: inspect its signed structure, never adopt a kernel."""
+        if (self._project_root is None or
+                str(self._project_root) != str(payload.get("project_root"))):
+            self.show_failure("Rejected PSF belongs to another Galaxy Project")
+            return
         self._preview = None
+        self._qa_payload = {
+            "science_status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "source_project": str(self._project_root),
+            "band": self.band.currentData(),
+            "reason": payload.get("reason"),
+            "diagnostics": {
+                name: value for name, value in payload.get("diagnostics", {}).items()
+                if name != "signed_kernel_values_for_qa_only"
+            },
+        }
         self.kernel_view.setPixmap(QPixmap())
-        self.kernel_view.setText("REJECTED ePSF · no kernel accepted")
+        self.kernel_view.setText("No signed model available")
         self.status.setText(
             "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
         diagnostic = payload.get("diagnostics", {})
@@ -301,14 +330,73 @@ class PSF0Panel(QGroupBox):
                     f"{star['cutout_sky_nMgy']:.4g}",
                     f"{star['gradient_sigma_span']:.2f}")):
                 self.stars.setItem(index, col, QTableWidgetItem(label))
+        signed = diagnostic.get("signed_kernel_qa", {})
+        annuli = signed.get("annuli", {})
+        breakdown = []
+        for label, key in (
+                ("Core (r ≤ 1× guessed FWHM)", "core_r_le_1x_guessed_fwhm"),
+                ("Intermediate (1–2× guessed FWHM)",
+                 "intermediate_1x_to_2x_guessed_fwhm"),
+                ("Outer (r > 2× guessed FWHM)",
+                 "outer_r_gt_2x_guessed_fwhm")):
+            if key in annuli:
+                breakdown.append(
+                    f"{label}: negative mass contribution "
+                    f"{annuli[key]['negative_fraction_of_total_absolute_mass']:.2%} "
+                    "of total |model|.")
+        raw = diagnostic.get("signed_kernel_values_for_qa_only")
+        if raw is not None:
+            self._show_signed_rejected_kernel(raw)
         self.qa.setPlainText(
             payload.get("reason", "PSF reconstruction quality failure")
+            + "\n\nNegative contribution by radial zone "
+            "(radii use an assumed detection FWHM, NOT a measured FWHM):\n"
+            + ("\n".join(breakdown) if breakdown else "Unavailable")
             + "\n\nRejected candidates: "
             + str(diagnostic.get("rejected_reasons", {}))
             + "\n\n"
             + "\n".join(diagnostic.get("notes", []))
             + "\n\nNo invalid PSF kernel or photometric measurement was saved.")
         self._update_buttons()
+
+    def _show_signed_rejected_kernel(self, values):
+        """Red = negative model, cyan = positive; descriptive, not accepted."""
+        data = np.asarray(values, dtype=float)
+        if (data.ndim != 2 or min(data.shape) < 9
+                or not np.isfinite(data).all()):
+            self.kernel_view.setText("Signed model grid unavailable")
+            return
+        peak = float(np.max(np.abs(data)))
+        if peak <= 0:
+            self.kernel_view.setText("Signed model grid is empty")
+            return
+        stretch = np.arcsinh(100. * np.abs(data) / peak) / np.arcsinh(100.)
+        brightness = np.clip(np.rint(205. * stretch), 0, 205).astype(np.int16)
+        rgb = np.zeros((*data.shape, 3), dtype=np.uint8)
+        rgb[:] = (34, 39, 45)
+        positive = data > 0
+        negative = data < 0
+        rgb[positive, 0] = 25
+        rgb[positive, 1] = 50 + brightness[positive] * 3 // 4
+        rgb[positive, 2] = 50 + brightness[positive]
+        rgb[negative, 0] = 50 + brightness[negative]
+        rgb[negative, 1] = 39
+        rgb[negative, 2] = 45
+        h, w = data.shape
+        img = QImage(rgb.tobytes(), w, h, w * 3, QImage.Format_RGB888).copy()
+        self.kernel_view.setPixmap(QPixmap.fromImage(img).scaled(
+            230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
+        self.kernel_view.setToolTip(
+            "REJECTED signed ePSF · cyan positive; red negative. "
+            "Asinh-stretched for visual diagnosis; no physically accepted PSF.")
+
+    def _copy_qa(self):
+        if self._qa_payload is None or self._busy:
+            return
+        QApplication.clipboard().setText(json.dumps(
+            self._qa_payload, ensure_ascii=False, indent=2,
+            sort_keys=True, allow_nan=False))
+        self.qa.appendPlainText("\nQA report copied to clipboard (no FITS written).")
 
     def show_result(self, preview: dict):
         if (self._project_root is None or
@@ -318,6 +406,7 @@ class PSF0Panel(QGroupBox):
         result = preview["result"]
         self._preview = preview
         report = result.report()
+        self._qa_payload = report
         self.status.setText(
             f"{result.dataset_id} · EXPERIMENTAL_PSF_NOT_ADOPTED")
         self.summary.setText(
