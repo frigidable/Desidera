@@ -121,8 +121,33 @@ selected `DR11 South / 1554p180 / g` band. The requested **r**
 original quartet exists independently. That real-r run returned
 `PSF0_FAILED_NOT_ADOPTED` due to
 `Strong negative EPSF ringing; inspect star selection/sky`.
-It is therefore **not** a validated observational PSF. The current GUI
-adds explicit quantitative diagnostics for this blocking failure.
+It is therefore **not** a validated observational PSF.
+
+**Real g-band GUI evidence (researcher screenshots, 2026-11-03):** all
+four FITS paths were found; the initial empirical reconstruction used
+74 training stars and 19 independent holdout stars, with 28 isolation,
+5 pixel-quality/target and 1 image-edge rejection. The signed
+ePSF had 4.09% negative absolute mass against an **experimental,
+uncalibrated 2.50% screening threshold** and was correctly rejected.
+These observations are not a measured FWHM, a validated PSF or evidence
+of unusable stellar data; they motivate radial, per-star and
+solver-version diagnostics.
+
+The new GUI examines **unmodified signed ePSF values**, separates
+negative mass into core/intermediate/outer zones defined using the
+*assumed detection FWHM* (not a measured FWHM), records the effective
+photutils version/solver defaults, shows a cyan-positive/red-negative
+diagnostic image, and offers **Copy QA report** without writing files
+or adopting a science result. Do not lower the 2.5% provisional
+cutoff or adopt the clipped kernel simply to pass this diagnostic.
+
+Photutils 3.1 changed default ePSF smoothing and center-fit boxes;
+at a native-grid assumed FWHM of roughly 4.8 px its auto smoothing
+may apply no smoothing, as documented by photutils. This is a
+**hypothesis requiring real g/r star-cutout verification**, not a
+demonstrated cause of the observed 4.09% negative mass.
+See https://docs.astropy.org/projects/photutils/en/stable/whats_new/3.1.html
+and https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html .
 
 After the stacked PRs are reviewed and available in the existing
 checkout, start the GUI with the existing interpreter:
