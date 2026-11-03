@@ -1,4 +1,4 @@
-"""Leo P FIRST PSF-0 pilot: offline native-FITS workflow (no downloads).
+r"""Leo P FIRST PSF-0 pilot: offline native-FITS workflow (no downloads).
 
 Examples (Windows PowerShell):
   .\.venv\Scripts\python.exe scripts/psf0_leo_p.py --project-root "C:\\...\\Leo_P"
