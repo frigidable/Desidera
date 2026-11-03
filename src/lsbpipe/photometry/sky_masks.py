@@ -21,7 +21,10 @@ BANDS = frozenset(("g", "r", "i", "z"))
 
 
 def _angle(value: float) -> float:
-    number = float(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Missing or invalid geometric parameter") from exc
     if not math.isfinite(number):
         raise ValueError("Non-finite sky coordinate")
     return number
