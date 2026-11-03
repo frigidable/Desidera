@@ -10,6 +10,7 @@ SBF-grade PSF. In particular, small-cutout EPSFs do not constrain wings.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import re
 from collections.abc import Mapping
 from hashlib import sha256
 import json
@@ -33,9 +34,10 @@ RECIPE = "desidera.psf0-coadd-epsf/1"
 class PSF0QualityError(ValueError):
     """Scientifically rejected ePSF, with read-only candidate-star QA evidence."""
 
-    def __init__(self, message: str, diagnostics: dict):
+    def __init__(self, message: str, diagnostics: dict, review_snapshot=None):
         super().__init__(message)
         self.diagnostics = diagnostics
+        self.review_snapshot = review_snapshot
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,9 @@ class PSF0Config:
     psf_oversampling: int = 1
     max_star_gradient_sigma: float = 6.
     seed: int = 20261103
+    # Reviewed identifiers are fixed before model fitting. Holdouts cannot
+    # be manually removed to improve the QA score.
+    excluded_training_star_ids: tuple[str, ...] = ()
 
     def __post_init__(self):
         floats = (self.guessed_fwhm_pix, self.detection_sigma,
@@ -90,6 +95,14 @@ class PSF0Config:
             raise ValueError("PSF-0 currently supports only a native-grid EPSF; oversampling requires separate calibration")
         if self.max_star_gradient_sigma <= 0:
             raise ValueError("Gradient rejection threshold must be positive")
+        excluded = self.excluded_training_star_ids
+        if (not isinstance(excluded, tuple) or
+                any(not isinstance(key, str) or
+                    re.fullmatch(r"star-\\d{4}", key) is None for key in excluded) or
+                len(set(excluded)) != len(excluded) or
+                excluded != tuple(sorted(excluded))):
+            raise ValueError(
+                "Manual training-star exclusions must be sorted, unique star-XXXX IDs")
 
     @property
     def digest(self):
@@ -143,6 +156,7 @@ class PSF0Result:
     center_target_icrs: tuple[float, float]
     target_protection_arcsec: float
     algorithm_versions: dict
+    review_snapshot: dict | None = field(default=None, repr=False, compare=False)
     status: str = STATUS
 
     def __post_init__(self):
@@ -179,6 +193,8 @@ class PSF0Result:
             "target_protection_arcsec": self.target_protection_arcsec,
             "n_detected": self.detection_count,
             "n_train": len(self.training), "n_holdout": len(self.holdout),
+            "manual_excluded_training_star_ids": list(
+                self.recipe.excluded_training_star_ids),
             "training": [asdict(s) for s in self.training],
             "holdout": [asdict(s) for s in self.holdout],
             "rejections": dict(self.rejected_reasons),
@@ -429,6 +445,23 @@ def build_empirical_coadd_psf(
     if len(training_entries) < cfg.min_train_stars:
         raise ValueError("Independent holdout would leave too few training stars")
     training_entries = training_entries[:cfg.max_training_stars]
+    # Split before reviewer exclusions. The holdout IDs/coordinates remain
+    # identical in the next run, even if several train stars are excluded.
+    original_training_entries = list(training_entries)
+    train_ids = {entry[0] for entry in original_training_entries}
+    excluded_ids = set(cfg.excluded_training_star_ids)
+    invalid_exclusions = excluded_ids - train_ids
+    if invalid_exclusions:
+        raise ValueError(
+            "Manual exclusions are not in this configuration's training "
+            f"sample (or refer to protected holdouts): {sorted(invalid_exclusions)}")
+    training_entries = [
+        entry for entry in original_training_entries
+        if entry[0] not in excluded_ids]
+    if len(training_entries) < cfg.min_train_stars:
+        raise ValueError(
+            f"Manual exclusion would leave only {len(training_entries)} "
+            f"training stars; minimum is {cfg.min_train_stars}")
     def metadata(entry, role):
         ident, x, y, ra, dec, peak, c = entry
         return PSF0Star(ident, x, y, ra, dec, c["peak_nMgy"],
@@ -527,6 +560,47 @@ def build_empirical_coadd_psf(
     if not np.isfinite(raw_kernel).all():
         raise ValueError("Nonfinite ePSF solution")
     signed_diagnostics = signed_psf_qa(raw_kernel, cfg.guessed_fwhm_pix)
+    # Prepared only in worker memory: never serialize observation cutouts
+    # or present them as a certified science image or saved FITS product.
+    review_stars = []
+    from scipy.ndimage import shift as _shift_review_model
+    for entry in original_training_entries:
+        c = entry[-1]
+        local_x, local_y = c["center_in_cutout"]
+        center = (np.asarray(raw_kernel.shape)-1)/2.
+        template = _shift_review_model(
+            raw_kernel, (local_y-center[0], local_x-center[1]),
+            order=3, mode="constant", cval=0.)
+        yy, xx = np.indices(template.shape)
+        near = (np.hypot(xx-local_x, yy-local_y) <= cfg.guessed_fwhm_pix)
+        good = near & (c["weights"] > 0)
+        weighted = c["weights"][good]**2
+        denominator = float(np.sum(weighted*template[good]**2))
+        amplitude = (float(np.sum(weighted*template[good]*c["image"][good])
+                           / denominator) if denominator > 0 else 0.)
+        # Model preview is signed and on the EXACT cutout's native grid.
+        # It cannot be adopted or exported as a physical PSF from review.
+        model = template * max(amplitude, 0.)
+        review_stars.append({
+            "star_id": entry[0],
+            "role": ("excluded" if entry[0] in excluded_ids else "train"),
+            "x_pix": float(entry[1]), "y_pix": float(entry[2]),
+            "ra_deg": float(entry[3]), "dec_deg": float(entry[4]),
+            "cutout": c["image"].copy(),
+            "model": model,
+            "valid": c["weights"] > 0,
+            "center_in_cutout": (float(local_x), float(local_y)),
+            "peak_nMgy": float(c["peak_nMgy"]),
+            "sky_nMgy": float(c["sky_nMgy"]),
+            "gradient_sigma_span": float(c["gradient_sigma_span"]),
+        })
+    review_snapshot = {
+        "schema": "desidera.psf0-star-review-in-memory/1",
+        "status": "RESEARCHER_REVIEW_NOT_SCIENCE_ADOPTED",
+        "guessed_fwhm_pix": cfg.guessed_fwhm_pix,
+        "excluded_training_star_ids": tuple(cfg.excluded_training_star_ids),
+        "stars": review_stars,
+    }
     negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
     # Even when the signed kernel fails the negative-mass gate, preserve
     # independent holdout residual evidence. Fit amplitudes only in cores;
@@ -555,6 +629,7 @@ def build_empirical_coadd_psf(
             "negative_absolute_mass_fraction": negative_fraction,
             "blocking_threshold_fraction": .025,
             "psf_recipe": asdict(cfg),
+            "reviewed_excluded_training_ids": list(cfg.excluded_training_star_ids),
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
             "signed_holdout_details": signed_holdouts,
@@ -583,7 +658,7 @@ def build_empirical_coadd_psf(
             f"Strong negative EPSF ringing: negative absolute mass "
             f"{negative_fraction:.2%} exceeds the experimental 2.50% "
             f"screening limit (training {len(train)}, holdout {len(holdout)}).",
-            diagnostic)
+            diagnostic, review_snapshot=review_snapshot)
     kernel = np.maximum(raw_kernel, 0.)
     if kernel.sum() <= 0:
         raise ValueError("Nonpositive empirical PSF normalization")
@@ -658,6 +733,7 @@ def build_empirical_coadd_psf(
         source_hashes=source_hashes, lineage_id=lineage,
         center_target_icrs=(float(target_icrs_deg[0]),float(target_icrs_deg[1])),
         target_protection_arcsec=float(target_protection_arcsec),
+        review_snapshot=review_snapshot,
         algorithm_versions={
             "recipe": RECIPE, "numpy":np.__version__,
             "scipy":__import__("scipy").__version__,
