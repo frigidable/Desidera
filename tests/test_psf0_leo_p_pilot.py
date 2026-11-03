@@ -97,9 +97,10 @@ def test_synthetic_native_legacy_fits_runs_leo_p_pilot_without_false_science(
     p = _project(tmp_path)
     paths = _synthetic_legacy_files(p)
     originals = {k:path.read_bytes() for k,path in paths.items()}
+    recipe = PSF0Config(
+        max_training_stars=30, min_train_stars=6, min_holdout_stars=2)
     outcome = run_leo_p_pilot(
-        p.root, bands=("r", "g"), config=PSF0Config(
-            max_training_stars=30, min_train_stars=6, min_holdout_stars=2),
+        p.root, bands=("r", "g"), config=recipe,
         protection_arcsec=12., save_diagnostic=True)
     r,g=outcome["band_results"]
     assert r["status"] == "EXPERIMENTAL_PSF_NOT_ADOPTED", r
@@ -116,7 +117,7 @@ def test_synthetic_native_legacy_fits_runs_leo_p_pilot_without_false_science(
         assert hdul[0].header["BAND"]=="r"
     assert all(paths[k].read_bytes()==data for k,data in originals.items())
     again=run_leo_p_pilot(
-        p.root,bands=("r",), config=PSF0Config(max_training_stars=30),
+        p.root,bands=("r",), config=recipe,
         protection_arcsec=12.,save_diagnostic=True)
     assert again["band_results"][0]["status"]=="PSF0_FAILED_NOT_ADOPTED"
     assert "already exists" in again["band_results"][0]["reason"]
