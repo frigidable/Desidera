@@ -88,7 +88,7 @@ class TractorGaiaMatcher:
         object.__setattr__(self, "pixel_positions", points)
         object.__setattr__(self, "_tree", cKDTree(points))
 
-    def match(self, x, y, *, band, neighbor_search_radius_pix=25.):
+    def match(self, x, y, *, band, neighbor_search_radius_pix=10.):
         """Return Gaia-confirmed, locally isolated PSF source or explicit refusal.
 
         A nearby Tractor source may be too faint for DAOStarFinder, so
