@@ -6,7 +6,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPoint
 from PySide6.QtWidgets import QSplitter, QScrollArea
 
 from lsbpipe.gui.galaxy_card_model import GalaxyCardSnapshot
@@ -44,7 +44,8 @@ def test_existing_left_list_and_single_right_passport(qtbot):
     assert view.detail.minimumWidth() <= view.splitter.sizes()[1]
     assert view.detail.preview.width() == view.detail.preview.height()
     assert view.detail.preview.width() in (124, 184)
-    assert view.detail.preview_holder.x() < view.detail.name.x()
+    assert (view.detail.preview.mapToGlobal(QPoint(0, 0)).x()
+            < view.detail.name.mapToGlobal(QPoint(0, 0)).x())
     assert view.detail.preview.size().width() <= 184
 
 
