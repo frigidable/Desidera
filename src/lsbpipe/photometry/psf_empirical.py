@@ -21,6 +21,9 @@ from scipy.spatial import cKDTree
 from lsbpipe.photometry.contracts import NativeBandFrame
 from lsbpipe.photometry.workflow_dependencies import PSFLineageKey
 from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
+from lsbpipe.photometry.psf_holdout_qa import (
+    heldout_signed_residual, summarize_signed_holdouts,
+)
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -525,6 +528,24 @@ def build_empirical_coadd_psf(
         raise ValueError("Nonfinite ePSF solution")
     signed_diagnostics = signed_psf_qa(raw_kernel, cfg.guessed_fwhm_pix)
     negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
+    # Even when the signed kernel fails the negative-mass gate, preserve
+    # independent holdout residual evidence. Fit amplitudes only in cores;
+    # *never* clip the signed rejected model to manufacture a pass.
+    signed_holdouts = []
+    holdout_failures = []
+    for entry in holdout_entries:
+        c = entry[-1]
+        try:
+            signed_holdouts.append(heldout_signed_residual(
+                source_id=entry[0], image=c["image"],
+                sqrt_ivar=c["weights"], signed_kernel=raw_kernel,
+                local_center_xy=c["center_in_cutout"],
+                guessed_fwhm_pix=cfg.guessed_fwhm_pix,
+                measured_peak=c["peak_nMgy"]))
+        except ValueError as exc:
+            holdout_failures.append({
+                "star_id": entry[0], "reason": str(exc)})
+    signed_holdout_summary = summarize_signed_holdouts(signed_holdouts)
     if negative_fraction > .025:
         # Preserve evidence needed to troubleshoot Leo P without allowing
         # this rejected kernel into a FITS export or science result.
@@ -535,6 +556,9 @@ def build_empirical_coadd_psf(
             "blocking_threshold_fraction": .025,
             "psf_recipe": asdict(cfg),
             "signed_kernel_qa": signed_diagnostics,
+            "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_details": signed_holdouts,
+            "signed_holdout_failures": holdout_failures,
             "solver_diagnostics": solver_diagnostics,
             # An unaltered rejected model can be visualized in the GUI, but
             # never normalized, used for photometry or exported as a PSF.
@@ -616,6 +640,9 @@ def build_empirical_coadd_psf(
         "holdout_diagnostics": checks,
         "epsf_negative_mass_fraction_before_clipping": negative_fraction,
         "signed_epsf_diagnostics_before_clipping": signed_diagnostics,
+        "signed_holdout_summary": signed_holdout_summary,
+        "signed_holdout_details": signed_holdouts,
+        "signed_holdout_failures": holdout_failures,
         "solver_diagnostics": solver_diagnostics,
         "initial_detection_background_nMgy_per_pixel": float(sky0),
         "initial_detection_rms_nMgy_per_pixel": float(std0),
