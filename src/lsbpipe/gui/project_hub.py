@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
@@ -24,11 +25,16 @@ from lsbpipe.gui.target_input import parse_coordinate_pair
 from .survey_explorer import SurveyExplorer
 from .galaxy_cards import GalaxyDetailCard
 from .galaxy_card_model import snapshot_from_record
+from .card_previews import build_local_preview, has_local_image_source
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
 from .ned_knowledge_dialog import NedKnowledgeDialog
 from .analysis_configurations_dialog import AnalysisConfigurationsDialog
 from lsbpipe.surveys.galaxy_knowledge import latest_simbad_confirmation
 from lsbpipe.surveys.knowledge_summary import load_galaxy_knowledge
+
+
+_PREVIEW_POOL = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="desidera-card-preview")
 
 
 class CreateProjectDialog(QDialog):
@@ -202,6 +208,12 @@ class ProjectHub(QMainWindow):
         self.setWindowTitle("DESIDERA · Galaxy Projects")
         self.resize(1100, 720)
         self.workspace = None
+        self._preview_future = None
+        self._preview_project_id = None
+        self._preview_errors = {}
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(100)
+        self._preview_timer.timeout.connect(self._finish_preview)
 
         content = QWidget()
         outer = QVBoxLayout(content)
@@ -309,6 +321,13 @@ class ProjectHub(QMainWindow):
         self.continue_btn.setObjectName("hub_continue")
         self.continue_btn.clicked.connect(self._open_selected)
         right.addWidget(self.continue_btn)
+        self.preview_btn = QPushButton("Regenerate local FITS preview")
+        self.preview_btn.setObjectName("hub_generate_card_preview")
+        self.preview_btn.setToolTip(
+            "Generate a cached monochrome IMAGE thumbnail from original "
+            "local Legacy FITS; never alter originals or run photometry.")
+        self.preview_btn.clicked.connect(self._regenerate_preview)
+        right.addWidget(self.preview_btn)
         self.knowledge_btn = QPushButton("Galaxy Knowledge · SIMBAD…")
         self.knowledge_btn.setObjectName("hub_knowledge_simbad")
         self.knowledge_btn.setToolTip(
@@ -454,12 +473,19 @@ class ProjectHub(QMainWindow):
         record = (item.data(Qt.UserRole)
                   if item is not None and not item.isHidden() else None)
         selected = isinstance(record, dict)
-        self.galaxy_card.set_snapshot(
-            snapshot_from_record(record) if selected else None)
+        card = snapshot_from_record(record) if selected else None
+        self.galaxy_card.set_snapshot(card)
         self.galaxy_card.open_button.setEnabled(
             selected and self.workspace is None)
         self.continue_btn.setEnabled(selected)
+        can_preview = (
+            selected and self.workspace is None
+            and bool(record.get("available")) and not bool(record.get("legacy")))
+        self.preview_btn.setEnabled(
+            can_preview and self._preview_future is None)
         self.remove_btn.setEnabled(selected and self.workspace is None)
+        if can_preview and card is not None:
+            self._auto_preview_selected(record, card)
         self.knowledge_btn.setEnabled(
             selected and self.workspace is None and
             bool(record.get("available")) and not bool(record.get("legacy")))
@@ -540,6 +566,67 @@ class ProjectHub(QMainWindow):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             note += f"\nKnowledge evidence unavailable or corrupt: {exc}"
         self.detail_note.setText(note)
+
+    def _selected_preview_record(self):
+        item = self.projects.currentItem()
+        if item is None or item.isHidden() or self.workspace is not None:
+            return None
+        record = item.data(Qt.UserRole)
+        if (not isinstance(record, dict) or not record.get("available")
+                or record.get("legacy")):
+            return None
+        return record
+
+    def _auto_preview_selected(self, record, card):
+        if card.thumbnail is not None or self._preview_future is not None:
+            return
+        project_id = record.get("project_id")
+        if project_id in self._preview_errors:
+            self.galaxy_card.preview.setText(
+                "Local preview failed: " + self._preview_errors[project_id]
+                + ". Use Regenerate local FITS preview to retry.")
+            return
+        try:
+            project = read_object_project(record["root"])
+            if not has_local_image_source(project):
+                return
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return
+        self._start_preview(record)
+
+    def _start_preview(self, record):
+        if self._preview_future is not None:
+            return
+        self._preview_project_id = record["project_id"]
+        self._preview_future = _PREVIEW_POOL.submit(
+            build_local_preview, record["root"])
+        self.preview_btn.setEnabled(False)
+        self.galaxy_card.preview.setText(
+            "Building local FITS thumbnail (display only)…")
+        self._preview_timer.start()
+
+    def _finish_preview(self):
+        if self._preview_future is None or not self._preview_future.done():
+            return
+        task, completed_id = self._preview_future, self._preview_project_id
+        self._preview_future = None
+        self._preview_project_id = None
+        self._preview_timer.stop()
+        try:
+            task.result()
+            self._preview_errors.pop(completed_id, None)
+        except Exception as exc:
+            self._preview_errors[completed_id] = (
+                f"{type(exc).__name__}: {exc}")
+        if self._selected_preview_record() is not None:
+            self._selection_changed()
+
+    def _regenerate_preview(self):
+        record = self._selected_preview_record()
+        if record is None or self._preview_future is not None:
+            return
+        self._preview_errors.pop(record["project_id"], None)
+        self._start_preview(record)
 
     def _open_card_project(self, project_id: str):
         """Activate the currently selected original project by immutable ID."""
