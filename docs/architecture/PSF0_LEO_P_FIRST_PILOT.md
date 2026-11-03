@@ -81,7 +81,64 @@ a scientifically validated target extent.
     and never touches original FITS. It does not insert the output
     into the scientific accepted-results registry.
 
-## Running Leo P pilot locally
+## Primary workflow: existing Windows GUI and galaxy projects
+
+The only supported day-to-day developer and researcher path is the existing
+`C:\\Users\\frigi\\Documents\\PhD\\Desidera` checkout and its
+existing `.venv`. Do **not** create a separate worktree, venv, or copy
+of the project. The existing Leo P project is opened via Galaxy Projects.
+
+1. Run the established `lsbpipe.gui` application from the same
+   checkout, with the existing virtual environment.
+2. In **Galaxy Projects**, open the already saved **Leo P**.
+3. Enter **Galaxy Workspace → Photometry**.
+4. In **04 · Empirical PSF**, choose an actually present band
+   (e.g., `r`, even if the saved Galaxy Workspace default is `g`),
+   review the initial guessed detection width and the explicit
+   conservative target protection radius.
+5. Click **Build PSF preview**. Existing background task controller
+   validates real original FITS/WCS/units and computes a diagnostic
+   ePSF without writing an output FITS or modifying the project selection.
+   GUI stays responsive, with existing Task Stop semantics; the
+   photutils fitting phase itself is not presently interruptible.
+6. If successful, inspect training vs independent holdout stellar
+   positions, reconstructed native-grid PSF image, residual diagnostic
+   and all scientific flags. The result is **experimental**, not
+   adopted science.
+7. Optionally click **Save diagnostic FITS + report**. An independent
+   GUI task rehashes all four original files to detect changes,
+   then publishes an immutable experimental derivative within
+   the SAME Leo P project directory. Previously saved outputs are
+   never overwritten.
+8. If the model is scientifically rejected (e.g., strong negative
+   ePSF ringing), inspect the rejected star sample, the negative
+   mass fraction and background/selection flags directly in the GUI;
+   no invalid PSF kernel is accepted or exported. No automatic
+   weakening of QA thresholds is performed.
+
+The user's first actual run on 2026-11-03 found Leo P, with the saved
+selected `DR11 South / 1554p180 / g` band. The requested **r**
+original quartet exists independently. That real-r run returned
+`PSF0_FAILED_NOT_ADOPTED` due to
+`Strong negative EPSF ringing; inspect star selection/sky`.
+It is therefore **not** a validated observational PSF. The current GUI
+adds explicit quantitative diagnostics for this blocking failure.
+
+After the stacked PRs are reviewed and available in the existing
+checkout, start the GUI with the existing interpreter:
+
+```powershell
+Set-Location "C:\\Users\\frigi\\Documents\\PhD\\Desidera"
+$py = ".\\.venv\\Scripts\\python.exe"
+& $py -m lsbpipe.gui
+```
+
+If `photutils` is not installed in the **existing** `.venv`, install
+the project's current optional science dependencies there; do not
+create a new `.venv`. The code on the current unmerged PR branch is
+not obtained merely by running `git pull origin main`.
+
+## Optional legacy CLI diagnostic (not required for GUI work)
 
 From the existing Desidera repository, with dependencies installed:
 
