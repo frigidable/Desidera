@@ -36,3 +36,13 @@ __all__ += [
     "StarMaskSeed", "SmartStarMaskCandidate", "propose_seeded_star_mask",
     "SMART_MASK_STATUS",
 ]
+
+# Planning-only workflow DAG and observation-bound PSF cache identity.
+from .workflow_dependencies import (
+    STAGE_ORDER, DEPENDENCIES, invalidated_descendants,
+    require_stage_dependencies, PSFLineageKey,
+)
+__all__ += [
+    "STAGE_ORDER", "DEPENDENCIES", "invalidated_descendants",
+    "require_stage_dependencies", "PSFLineageKey",
+]

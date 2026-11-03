@@ -1,5 +1,14 @@
 # Photometric core architecture — design baseline P1.1
 
+> **Stage-order update (P1.3, 2026-11-03):** the logical workflow is now
+> Data Preparation → Scene Initialization → Preliminary Sky →
+> PSF Reconstruction → Final Scene & Smart Masks → Sky Reconstruction →
+> Conditional Refinement → Galaxy Photometry & QA. See
+> `PSF_SCENE_SKY_ORDER_P13.md` for authoritative ordering, PSF reuse
+> and validation requirements. The milestone labels below are historical
+> and must not be interpreted as executable order. P1.1 remains a
+> non-measuring preparation screen.
+
 Date: 2026-11-03. Status: scientific architecture plus a **non-measuring**
 project-bound GUI preparation screen. This document is a design contract,
 not evidence that the following numerical methods exist or are validated.
