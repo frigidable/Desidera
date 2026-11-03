@@ -425,6 +425,8 @@ def test_brightness_rank_guard_preserves_original_training_and_holdout(
     assert evidence[0]["brightness_score_coupling_qa"]["auto_trim_blocked"]
     assert evidence[0]["proposed_before_brightness_guard"]
     assert evidence[0]["selected_for_exclusion"] == []
+    assert evidence[0]["n_removed_this_pass"] == 0
+    assert evidence[0]["n_proposed_before_brightness_guard"] > 0
     assert guarded.review_snapshot["automatic_training_rejections"] == ()
     assert len(guarded.training) == len(initial.training)
     assert {s.star_id for s in guarded.holdout} == {
