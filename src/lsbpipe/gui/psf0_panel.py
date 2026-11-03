@@ -31,6 +31,7 @@ class PSF0Panel(QGroupBox):
     runRequested = Signal(object)
     saveRequested = Signal(object)
     autoFwhmRequested = Signal(object)
+    tractorRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__("04 · Empirical PSF · first pilot Leo P", parent)
@@ -60,6 +61,29 @@ class PSF0Panel(QGroupBox):
         self.band.setAccessibleName("Native optical band for provisional PSF")
         self.band.currentIndexChanged.connect(self._band_changed)
         form.addRow("Native band", self.band)
+        catalogue_row = QHBoxLayout()
+        self.catalog_policy = QComboBox()
+        self.catalog_policy.setObjectName("psf0_star_catalog_policy")
+        self.catalog_policy.addItem(
+            "Gaia DR3 + Tractor PSF + clean-image QA (strict)", "gaia_strict")
+        self.catalog_policy.addItem(
+            "DAO detections only · unverified diagnostic", "dao_diagnostic")
+        self.catalog_policy.currentIndexChanged.connect(self._band_changed)
+        self.catalog_policy.setToolTip(
+            "Gaia DR3 REF_CAT=G3 and TYPE=PSF plus native-image quality "
+            "checks. Forced/frozen models, duplicates, masks, saturation, "
+            "ambiguous matches and abnormal shapes are rejected. "
+            "Missing Tractor catalogue blocks strict runs.")
+        catalogue_row.addWidget(self.catalog_policy, 2)
+        self.get_tractor_btn = QPushButton("Get DR11 Tractor + Gaia…")
+        self.get_tractor_btn.setObjectName("psf0_get_tractor_gaia")
+        self.get_tractor_btn.clicked.connect(self._request_tractor_catalog)
+        self.get_tractor_btn.setToolTip(
+            "Explicitly download the ORIGINAL DR11 south Tractor brick "
+            "catalogue from the official Legacy Surveys archive into "
+            "the current Leo P project's data root. No new project.")
+        catalogue_row.addWidget(self.get_tractor_btn, 1)
+        form.addRow("PSF star selection", catalogue_row)
         self.fwhm = QDoubleSpinBox()
         self.fwhm.setObjectName("psf0_fwhm_guess")
         self.fwhm.setRange(2.5, 20.)
@@ -112,6 +136,13 @@ class PSF0Panel(QGroupBox):
         self.prior_source.setWordWrap(True)
         self.prior_source.setObjectName("psf0_prior_provenance")
         layout.addWidget(self.prior_source)
+        self.gaia_source = QLabel(
+            "No Gaia/Tractor source checked. Strict mode requires the original "
+            "catalogue for this DR11 brick; Gaia identity does not prove "
+            "an uncontaminated stellar cutout.")
+        self.gaia_source.setObjectName("psf0_gaia_catalog_source")
+        self.gaia_source.setWordWrap(True)
+        layout.addWidget(self.gaia_source)
 
         actions = QHBoxLayout()
         self.run_btn = QPushButton("Build PSF preview")
@@ -260,6 +291,18 @@ class PSF0Panel(QGroupBox):
                 self.band.setCurrentIndex(self.band.findData(chosen))
             self.protection.setValue(
                 min(1800., snapshot["target_protection_default_arcsec"]))
+            self.gaia_source.setText(
+                ("Original DR11 Tractor FITS found (not yet validated): "
+                 + str(snapshot.get("gaia_tractor_path"))
+                 if snapshot.get("gaia_tractor_present_unverified")
+                 else "No original DR11 Tractor+Gaia catalogue locally; "
+                      "strict Gaia selection needs a deliberate GUI download."))
+            self.catalog_policy.blockSignals(True)
+            self.catalog_policy.setCurrentIndex(
+                self.catalog_policy.findData(
+                    "gaia_strict" if snapshot.get("gaia_tractor_present_unverified")
+                    else "dao_diagnostic"))
+            self.catalog_policy.blockSignals(False)
             self.prior_source.setText(
                 "FWHM: initial 4.80 px code default (not measured). "
                 f"Target protection: max(saved project radius, 90″) = "
@@ -283,6 +326,9 @@ class PSF0Panel(QGroupBox):
     def _band_changed(self, *_):
         self._star_review_data = None
         self._active_exclusions = ()
+        # Changing filter/policy changes the source sample. Clear old
+        # comparisons when identities are not scientifically comparable.
+        # Changing the experiment retains same-band trials, as before.
         # Changing filter invalidates former-band comparison. Changing the
         # experiment retains historical same-band trials in memory.
         band = self.band.currentData()
@@ -305,13 +351,21 @@ class PSF0Panel(QGroupBox):
         eligible = bool(self._snapshot) and any(
             e["band"] == selected and e["paths_present_unverified"]
             for e in self._snapshot["bands"])
-        self.run_btn.setEnabled(eligible and not self._busy)
+        catalog_ready = (
+            self.catalog_policy.currentData() != "gaia_strict" or
+            bool(self._snapshot.get("gaia_tractor_present_unverified"))
+            if self._snapshot is not None else False)
+        self.run_btn.setEnabled(eligible and catalog_ready and not self._busy)
         self.save_btn.setEnabled(self._preview is not None and not self._busy
                                  and self._preview["result"].lineage_id is not None)
         self.band.setEnabled(not self._busy)
         self.fwhm.setEnabled(not self._busy)
         self.protection.setEnabled(not self._busy)
         self.experiment.setEnabled(not self._busy)
+        self.catalog_policy.setEnabled(not self._busy)
+        self.get_tractor_btn.setEnabled(
+            not self._busy and bool(self._snapshot)
+            and self._snapshot["dataset"][0:2] == ("dr11", "south"))
         self.auto_fwhm_btn.setEnabled(eligible and not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
         self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)
@@ -340,10 +394,35 @@ class PSF0Panel(QGroupBox):
             "band": self.band.currentData(),
             "fwhm_pix": self.fwhm.value(),
             "experiment": self.experiment.currentData(),
+            "star_catalog_policy": self.catalog_policy.currentData(),
             "excluded_training_star_ids": tuple(self._active_exclusions),
             "manual_review_confirmed": review_confirmed,
             "target_protection_arcsec": self.protection.value(),
         })
+
+    def _request_tractor_catalog(self):
+        if self._busy or self._project_root is None or self._snapshot is None:
+            return
+        self.tractorRequested.emit({"project_root":str(self._project_root)})
+
+    def show_tractor_acquired(self, payload):
+        if (self._project_root is None or
+                str(self._project_root) != str(payload.get("project_root"))):
+            self.status.setText("Tractor catalogue belongs to another project")
+            return
+        self._snapshot = inspect_psf0_bands(self._project_root)
+        self.catalog_policy.setCurrentIndex(
+            self.catalog_policy.findData("gaia_strict"))
+        self._band_changed()
+        self.gaia_source.setText(
+            f"Native DR11 Tractor+Gaia catalogue verified: "
+            f"{payload['n_catalog_sources']} brick-primary sources; "
+            f"SHA256 {payload['sha256_local'][:16]}… "
+            "Gaia association is necessary but not sufficient for clean PSF.")
+        self.status.setText(
+            "Gaia-strict selection enabled. Build a fresh PSF preview "
+            "to reject nonstellar and contaminated candidates.")
+        self._update_buttons()
 
     def _request_auto_fwhm(self):
         if self._busy or self._project_root is None or self.band.currentData() is None:
