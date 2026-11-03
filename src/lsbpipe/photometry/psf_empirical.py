@@ -20,6 +20,7 @@ from scipy.spatial import cKDTree
 
 from lsbpipe.photometry.contracts import NativeBandFrame
 from lsbpipe.photometry.workflow_dependencies import PSFLineageKey
+from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -445,8 +446,8 @@ def build_empirical_coadd_psf(
         raise ValueError("Unexpected ePSF output grid/shape; refuse silent resampling")
     if not np.isfinite(raw_kernel).all():
         raise ValueError("Nonfinite ePSF solution")
-    negative_fraction = float(np.sum(np.abs(raw_kernel[raw_kernel<0])) /
-                              max(np.sum(np.abs(raw_kernel)), 1e-20))
+    signed_diagnostics = signed_psf_qa(raw_kernel, cfg.guessed_fwhm_pix)
+    negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
     if negative_fraction > .025:
         # Preserve evidence needed to troubleshoot Leo P without allowing
         # this rejected kernel into a FITS export or science result.
@@ -455,6 +456,10 @@ def build_empirical_coadd_psf(
             "reason_code": "STRONG_NEGATIVE_EPSF_RINGING",
             "negative_absolute_mass_fraction": negative_fraction,
             "blocking_threshold_fraction": .025,
+            "signed_kernel_qa": signed_diagnostics,
+            # An unaltered rejected model can be visualized in the GUI, but
+            # never normalized, used for photometry or exported as a PSF.
+            "signed_kernel_values_for_qa_only": raw_kernel.tolist(),
             "n_train": len(train),
             "n_holdout": len(holdout),
             "n_detected_candidates": len(candidates),
@@ -467,6 +472,8 @@ def build_empirical_coadd_psf(
                 "the empirical core and the photutils recipe.",
                 "Negative absolute mass is a conservative screening heuristic, "
                 "not a statistically calibrated false-positive rate.",
+                "Compare signed negative mass by guessed-FWHM annulus; do not "
+                "weaken the gate until the stellar cutouts are independently assessed.",
             ],
         }
         raise PSF0QualityError(
@@ -529,6 +536,7 @@ def build_empirical_coadd_psf(
         "holdout_median_abs_core_residual_over_peak": med_core_resid,
         "holdout_diagnostics": checks,
         "epsf_negative_mass_fraction_before_clipping": negative_fraction,
+        "signed_epsf_diagnostics_before_clipping": signed_diagnostics,
         "initial_detection_background_nMgy_per_pixel": float(sky0),
         "initial_detection_rms_nMgy_per_pixel": float(std0),
         "assumed_detection_fwhm_pix_not_measured": cfg.guessed_fwhm_pix,
