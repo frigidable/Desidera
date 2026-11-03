@@ -53,6 +53,16 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
             "min_neighbor_separation_pix": 55.,
         },
     },
+    "outer_sky_robust": {
+        "label": "Extended + iterative train-star rejection (2 passes)",
+        "kwargs": {
+            "cutout_size_pix": 51,
+            "sky_annulus_inner_pix": 19.,
+            "sky_annulus_outer_pix": 24.,
+            "min_neighbor_separation_pix": 55.,
+            "training_outlier_passes": 2,
+        },
+    },
     "wing_smoothing_off": {
         "label": "Disable final wing smoothing · 31 px",
         "kwargs": {"wing_smoothing": False},
