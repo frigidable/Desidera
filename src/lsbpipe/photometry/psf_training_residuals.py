@@ -103,3 +103,60 @@ def choose_training_outliers(rows, *, min_train, sigma_threshold=4.,
         "max_removed_this_pass":max_remove,
         "metric":"TRAIN_ONLY_PROVISIONAL_NONCALIBRATED",
     }
+
+
+def brightness_bias_audit(rows, proposed_ids=(), *,
+                          strong_correlation_limit=.75):
+    """Flag when 'outlier' score mainly ranks stars by amplitude.
+
+    This is a conservative, descriptive gating heuristic for experimental
+    *automatic* removal, never a significance test or flux certification.
+    Without adequate amplitude variation, it reports 'not assessable'.
+    """
+    ids = tuple(r["star_id"] for r in rows)
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate training-star identity")
+    try:
+        amps = np.array([
+            float(r["amplitude_nMgy_diagnostic"]) for r in rows])
+        scores = np.array([float(r["score"]) for r in rows])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Cannot audit brightness bias without explicit amplitudes/scores"
+        ) from exc
+    if (not np.isfinite(amps).all() or not np.isfinite(scores).all()
+            or np.any(amps <= 0)):
+        raise ValueError("Invalid amplitude/score for brightness-bias audit")
+    from scipy.stats import spearmanr
+    if (len(rows) < 12 or len(set(amps)) < 3
+            or len(set(scores)) < 3):
+        return {
+            "status":"INSUFFICIENT_RANK_VARIATION_NOT_ASSESSED",
+            "n_scored":len(rows), "score_amplitude_spearman_rho":None,
+            "auto_trim_blocked":False,
+            "guard_threshold_abs_rho":float(strong_correlation_limit),
+        }
+    rho = float(spearmanr(amps, scores).statistic)
+    selected = set(proposed_ids)
+    chosen = [amps[i] for i, sid in enumerate(ids) if sid in selected]
+    kept = [amps[i] for i, sid in enumerate(ids) if sid not in selected]
+    # At least 20 stars for this provisional protective gate.
+    blocked = (
+        len(rows) >= 20 and bool(selected) and
+        rho >= strong_correlation_limit)
+    return {
+        "status":("BRIGHTNESS_ASSOCIATION_BLOCKS_AUTO_TRIM"
+                  if blocked else
+                  "DESCRIPTIVE_CORRELATION_ONLY_NOT_VALIDATED"),
+        "n_scored":len(rows),
+        "score_amplitude_spearman_rho":rho,
+        "guard_threshold_abs_rho":float(strong_correlation_limit),
+        "median_amplitude_proposed_remove_nMgy":
+            (float(np.median(chosen)) if chosen else None),
+        "median_amplitude_remaining_nMgy":
+            (float(np.median(kept)) if kept else None),
+        "proposed_remove_ids":list(sorted(selected)),
+        "auto_trim_blocked":blocked,
+        "correlation_is_not_causal":True,
+        "scores_use_training_stars_in_their_own_ePSF":True,
+    }
