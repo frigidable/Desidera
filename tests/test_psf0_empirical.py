@@ -222,3 +222,9 @@ def test_photutils31_wing_smoothing_ab_is_executed_and_audited():
     assert solver["wing_smoothing_explicitly_set"] is True
     assert solver["max_iterations_requested"] == 8
     assert solver["photutils_version"]
+    history = solver["iteration_history_if_reported"]
+    assert isinstance(history, list)
+    assert history, "photutils 3.1 must expose actual ePSF iteration evidence"
+    assert all("iteration" in step for step in history)
+    assert len(history) <= 25
+    assert "converged_if_reported" in solver
