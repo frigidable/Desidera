@@ -139,6 +139,8 @@ class PSF0Panel(QGroupBox):
         self.qa.setPlaceholderText(
             "PSF quality flags and source limitations appear here.")
         layout.addWidget(self.qa)
+        # Before a galaxy is bound, no action may appear runnable.
+        self._update_buttons()
 
     @property
     def active_preview(self):
