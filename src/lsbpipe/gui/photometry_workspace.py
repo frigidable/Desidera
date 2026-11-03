@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from lsbpipe.photometry.readiness import inspect_photometry_inputs
+from lsbpipe.gui.psf0_panel import PSF0Panel
 
 _STAGES = (
     ("01", "Data preparation", "Original FITS, WCS, native masks and calibration"),
@@ -32,6 +33,8 @@ class PhotometryWorkspace(QWidget):
 
     backRequested = Signal()
     sourcesRequested = Signal()
+    psf0RunRequested = Signal(object)
+    psf0SaveRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -136,6 +139,13 @@ class PhotometryWorkspace(QWidget):
         source_layout.addWidget(self.table)
         body.addWidget(source_box)
 
+        # The first *real* computing stage lives within the already-opened
+        # object project. No separate project browser, CLI or environment.
+        self.psf0_panel = PSF0Panel(central)
+        self.psf0_panel.runRequested.connect(self.psf0RunRequested.emit)
+        self.psf0_panel.saveRequested.connect(self.psf0SaveRequested.emit)
+        body.addWidget(self.psf0_panel)
+
         method_box = QGroupBox("Measurement design")
         method_layout = QVBoxLayout(method_box)
         for heading, detail in (
@@ -163,8 +173,9 @@ class PhotometryWorkspace(QWidget):
         body.addWidget(method_box)
 
         self.blocker = QLabel(
-            "No science run is available on this screen yet. "
-            "Input presence alone never enables photometry.")
+            "PSF-0 preview is experimental and not adopted science. "
+            "No final background, masks, photometry or SBF is implemented. "
+            "File presence alone never establishes source-FITS validity.")
         self.blocker.setObjectName("photometry_blocker")
         self.blocker.setWordWrap(True)
         body.addWidget(self.blocker)
@@ -223,7 +234,9 @@ class PhotometryWorkspace(QWidget):
                 item.setToolTip(value)
                 self.table.setItem(index, column, item)
         self.blocker.setText(
-            "Science state: NOT_MEASURED_NOT_ADOPTED. "
-            "The screen checks saved file paths only. FITS structure, WCS, "
-            "pixel masks, sky, PSF, correlated noise and photometry have "
-            "not been validated here. No science or catalogue value is adopted.")
+            "Scientific state: PSF0_DIAGNOSTIC_NOT_ADOPTED. "
+            "The source table checks saved paths only. Building a PSF preview "
+            "validates real FITS/WCS and performs an experimental stellar fit, "
+            "but PSF wings/spatial representation, galaxy sky, correlated "
+            "noise and photometric measurements remain unvalidated.")
+        self.psf0_panel.bind_project(self._project_root)
