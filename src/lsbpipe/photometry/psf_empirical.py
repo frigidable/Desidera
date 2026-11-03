@@ -485,6 +485,38 @@ def build_empirical_coadd_psf(
                 and math.isfinite(float(fitted.final_converged_fraction)))
             else None),
     }
+    solver_diagnostics["convergence_fraction_target_if_reported"] = (
+        float(getattr(builder, "converged_fraction"))
+        if getattr(builder, "converged_fraction", None) is not None
+        else None)
+    # Astropy photutils >=3.1 exposes the per-iteration fit diagnostics.
+    # Preserve the complete finite, JSON-safe convergence series, not just
+    # a Boolean "converged=False"; this distinguishes a near pass from a
+    # genuinely unstable optimizer. Do not change any science gating.
+    def safe_float(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) else None
+
+    iteration_records = []
+    iteration_info = getattr(fitted, "iteration_info", None)
+    if iteration_info is not None:
+        fields = set(getattr(iteration_info, "colnames", []))
+        for row in iteration_info:
+            item = {}
+            for key in ("iteration", "converged_fraction",
+                        "max_center_shift", "common_center_shift",
+                        "n_fit_failed", "max_epsf_change"):
+                if key in fields:
+                    item[key] = safe_float(row[key])
+            if "stage" in fields:
+                item["stage"] = str(row["stage"])
+            if "converged" in fields:
+                item["converged"] = bool(row["converged"])
+            iteration_records.append(item)
+    solver_diagnostics["iteration_history_if_reported"] = iteration_records
     psf_model = fitted.epsf if hasattr(fitted, "epsf") else fitted[0]
     raw_kernel = np.asarray(psf_model.data, dtype=float)
     if raw_kernel.shape != (cfg.cutout_size_pix, cfg.cutout_size_pix):
