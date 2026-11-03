@@ -144,7 +144,7 @@ class GalaxyDetailCard(QFrame):
         body.addWidget(self.catalogue_help)
         self.catalogue_help.hide()
 
-        self.literature_heading = QLabel("LITERATURE · EXTERNAL VALUES")
+        self.literature_heading = QLabel("PUBLISHED VALUES · NED")
         self.literature_heading.setObjectName("galaxy_card_section")
         body.addWidget(self.literature_heading)
         self.literature = _metadata("")
@@ -161,7 +161,7 @@ class GalaxyDetailCard(QFrame):
         # Coordinate disagreement is scientific provenance, not a long
         # default-card warning: render it in the expandable evidence view.
 
-        observations = QLabel("OBSERVATIONS")
+        observations = QLabel("OBSERVATION DATA")
         observations.setObjectName("galaxy_card_section")
         body.addWidget(observations)
         self.dataset = _metadata("No dataset selected", selectable=True)
@@ -174,7 +174,7 @@ class GalaxyDetailCard(QFrame):
         self.observation_explanation.setObjectName(
             "galaxy_card_observation_explanation")
         # Exact source/coverage caveats belong in the expanded evidence.
-        self.qa_heading = QLabel("SAVED DATASET QA")
+        self.qa_heading = QLabel("FITS/WCS CHECK")
         self.qa_heading.setObjectName("galaxy_card_section")
         body.addWidget(self.qa_heading)
         self.qa_status = _metadata("")
@@ -414,25 +414,26 @@ class GalaxyDetailCard(QFrame):
             if ned is not None and (ned.object_type or ned.redshift is not None):
                 literature = []
                 if ned.object_type:
-                    meaning = " (galaxy)" if ned.object_type == "G" else ""
+                    meaning = " · galaxy" if ned.object_type == "G" else ""
                     literature.append(
-                        f"NED classification: {ned.object_type}{meaning}")
+                        f"Type (NED)   {ned.object_type}{meaning}")
                 if ned.redshift is not None:
                     literature.append(
-                        f"NED heliocentric z = {ned.redshift:.7g} "
-                        f"· refcode {ned.redshift_refcode or 'unspecified'}")
-                literature.append(
-                    "External catalogue statements · not adopted as "
-                    "DESIDERA measurements or distance estimates.")
+                        f"Heliocentric z (NED)   {ned.redshift:.7g}")
+                literature.append("Published catalogue values · not adopted")
                 self.literature.setText("\n".join(literature))
+                self.literature.setToolTip(
+                    "Source: NED ObjectLookup. Measurement/refcode details "
+                    "are in Sources & QA details; redshift is not a "
+                    "distance estimate or adopted DESIDERA result.")
                 self.literature_heading.show()
                 self.literature.show()
             if snapshot.provider_offset_arcsec is not None:
                 self.cross_catalogue.setText(
-                    f"SIMBAD–NED positions differ by "
+                    f"SIMBAD–NED position difference: "
                     f"{snapshot.provider_offset_arcsec:.2f}″. "
-                    "Compare sources in details; this does not establish "
-                    "a wrong identification.")
+                    "Different centres or source definitions may contribute; "
+                    "this comparison does not verify or reject identity.")
                 self.cross_catalogue.show()
 
         project_state = (
@@ -443,12 +444,21 @@ class GalaxyDetailCard(QFrame):
         self.open_button.setText(
             "Relink project…" if not snapshot.available else "Open project")
         if snapshot.readiness is not None:
-            self.fits.setText(snapshot.readiness.observation_label)
+            self.fits.setText(
+                "Original FITS: 4/4 present" if
+                snapshot.readiness.code ==
+                "FOUR_ORIGINAL_FITS_PRESENT_UNVERIFIED"
+                else snapshot.readiness.observation_label)
+            self.fits.setToolTip(snapshot.readiness.explanation)
             self.observation_explanation.setText(
                 snapshot.readiness.explanation)
             self.observation_explanation.show()
             self.next_step.setText(snapshot.readiness.next_action_label)
-            self.open_button.setText(snapshot.readiness.next_action_label)
+            self.open_button.setText("Open project")
+            self.open_button.setToolTip(
+                "Suggested: " + snapshot.readiness.next_action_label
+                + ". Opens the existing project workspace; no QA or "
+                "scientific result is automatically adopted.")
         elif not snapshot.available:
             self.next_step.setText("Relink the project folder to continue.")
 
@@ -459,7 +469,20 @@ class GalaxyDetailCard(QFrame):
             if snapshot.readiness.code not in (
                     "TARGET_NOT_SET", "DATASET_NOT_SELECTED"):
                 self.qa_heading.show()
-                self.qa_status.setText(audit.label)
+                short_labels = {
+                    "AUDIT_RECORDED_STAT_MATCH":
+                        "Prior FITS/WCS diagnostic · metadata unchanged",
+                    "AUDIT_INPUTS_CHANGED":
+                        "Saved audit needs rerun · files changed",
+                    "AUDIT_SELECTION_STALE":
+                        "Saved audit needs rerun · selection changed",
+                    "AUDIT_EVIDENCE_UNAVAILABLE":
+                        "Saved audit needs rerun · evidence unavailable",
+                    "AUDIT_REPORTED_ISSUE":
+                        "Prior audit reported an issue",
+                }
+                self.qa_status.setText(
+                    short_labels.get(audit.state, audit.label))
                 self.qa_status.show()
                 self.qa_status.setToolTip(audit.explanation)
                 if audit.state != "NO_SAVED_AUDIT":
@@ -474,13 +497,15 @@ class GalaxyDetailCard(QFrame):
                 if (audit.state == "AUDIT_RECORDED_STAT_MATCH"
                         and snapshot.readiness.code ==
                         "FOUR_ORIGINAL_FITS_PRESENT_UNVERIFIED"):
-                    self.open_button.setText(
-                        "Open project · review saved FITS/WCS QA")
+                    self.open_button.setToolTip(
+                        "Suggested: review saved FITS/WCS QA in the project. "
+                        + audit.explanation)
                 elif audit.state in (
                         "AUDIT_SELECTION_STALE", "AUDIT_INPUTS_CHANGED",
                         "AUDIT_EVIDENCE_UNAVAILABLE"):
-                    self.open_button.setText(
-                        "Open project · rerun dataset QA")
+                    self.open_button.setToolTip(
+                        "Suggested: rerun dataset QA in the project. "
+                        + audit.explanation)
 
         self.aliases.setVisible(bool(snapshot.aliases))
         self.aliases.setText("Also known as: " + ", ".join(snapshot.aliases))
