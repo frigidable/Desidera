@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from lsbpipe.photometry.psf_gui_backend import inspect_psf0_bands
+from lsbpipe.photometry.psf_gui_backend import (
+    inspect_psf0_bands, PSF0_DIAGNOSTIC_EXPERIMENTS,
+)
 
 
 class PSF0Panel(QGroupBox):
@@ -63,6 +65,17 @@ class PSF0Panel(QGroupBox):
             "DAOStarFinder detection-width GUESS, not a measured FWHM. "
             "Changing it does not repair a scientifically rejected ePSF.")
         form.addRow("Detection FWHM guess", self.fwhm)
+        self.experiment = QComboBox()
+        self.experiment.setObjectName("psf0_diagnostic_experiment")
+        self.experiment.setAccessibleName("Controlled PSF reconstruction diagnostic")
+        for key, info in PSF0_DIAGNOSTIC_EXPERIMENTS.items():
+            self.experiment.addItem(info["label"], key)
+        self.experiment.currentIndexChanged.connect(self._band_changed)
+        self.experiment.setToolTip(
+            "Controlled one-factor comparisons to investigate the actual "
+            "Leo P outer-wing failure. These tests are not scientific PSF "
+            "selection and may change the selected star sample.")
+        form.addRow("Diagnostic experiment", self.experiment)
         self.protection = QDoubleSpinBox()
         self.protection.setObjectName("psf0_target_protection")
         self.protection.setRange(1., 1800.)
@@ -238,6 +251,7 @@ class PSF0Panel(QGroupBox):
         self.band.setEnabled(not self._busy)
         self.fwhm.setEnabled(not self._busy)
         self.protection.setEnabled(not self._busy)
+        self.experiment.setEnabled(not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
 
     def set_busy(self, state: bool, message: str = ""):
@@ -261,6 +275,7 @@ class PSF0Panel(QGroupBox):
             "project_root": str(self._project_root),
             "band": self.band.currentData(),
             "fwhm_pix": self.fwhm.value(),
+            "experiment": self.experiment.currentData(),
             "target_protection_arcsec": self.protection.value(),
         })
 
@@ -300,6 +315,7 @@ class PSF0Panel(QGroupBox):
             "science_status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
             "source_project": str(self._project_root),
             "band": self.band.currentData(),
+            "experiment": self.experiment.currentData(),
             "reason": payload.get("reason"),
             "diagnostics": {
                 name: value for name, value in payload.get("diagnostics", {}).items()
@@ -425,6 +441,7 @@ class PSF0Panel(QGroupBox):
         self.status.setText(
             f"{result.dataset_id} · EXPERIMENTAL_PSF_NOT_ADOPTED")
         self.summary.setText(
+            f"Experiment: {self.experiment.currentText()} · "
             f"Training stars: {len(result.training)} · Independent holdout: "
             f"{len(result.holdout)} · Detected candidates: {result.detection_count} · "
             f"Median heldout core |residual|/peak: "
