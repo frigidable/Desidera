@@ -155,6 +155,9 @@ def _saved_manual_exclusions(project, source_hashes, *,
             recipe = data["recipe"]
             original_recipe = {k:v for k,v in recipe.items()
                                if k!="excluded_training_star_ids"}
+            # Before this feature, only DAO candidates existed. Treat
+            # those historical receipts as DAO-only; never as Gaia-strict.
+            original_recipe.setdefault("star_catalog_policy", "dao_diagnostic")
             ids = data["excluded_training_star_ids"]
             if (data.get("schema") !=
                     "desidera.psf0-manual-training-review/1"
@@ -353,6 +356,15 @@ def commit_psf0_manual_review(preview, *, explicitly_confirmed=False):
             raise ValueError("Original source changed before saving star review")
         if _hash_original_file(path) != source_hashes[kind]:
             raise ValueError("Original FITS changed during manual star review; rerun")
+    expected_catalog = star_review.get("catalog_sha256")
+    if expected_catalog is not None:
+        catalog_path, _ = tractor_catalog_location(
+            project.data_root, release=release, region=region, brick=brick)
+        if (not catalog_path.is_file() or catalog_path.is_symlink() or
+                _hash_original_file(catalog_path) != expected_catalog):
+            raise ValueError(
+                "Original DR11 Tractor/Gaia catalogue changed since PSF "
+                "review; do not persist stale star exclusions")
     receipt = {
         "schema": "desidera.psf0-manual-training-review/1",
         "status": "MANUAL_SELECTION_NOT_PSF_ADOPTION",
@@ -424,6 +436,16 @@ def save_gui_psf0(preview: dict, progress: Callable | None = None) -> str:
             raise ValueError(f"Original {kind.upper()} FITS missing/unsafe; cannot save")
         if _hash_original_file(p) != result.source_hashes[kind]:
             raise ValueError(f"Original {kind.upper()} FITS changed since PSF build; rerun")
+    catalogue_sha = result.metrics.get(
+        "catalog_selection_qa", {}).get("catalog_source_sha256")
+    if catalogue_sha is not None:
+        catalog_path, _ = tractor_catalog_location(
+            project.data_root, release=release, region=region, brick=brick)
+        if (not catalog_path.is_file() or catalog_path.is_symlink() or
+                _hash_original_file(catalog_path) != catalogue_sha):
+            raise ValueError(
+                "Original DR11 Tractor/Gaia catalogue changed; cannot "
+                "export a source-mismatched experimental PSF")
     _progress(progress, "Publishing immutable experimental PSF FITS + QA report")
     output = export_psf0_diagnostic(
         result, project.root / "analyses" / "psf-pilots", explicitly_requested=True)
