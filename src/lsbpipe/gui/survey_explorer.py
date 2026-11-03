@@ -680,6 +680,8 @@ class SurveyExplorer(QMainWindow):
             self._save_project_psf0)
         self.photometry_workspace.psf0AutoFwhmRequested.connect(
             self._suggest_project_psf0_fwhm)
+        self.photometry_workspace.psf0TractorRequested.connect(
+            self._acquire_project_psf0_tractor)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -813,7 +815,9 @@ class SurveyExplorer(QMainWindow):
                 float(request["fwhm_pix"]), str(request["experiment"]))
             excluded = tuple(request.get("excluded_training_star_ids", ()))
             config = replace(
-                base_config, excluded_training_star_ids=excluded)
+                base_config, excluded_training_star_ids=excluded,
+                star_catalog_policy=str(
+                    request.get("star_catalog_policy", "dao_diagnostic")))
             manual_confirmed = request.get("manual_review_confirmed") is True
             band = str(request["band"])
             radius = float(request["target_protection_arcsec"])
@@ -852,6 +856,35 @@ class SurveyExplorer(QMainWindow):
         if self.thread is not None:
             panel.set_busy(True, "PSF-0 running on saved original FITS. "
                            "No science result will be adopted.")
+
+    def _acquire_project_psf0_tractor(self, request):
+        """Explicit official native Gaia/Tractor FITS download in current project."""
+        from lsbpipe.photometry.psf_gui_backend import acquire_gui_psf0_tractor
+        panel = self.photometry_workspace.psf0_panel
+        if self.thread is not None:
+            panel.status.setText("Finish the active task before acquiring Gaia data.")
+            return
+        if (self._object_project is None or
+                request.get("project_root") != str(self._object_project.root)):
+            panel.status.setText("Leo P project changed. Reopen Photometry.")
+            return
+        root = str(self._object_project.root)
+        def run(progress):
+            return acquire_gui_psf0_tractor(root, progress=progress)
+        def finished(payload):
+            panel.show_tractor_acquired(payload)
+            self.message.setText(
+                "Original DR11 Tractor/Gaia catalogue verified in current "
+                "Leo P project. PSF has NOT been rebuilt or adopted.")
+        def failed(message):
+            panel.status.setText(
+                "DR11 Tractor/Gaia catalogue unavailable or invalid: "
+                + message + ". No automatic DAO fallback was used.")
+        self._start(run, finished, failed,
+                    operation_name="psf0-native-tractor-gaia")
+        if self.thread is not None:
+            panel.set_busy(True, "Fetching original DR11 Tractor+Gaia "
+                           "source catalogue on explicit user request.")
 
     def _suggest_project_psf0_fwhm(self, request):
         """Use existing project native WCS and local optional PSFSIZE map."""
