@@ -527,6 +527,18 @@ class PSF0Panel(QGroupBox):
             self._star_review_data = current
 
     @staticmethod
+    def _catalog_screening_summary(catalog):
+        # Full per-star score/iteration evidence is in Copy QA report.
+        # The on-screen panel must show the short catalog provenance
+        # separately, not dump 40–100 rows of nested trial statistics.
+        omit = {
+            "training_residual_screening_history",
+            "automatic_training_rejections",
+        }
+        return str({key:value for key,value in catalog.items()
+                    if key not in omit})
+
+    @staticmethod
     def _training_sky_qa_summary(metrics):
         sky = metrics.get("sky_sample_qa", {})
         passes = metrics.get("training_residual_screening_history", [])
@@ -694,7 +706,7 @@ class PSF0Panel(QGroupBox):
                if holdout_lines else "Unavailable")
             + solver_text
             + "\n\nStar catalogue screening: "
-            + str(catalog_qa)
+            + self._catalog_screening_summary(catalog_qa)
             + "\n\n" + self._training_sky_qa_summary(diagnostic)
             + "\n\nRejected candidates: "
             + str(diagnostic.get("rejected_reasons", {}))
@@ -845,7 +857,8 @@ class PSF0Panel(QGroupBox):
         self.qa.setPlainText(
             "Scientific limits:\n" + "\n".join(f"• {f}" for f in result.flags)
             + "\n\nCatalog screening: "
-            + str(result.metrics.get("catalog_selection_qa", {}))
+            + self._catalog_screening_summary(
+                result.metrics.get("catalog_selection_qa", {}))
             + "\n\n" + self._training_sky_qa_summary(result.metrics)
             + "\n\nRejected star counts: " + str(result.rejected_reasons)
             + "\nSource SHA-256 lineage: "
