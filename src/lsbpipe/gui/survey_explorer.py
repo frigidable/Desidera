@@ -678,6 +678,8 @@ class SurveyExplorer(QMainWindow):
             self._run_project_psf0)
         self.photometry_workspace.psf0SaveRequested.connect(
             self._save_project_psf0)
+        self.photometry_workspace.psf0AutoFwhmRequested.connect(
+            self._suggest_project_psf0_fwhm)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -792,8 +794,10 @@ class SurveyExplorer(QMainWindow):
 
     def _run_project_psf0(self, request):
         """Dispatch genuine Leo P native-band ePSF in the existing GUI thread pool."""
+        from dataclasses import replace
         from lsbpipe.photometry.psf_gui_backend import (
             run_gui_psf0, psf0_experiment_recipe,
+            commit_psf0_manual_review,
         )
 
         panel = self.photometry_workspace.psf0_panel
@@ -805,8 +809,12 @@ class SurveyExplorer(QMainWindow):
             panel.show_failure("Leo P project identity changed before PSF dispatch")
             return
         try:
-            config = psf0_experiment_recipe(
+            base_config = psf0_experiment_recipe(
                 float(request["fwhm_pix"]), str(request["experiment"]))
+            excluded = tuple(request.get("excluded_training_star_ids", ()))
+            config = replace(
+                base_config, excluded_training_star_ids=excluded)
+            manual_confirmed = request.get("manual_review_confirmed") is True
             band = str(request["band"])
             radius = float(request["target_protection_arcsec"])
             root = str(self._object_project.root)
@@ -815,11 +823,19 @@ class SurveyExplorer(QMainWindow):
             return
 
         def run(progress):
-            return run_gui_psf0(
+            payload = run_gui_psf0(
                 root, band=band, config=config,
                 protection_arcsec=radius, progress=progress)
+            if manual_confirmed:
+                payload["manual_review_receipt"] = commit_psf0_manual_review(
+                    payload, explicitly_confirmed=True)
+            return payload
 
         def finished(payload):
+            if payload.get("manual_review_receipt"):
+                panel.status.setText(
+                    "Manual training-star exclusions saved in Leo P project. "
+                    "PSF remains experimental and not adopted.")
             if payload.get("status") == "PSF0_QUALITY_REJECTED_NOT_ADOPTED":
                 panel.show_quality_rejection(payload)
                 self.message.setText(
@@ -838,6 +854,32 @@ class SurveyExplorer(QMainWindow):
         if self.thread is not None:
             panel.set_busy(True, "PSF-0 running on saved original FITS. "
                            "No science result will be adopted.")
+
+    def _suggest_project_psf0_fwhm(self, request):
+        """Use existing project native WCS and local optional PSFSIZE map."""
+        from lsbpipe.photometry.psf_gui_backend import suggest_gui_psf0_fwhm
+        panel = self.photometry_workspace.psf0_panel
+        if self.thread is not None:
+            panel.status.setText("Workspace task active; finish it before PSFSIZE lookup")
+            return
+        if (self._object_project is None or
+                request.get("project_root") != str(self._object_project.root)):
+            panel.status.setText("Leo P project changed. Reopen Photometry.")
+            return
+        band, root = request["band"], str(self._object_project.root)
+        def run(progress):
+            return suggest_gui_psf0_fwhm(
+                root, band=band, progress=progress)
+        def finished(payload):
+            panel.show_fwhm_suggestion(payload)
+        def failed(message):
+            panel.status.setText(
+                "Local DESI PSFSIZE could not be verified: " + message
+                + ". Manual initial FWHM guess remains unchanged.")
+        self._start(run, finished, failed, operation_name="psf0-seeing-prior")
+        if self.thread is not None:
+            panel.set_busy(True, "Checking original FITS WCS and optional "
+                           "DESI PSFSIZE seeing map (no download).")
 
     def _save_project_psf0(self, preview):
         """User requested an immutable derivative; recheck original FITS first."""
