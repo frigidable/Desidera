@@ -88,8 +88,12 @@ class TractorGaiaMatcher:
         object.__setattr__(self, "pixel_positions", points)
         object.__setattr__(self, "_tree", cKDTree(points))
 
-    def match(self, x, y, *, band):
-        """Return Gaia-confirmed unforced PSF source, or explicit refusal."""
+    def match(self, x, y, *, band, neighbor_search_radius_pix=25.):
+        """Return Gaia-confirmed, locally isolated PSF source or explicit refusal.
+
+        A nearby Tractor source may be too faint for DAOStarFinder, so
+        isolation is checked against the *full* same-brick catalogue.
+        """
         if band not in SATURATION_BITS:
             raise ValueError("Unknown optical band for Gaia screening")
         if not self.rows:
@@ -116,8 +120,32 @@ class TractorGaiaMatcher:
                 return None, "TRACTOR_SATURATED_OR_ALLMASK"
         if row["gaia_duplicated_source"]:
             return None, "GAIA_DUPLICATED_SOURCE"
-        if row["flux_ivar"] is not None and row["flux_ivar"] <= 0:
+        if (row["flux_ivar"] is None or row["flux_ivar"] <= 0 or
+                row["flux"] is None or row["flux"] <= 0):
             return None, "TRACTOR_NO_FITTED_BAND_FLUX"
+        snr = row["flux"]*math.sqrt(row["flux_ivar"])
+        # PSFEx reference minimum S/N=20. This catalog statistic uses
+        # diagonal coadd errors, not calibrated correlated-noise S/N.
+        if snr < 20.:
+            return None, "TRACTOR_LOW_BAND_SIGNAL_TO_NOISE"
+        search_radius = float(neighbor_search_radius_pix)
+        if not 2 <= search_radius <= 50 or not math.isfinite(search_radius):
+            raise ValueError("Invalid Tractor neighbor-search aperture")
+        # Significant neighbors may be missing from DAO detections but
+        # appear as Tractor sources. Reject if their fitted coadd flux is
+        # >2% of target and their catalog S/N is at least 5.
+        for other_idx in self._tree.query_ball_point(
+                [float(x),float(y)],r=search_radius):
+            if int(other_idx) == index:
+                continue
+            other = self.rows[int(other_idx)]
+            other_flux, other_ivar = (
+                other.get("flux"), other.get("flux_ivar"))
+            if (other_flux is None or other_ivar is None or
+                    other_flux <= .02*row["flux"] or other_ivar <= 0):
+                continue
+            if other_flux*math.sqrt(other_ivar) >= 5.:
+                return None, "TRACTOR_NEIGHBOR_WITHIN_PSF_CUTOUT"
         return {
             "catalog": "DESI_DR11_TRACTOR_GAIA_DR3",
             "gaia_source_id": row["ref_id"],
@@ -126,6 +154,7 @@ class TractorGaiaMatcher:
             "match_offset_pix": float(np.hypot(
                 positions[index, 0]-x, positions[index, 1]-y)),
             "gaia_g_mag": row["gaia_g_mag"],
+            "tractor_band_snr_diagonal_only":float(snr),
             "catalog_sha256_local": self.source_sha256,
             "is_clean_psf_proven": False,
         }, None
@@ -158,7 +187,9 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
         names = {name.upper():name for name in tables[0].columns.names}
         missing = REQUIRED - set(names)
         required_band = "FLUX_IVAR_" + frame.band.upper()
-        missing |= {"GAIA_DUPLICATED_SOURCE", required_band} - set(names)
+        flux_band = "FLUX_" + frame.band.upper()
+        missing |= {"GAIA_DUPLICATED_SOURCE", required_band,
+                    flux_band} - set(names)
         if missing:
             raise ValueError(f"Tractor Gaia fields missing: {sorted(missing)}")
         if len(data) > 500_000:
@@ -166,6 +197,7 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
         catalog_rows = []
         world = []
         flux_key = names[required_band]
+        signal_key = names[flux_band]
         for row in data:
             if _value(row[names["BRICKNAME"]]) != brick:
                 raise ValueError("Tractor FITS contains another brick identity")
@@ -184,6 +216,7 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
                 "type": _value(row[names["TYPE"]]).upper(),
                 "fitbits": int(row[names["FITBITS"]]),
                 "maskbits": int(row[names["MASKBITS"]]),
+                "flux": _number(row[signal_key]),
                 "flux_ivar": _number(row[flux_key]),
                 "gaia_duplicated_source": bool(
                     row[names["GAIA_DUPLICATED_SOURCE"]]),
@@ -267,8 +300,9 @@ def download_native_tractor_gaia(data_root, *, release, region, brick,
             if len(tables) != 1:
                 raise ValueError("Downloaded Tractor is not one binary table")
             names = {n.upper() for n in tables[0].columns.names}
-            if REQUIRED - names or "GAIA_DUPLICATED_SOURCE" not in names:
-                raise ValueError("Downloaded Tractor FITS lacks Gaia QA fields")
+            if (REQUIRED - names or "GAIA_DUPLICATED_SOURCE" not in names or
+                    "FLUX_G" not in names or "FLUX_IVAR_G" not in names):
+                raise ValueError("Downloaded Tractor FITS lacks Gaia/flux QA fields")
             data = tables[0].data
             if len(data) and _value(data["BRICKNAME"][0]) != brick:
                 raise ValueError("Downloaded Tractor FITS brick identity mismatches")
