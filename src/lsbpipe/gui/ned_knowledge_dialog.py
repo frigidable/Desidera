@@ -62,6 +62,7 @@ class NedKnowledgeDialog(QDialog):
         self.response = QLabel("No cached NED result.")
         self.response.setObjectName("ned_lookup_response")
         self.response.setWordWrap(True)
+        self.response.setTextFormat(Qt.PlainText)
         self.response.setTextInteractionFlags(Qt.TextSelectableByMouse)
         outer.addWidget(self.response, 1)
         self.confirmed = QLabel("No user-confirmed NED association.")
