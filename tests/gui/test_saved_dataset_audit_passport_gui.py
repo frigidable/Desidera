@@ -33,7 +33,7 @@ def _make_project(tmp_path, *, with_receipt):
         file.write_bytes(("source:" + kind).encode())
         st = file.stat()
         products[kind] = {
-            "relative_path": rel.as_posix(), "size_bytes": st.st_size,
+            "relative_path": rel, "size_bytes": st.st_size,
             "mtime_ns": st.st_mtime_ns,
             "sha256_local": hashlib.sha256(file.read_bytes()).hexdigest()}
     if with_receipt:
