@@ -28,6 +28,9 @@ from lsbpipe.photometry.psf_holdout_qa import (
 from lsbpipe.photometry.psf_star_quality import (
     assess_psf_star_cutout, assess_sample_widths,
 )
+from lsbpipe.photometry.psf_training_residuals import (
+    training_star_residual, choose_training_outliers,
+)
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -68,6 +71,9 @@ class PSF0Config:
     # DAO fallback is explicitly diagnostic; strict Gaia mode needs a
     # verified, release-matched, locally saved original Tractor table.
     star_catalog_policy: str = "dao_diagnostic"
+    # Only when explicitly requested. Star-level trimming is separate
+    # from photutils pixelwise sigma-clipping and needs heldout QA.
+    training_outlier_passes: int = 0
 
     def __post_init__(self):
         floats = (self.guessed_fwhm_pix, self.detection_sigma,
@@ -103,6 +109,9 @@ class PSF0Config:
             raise ValueError("Gradient rejection threshold must be positive")
         if self.star_catalog_policy not in ("dao_diagnostic", "gaia_strict"):
             raise ValueError("Unknown PSF star-catalogue selection policy")
+        if type(self.training_outlier_passes) is not int or not (
+                0 <= self.training_outlier_passes <= 2):
+            raise ValueError("Training-star residual screening permits 0–2 passes")
         excluded = self.excluded_training_star_ids
         if (not isinstance(excluded, tuple) or
                 any(not isinstance(key, str) or
@@ -536,15 +545,18 @@ def build_empirical_coadd_psf(
             gaia_g_mag=identity.get("gaia_g_mag"),
             image_axis_ratio=shape.get("axis_ratio"),
             image_core_sigma_pix=shape.get("sigma_eff_pix"))
-    train = tuple(metadata(v, "train") for v in training_entries)
+    # Start with a fixed heldout inventory. The strict iterative screen
+    # NEVER reads holdout pixels to determine training exclusions.
     holdout = tuple(metadata(v, "holdout") for v in holdout_entries)
-    epsf_stars = []
-    for entry in training_entries:
-        c = entry[-1]
-        epsf_stars.append(EPSFStar(
-            c["image"], weights=c["weights"],
-            cutout_center=c["center_in_cutout"],
-            id_label=entry[0]))
+    auto_excluded_ids = set()
+    outlier_history = []
+    def training_epsf_stars(entries):
+        return EPSFStars([
+            EPSFStar(
+                entry[-1]["image"], weights=entry[-1]["weights"],
+                cutout_center=entry[-1]["center_in_cutout"],
+                id_label=entry[0])
+            for entry in entries])
     # Retain explicit installed-version/solver policy information: photutils
     # 3.1 changed default smoothing and centroid-fit box behavior. Merely
     # hashing the Desidera recipe is not enough to reproduce this model.
@@ -564,8 +576,53 @@ def build_empirical_coadd_psf(
         raise RuntimeError(
             "The wing-smoothing A/B test requires photutils >=3.1 "
             "with EPSFBuilder wing_smoothing support")
-    builder = EPSFBuilder(**kwargs)
-    fitted = builder(EPSFStars(epsf_stars))
+    def build_for_training(entries):
+        # EPSFBuilder holds per-call fitter state; create fresh on each
+        # rebuild, never reuse its previous fitted-star state.
+        b = EPSFBuilder(**kwargs)
+        return b, b(training_epsf_stars(entries))
+    builder, fitted = build_for_training(training_entries)
+    for iteration in range(cfg.training_outlier_passes):
+        current_psf = fitted.epsf if hasattr(fitted, "epsf") else fitted[0]
+        raw_trial = np.asarray(current_psf.data, dtype=float)
+        scores = []
+        for entry in training_entries:
+            try:
+                scores.append(training_star_residual(
+                    entry, raw_trial,
+                    guessed_fwhm_pix=cfg.guessed_fwhm_pix))
+            except ValueError as exc:
+                # Fail clearly. A badly modelled star must not silently
+                # receive a zero/benign score and remain in training.
+                scores.append({"star_id":entry[0], "score":1e6,
+                               "error":str(exc),
+                               "metric":"UNSCORABLE_TRAIN_STAR"})
+        rejected_ids, summary = choose_training_outliers(
+            scores, min_train=cfg.min_train_stars)
+        # Cumulative cap to protect real spatial PSF variation from a
+        # feedback loop that progressively deletes hard-to-fit regions.
+        cap = max(1, int(.20 * len(original_training_entries)))
+        budget = max(0, cap-len(auto_excluded_ids))
+        rejected_ids = tuple(rejected_ids[:budget])
+        summary.update({
+            "iteration":iteration+1,
+            "screened_stars":scores,
+            "selected_for_exclusion":list(rejected_ids),
+            "cumulative_exclusion_budget":cap,
+            "uses_holdout_to_select":False,
+            "coadd_chi_square_calibrated":False,
+        })
+        outlier_history.append(summary)
+        if not rejected_ids:
+            break
+        auto_excluded_ids.update(rejected_ids)
+        for _ in rejected_ids:
+            reject("TRAIN_PSF_RESIDUAL_OUTLIER_AUTO_EXPERIMENTAL")
+        training_entries = [
+            entry for entry in training_entries
+            if entry[0] not in auto_excluded_ids]
+        builder, fitted = build_for_training(training_entries)
+    train = tuple(metadata(v, "train") for v in training_entries)
     solver_diagnostics = {
         "photutils_version": str(photutils.__version__),
         "smoothing_kernel_requested_or_default": str(
@@ -652,7 +709,11 @@ def build_empirical_coadd_psf(
         model = template * max(amplitude, 0.)
         review_stars.append({
             "star_id": entry[0],
-            "role": ("excluded" if entry[0] in excluded_ids else "train"),
+            "role": ("excluded" if entry[0] in excluded_ids else
+                     "auto_rejected" if entry[0] in auto_excluded_ids else
+                     "train"),
+            "auto_rejected_by_training_residual": (
+                entry[0] in auto_excluded_ids),
             "gaia": (c.get("star_identity") or {}),
             "shape_qa": (c.get("shape_qa") or {}),
             "x_pix": float(entry[1]), "y_pix": float(entry[2]),
@@ -674,6 +735,8 @@ def build_empirical_coadd_psf(
         "catalog_sha256": (
             catalog_matcher.source_sha256 if catalog_matcher else None),
         "excluded_training_star_ids": tuple(cfg.excluded_training_star_ids),
+        "automatic_training_rejections": tuple(sorted(auto_excluded_ids)),
+        "training_residual_screening_history": outlier_history,
         "stars": review_stars,
     }
     negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
@@ -687,6 +750,8 @@ def build_empirical_coadd_psf(
         "n_tractor_primary_sources": (
             len(catalog_matcher.rows) if catalog_matcher else None),
         "image_moment_width_reference": width_qa,
+        "training_residual_screening_history": outlier_history,
+        "automatic_training_rejections": sorted(auto_excluded_ids),
         "n_train_gaia_matched": sum(s.gaia_source_id is not None for s in train),
         "n_holdout_gaia_matched": sum(s.gaia_source_id is not None for s in holdout),
         "psf_star_cleanliness_certified": False,
@@ -719,6 +784,7 @@ def build_empirical_coadd_psf(
             "blocking_threshold_fraction": .025,
             "psf_recipe": asdict(cfg),
             "catalog_selection_qa": selection_catalog_qa,
+            "training_residual_screening_history": outlier_history,
             "reviewed_excluded_training_ids": list(cfg.excluded_training_star_ids),
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
@@ -808,6 +874,7 @@ def build_empirical_coadd_psf(
     # FWHM here is only the guessed finder width, NOT measured EPSF FWHM.
     metrics = {
         "catalog_selection_qa": selection_catalog_qa,
+        "training_residual_screening_history": outlier_history,
         "holdout_median_abs_core_residual_over_peak": med_core_resid,
         "holdout_diagnostics": checks,
         "epsf_negative_mass_fraction_before_clipping": negative_fraction,
