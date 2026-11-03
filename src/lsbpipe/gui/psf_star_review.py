@@ -182,9 +182,12 @@ class PSFStarReviewDialog(QDialog):
                 ratio = shape.get("axis_ratio")
                 axis_text = (f"core axis ratio {ratio:.2f}"
                              if ratio is not None else "core shape unavailable")
+                band_snr = gaia.get("tractor_band_snr_diagonal_only")
+                snr_text = (f"Tractor S/N≈{band_snr:.1f} (diagonal only)"
+                            if band_snr is not None else "S/N unknown")
                 identity = QLabel(
                     f"Gaia DR3 {gaia['gaia_source_id']} · {mag_text} · "
-                    f"{axis_text} · separation "
+                    f"{snr_text} · {axis_text} · separation "
                     f"{gaia.get('match_offset_pix', 0):.2f} px")
                 identity.setWordWrap(True)
                 identity.setToolTip(
