@@ -38,6 +38,8 @@ class PSF0Panel(QGroupBox):
         self._preview = None
         self._qa_payload = None
         self._busy = False
+        self._experiment_history = []
+        self._history_band = None
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -127,6 +129,16 @@ class PSF0Panel(QGroupBox):
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.summary)
+        self.compare = QLabel(
+            "Experiment comparison (same band): no completed trials.")
+        self.compare.setObjectName("psf0_experiment_comparison")
+        self.compare.setWordWrap(True)
+        self.compare.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.compare.setToolTip(
+            "Historical non-adopted diagnostic trials on the current band. "
+            "Different cutout sizes can change the stellar sample; no "
+            "scientific best model is selected automatically.")
+        layout.addWidget(self.compare)
 
         details = QHBoxLayout()
         self.kernel_view = QLabel("No empirical PSF image")
@@ -174,6 +186,9 @@ class PSF0Panel(QGroupBox):
         self.refresh_sources()
 
     def refresh_sources(self):
+        self._experiment_history = []
+        self._history_band = None
+        self._render_comparison()
         self._preview = None
         self._qa_payload = None
         self.save_btn.setEnabled(False)
@@ -222,6 +237,7 @@ class PSF0Panel(QGroupBox):
                     "No complete local native FITS quartet for PSF-0. "
                     "Use Manage sources; no automatic download.")
         self.band.blockSignals(False)
+        self._history_band = self.band.currentData()
         self._update_buttons()
 
     def _parameters_changed(self, *_):
@@ -229,7 +245,13 @@ class PSF0Panel(QGroupBox):
             self._band_changed()
 
     def _band_changed(self, *_):
-        # Changing filter invalidates any earlier science and rejection QA.
+        # Changing filter invalidates former-band comparison. Changing the
+        # experiment retains historical same-band trials in memory.
+        band = self.band.currentData()
+        if band != self._history_band:
+            self._history_band = band
+            self._experiment_history = []
+            self._render_comparison()
         self._preview = None
         self._qa_payload = None
         self.save_btn.setEnabled(False)
@@ -388,6 +410,13 @@ class PSF0Panel(QGroupBox):
             + "\n\n"
             + "\n".join(diagnostic.get("notes", []))
             + "\n\nNo invalid PSF kernel or photometric measurement was saved.")
+        self._record_experiment(
+            n_train=diagnostic.get("n_train", 0),
+            n_holdout=diagnostic.get("n_holdout", 0),
+            negative=negative,
+            converged=diagnostic.get(
+                "solver_diagnostics", {}).get("converged_if_reported"),
+            status="QUALITY REJECTED")
         self._update_buttons()
 
     def _show_signed_rejected_kernel(self, values):
@@ -421,11 +450,51 @@ class PSF0Panel(QGroupBox):
             "REJECTED signed ePSF · cyan positive; red negative. "
             "Asinh-stretched for visual diagnosis; no physically accepted PSF.")
 
+    def _record_experiment(self, *, n_train, n_holdout, negative, converged, status):
+        entry = {
+            "band": self.band.currentData(),
+            "experiment": self.experiment.currentData(),
+            "label": self.experiment.currentText(),
+            "status": status,
+            "negative_fraction": (
+                float(negative) if negative is not None else None),
+            "solver_converged": converged,
+            "n_train": int(n_train),
+            "n_holdout": int(n_holdout),
+            "science_adopted": False,
+        }
+        self._experiment_history.append(entry)
+        self._experiment_history = self._experiment_history[-10:]
+        self._render_comparison()
+
+    def _render_comparison(self):
+        if not self._experiment_history:
+            self.compare.setText(
+                "Experiment comparison (same band): no completed trials.")
+            return
+        descriptions = []
+        for entry in self._experiment_history:
+            pct = (f"{entry['negative_fraction']:.2%}"
+                   if entry["negative_fraction"] is not None else "N/A")
+            converged = ("yes" if entry["solver_converged"] is True else
+                         "no" if entry["solver_converged"] is False else "?")
+            descriptions.append(
+                f"{entry['experiment']}: neg {pct}, "
+                f"conv {converged}, "
+                f"stars {entry['n_train']}/{entry['n_holdout']}")
+        self.compare.setText(
+            "Non-adopted same-band trials · "
+            + " | ".join(descriptions)
+            + ". Different cutouts may select different stars.")
+
     def _copy_qa(self):
         if self._qa_payload is None or self._busy:
             return
+        payload = dict(self._qa_payload)
+        payload["comparison_trials_not_adopted"] = [
+            dict(trial) for trial in self._experiment_history]
         QApplication.clipboard().setText(json.dumps(
-            self._qa_payload, ensure_ascii=False, indent=2,
+            payload, ensure_ascii=False, indent=2,
             sort_keys=True, allow_nan=False))
         self.qa.appendPlainText("\nQA report copied to clipboard (no FITS written).")
 
@@ -458,6 +527,14 @@ class PSF0Panel(QGroupBox):
                 item.setToolTip(
                     f"ICRS RA={star.ra_deg:.7f}°, Dec={star.dec_deg:.7f}°")
                 self.stars.setItem(i, j, item)
+        diagnostics = result.metrics.get(
+            "signed_epsf_diagnostics_before_clipping", {})
+        self._record_experiment(
+            n_train=len(result.training), n_holdout=len(result.holdout),
+            negative=diagnostics.get("negative_absolute_mass_fraction"),
+            converged=result.metrics.get(
+                "solver_diagnostics", {}).get("converged_if_reported"),
+            status="EXPERIMENTAL PREVIEW")
         self.qa.setPlainText(
             "Scientific limits:\n" + "\n".join(f"• {f}" for f in result.flags)
             + "\n\nRejected star counts: " + str(result.rejected_reasons)
