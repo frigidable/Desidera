@@ -94,6 +94,62 @@ def capture(output_dir: Path) -> list[dict]:
                         "visual_reviewed": False,
                     }
                     manifest.append(record)
+            # Explicitly synthetic gallery: no real Leo P image bytes are
+            # accessible to CI. Capture equal-square cutout, PSF and radial
+            # previews plus manual exclusion controls at practical sizes.
+            import numpy as np
+            from lsbpipe.gui.psf_star_review import PSFStarReviewDialog
+            yy, xx = np.indices((31, 31), dtype=float)
+            mock_stars = []
+            for i in range(10):
+                source = (30. + i) * np.exp(
+                    -.5*((xx-15.1)**2+(yy-14.8)**2)/5.3)
+                model = source*.985
+                model[-3:, -3:] = -.004
+                mock_stars.append({
+                    "star_id":f"star-{i+1:04d}", "role":"train",
+                    "x_pix":300. + i*40., "y_pix":100. + i*50.,
+                    "ra_deg":155.438012, "dec_deg":18.088025,
+                    "cutout":source, "model":model,
+                    "valid":np.ones(source.shape,dtype=bool),
+                    "center_in_cutout":(15.1,14.8),
+                    "peak_nMgy":float(source.max()),
+                    "sky_nMgy":.001*i, "gradient_sigma_span":.3,
+                })
+            gallery = PSFStarReviewDialog({
+                "schema":"desidera.psf0-star-review-in-memory/1",
+                "status":"RESEARCHER_REVIEW_NOT_SCIENCE_ADOPTED",
+                "min_train_stars":4,
+                "guessed_fwhm_pix":4.8,
+                "excluded_training_star_ids":(),
+                "stars":mock_stars,
+            })
+            try:
+                gallery._controls["star-0003"].setChecked(True)
+                for width, height in ((1100, 760), (1400, 900)):
+                    gallery.resize(width, height)
+                    gallery.show()
+                    app.processEvents()
+                    actual = gallery.size()
+                    path = output_dir / f"psf0_star_review_SYNTHETIC_{width}x{height}.png"
+                    picture = gallery.grab()
+                    if picture.isNull() or not picture.save(str(path), "PNG"):
+                        raise RuntimeError(f"Cannot capture {path}")
+                    manifest.append({
+                        "path":str(path),
+                        "state":"synthetic_psf_training_mosaic",
+                        "fixture":"SYNTHETIC_STAR_ARRAYS_NO_LEO_P_FITS",
+                        "scientific_status":"NOT_MEASURED_NOT_ADOPTED",
+                        "size_logical":[width,height],
+                        "size_image":[picture.width(),picture.height()],
+                        "star_cards":len(mock_stars),
+                        "excluded_training_star_ids":list(gallery.excluded_ids()),
+                        "source_fits_read":False,
+                        "visual_reviewed":False,
+                    })
+            finally:
+                gallery.close()
+                gallery.deleteLater()
             widget.hide()
         finally:
             widget.close()
