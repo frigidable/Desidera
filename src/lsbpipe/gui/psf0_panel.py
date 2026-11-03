@@ -334,6 +334,7 @@ class PSF0Panel(QGroupBox):
         self.kernel_view.setText("PSF calculation running…")
         self.summary.setText("No accepted PSF; calculating provisional model.")
         self.qa.clear()
+        self._update_buttons()
         self.runRequested.emit({
             "project_root": str(self._project_root),
             "band": self.band.currentData(),
