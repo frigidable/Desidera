@@ -87,7 +87,7 @@ def test_unconfirmed_simbad_neighbours_never_become_project_aliases(leo):
     card = snapshot_from_record(_record(leo))
     assert not card.matches("Foreground star")
     assert not card.matches("NAME Leo P")
-    assert read_object_project(leo.root).aliases == ()
+    assert read_object_project(leo.root).aliases == []
 
 
 def test_confirmed_identity_becomes_provenance_linked_card_without_mutation(leo):
