@@ -26,6 +26,14 @@ STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
 RECIPE = "desidera.psf0-coadd-epsf/1"
 
 
+class PSF0QualityError(ValueError):
+    """Scientifically rejected ePSF, with read-only candidate-star QA evidence."""
+
+    def __init__(self, message: str, diagnostics: dict):
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
 @dataclass(frozen=True)
 class PSF0Config:
     """Reproducible, conservative core-PSF recipe (not a science calibration)."""
@@ -440,7 +448,32 @@ def build_empirical_coadd_psf(
     negative_fraction = float(np.sum(np.abs(raw_kernel[raw_kernel<0])) /
                               max(np.sum(np.abs(raw_kernel)), 1e-20))
     if negative_fraction > .025:
-        raise ValueError("Strong negative EPSF ringing; inspect star selection/sky")
+        # Preserve evidence needed to troubleshoot Leo P without allowing
+        # this rejected kernel into a FITS export or science result.
+        diagnostic = {
+            "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "reason_code": "STRONG_NEGATIVE_EPSF_RINGING",
+            "negative_absolute_mass_fraction": negative_fraction,
+            "blocking_threshold_fraction": .025,
+            "n_train": len(train),
+            "n_holdout": len(holdout),
+            "n_detected_candidates": len(candidates),
+            "training": [asdict(star) for star in train],
+            "holdout": [asdict(star) for star in holdout],
+            "rejected_reasons": dict(rejected),
+            "notes": [
+                "The rejected EPSF kernel is NOT normalized, clamped or exported.",
+                "Inspect star identity, local cutout sky, centroid alignment, "
+                "the empirical core and the photutils recipe.",
+                "Negative absolute mass is a conservative screening heuristic, "
+                "not a statistically calibrated false-positive rate.",
+            ],
+        }
+        raise PSF0QualityError(
+            f"Strong negative EPSF ringing: negative absolute mass "
+            f"{negative_fraction:.2%} exceeds the experimental 2.50% "
+            f"screening limit (training {len(train)}, holdout {len(holdout)}).",
+            diagnostic)
     kernel = np.maximum(raw_kernel, 0.)
     if kernel.sum() <= 0:
         raise ValueError("Nonpositive empirical PSF normalization")
