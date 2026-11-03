@@ -169,6 +169,19 @@ class GalaxyDetailCard(QFrame):
             "galaxy_card_observation_explanation")
         body.addWidget(self.observation_explanation)
 
+        self.qa_heading = QLabel("SAVED DATASET QA")
+        self.qa_heading.setObjectName("galaxy_card_section")
+        body.addWidget(self.qa_heading)
+        self.qa_status = _metadata("")
+        self.qa_status.setObjectName("galaxy_card_qa_status")
+        body.addWidget(self.qa_status)
+        self.qa_note = _metadata("")
+        self.qa_note.setObjectName("galaxy_card_qa_note")
+        body.addWidget(self.qa_note)
+        self.qa_heading.hide()
+        self.qa_status.hide()
+        self.qa_note.hide()
+
         next_title = QLabel("NEXT STEP")
         next_title.setObjectName("galaxy_card_section")
         body.addWidget(next_title)
@@ -176,6 +189,10 @@ class GalaxyDetailCard(QFrame):
         self.next_step = _metadata("")
         self.next_step.setObjectName("galaxy_card_next_step")
         body.addWidget(self.next_step)
+        # The contextual primary action already says what to do next.
+        # Keep these compatibility labels but do not render duplicate text.
+        self.next_step_title.hide()
+        self.next_step.hide()
 
         self.details_toggle = QPushButton("Catalogue & project details  ▾")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
@@ -197,6 +214,10 @@ class GalaxyDetailCard(QFrame):
             "galaxy_card_catalogue_provenance")
         self.catalogue_provenance.setTextFormat(Qt.PlainText)
         extended.addWidget(self.catalogue_provenance)
+        self.audit_receipt_note = _metadata("", selectable=True)
+        self.audit_receipt_note.setObjectName("galaxy_card_audit_provenance")
+        extended.addWidget(self.audit_receipt_note)
+        self.audit_receipt_note.hide()
 
         project_title = QLabel("PROJECT INFORMATION")
         project_title.setObjectName("galaxy_card_section")
@@ -273,6 +294,10 @@ class GalaxyDetailCard(QFrame):
             self.literature.hide()
             self.cross_catalogue.hide()
             self.observation_explanation.hide()
+            self.qa_heading.hide()
+            self.qa_status.hide()
+            self.qa_note.hide()
+            self.audit_receipt_note.hide()
             self.next_step_title.hide()
             self.next_step.hide()
             self.last_opened.hide()
@@ -282,7 +307,6 @@ class GalaxyDetailCard(QFrame):
 
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
-        self.next_step.show()
         if (previous_id != snapshot.project_id
                 and snapshot.knowledge_status != "EVIDENCE_ERROR"):
             self.details_toggle.setChecked(False)
@@ -291,8 +315,13 @@ class GalaxyDetailCard(QFrame):
         self.literature.hide()
         self.cross_catalogue.hide()
         self.catalogue_help.hide()
-        self.next_step_title.show()
+        self.next_step_title.hide()
+        self.next_step.hide()
         self.observation_explanation.hide()
+        self.qa_heading.hide()
+        self.qa_status.hide()
+        self.qa_note.hide()
+        self.audit_receipt_note.hide()
         catalogues = snapshot.catalogue_identities or (
             (snapshot.catalogue_identity,) if snapshot.catalogue_identity else ())
         self.catalogue_provenance.hide()
@@ -410,6 +439,37 @@ class GalaxyDetailCard(QFrame):
             self.open_button.setText(snapshot.readiness.next_action_label)
         elif not snapshot.available:
             self.next_step.setText("Relink the project folder to continue.")
+
+        if snapshot.audit is not None and snapshot.readiness is not None:
+            # The audit is a saved diagnostic, not live integrity certification.
+            # Only surface it for a project with a selected survey dataset.
+            audit = snapshot.audit
+            if snapshot.readiness.code not in (
+                    "TARGET_NOT_SET", "DATASET_NOT_SELECTED"):
+                self.qa_heading.show()
+                self.qa_status.setText(audit.label)
+                self.qa_status.show()
+                self.qa_status.setToolTip(audit.explanation)
+                if audit.state != "NO_SAVED_AUDIT":
+                    self.qa_note.setText(audit.explanation)
+                    self.qa_note.show()
+                    if audit.receipt_relative_path:
+                        self.audit_receipt_note.setText(
+                            "Dataset audit: " + audit.receipt_relative_path
+                            + (" · " + audit.created_utc
+                               if audit.created_utc else ""))
+                        self.audit_receipt_note.show()
+                if (audit.state == "AUDIT_RECORDED_STAT_MATCH"
+                        and snapshot.readiness.code ==
+                        "FOUR_ORIGINAL_FITS_PRESENT_UNVERIFIED"):
+                    self.open_button.setText(
+                        "Open project · review saved FITS/WCS QA")
+                elif audit.state in (
+                        "AUDIT_SELECTION_STALE", "AUDIT_INPUTS_CHANGED",
+                        "AUDIT_EVIDENCE_UNAVAILABLE"):
+                    self.open_button.setText(
+                        "Open project · rerun dataset QA")
+
         self.aliases.setVisible(bool(snapshot.aliases))
         self.aliases.setText("Also known as: " + ", ".join(snapshot.aliases))
         self.last_opened.setVisible(bool(snapshot.last_opened))
