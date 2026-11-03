@@ -23,16 +23,17 @@ def test_compact_passport_preserves_simbad_and_immutable_setup_controls(
     hub.show()
     assert hub.galaxy_card.snapshot.project_id == original.project_id
     assert hub.galaxy_card.open_button.isEnabled()
-    assert hub.knowledge_btn.isVisible()
-    assert hub.knowledge_btn.isEnabled()
-    assert hub.config_btn.isVisible()
-    assert hub.config_btn.isEnabled()
+    assert hub.catalogues_menu_btn.isVisible()
+    assert hub.simbad_action.isEnabled()
+    assert hub.tools_menu_btn.isVisible()
+    assert hub.config_action.isEnabled()
     assert not hub.continue_btn.isVisible()
-    assert hub.remove_btn.isVisible()
+    assert not hub.remove_btn.isVisible()
+    assert hub.remove_action.isEnabled()
     assert manifest.read_bytes() == unchanged
     hub.filter.setText("unknown-no-match")
     assert hub.galaxy_card.snapshot is None
-    assert not hub.knowledge_btn.isEnabled()
-    assert not hub.config_btn.isEnabled()
+    assert not hub.simbad_action.isEnabled()
+    assert not hub.config_action.isEnabled()
     hub.filter.clear()
     assert hub.galaxy_card.snapshot.project_id == original.project_id

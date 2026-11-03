@@ -63,7 +63,7 @@ def test_passport_identity_search_and_offline_reopen(qtbot, tmp_path):
     confirm_simbad_identity(p.root, d, "NAME Leo P")
     hub.refresh()
     assert "NAME Leo P" in hub.galaxy_card.catalogue.text()
-    assert "user-confirmed" in hub.galaxy_card.catalogue.text()
+    assert "user-confirmed" in hub.galaxy_card.catalogue.toolTip()
     assert "Project coordinates unchanged" in (
         hub.galaxy_card.catalogue_provenance.text())
     assert "Separation from project centre" in (

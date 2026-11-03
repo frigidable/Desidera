@@ -74,15 +74,21 @@ a descriptive coordinate difference and unadopted NED redshift.
 Automated cross-catalogue identity reconciliation, positional TAP search,
 and comprehensive literature measurements remain future work.
 
-Galaxy Projects now displays a **square thumbnail on the left** and the
-scrollable scientific passport on the right. The selected project can
-explicitly **Fetch Legacy Surveys colour preview**, a JPEG cutout from the
-official Viewer. It is cached separately from the original-FITS preview;
-offline startup always uses a matching RGB cache, otherwise falls back to
-the local grayscale thumbnail without making network calls. Both are
-display-only and never affect photometry or source FITS. See
-`docs/architecture/GALAXY_RGB_CARDS_P10D.md` for source layers,
-size limits and cache provenance.
+Galaxy Projects now displays a **compact square galaxy thumbnail**
+beside the name, coordinates and confirmed SIMBAD/NED identifiers. Its
+observational facts flow below the image at full width; verbose source
+provenance and project paths expand on demand. Secondary actions are grouped
+into **Catalogues** and **Project tools** menus.
+
+The selected project's **Legacy Surveys RGB preview loads automatically**
+after a brief stable-selection delay when missing from cache. Only the
+selected galaxy is fetched, never the complete project list. Offline it
+uses the cached RGB, otherwise the local original-FITS grayscale thumbnail.
+A failed remote request does not loop; Project tools allows explicit retry.
+Set `DESIDERA_DISABLE_AUTOMATIC_RGB=1` to turn off automatic network fetches.
+The visual caches do not affect photometry or original FITS. See
+`docs/architecture/AUTOMATIC_RGB_PASSPORT_P10E.md` for user behavior and
+`docs/architecture/GALAXY_RGB_CARDS_P10D.md` for source layer/receipt QA.
 
 Galaxy Projects also lazily generates a **local, display-only original-FITS
 thumbnail** for the selected galaxy when a linked IMAGE product is

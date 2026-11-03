@@ -59,7 +59,7 @@ def test_square_passport_and_manual_colour_fetch_then_offline_reopen(
     assert hub.galaxy_card.preview.width() == hub.galaxy_card.preview.height()
     assert (hub.galaxy_card.preview.mapToGlobal(QPoint(0, 0)).x()
             < hub.galaxy_card.name.mapToGlobal(QPoint(0, 0)).x())
-    hub.rgb_btn.click()
+    hub.rgb_action.trigger()
     qtbot.waitUntil(
         lambda: (hub._rgb_future is None and
                  hub.galaxy_card.snapshot is not None and
@@ -68,7 +68,8 @@ def test_square_passport_and_manual_colour_fetch_then_offline_reopen(
     assert len(calls) == 1
     assert "ls-dr11-south" in calls[0]
     assert "size=384" in calls[0]
-    assert "Legacy Surveys RGB" in hub.galaxy_card.preview_note.text()
+    assert "Legacy Surveys Viewer RGB" in hub.galaxy_card.preview.toolTip()
+    assert not hub.galaxy_card.preview_note.isVisible()
     assert not hub.galaxy_card.preview.pixmap().isNull()
     assert manifest.read_bytes() == before
 
@@ -104,7 +105,7 @@ def test_failed_colour_download_retains_local_preview_and_no_overwrite(
     qtbot.addWidget(hub)
     hub.show()
     assert hub.galaxy_card.snapshot.thumbnail == cache
-    hub.rgb_btn.click()
+    hub.rgb_action.trigger()
     qtbot.waitUntil(lambda: hub._rgb_future is None, timeout=10000)
     assert hub.galaxy_card.snapshot.thumbnail == cache
     assert hub.galaxy_card.snapshot.preview_source == "LOCAL_FITS_GRAYSCALE"

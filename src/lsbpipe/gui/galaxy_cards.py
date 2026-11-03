@@ -66,117 +66,148 @@ class GalaxyDetailCard(QFrame):
         self._pixmap: QPixmap | None = None
 
         container = QVBoxLayout(self)
-        container.setContentsMargins(12, 12, 12, 12)
+        container.setContentsMargins(14, 14, 14, 12)
         container.setSpacing(8)
 
-        kicker = QLabel("SELECTED GALAXY")
-        kicker.setObjectName("galaxy_card_section")
-        container.addWidget(kicker)
-
-        # Preview and passport share one horizontally arranged, scrollable
-        # content surface. Keep the image square at every inspector width.
         scroll = QScrollArea(self)
         scroll.setObjectName("galaxy_card_scroll")
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
-        detail = QHBoxLayout(inner)
-        detail.setContentsMargins(0, 0, 0, 0)
-        detail.setSpacing(12)
+        body = QVBoxLayout(inner)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(12)
 
+        # Hero: concise identity flows alongside the square image. Subsequent
+        # sections span the full card width directly below the image, instead
+        # of leaving a permanently empty narrow column on the left.
+        hero = QWidget()
+        hero.setObjectName("galaxy_card_hero")
+        hero_row = QHBoxLayout(hero)
+        hero_row.setContentsMargins(0, 0, 0, 0)
+        hero_row.setSpacing(14)
         self.preview_holder = QWidget()
         self.preview_holder.setObjectName("galaxy_card_preview_column")
-        preview_col = QVBoxLayout(self.preview_holder)
-        preview_col.setContentsMargins(0, 0, 0, 0)
-        preview_col.setSpacing(5)
-
+        image_layout = QVBoxLayout(self.preview_holder)
+        image_layout.setContentsMargins(0, 0, 0, 0)
         self.preview = QLabel("No preview")
         self.preview.setObjectName("galaxy_card_preview")
         self.preview.setAlignment(Qt.AlignCenter)
-        self.preview.setWordWrap(True)
         self.preview.setTextFormat(Qt.PlainText)
+        self.preview.setWordWrap(True)
         self.preview.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        preview_col.addWidget(self.preview)
+        image_layout.addWidget(self.preview)
+        hero_row.addWidget(self.preview_holder, 0, Qt.AlignTop)
 
+        # Kept as a nonvisual compatibility/provenance hook. A thumbnail has
+        # no caption; detailed source information belongs in its tooltip.
         self.preview_note = _metadata("")
         self.preview_note.setObjectName("galaxy_card_preview_note")
-        self.preview_note.setTextFormat(Qt.PlainText)
-        preview_col.addWidget(self.preview_note)
-        preview_col.addStretch(1)
-        detail.addWidget(self.preview_holder, 0, Qt.AlignTop)
+        self.preview_note.hide()
 
-        metadata = QWidget()
-        metadata.setObjectName("galaxy_card_metadata_column")
-        passport = QVBoxLayout(metadata)
-        passport.setContentsMargins(0, 0, 0, 0)
-        passport.setSpacing(8)
-
+        identity = QWidget()
+        identity.setObjectName("galaxy_card_metadata_column")
+        identity_col = QVBoxLayout(identity)
+        identity_col.setContentsMargins(0, 0, 0, 0)
+        identity_col.setSpacing(7)
+        kicker = QLabel("SELECTED GALAXY")
+        kicker.setObjectName("galaxy_card_section")
+        identity_col.addWidget(kicker)
         self.name = QLabel("Choose a galaxy")
         self.name.setObjectName("galaxy_card_name")
         self.name.setWordWrap(True)
-        passport.addWidget(self.name)
-
+        identity_col.addWidget(self.name)
         self.coordinates = _metadata("Select a project from the list.")
         self.coordinates.setObjectName("galaxy_card_coordinates")
         self.coordinates.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        passport.addWidget(self.coordinates)
-
-        knowledge_header = QLabel("CATALOGUE IDENTITY")
-        knowledge_header.setObjectName("galaxy_card_section")
-        passport.addWidget(knowledge_header)
-        self.catalogue = _metadata("No user-confirmed catalogue identity")
+        identity_col.addWidget(self.coordinates)
+        self.catalogue = _metadata("No confirmed catalogue identity")
         self.catalogue.setObjectName("galaxy_card_catalogue")
         self.catalogue.setTextFormat(Qt.PlainText)
-        passport.addWidget(self.catalogue)
+        self.catalogue.setToolTip(
+            "Only user-confirmed catalogue identities. External evidence "
+            "does not change project coordinates or adopt measurements.")
+        identity_col.addWidget(self.catalogue)
+        identity_col.addStretch(1)
+        hero_row.addWidget(identity, 1)
+        body.addWidget(hero)
+
+        observations = QLabel("OBSERVATIONS")
+        observations.setObjectName("galaxy_card_section")
+        body.addWidget(observations)
+        self.dataset = _metadata("No dataset selected", selectable=True)
+        self.dataset.setObjectName("galaxy_card_dataset")
+        body.addWidget(self.dataset)
+        self.fits = _metadata("FITS: not inspected")
+        self.fits.setObjectName("galaxy_card_fits")
+        body.addWidget(self.fits)
+
+        self.details_toggle = QPushButton("Catalogue & project details  ▾")
+        self.details_toggle.setObjectName("galaxy_card_details_toggle")
+        self.details_toggle.setCheckable(True)
+        self.details_toggle.setChecked(False)
+        body.addWidget(self.details_toggle)
+
+        self.details_panel = QWidget()
+        self.details_panel.setObjectName("galaxy_card_details_panel")
+        extended = QVBoxLayout(self.details_panel)
+        extended.setContentsMargins(6, 2, 6, 2)
+        extended.setSpacing(9)
+
+        provenance_title = QLabel("CATALOGUE SOURCES")
+        provenance_title.setObjectName("galaxy_card_section")
+        extended.addWidget(provenance_title)
         self.catalogue_provenance = _metadata("", selectable=True)
         self.catalogue_provenance.setObjectName(
             "galaxy_card_catalogue_provenance")
         self.catalogue_provenance.setTextFormat(Qt.PlainText)
-        passport.addWidget(self.catalogue_provenance)
+        extended.addWidget(self.catalogue_provenance)
 
-        observation = QLabel("OBSERVATIONS")
-        observation.setObjectName("galaxy_card_section")
-        passport.addWidget(observation)
-        self.dataset = _metadata("No dataset selected", selectable=True)
-        self.dataset.setObjectName("galaxy_card_dataset")
-        passport.addWidget(self.dataset)
-        self.fits = _metadata("FITS: not inspected")
-        self.fits.setObjectName("galaxy_card_fits")
-        passport.addWidget(self.fits)
-
-        research = QLabel("PROJECT INFORMATION")
-        research.setObjectName("galaxy_card_section")
-        passport.addWidget(research)
+        project_title = QLabel("PROJECT INFORMATION")
+        project_title.setObjectName("galaxy_card_section")
+        extended.addWidget(project_title)
         self.aliases = _metadata("")
         self.aliases.setObjectName("galaxy_card_aliases")
-        passport.addWidget(self.aliases)
+        extended.addWidget(self.aliases)
         self.last_opened = _metadata("")
         self.last_opened.setObjectName("galaxy_card_last_opened")
-        passport.addWidget(self.last_opened)
+        extended.addWidget(self.last_opened)
         self.path = _metadata("", selectable=True)
         self.path.setObjectName("galaxy_card_path")
-        passport.addWidget(self.path)
+        extended.addWidget(self.path)
         self.note = _metadata("")
         self.note.setObjectName("galaxy_card_note")
-        passport.addWidget(self.note)
-        passport.addStretch(1)
-        detail.addWidget(metadata, 1)
+        extended.addWidget(self.note)
+        body.addWidget(self.details_panel)
+        self.details_panel.hide()
+        self.details_toggle.toggled.connect(self._details_toggled)
+        body.addStretch(1)
 
         scroll.setWidget(inner)
         container.addWidget(scroll, 1)
-
         self.open_button = QPushButton("Open project")
         self.open_button.setObjectName("galaxy_card_open")
         self.open_button.setEnabled(False)
+        self.open_button.setToolTip(
+            "Opens the project offline. Original FITS and previous scientific "
+            "QA are never automatically adopted.")
         self.open_button.clicked.connect(self._request_open)
         container.addWidget(self.open_button)
-        self.safety = _metadata(
-            "Opening does not download FITS or approve previous scientific QA.")
+
+        # Kept for older integrations but deliberately absent from the
+        # displayed card: the repetitive caveat is now a button tooltip.
+        self.safety = _metadata("")
         self.safety.setObjectName("galaxy_card_safety")
-        container.addWidget(self.safety)
+        self.safety.hide()
         self._set_preview_side(184)
         self.set_snapshot(None)
+
+    def _details_toggled(self, checked: bool):
+        self.details_panel.setVisible(checked)
+        self.details_toggle.setText(
+            "Hide catalogue & project details  ▴" if checked
+            else "Catalogue & project details  ▾")
 
     def _set_preview_side(self, side: int):
         """Square preview, responsive down to the 300 px narrow inspector."""
@@ -219,11 +250,10 @@ class GalaxyDetailCard(QFrame):
                 "Stored catalogue evidence is invalid or unreadable: "
                 + snapshot.knowledge_error)
             self.catalogue_provenance.show()
+            self.details_toggle.setChecked(True)
         elif catalogues:
             self.catalogue.setText("\n".join(
-                f"{entry.provider}: {entry.main_id} · "
-                "user-confirmed association"
-                + (f" · type: {entry.object_type}" if entry.object_type else "")
+                f"{entry.provider}: {entry.main_id}"
                 for entry in catalogues))
             details = []
             for entry in catalogues:
@@ -280,26 +310,26 @@ class GalaxyDetailCard(QFrame):
         )
         self.preview.setPixmap(QPixmap())
         self.preview.setText("No cached local preview")
-        self.preview_note.setVisible(snapshot.thumbnail is not None)
+        self.preview_note.hide()
         if snapshot.preview_source == "REMOTE_LEGACY_RGB":
-            self.preview_note.setText(
-                "Legacy Surveys RGB · display only · cached")
+            tooltip = ("Legacy Surveys Viewer RGB cutout; display only. "
+                       "Source and SHA-256 in the local preview receipt.")
         elif snapshot.preview_status == "READY_RECENT_STAT_NOT_FITS_REHASHED":
-            self.preview_note.setText("Local FITS · display only")
+            tooltip = ("Local original-FITS image; display only. "
+                       "Source FITS integrity not rehashed at startup.")
         else:
-            self.preview_note.setText(
-                "Local preview · unverified provenance")
+            tooltip = "Preview only. No photometric measurement or QA adoption."
         if snapshot.thumbnail is not None:
             image = QPixmap(str(snapshot.thumbnail))
             if (image.isNull()
                     and snapshot.preview_source == "REMOTE_LEGACY_RGB"
                     and snapshot.local_thumbnail is not None):
                 image = QPixmap(str(snapshot.local_thumbnail))
-                self.preview_note.setText(
-                    "Remote RGB unreadable · local FITS fallback · display only")
+                tooltip = "Remote RGB unreadable; local FITS fallback (display only)"
             if not image.isNull():
                 self._pixmap = image
                 self._update_preview()
+        self.preview.setToolTip(tooltip)
 
     def _update_preview(self) -> None:
         if self._pixmap is not None:
