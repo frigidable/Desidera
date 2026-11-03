@@ -60,7 +60,7 @@ def test_documented_release_specific_rgb_layers_and_actual_square(tmp_path):
         p.selected_dataset = (release, region, "1554p180", "r")
         assert request_for_project(p)["layer"] == expected
     p.selected_dataset = ("dr11", "north", "1554p180", "r")
-    with pytest.raises(ValueError, match="no release"):
+    with pytest.raises(ValueError, match="release/region-specific"):
         request_for_project(p)
 
 
