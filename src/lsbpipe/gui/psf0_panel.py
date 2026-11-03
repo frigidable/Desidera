@@ -65,6 +65,8 @@ class PSF0Panel(QGroupBox):
         self.protection.setRange(1., 1800.)
         self.protection.setDecimals(1)
         self.protection.setValue(90.)
+        self.fwhm.valueChanged.connect(self._parameters_changed)
+        self.protection.valueChanged.connect(self._parameters_changed)
         self.protection.setSuffix(" arcsec")
         self.protection.setToolTip(
             "Preliminary exclusion circle around Leo P. Must be reviewed "
