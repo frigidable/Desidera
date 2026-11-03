@@ -396,6 +396,10 @@ class PSF0Panel(QGroupBox):
             f"\nBuilder smoothing: "
             f"{solver.get('smoothing_kernel_final_if_reported', 'unknown')}"
             f"\nBuilder fit box: {solver.get('fit_shape_final_if_reported', 'unknown')}"
+            f"\nBuilder wing smoothing: "
+            f"{solver.get('wing_smoothing_requested', 'unknown')}"
+            f"\nIterations run: "
+            f"{solver.get('iterations_performed_if_reported', 'unknown')}"
             f"\nBuilder converged: {solver.get('converged_if_reported', 'unknown')}")
         self.qa.setPlainText(
             payload.get("reason", "PSF reconstruction quality failure")
