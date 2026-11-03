@@ -481,7 +481,8 @@ def build_empirical_coadd_psf(
             bool(fitted.converged) if hasattr(fitted, "converged") else None),
         "final_converged_fraction_if_reported": (
             float(fitted.final_converged_fraction)
-            if getattr(fitted, "final_converged_fraction", None) is not None
+            if (getattr(fitted, "final_converged_fraction", None) is not None
+                and math.isfinite(float(fitted.final_converged_fraction)))
             else None),
     }
     psf_model = fitted.epsf if hasattr(fitted, "epsf") else fitted[0]
