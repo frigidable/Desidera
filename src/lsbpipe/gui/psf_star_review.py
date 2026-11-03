@@ -121,6 +121,7 @@ class PSFStarReviewDialog(QDialog):
             raise ValueError("Unsupported or missing PSF training-star review data")
         self.snapshot = snapshot
         self._controls = {}
+        self._min_train = int(snapshot.get("min_train_stars", 1))
         self.setWindowTitle("Desidera · PSF training-star mosaic · manual review")
         self.setObjectName("psf0_training_star_mosaic")
         self.resize(1160, 770)
@@ -134,7 +135,7 @@ class PSFStarReviewDialog(QDialog):
         notice = QLabel(
             "Exclusions affect ONLY the ePSF training sample. Independent "
             "holdout stars stay untouched. Changes apply only after clicking "
-            "Apply exclusions & rebuild; current model remains non-adopted.")
+            "Apply & save exclusions + rebuild; current model remains non-adopted.")
         notice.setWordWrap(True)
         root.addWidget(notice)
         self.count_label = QLabel()
@@ -219,7 +220,7 @@ class PSFStarReviewDialog(QDialog):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         footer.addWidget(self.cancel_button)
-        self.apply_button = QPushButton("Apply exclusions & rebuild")
+        self.apply_button = QPushButton("Apply, save exclusions & rebuild")
         self.apply_button.setObjectName("psf0_apply_exclusions")
         self.apply_button.clicked.connect(self.accept)
         footer.addWidget(self.apply_button)
@@ -233,10 +234,12 @@ class PSFStarReviewDialog(QDialog):
     def _update_counts(self, *_):
         count = len(self._controls)
         excluded = len(self.excluded_ids())
+        remaining = count-excluded
         self.count_label.setText(
             f"Training candidate cards: {count} · excluded manually: "
-            f"{excluded} · to rebuild: {count-excluded}. "
+            f"{excluded} · to rebuild: {remaining} (minimum {self._min_train}). "
             "No holdout object is selectable.")
+        self.apply_button.setEnabled(remaining >= self._min_train)
 
     def excluded_ids(self):
         return tuple(sorted(k for k, ctrl in self._controls.items()
