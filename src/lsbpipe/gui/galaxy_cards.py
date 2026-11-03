@@ -109,9 +109,11 @@ class GalaxyDetailCard(QFrame):
         detail.addWidget(knowledge_header)
         self.catalogue = _metadata("No user-confirmed catalogue identity")
         self.catalogue.setObjectName("galaxy_card_catalogue")
+        self.catalogue.setTextFormat(Qt.PlainText)
         detail.addWidget(self.catalogue)
         self.catalogue_provenance = _metadata("", selectable=True)
         self.catalogue_provenance.setObjectName("galaxy_card_catalogue_provenance")
+        self.catalogue_provenance.setTextFormat(Qt.PlainText)
         detail.addWidget(self.catalogue_provenance)
 
         observation = QLabel("OBSERVATIONS")
