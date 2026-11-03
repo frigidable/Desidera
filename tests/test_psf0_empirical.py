@@ -194,3 +194,31 @@ def test_rejected_epsf_retains_star_diagnostics_without_export(monkeypatch):
     assert diagnostic["holdout"]
     assert len(diagnostic["training"]) == diagnostic["n_train"]
     assert "STRONG_NEGATIVE_EPSF_RINGING" == diagnostic["reason_code"]
+
+
+def test_photutils31_wing_smoothing_ab_is_executed_and_audited():
+    import inspect
+    from photutils.psf import EPSFBuilder
+    from lsbpipe.photometry.psf_empirical import PSF0QualityError
+    if "wing_smoothing" not in inspect.signature(EPSFBuilder).parameters:
+        pytest.skip("photutils <3.1 lacks native wing_smoothing option")
+    config = PSF0Config(
+        wing_smoothing=False, min_train_stars=6,
+        min_holdout_stars=2, max_training_stars=30)
+    try:
+        proposal = build_empirical_coadd_psf(
+            fake_frame(), target_icrs_deg=LEO_P,
+            target_protection_arcsec=13., config=config)
+    except PSF0QualityError as exc:
+        diagnostic = exc.diagnostics
+        assert diagnostic["status"] == "PSF0_QUALITY_REJECTED_NOT_ADOPTED"
+        solver = diagnostic["solver_diagnostics"]
+        assert diagnostic["psf_recipe"]["wing_smoothing"] is False
+    else:
+        assert proposal.status == STATUS
+        solver = proposal.metrics["solver_diagnostics"]
+        assert proposal.recipe.wing_smoothing is False
+    assert solver["wing_smoothing_requested"] is False
+    assert solver["wing_smoothing_explicitly_set"] is True
+    assert solver["max_iterations_requested"] == 8
+    assert solver["photutils_version"]
