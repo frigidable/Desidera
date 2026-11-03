@@ -39,7 +39,10 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(b"not a FITS; UI existence-only fixture")
 
+    configurations = []
+
     def fake_backend(root, *, band, config, protection_arcsec, progress=None):
+        configurations.append(config)
         if progress is not None:
             progress((0, 1, "Synthetic QA-rejected star sample"))
         assert root == str(project.root)
@@ -76,6 +79,8 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     panel = window.photometry_workspace.psf0_panel
     assert window.preview_tabs.currentWidget() is window.photometry_workspace
     assert panel.run_btn.isEnabled()
+    assert panel.experiment.count() == 4
+    assert panel.experiment.currentData() == "baseline"
     assert panel.band.currentData() == "r"
     assert panel.protection.value() == pytest.approx(90.)
     assert not panel.save_btn.isEnabled()
@@ -97,7 +102,26 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     assert "PSF0_QUALITY_REJECTED_NOT_ADOPTED" in copied
     assert "signed_kernel_qa" in copied
     assert "signed_kernel_values_for_qa_only" not in copied
+    assert '"comparison_trials_not_adopted"' in copied
+    assert "baseline: neg 7.50%" in panel.compare.text()
     assert not panel.save_btn.isEnabled()
+    # A second reconstruction can change the outer-sky annulus while the
+    # historical baseline remains visible and traceable as non-adopted.
+    panel.experiment.setCurrentIndex(panel.experiment.findData("outer_sky"))
+    assert not panel.copy_qa_btn.isEnabled()
+    assert "baseline: neg 7.50%" in panel.compare.text()
+    panel.run_btn.click()
+    qtbot.waitUntil(lambda: window.thread is None, timeout=15000)
+    assert len(configurations) == 2
+    assert configurations[-1].cutout_size_pix == 51
+    assert configurations[-1].sky_annulus_inner_pix == 19.
+    assert "outer_sky: neg 7.50%" in panel.compare.text()
+    assert "baseline: neg 7.50%" in panel.compare.text()
+    assert panel.copy_qa_btn.isEnabled()
+    panel.copy_qa_btn.click()
+    copied_comparison = QApplication.clipboard().text()
+    assert '"experiment": "baseline"' in copied_comparison
+    assert '"experiment": "outer_sky"' in copied_comparison
     # Changing the recipe must invalidate rejection evidence, not just a
     # successful result, to prevent accidental cross-recipe reporting.
     panel.fwhm.setValue(5.5)
