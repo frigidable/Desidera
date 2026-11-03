@@ -437,9 +437,30 @@ def build_empirical_coadd_psf(
             c["image"], weights=c["weights"],
             cutout_center=c["center_in_cutout"],
             id_label=entry[0]))
-    fitted = EPSFBuilder(
+    # Retain explicit installed-version/solver policy information: photutils
+    # 3.1 changed default smoothing and centroid-fit box behavior. Merely
+    # hashing the Desidera recipe is not enough to reproduce this model.
+    builder = EPSFBuilder(
         oversampling=1, shape=(cfg.cutout_size_pix, cfg.cutout_size_pix),
-        maxiters=cfg.max_iterations, progress_bar=False)(EPSFStars(epsf_stars))
+        maxiters=cfg.max_iterations, progress_bar=False)
+    fitted = builder(EPSFStars(epsf_stars))
+    solver_diagnostics = {
+        "photutils_version": str(photutils.__version__),
+        "smoothing_kernel_requested_or_default": str(
+            getattr(builder, "smoothing_kernel", "LIBRARY_DEFAULT_NOT_REPORTED")),
+        "smoothing_kernel_final_if_reported": str(
+            getattr(fitted, "smoothing_kernel", "NOT_REPORTED")),
+        "fit_shape_requested_or_default": str(
+            getattr(builder, "fit_shape", "LIBRARY_DEFAULT_NOT_REPORTED")),
+        "fit_shape_final_if_reported": str(
+            getattr(fitted, "fit_shape", "NOT_REPORTED")),
+        "converged_if_reported": (
+            bool(fitted.converged) if hasattr(fitted, "converged") else None),
+        "final_converged_fraction_if_reported": (
+            float(fitted.final_converged_fraction)
+            if getattr(fitted, "final_converged_fraction", None) is not None
+            else None),
+    }
     psf_model = fitted.epsf if hasattr(fitted, "epsf") else fitted[0]
     raw_kernel = np.asarray(psf_model.data, dtype=float)
     if raw_kernel.shape != (cfg.cutout_size_pix, cfg.cutout_size_pix):
@@ -457,6 +478,7 @@ def build_empirical_coadd_psf(
             "negative_absolute_mass_fraction": negative_fraction,
             "blocking_threshold_fraction": .025,
             "signed_kernel_qa": signed_diagnostics,
+            "solver_diagnostics": solver_diagnostics,
             # An unaltered rejected model can be visualized in the GUI, but
             # never normalized, used for photometry or exported as a PSF.
             "signed_kernel_values_for_qa_only": raw_kernel.tolist(),
@@ -537,6 +559,7 @@ def build_empirical_coadd_psf(
         "holdout_diagnostics": checks,
         "epsf_negative_mass_fraction_before_clipping": negative_fraction,
         "signed_epsf_diagnostics_before_clipping": signed_diagnostics,
+        "solver_diagnostics": solver_diagnostics,
         "initial_detection_background_nMgy_per_pixel": float(sky0),
         "initial_detection_rms_nMgy_per_pixel": float(std0),
         "assumed_detection_fwhm_pix_not_measured": cfg.guessed_fwhm_pix,
