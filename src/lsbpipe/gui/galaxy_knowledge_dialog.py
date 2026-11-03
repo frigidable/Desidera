@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout, QLabel,
+    QComboBox,
     QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
     QAbstractItemView,
 )
@@ -51,6 +52,17 @@ class GalaxyKnowledgeDialog(QDialog):
         self.radius.setSuffix(" arcsec")
         self.radius.setEnabled(self.project.field is not None)
         controls.addWidget(self.radius)
+        controls.addWidget(QLabel("SIMBAD server"))
+        self.endpoint_policy = QComboBox()
+        self.endpoint_policy.setObjectName("knowledge_endpoint_policy")
+        self.endpoint_policy.addItem("Automatic · Strasbourg → Harvard", "auto")
+        self.endpoint_policy.addItem("Automatic · Harvard → Strasbourg", "prefer_harvard")
+        self.endpoint_policy.addItem("Strasbourg only", "strasbourg_only")
+        self.endpoint_policy.addItem("Harvard only", "harvard_only")
+        self.endpoint_policy.setToolTip(
+            "Only the two official SIMBAD/astroquery mirrors. "
+            "Failover occurs on network/service errors, not empty searches.")
+        controls.addWidget(self.endpoint_policy)
         controls.addStretch(1)
         self.search_btn = QPushButton("Search SIMBAD…")
         self.search_btn.setObjectName("knowledge_search_simbad")
@@ -62,6 +74,10 @@ class GalaxyKnowledgeDialog(QDialog):
         self.status.setObjectName("knowledge_search_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
+        self.endpoint_note = QLabel("Server provenance: no query yet.")
+        self.endpoint_note.setObjectName("knowledge_endpoint_provenance")
+        self.endpoint_note.setWordWrap(True)
+        root.addWidget(self.endpoint_note)
 
         self.table = QTableWidget(0, 5)
         self.table.setObjectName("knowledge_candidate_table")
@@ -116,6 +132,20 @@ class GalaxyKnowledgeDialog(QDialog):
 
     def _show_snapshot(self, digest: str, data: dict):
         self._snapshot_digest = digest
+        provenance = data.get("endpoint_evidence") or {}
+        host = provenance.get("endpoint_host")
+        if host:
+            failed = provenance.get("failed_attempts") or []
+            attempted = provenance.get("attempted_hosts") or []
+            self.endpoint_note.setText(
+                f"SIMBAD server: {host} · "
+                + ("fallback after " + ", ".join(
+                    f["host"] for f in failed) if failed else "primary/selected endpoint")
+                + (f" · tried {len(attempted)} endpoint(s)" if attempted else "")
+                + " · external identity unverified")
+        else:
+            self.endpoint_note.setText(
+                "SIMBAD server: not recorded in this older snapshot")
         candidates = data["candidates"]
         self.table.setRowCount(0)
         for c in candidates:
@@ -155,13 +185,15 @@ class GalaxyKnowledgeDialog(QDialog):
         project = self.project
         field = project.field
         self.search_btn.setEnabled(False)
+        self.endpoint_policy.setEnabled(False)
         self.confirm_btn.setEnabled(False)
         self.status.setText("Contacting SIMBAD · no local scientific data will change…")
         self._future = _POOL.submit(
             query_simbad_candidates, name=project.display_name,
             ra_deg=field.ra_deg if field else None,
             dec_deg=field.dec_deg if field else None,
-            radius_arcsec=self.radius.value())
+            radius_arcsec=self.radius.value(),
+            mirror_policy=self.endpoint_policy.currentData())
         self._poll.start()
 
     def _check_result(self):
@@ -170,6 +202,7 @@ class GalaxyKnowledgeDialog(QDialog):
         future, self._future = self._future, None
         self._poll.stop()
         self.search_btn.setEnabled(True)
+        self.endpoint_policy.setEnabled(True)
         try:
             response = future.result()
             digest = store_simbad_snapshot(self.project_root, response)
