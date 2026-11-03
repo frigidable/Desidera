@@ -418,6 +418,30 @@ class PSF0Panel(QGroupBox):
         self.summary.setText("No PSF saved or adopted. Original FITS unchanged.")
         self._update_buttons()
 
+    def _attach_star_review(self, payload: dict):
+        """Expose saved checkboxes for review, but don't auto-alter PSF."""
+        current = payload.get("star_review")
+        if current is None:
+            self._star_review_data = None
+            return
+        saved = payload.get("saved_manual_review")
+        if saved and not current.get("excluded_training_star_ids"):
+            # Data has already been SHA- and recipe-matched in the worker.
+            # The researcher must still inspect and click Apply; baseline
+            # remains exactly the default algorithm until then.
+            self._star_review_data = {
+                **current,
+                "excluded_training_star_ids": tuple(
+                    saved["excluded_training_star_ids"]),
+            }
+            self.prior_source.setText(
+                self.prior_source.text()
+                + " Previous training-star exclusions found for these "
+                "original FITS; inspect them in Review training stars. "
+                "They were NOT applied automatically.")
+        else:
+            self._star_review_data = current
+
     def show_quality_rejection(self, payload: dict):
         """Rejected ePSF: inspect its signed structure, never adopt a kernel."""
         if (self._project_root is None or
@@ -425,7 +449,7 @@ class PSF0Panel(QGroupBox):
             self.show_failure("Rejected PSF belongs to another Galaxy Project")
             return
         self._preview = None
-        self._star_review_data = payload.get("star_review")
+        self._attach_star_review(payload)
         self._qa_payload = {
             "science_status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
             "source_project": str(self._project_root),
@@ -645,7 +669,7 @@ class PSF0Panel(QGroupBox):
             return
         result = preview["result"]
         self._preview = preview
-        self._star_review_data = preview.get("star_review")
+        self._attach_star_review(preview)
         report = result.report()
         self._qa_payload = report
         self.status.setText(
