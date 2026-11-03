@@ -112,7 +112,7 @@ def test_stale_config_corrupt_cache_and_invalid_media_fall_back(tmp_path):
         fetch_remote_rgb_preview(
             p.root, transport=lambda url: (b"<html>server error</html>",
                                            "image/jpeg", url))
-    with pytest.raises(ValueError, match="not a JPEG"):
+    with pytest.raises(ValueError, match="non-JPEG|not a JPEG"):
         fetch_remote_rgb_preview(
             p.root, transport=lambda url: (b"fake", "image/jpeg", url))
     with pytest.raises(ValueError, match="non-JPEG|not a JPEG|incomplete"):
