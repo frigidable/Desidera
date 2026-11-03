@@ -392,3 +392,44 @@ def test_training_outlier_screening_does_not_touch_fixed_holdouts():
     assert auto.isdisjoint({s.star_id for s in holdout0})
     assert auto.isdisjoint({s.star_id for s in train1})
     assert len(auto) <= max(1,int(.2*len(train0)))
+
+
+def test_brightness_rank_guard_preserves_original_training_and_holdout(
+        monkeypatch):
+    from dataclasses import replace
+    import lsbpipe.photometry.psf_empirical as module
+
+    frame=fake_frame()
+    cfg=PSF0Config(
+        min_train_stars=6,min_holdout_stars=2,
+        max_training_stars=30,min_neighbor_separation_pix=32.)
+    def synthetic_brightness_coupled_score(entry, kernel, *,
+                                           guessed_fwhm_pix):
+        amplitude=float(entry[-1]["peak_nMgy"])
+        return {
+            "star_id":entry[0],
+            "score":1. + 0.001*amplitude + 30.*(amplitude > 175.),
+            "amplitude_nMgy_diagnostic":amplitude,
+            "metric":"SYNTHETIC_BRIGHTNESS_BIAS_NOT_A_PSF_QUALITY_SCORE",
+        }
+    monkeypatch.setattr(
+        module, "training_star_residual", synthetic_brightness_coupled_score)
+    initial=module.build_empirical_coadd_psf(
+        frame,target_icrs_deg=LEO_P,
+        target_protection_arcsec=13.,config=cfg)
+    guarded=module.build_empirical_coadd_psf(
+        frame,target_icrs_deg=LEO_P,target_protection_arcsec=13.,
+        config=replace(cfg,training_outlier_passes=2))
+    evidence=guarded.review_snapshot["training_residual_screening_history"]
+    assert evidence and evidence[0]["n_above_cutoff"] > 0
+    assert evidence[0]["brightness_score_coupling_qa"]["auto_trim_blocked"]
+    assert evidence[0]["proposed_before_brightness_guard"]
+    assert evidence[0]["selected_for_exclusion"] == []
+    assert guarded.review_snapshot["automatic_training_rejections"] == ()
+    assert len(guarded.training) == len(initial.training)
+    assert {s.star_id for s in guarded.holdout} == {
+        s.star_id for s in initial.holdout}
+    assert {s.star_id for s in guarded.training} == {
+        s.star_id for s in initial.training}
+    assert np.allclose(guarded.kernel,initial.kernel,atol=1e-12)
+    assert "AUTO_TRAINING_TRIM_BLOCKED_BY_SCORE_FLUX_COUPLING" in guarded.flags
