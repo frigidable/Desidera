@@ -60,11 +60,15 @@ def test_ned_dialog_manual_only_then_confirm_and_offline_reopen(
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     dialog.confirm_btn.click()
     assert "Leo P" in dialog.confirmed.text()
+    assert 'href="https://ned.ipac.caltech.edu/byname?objname=Leo+P"' in (
+        dialog.confirmed.text())
+    assert dialog.confirmed.openExternalLinks()
 
     reopened = ned_gui.NedKnowledgeDialog(project.root)
     qtbot.addWidget(reopened)
     assert reopened.confirm_btn.isEnabled()
     assert "Leo P" in reopened.confirmed.text()
+    assert 'ned.ipac.caltech.edu/byname?objname=Leo+P' in reopened.confirmed.text()
     assert len(calls) == 1
 
     with offline_legacy_viewer():
@@ -73,7 +77,10 @@ def test_ned_dialog_manual_only_then_confirm_and_offline_reopen(
     hub.show()
     assert hub.catalogues_menu_btn.isVisible()
     assert hub.ned_action.isEnabled()
-    assert "NED: Leo P" in hub.galaxy_card.catalogue.text()
+    assert "NED: " in hub.galaxy_card.catalogue.text()
+    assert "Leo P" in hub.galaxy_card.catalogue.text()
+    assert 'href="https://ned.ipac.caltech.edu/byname?objname=Leo+P"' in (
+        hub.galaxy_card.catalogue.text())
     assert "unadopted" in hub.galaxy_card.catalogue_provenance.text()
     assert manifest.read_bytes() == before
 
