@@ -74,8 +74,19 @@ a descriptive coordinate difference and unadopted NED redshift.
 Automated cross-catalogue identity reconciliation, positional TAP search,
 and comprehensive literature measurements remain future work.
 
-See `docs/architecture/GALAXY_KNOWLEDGE_READ_MODEL_P10A.md` for the
-catalogue-evidence/read-model contract and local Windows pilot.
+Galaxy Projects also lazily generates a **local, display-only original-FITS
+thumbnail** for the selected galaxy when a linked IMAGE product is
+available. The grayscale preview uses the saved project ICRS and WCS,
+and is cached under `.desidera/card-preview.png` with an independent
+provenance receipt. Reopening a cached galaxy does not decode the FITS
+again; source changes invalidate the cache. Use **Regenerate local FITS
+preview** to refresh explicitly. No automatic photometry, downloads,
+background estimation, original FITS writes or scientific adoption.
+
+See `docs/architecture/LOCAL_GALAXY_CARD_PREVIEWS_P10C.md` for the preview
+source/size limits and Windows pilot, and
+`docs/architecture/GALAXY_KNOWLEDGE_READ_MODEL_P10A.md` for the
+catalogue-evidence/read-model contract.
 
 See `docs/architecture/OBJECT_CENTRIC_PROJECT_HUB_DESIGN.md` for the
 lifecycle and caveats. Old source FITS remain read-only; no QA output is
