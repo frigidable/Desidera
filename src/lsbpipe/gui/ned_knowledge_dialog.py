@@ -126,7 +126,9 @@ class NedKnowledgeDialog(QDialog):
                 "Aliases (not adopted): " +
                 ", ".join(result.get("aliases_unadopted", [])[:12]),
                 "NED API version: " + result["api_version"],
-                "Catalogue values are external, unadopted evidence.",
+                "Catalogue values are external, unadopted evidence. "
+                "ObjectLookup freshness versus NED's 2026 Overview API "
+                "has not been independently established.",
             ]
             self.response.setText("\n".join(details))
         elif status == "AMBIGUOUS_NAME":
