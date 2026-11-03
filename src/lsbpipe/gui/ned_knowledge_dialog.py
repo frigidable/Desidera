@@ -4,7 +4,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
@@ -62,9 +62,7 @@ class NedKnowledgeDialog(QDialog):
         self.response = QLabel("No cached NED result.")
         self.response.setObjectName("ned_lookup_response")
         self.response.setWordWrap(True)
-        self.response.setTextInteractionFlags(
-            self.response.textInteractionFlags() |
-            self.response.textInteractionFlags().TextSelectableByMouse)
+        self.response.setTextInteractionFlags(Qt.TextSelectableByMouse)
         outer.addWidget(self.response, 1)
         self.confirmed = QLabel("No user-confirmed NED association.")
         self.confirmed.setObjectName("ned_confirmed")
