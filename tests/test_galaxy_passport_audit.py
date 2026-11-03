@@ -33,7 +33,7 @@ def _audit(project, *, record_status="FITS_WCS_VALIDATED_DIAGNOSTIC"):
         file.write_bytes((kind + " - test original contents").encode("ascii"))
         st = file.stat()
         products[kind] = {
-            "relative_path": product.relative_path.as_posix(),
+            "relative_path": product.relative_path,
             "size_bytes": st.st_size, "mtime_ns": st.st_mtime_ns,
             "sha256_local": hashlib.sha256(file.read_bytes()).hexdigest(),
         }
