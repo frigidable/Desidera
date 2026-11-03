@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Callable
 
 from lsbpipe.photometry.native_fits import load_native_legacy_quartet
-from lsbpipe.photometry.psf_empirical import PSF0Config, PSF0Result, build_empirical_coadd_psf
+from lsbpipe.photometry.psf_empirical import (
+    PSF0Config, PSF0Result, PSF0QualityError, build_empirical_coadd_psf,
+)
 from lsbpipe.photometry.psf_export import export_psf0_diagnostic
 from lsbpipe.surveys.dataset_integrity import _expected_paths
 from lsbpipe.surveys.object_projects import read_object_project
@@ -98,11 +100,24 @@ def run_gui_psf0(
         project.data_root, release=release, region=region, brick=brick,
         band=band, hash_inputs=True, require_explicit_bunit=True)
     _progress(progress, f"Building provisional {band} PSF · star selection, sky, holdout")
-    result = build_empirical_coadd_psf(
-        frame, target_icrs_deg=LEO_P_CENTER,
-        target_protection_arcsec=float(protection_arcsec), config=config)
+    try:
+        result = build_empirical_coadd_psf(
+            frame, target_icrs_deg=LEO_P_CENTER,
+            target_protection_arcsec=float(protection_arcsec), config=config)
+    except PSF0QualityError as exc:
+        # This is a *normal scientific rejection* with useful candidate-star
+        # evidence, not an exception that should lose context in a GUI popup.
+        return {
+            "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "reason": str(exc),
+            "diagnostics": exc.diagnostics,
+            "project_id": snapshot["project_id"],
+            "project_root": snapshot["project_root"],
+            "dataset": snapshot["dataset"],
+        }
     _progress(progress, f"Completed provisional {band} PSF · not science-adopted")
     return {
+        "status": "EXPERIMENTAL_PSF_NOT_ADOPTED",
         "result": result,
         "project_id": snapshot["project_id"],
         "project_root": snapshot["project_root"],
