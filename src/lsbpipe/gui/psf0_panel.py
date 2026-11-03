@@ -347,11 +347,21 @@ class PSF0Panel(QGroupBox):
         raw = diagnostic.get("signed_kernel_values_for_qa_only")
         if raw is not None:
             self._show_signed_rejected_kernel(raw)
+        solver = diagnostic.get("solver_diagnostics", {})
+        solver_text = (
+            f"\n\nPhotutils version: {solver.get('photutils_version', 'unknown')}"
+            f"\nBuilder smoothing: "
+            f"{solver.get('smoothing_kernel_final_if_reported', 'unknown')}"
+            f"\nBuilder fit box: {solver.get('fit_shape_final_if_reported', 'unknown')}"
+            f"\nBuilder converged: {solver.get('converged_if_reported', 'unknown')}")
         self.qa.setPlainText(
             payload.get("reason", "PSF reconstruction quality failure")
+            + "\n\nSigned ePSF preview: cyan = positive, red = negative; "
+            "nonlinear contrast for diagnosis only."
             + "\n\nNegative contribution by radial zone "
             "(radii use an assumed detection FWHM, NOT a measured FWHM):\n"
             + ("\n".join(breakdown) if breakdown else "Unavailable")
+            + solver_text
             + "\n\nRejected candidates: "
             + str(diagnostic.get("rejected_reasons", {}))
             + "\n\n"
