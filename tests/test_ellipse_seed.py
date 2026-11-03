@@ -46,7 +46,7 @@ def test_fails_gracefully_on_non_detected_target():
         propose_isophotal_seed(im, 1., np.ones_like(im, bool), (25., 25.))
     with pytest.raises(ValueError, match="outside"):
         propose_isophotal_seed(im, 1., np.ones_like(im, bool), (200., 25.))
-    with pytest.raises(ValueError, match="positive RMS"):
+    with pytest.raises(ValueError, match="finite and positive"):
         propose_isophotal_seed(im, 0., np.ones_like(im, bool), (25., 25.))
 
 
