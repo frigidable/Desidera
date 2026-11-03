@@ -9,7 +9,7 @@ the saved Galaxy Workspace *default band*.
 from __future__ import annotations
 
 from hashlib import sha256
-from dataclasses import replace
+from dataclasses import replace, asdict
 import json
 import math
 import os
@@ -123,6 +123,44 @@ def _progress(progress: Callable | None, text: str):
             checkpoint()
 
 
+def _saved_manual_exclusions(project, source_hashes, *,
+                             release, region, brick, band, config, radius):
+    """Read only matching source+recipe reviews; never silently apply one."""
+    directory = project.root / "analyses" / "psf-pilots" / "star-reviews"
+    if not directory.is_dir() or directory.is_symlink():
+        return None
+    required_recipe = asdict(config)
+    required_recipe.pop("excluded_training_star_ids", None)
+    candidates = []
+    for path in list(directory.glob("review-*.json"))[:1000]:
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf8"))
+            recipe = data["recipe"]
+            original_recipe = {k:v for k,v in recipe.items()
+                               if k!="excluded_training_star_ids"}
+            ids = data["excluded_training_star_ids"]
+            if (data.get("schema") !=
+                    "desidera.psf0-manual-training-review/1"
+                    or data.get("project_id") != project.project_id
+                    or data.get("dataset") != [release, region, brick, band]
+                    or data.get("source_sha256_local") != source_hashes
+                    or data.get("target_protection_arcsec") != radius
+                    or original_recipe != required_recipe
+                    or not isinstance(ids, list) or
+                    any(not isinstance(k, str) for k in ids)):
+                continue
+            candidates.append((path.stat().st_mtime_ns, path, ids))
+        except (OSError, ValueError, TypeError, KeyError):
+            continue
+    if not candidates:
+        return None
+    _, path, ids = max(candidates, key=lambda x: (x[0],str(x[1])))
+    return {"excluded_training_star_ids": tuple(ids),
+            "receipt_path": str(path), "auto_applied": False}
+
+
 def run_gui_psf0(
     project_root: str | Path, *,
     band: str, config: PSF0Config,
@@ -143,6 +181,10 @@ def run_gui_psf0(
     frame = load_native_legacy_quartet(
         project.data_root, release=release, region=region, brick=brick,
         band=band, hash_inputs=True, require_explicit_bunit=True)
+    previous_review = _saved_manual_exclusions(
+        project, dict(frame.source_evidence.get("local_hashes", {})),
+        release=release, region=region, brick=brick, band=band,
+        config=config, radius=float(protection_arcsec))
     _progress(progress, f"Building provisional {band} PSF · star selection, sky, holdout")
     try:
         result = build_empirical_coadd_psf(
@@ -157,6 +199,8 @@ def run_gui_psf0(
             "reason": str(exc),
             "diagnostics": exc.diagnostics,
             "star_review": exc.review_snapshot,
+            "saved_manual_review": previous_review,
+            "target_protection_arcsec": float(protection_arcsec),
             "source_hashes": dict(frame.source_evidence.get("local_hashes", {})),
             "project_id": snapshot["project_id"],
             "project_root": snapshot["project_root"],
@@ -168,6 +212,8 @@ def run_gui_psf0(
         "review_band": band,
         "result": result,
         "star_review": result.review_snapshot,
+        "saved_manual_review": previous_review,
+        "target_protection_arcsec": float(protection_arcsec),
         "source_hashes": dict(result.source_hashes),
         "project_id": snapshot["project_id"],
         "project_root": snapshot["project_root"],
@@ -258,6 +304,7 @@ def commit_psf0_manual_review(preview, *, explicitly_confirmed=False):
         "project_id": project.project_id,
         "dataset": [release, region, brick, band],
         "source_sha256_local": dict(source_hashes),
+        "target_protection_arcsec": float(preview["target_protection_arcsec"]),
         "recipe": (preview["result"].report()["recipe"] if "result" in preview
                    else preview["diagnostics"]["psf_recipe"]),
         "excluded_training_star_ids": list(exclusions),
