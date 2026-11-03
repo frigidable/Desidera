@@ -92,3 +92,52 @@ def test_review_btn_only_enabled_after_snapshot_and_emits_apply_rebuild(qtbot,
     assert calls[0]["project_root"] == "C:/test/Leo_P"
     assert not panel.review_btn.isEnabled()
     assert panel.active_preview is None
+
+
+def test_persisted_training_exclusions_are_prechecked_not_automatically_fitted(qtbot):
+    snapshot = _snapshot()
+    snapshot["excluded_training_star_ids"] = ("star-0002",)
+    dialog = PSFStarReviewDialog(snapshot)
+    qtbot.addWidget(dialog)
+    assert dialog.excluded_ids() == ("star-0002",)
+    assert dialog.changed() is False
+    assert dialog.findChild(
+        QCheckBox, "psf0_exclude_star-0002").isChecked()
+    dialog.findChild(QCheckBox, "psf0_exclude_star-0002").setChecked(False)
+    assert dialog.excluded_ids() == ()
+    assert dialog.changed()
+    # When a sufficient sample is not left, the UI must refuse Apply.
+    too_strict = _snapshot()
+    too_strict["min_train_stars"] = 2
+    blocking_dialog = PSFStarReviewDialog(too_strict)
+    qtbot.addWidget(blocking_dialog)
+    assert blocking_dialog.apply_button.isEnabled()
+    blocking_dialog.findChild(
+        QCheckBox, "psf0_exclude_star-0014").setChecked(True)
+    assert not blocking_dialog.apply_button.isEnabled()
+
+
+def test_auto_fwhm_suggestion_is_optional_and_protection_radius_unaffected(qtbot):
+    panel = PSF0Panel()
+    qtbot.addWidget(panel)
+    panel._project_root = "C:/test/Leo_P"
+    panel.band.addItem("g", "g")
+    panel.protection.setValue(90.)
+    panel.show_fwhm_suggestion({
+        "project_root":"C:/test/Leo_P", "band":"g",
+        "seeing":{"available":True,
+                  "psfsize_arcsec":1.2,
+                  "image_pixel_scale_arcsec":.262,
+                  "suggested_detection_fwhm_pix":1.2/.262},
+    })
+    assert panel.fwhm.value() == pytest.approx(round(1.2/.262,2))
+    assert panel.protection.value() == pytest.approx(90.)
+    assert "PSFSIZE" in panel.prior_source.text()
+    last = panel.fwhm.value()
+    panel.show_fwhm_suggestion({
+        "project_root":"C:/test/Leo_P", "band":"g",
+        "seeing":{"available":False,
+                  "message":"Optional local PSFSIZE map absent"},
+    })
+    assert panel.fwhm.value() == last
+    assert panel.protection.value() == 90.
