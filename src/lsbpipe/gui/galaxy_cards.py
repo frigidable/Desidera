@@ -103,6 +103,9 @@ class GalaxyDetailCard(QFrame):
         self.preview.setMaximumHeight(155)
         self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         detail.addWidget(self.preview)
+        self.preview_note = _metadata("")
+        self.preview_note.setObjectName("galaxy_card_preview_note")
+        detail.addWidget(self.preview_note)
 
         knowledge_header = QLabel("CATALOGUE IDENTITY")
         knowledge_header.setObjectName("galaxy_card_section")
@@ -167,6 +170,7 @@ class GalaxyDetailCard(QFrame):
             self.coordinates.setText("Select a project from the list.")
             self.preview.setPixmap(QPixmap())
             self.preview.setText("No galaxy selected")
+            self.preview_note.hide()
             self.dataset.clear()
             self.fits.clear()
             self.aliases.hide()
@@ -250,6 +254,12 @@ class GalaxyDetailCard(QFrame):
         )
         self.preview.setPixmap(QPixmap())
         self.preview.setText("No cached local preview")
+        self.preview_note.setVisible(snapshot.thumbnail is not None)
+        self.preview_note.setText(
+            "Cached original-FITS IMAGE preview · display only; "
+            "FITS integrity not rehashed on opening."
+            if snapshot.preview_status == "READY_RECENT_STAT_NOT_FITS_REHASHED"
+            else "Previously generated preview · source provenance unverified.")
         if snapshot.thumbnail is not None:
             image = QPixmap(str(snapshot.thumbnail))
             if not image.isNull():
