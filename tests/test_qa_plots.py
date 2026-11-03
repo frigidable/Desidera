@@ -107,3 +107,67 @@ def test_single_brick_plot_refuses_partial_field_not_zeros(tmp_path):
             target_radius_arcsec=10.,
             sky_inner_arcsec=20., sky_outer_arcsec=28.)
     assert not (tmp_path/"should_not_exist.png").exists()
+
+
+def test_plot_margin_can_be_trimmed_when_entire_search_square_is_inside(tmp_path):
+    """A valid 1' sky square near the brick edge must not fail due to 1.6x padding."""
+    pytest.importorskip("astropy")
+    pytest.importorskip("matplotlib")
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    from lsbpipe.surveys.legacy import SkyField, BrickHit, product_for
+    from lsbpipe.surveys.qa_plots import _load_four_cutouts, _cutout_pixels, render_qa_figure
+
+    _make_original_fits(tmp_path)
+    hit = BrickHit("dr9", "south", "0401p012", 40., 40.2, 1.1, 1.35, {"r": 4})
+    image_path = tmp_path / product_for(hit, "image", "r").relative_path
+    with fits.open(image_path) as hdu:
+        original_wcs = WCS(hdu[1].header).celestial
+        original_shape = hdu[1].data.shape
+        ra, dec = original_wcs.all_pix2world(259, 149, 0)
+    field = SkyField(float(ra), float(dec), 1.)
+    planned = _cutout_pixels(field.width_arcmin, original_wcs)
+    assert planned > 80
+
+    data, clipped_wcs, indices = _load_four_cutouts(
+        tmp_path, field=field, release="dr9",
+        region="south", brick="0401p012", band="r")
+    shapes = {data[k].shape for k in ("image", "invvar", "nexp", "maskbits")}
+    assert len(shapes) == 1
+    height, width = data["image"].shape
+    assert 60 <= width < planned  # Cosmetics clipped at brick boundary
+    assert height == planned
+    assert np.all(np.isfinite(data["image"]))
+    assert np.all(data["maskbits"] >= 0)
+    x, y = clipped_wcs.all_world2pix(float(ra), float(dec), 0)
+    assert 0 <= x < width and 0 <= y < height
+
+    png = tmp_path / "trimmed-but-complete.png"
+    result = render_qa_figure(
+        directory=tmp_path, release="dr9", region="south",
+        brick="0401p012", band="r", field=field,
+        output=png, target_radius_arcsec=10.,
+        sky_inner_arcsec=20., sky_outer_arcsec=28.)
+    assert result.is_file() and result.stat().st_size > 1000
+    with fits.open(image_path) as hdu:
+        assert hdu[1].data.shape == original_shape
+
+
+def test_partial_science_square_still_fails_even_when_trimmed_plot_could_render(tmp_path):
+    """No figure, even with trim, may hide missing scientific-field pixels."""
+    pytest.importorskip("astropy")
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    from lsbpipe.surveys.legacy import SkyField, BrickHit, product_for
+    from lsbpipe.surveys.qa_plots import _load_four_cutouts
+
+    _make_original_fits(tmp_path)
+    hit = BrickHit("dr9", "south", "0401p012", 40., 40.2, 1.1, 1.35, {"r": 4})
+    image_path = tmp_path / product_for(hit, "image", "r").relative_path
+    with fits.open(image_path) as hdu:
+        wcs = WCS(hdu[1].header).celestial
+        ra, dec = wcs.all_pix2world(283, 149, 0)
+    with pytest.raises(ValueError, match="science field extends beyond this brick"):
+        _load_four_cutouts(
+            tmp_path, field=SkyField(float(ra), float(dec), 1.),
+            release="dr9", region="south", brick="0401p012", band="r")

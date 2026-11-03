@@ -1,8 +1,9 @@
 """Inspect original Legacy FITS visually, without adopting galaxy photometry.
 
 Run: python -m lsbpipe.surveys.qa_plots --help
-This is a *single brick* display. It refuses partial cutouts rather than
-inventing missing pixels; multi-brick mosaics require a separate workflow.
+This is a *single brick* display. It refuses incomplete science fields,
+but may trim optional figure margins without padding or inventing pixels.
+Multi-brick mosaics require a separate workflow.
 Matplotlib and Astropy are imported lazily and remain optional for the core.
 """
 from __future__ import annotations
@@ -86,12 +87,31 @@ def _circle_on_sky(ra_deg: float, dec_deg: float, radius_arcsec: float,
     return tuple(zip(boundary.ra.deg, boundary.dec.deg))
 
 
+def _require_full_field_in_brick(field: SkyField, wcs, shape: tuple[int, int]):
+    """Reject a genuinely partial scientific TAN field, not plot-only padding.
+
+    Densely sample the field boundary using the same sky definition as the
+    survey viewer and square-coverage QA. No information beyond source FITS
+    is invented, even when a cosmetic display margin must be trimmed.
+    """
+    vertices = np.asarray(field_polygon(field, subdivisions=16), dtype=float)
+    x, y = wcs.all_world2pix(vertices[:, 0], vertices[:, 1], 0)
+    ny, nx = shape
+    if not (np.all(np.isfinite(x)) and np.all(np.isfinite(y)) and
+            np.all((x >= 0) & (x <= nx-1) & (y >= 0) & (y <= ny-1))):
+        raise ValueError(
+            "Requested science field extends beyond this brick. "
+            "Use a multi-brick workflow; missing source pixels "
+            "cannot be treated as valid observations.")
+
+
 def _load_four_cutouts(root: Path, *, field: SkyField,
                        release: str, region: str, brick: str, band: str):
-    """Read four original, co-registered FITS into an identical strict cutout.
+    """Read four original co-registered FITS and trim only plot margins.
 
-    A geometrically incomplete single-brick field fails, instead of being
-    silently padded by zeros (particularly dangerous for maskbits).
+    A genuine scientific-field/brick intersection failure remains fatal.
+    Extra plotting padding can exceed the original brick and is trimmed;
+    no data are fabricated, reprojected or zero-padded (especially MASKBITS).
     """
     from astropy.io import fits
     from astropy.nddata import Cutout2D
@@ -130,21 +150,20 @@ def _load_four_cutouts(root: Path, *, field: SkyField,
         }
         for kind in ("invvar", "nexp", "maskbits"):
             _check_wcs_compatible(wcs["image"], wcs[kind], ref_shape, kind)
+        # Cosmetic padding (1.6 x field side) is not the science footprint.
+        # Verify the requested TAN square independently before trimming the
+        # optional figure border to the native original-FITS boundary.
+        _require_full_field_in_brick(field, wcs["image"], ref_shape)
         n = _cutout_pixels(field.width_arcmin, wcs["image"])
         center = SkyCoord(field.ra_deg * u.deg,
                           field.dec_deg * u.deg, frame="icrs")
         cutouts = {}
         for kind, array in arrays.items():
-            try:
-                cutout = Cutout2D(
-                    array, center, (n, n), wcs=wcs["image"],
-                    mode="strict", copy=True)
-            except (ValueError, TypeError) as exc:
-                raise ValueError(
-                    "Requested plot cutout extends beyond this brick. "
-                    "Use a multi-brick workflow; do not interpret padded "
-                    "missing areas as valid pixels.") from exc
-            cutouts[kind] = cutout
+            cutouts[kind] = Cutout2D(
+                array, center, (n, n), wcs=wcs["image"],
+                mode="trim", copy=True)
+        if len({c.data.shape for c in cutouts.values()}) != 1:
+            raise ValueError("Original FITS cutouts have inconsistent shapes")
     return {k: obj.data for k, obj in cutouts.items()}, cutouts["image"].wcs, idx
 
 
@@ -239,7 +258,11 @@ def render_qa_figure(*, directory: Path, release: str, region: str,
         f"search side {field.width_arcmin:g}′; "
         f"DR {release.upper()} {region} / {brick} / {band}; "
         f"HDU {indices}. Magenta: sky-coordinate boundaries. "
-        "QA only, no sky model, no PSF or science adoption.",
+        + ("Plot margin trimmed to original brick; no padded pixels. "
+         if image.shape[0] < _cutout_pixels(field.width_arcmin, wcs)
+         or image.shape[1] < _cutout_pixels(field.width_arcmin, wcs)
+         else "Full requested display margin within brick. ")
+        + "QA only, no sky model, no PSF or science adoption.",
         fontsize=8)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
