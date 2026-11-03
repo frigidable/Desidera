@@ -158,3 +158,39 @@ def test_invalid_recipe_and_wrong_input_fail_closed():
         build_empirical_coadd_psf(
             fake_frame(), target_icrs_deg=(410.,18.),
             target_protection_arcsec=90.)
+
+
+def test_rejected_epsf_retains_star_diagnostics_without_export(monkeypatch):
+    """A failed ePSF must not be quietly clipped or accepted for Leo P."""
+    from types import SimpleNamespace
+    import photutils.psf
+    from lsbpipe.photometry.psf_empirical import PSF0QualityError
+
+    class RingingBuilder:
+        def __init__(self, **kwargs):
+            self.shape = kwargs["shape"]
+
+        def __call__(self, stars):
+            kernel = np.zeros(self.shape, dtype=float)
+            c = self.shape[0] // 2
+            kernel[c, c] = 1.
+            kernel[c+5, c] = -.2
+            return SimpleNamespace(
+                epsf=SimpleNamespace(data=kernel), converged=True)
+
+    monkeypatch.setattr(photutils.psf, "EPSFBuilder", RingingBuilder)
+    with pytest.raises(PSF0QualityError) as raised:
+        build_empirical_coadd_psf(
+            fake_frame(), target_icrs_deg=LEO_P,
+            target_protection_arcsec=13., config=PSF0Config(
+                min_train_stars=6, min_holdout_stars=2,
+                max_training_stars=30))
+    diagnostic = raised.value.diagnostics
+    assert diagnostic["status"] == "PSF0_QUALITY_REJECTED_NOT_ADOPTED"
+    assert diagnostic["negative_absolute_mass_fraction"] > .025
+    assert diagnostic["n_train"] >= 6
+    assert diagnostic["n_holdout"] >= 2
+    assert diagnostic["training"]
+    assert diagnostic["holdout"]
+    assert len(diagnostic["training"]) == diagnostic["n_train"]
+    assert "STRONG_NEGATIVE_EPSF_RINGING" == diagnostic["reason_code"]
