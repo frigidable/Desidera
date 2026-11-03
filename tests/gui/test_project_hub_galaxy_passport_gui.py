@@ -47,7 +47,9 @@ def test_passport_replaces_right_labels_without_replacing_left_list(hub, tmp_pat
     assert hub.galaxy_card.preview.text() == "No cached local preview"
     assert hub.galaxy_card.open_button.isVisible()
     assert not hub.continue_btn.isVisible()
-    assert hub.remove_btn.isVisible()
+    assert not hub.remove_btn.isVisible()
+    assert hub.tools_menu_btn.isVisible()
+    assert hub.remove_action.isEnabled()
     assert original.read_bytes() == b"original observations must remain untouched"
 
 
