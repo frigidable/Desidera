@@ -792,8 +792,9 @@ class SurveyExplorer(QMainWindow):
 
     def _run_project_psf0(self, request):
         """Dispatch genuine Leo P native-band ePSF in the existing GUI thread pool."""
-        from lsbpipe.photometry.psf_empirical import PSF0Config
-        from lsbpipe.photometry.psf_gui_backend import run_gui_psf0
+        from lsbpipe.photometry.psf_gui_backend import (
+            run_gui_psf0, psf0_experiment_recipe,
+        )
 
         panel = self.photometry_workspace.psf0_panel
         if self.thread is not None:
@@ -804,7 +805,8 @@ class SurveyExplorer(QMainWindow):
             panel.show_failure("Leo P project identity changed before PSF dispatch")
             return
         try:
-            config = PSF0Config(guessed_fwhm_pix=float(request["fwhm_pix"]))
+            config = psf0_experiment_recipe(
+                float(request["fwhm_pix"]), str(request["experiment"]))
             band = str(request["band"])
             radius = float(request["target_protection_arcsec"])
             root = str(self._object_project.root)
