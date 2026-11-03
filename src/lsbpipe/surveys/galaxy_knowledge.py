@@ -16,6 +16,7 @@ import re
 import numpy as np
 
 from .object_projects import read_object_project
+from .remote_failover import (simbad_endpoint_order, with_simbad_failover)
 
 SNAPSHOT_SCHEMA = "desidera.knowledge.simbad-query/1"
 CONFIRMATION_SCHEMA = "desidera.knowledge.simbad-confirmation/1"
@@ -81,7 +82,8 @@ def _candidate_rows(table, origin: str, centre) -> list[dict]:
 def query_simbad_candidates(*, name: str, ra_deg: float | None,
                             dec_deg: float | None,
                             radius_arcsec: float = 60.,
-                            limit: int = 30, client=None) -> dict:
+                            limit: int = 30, client=None,
+                            mirror_policy: str = "auto") -> dict:
     """Manual external lookup only; preserve multiple candidates for review.
 
     Inject a fake client for offline tests. No remote service is contacted when
@@ -105,6 +107,20 @@ def query_simbad_candidates(*, name: str, ra_deg: float | None,
                 0 <= ra_deg < 360 and -90 <= dec_deg <= 90):
             raise ValueError("Invalid project ICRS coordinates")
         centre = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg, frame="icrs")
+    # Validate the policy even with injected fake clients. Network candidates
+    # must come from a fixed, reviewed allowlist.
+    simbad_endpoint_order(mirror_policy)
+
+    def _tables(simbad_client):
+        simbad_client.ROW_LIMIT = limit + 1
+        name_result = simbad_client.query_object(name.strip(), wildcard=False)
+        cone_result = (
+            simbad_client.query_region(centre, radius=radius_arcsec * __import__(
+                "astropy.units", fromlist=["arcsec"]).arcsec)
+            if centre is not None else None
+        )
+        return (("name", name_result), ("cone", cone_result))
+
     if client is None:
         try:
             from astroquery.simbad import Simbad
@@ -112,16 +128,30 @@ def query_simbad_candidates(*, name: str, ra_deg: float | None,
             raise RuntimeError(
                 'SIMBAD requires optional dependency: pip install -e ".[knowledge]"'
             ) from exc
-        client = Simbad()
-        client.TIMEOUT = 15
-    client.ROW_LIMIT = limit + 1
-    # Deliberately preserve alternatives; no closest-object auto-matching.
+
+        def _remote_query(host):
+            remote = Simbad()
+            remote.server = host
+            remote.timeout = 15
+            return _tables(remote)
+
+        tables, endpoint_evidence = with_simbad_failover(
+            _remote_query, policy=mirror_policy)
+    else:
+        tables = _tables(client)
+        endpoint_evidence = {
+            "provider": "SIMBAD",
+            "endpoint_host": getattr(client, "server", "injected_client"),
+            "endpoint_policy": mirror_policy,
+            "attempted_hosts": [],
+            "failed_attempts": [],
+            "fallback_used": False,
+        }
+
+    # No partial results from a failed provider attempt are admitted. A valid
+    # empty result remains an empty result, not a trigger to search elsewhere.
     by_id: dict[str, dict] = {}
-    for origin, table in (
-        ("name", client.query_object(name.strip(), wildcard=False)),
-        ("cone", client.query_region(centre, radius=radius_arcsec * __import__(
-            "astropy.units", fromlist=["arcsec"]).arcsec) if centre is not None else None),
-    ):
+    for origin, table in tables:
         for candidate in _candidate_rows(table, origin, centre):
             key = candidate["main_id"].casefold()
             if key not in by_id:
@@ -142,6 +172,7 @@ def query_simbad_candidates(*, name: str, ra_deg: float | None,
                   "limit": limit},
         "candidates": candidates[:limit],
         "truncated": len(candidates) > limit,
+        "endpoint_evidence": endpoint_evidence,
         "status": "CANDIDATES_UNVERIFIED",
         "science_status": "NOT_SCIENTIFICALLY_ADOPTED",
     }
