@@ -40,6 +40,9 @@ jobs:
       - name: Capture GUI baseline (remote Viewer substituted offline)
         if: always()
         run: python scripts/capture_gui_baseline.py --output-dir gui-artifacts
+      - name: Capture Photometry Workspace preparation states
+        if: always()
+        run: python scripts/capture_photometry_workspace.py --output-dir gui-artifacts/photometry
       - name: Publish screenshot evidence
         if: always()
         uses: actions/upload-artifact@v4
