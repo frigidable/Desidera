@@ -229,12 +229,24 @@ while **independent final wing smoothing may still be enabled**.
 The controls report these two mechanisms separately. Official API:
 https://docs.astropy.org/projects/photutils/en/stable/api/photutils.psf.EPSFBuilder.html .
 
+The diagnostic computes additional **independent signed-kernel
+holdout residuals** before any negative-value clipping, in the same
+core/intermediate/outer radial zones. For each held-out star, fit
+only the positive source amplitude in the core while keeping the
+unmodified signed candidate ePSF; evaluate signed and absolute
+residuals divided by the observed peak outside the fitted core.
+Then summarize the medians across held-out stars per zone. This
+guards against an apparently cleaner-looking PSF which predicts
+real star wings less accurately. These diagnostics are not a
+noise-whitened chi-square or a calibrated PSF-leakage budget.
+
 Interpret candidate changes in this order: (a) sufficient and
-comparable clean stars, (b) convergence fraction and held-out core
-residual, (c) signed mass distribution and wide-angle wing
-representativity, (d) estimated galaxy-profile bias. A variant
-that merely passes the provisional 2.5% mass threshold **must not**
-be automatically adopted or ranked above a lower-bias alternative.
+comparable clean stars, (b) convergence fraction, (c) signed mass
+distribution AND independently held-out *outer-zone residuals*,
+(d) PSF spatial/wide-angle representativity, (e) estimated
+galaxy-profile bias. A variant that merely passes the provisional
+2.5% mass threshold **must not** be automatically adopted or
+ranked above a lower-bias alternative.
 
 ## Blocking issues before publishing Leo P science
 
