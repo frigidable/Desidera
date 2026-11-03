@@ -114,3 +114,22 @@ def test_brightness_coupling_guard_requires_positive_finite_amplitudes():
         brightness_bias_audit([{"star_id":"star-0001",
                                 "amplitude_nMgy_diagnostic":-1.,
                                 "score":3.}])
+
+
+def test_unscorable_star_fails_closed_without_invented_flux_amplitude():
+    from lsbpipe.photometry.psf_training_residuals import (
+        brightness_bias_audit)
+    rows=[{
+        "star_id":f"star-{i+1:04d}",
+        "amplitude_nMgy_diagnostic":float(i+1),
+        "score":1.+.01*i,
+    } for i in range(20)]
+    rows[3]={
+        "star_id":"star-0004","score":1e6,
+        "error":"Insufficient pixels for PSF fit",
+        "metric":"UNSCORABLE_TRAIN_STAR",
+    }
+    evidence=brightness_bias_audit(rows,("star-0004",))
+    assert evidence["auto_trim_blocked"] is True
+    assert evidence["unscorable_star_ids"] == ["star-0004"]
+    assert evidence["score_amplitude_spearman_rho"] is None
