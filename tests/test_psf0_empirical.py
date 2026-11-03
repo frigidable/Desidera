@@ -284,3 +284,59 @@ def test_manual_exclusion_recipe_rejects_malformed_or_duplicated_ids():
         PSF0Config(excluded_training_star_ids=("star-2",))
     with pytest.raises(ValueError, match="sorted, unique"):
         PSF0Config(excluded_training_star_ids=("star-0003", "star-0002"))
+
+
+def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(built):
+    from dataclasses import replace
+    from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
+    from lsbpipe.photometry.psf_empirical import PSF0QualityError
+
+    frame = fake_frame()
+    base = PSF0Config(
+        min_neighbor_separation_pix=32., min_train_stars=6,
+        min_holdout_stars=2,max_training_stars=30,
+        star_catalog_policy="gaia_strict")
+    with pytest.raises(ValueError,match="GAIA_STRICT_REQUIRES_NATIVE_DR11_TRACTOR"):
+        build_empirical_coadd_psf(
+            frame,target_icrs_deg=LEO_P,target_protection_arcsec=13.,
+            config=base)
+
+    references = list(built.training) + list(built.holdout)
+    rows = tuple({
+        "ref_cat":"G3","ref_id":int(1000+i),
+        "objid":i,"type":"PSF","fitbits":0,
+        "maskbits":0,"gaia_duplicated_source":False,
+        "flux_ivar":100.,"gaia_g_mag":18.,
+    } for i,_ in enumerate(references))
+    positions=np.array([(s.x_pix,s.y_pix) for s in references])
+    matcher=TractorGaiaMatcher(
+        "synthetic-tractor.fits","c"*64,frame.dataset_id,rows,positions)
+
+    def run(recipe):
+        try:
+            result=build_empirical_coadd_psf(
+                frame,target_icrs_deg=LEO_P,target_protection_arcsec=13.,
+                config=recipe,catalog_matcher=matcher)
+            return result.training, result.holdout, result.review_snapshot
+        except PSF0QualityError as exc:
+            from types import SimpleNamespace
+            return (
+                [SimpleNamespace(**x) for x in exc.diagnostics["training"]],
+                [SimpleNamespace(**x) for x in exc.diagnostics["holdout"]],
+                exc.review_snapshot)
+    train,holdout,snapshot=run(base)
+    assert len(train)>=base.min_train_stars
+    assert len(holdout)>=base.min_holdout_stars
+    assert all(s.gaia_source_id is not None for s in train+holdout)
+    assert snapshot["catalog_sha256"]=="c"*64
+    assert snapshot["catalog_policy"]=="gaia_strict"
+    assert all(item["gaia"]["gaia_source_id"]>0 for item in snapshot["stars"])
+    selected=train[0].star_id
+    reduced, holdout_again, review_again=run(
+        replace(base,excluded_training_star_ids=(selected,)))
+    assert selected not in {s.star_id for s in reduced}
+    assert {s.star_id for s in holdout}=={
+        s.star_id for s in holdout_again}
+    assert len(reduced)==len(train)-1
+    assert next(item for item in review_again["stars"]
+                if item["star_id"]==selected)["role"]=="excluded"
