@@ -61,8 +61,16 @@ Object identity uses an immutable UUID stored in `lsbpipe-object.json`
 rollback and old FITS-session compatibility. A user-local registry stores
 recent project paths, while the object manifest makes projects portable.
 No SIMBAD lookup or archive download occurs during Hub startup or project
-creation. SIMBAD-assisted object identification is a separately planned
-opt-in module, not an active synchronization feature.
+creation. **Galaxy Knowledge · SIMBAD…** performs explicitly initiated
+catalogue searches, preserves alternate candidates, and stores user-confirmed
+identity evidence as immutable local receipts. The Project Hub passport
+displays a confirmed SIMBAD association and its ICRS offset **offline**,
+without altering the project's target coordinates, source FITS or science
+results. Requests can switch between approved Strasbourg and Harvard mirrors.
+NED integration and detailed literature measurements are not yet implemented.
+
+See `docs/architecture/GALAXY_KNOWLEDGE_READ_MODEL_P10A.md` for the
+catalogue-evidence/read-model contract and local Windows pilot.
 
 See `docs/architecture/OBJECT_CENTRIC_PROJECT_HUB_DESIGN.md` for the
 lifecycle and caveats. Old source FITS remain read-only; no QA output is
