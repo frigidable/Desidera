@@ -98,7 +98,7 @@ class PSF0Config:
         excluded = self.excluded_training_star_ids
         if (not isinstance(excluded, tuple) or
                 any(not isinstance(key, str) or
-                    re.fullmatch(r"star-\\d{4}", key) is None for key in excluded) or
+                    re.fullmatch("star-[0-9]{4}", key) is None for key in excluded) or
                 len(set(excluded)) != len(excluded) or
                 excluded != tuple(sorted(excluded))):
             raise ValueError(
