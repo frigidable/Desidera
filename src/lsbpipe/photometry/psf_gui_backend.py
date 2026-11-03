@@ -153,6 +153,7 @@ def run_gui_psf0(
         # evidence, not an exception that should lose context in a GUI popup.
         return {
             "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "review_band": band,
             "reason": str(exc),
             "diagnostics": exc.diagnostics,
             "star_review": exc.review_snapshot,
@@ -164,6 +165,7 @@ def run_gui_psf0(
     _progress(progress, f"Completed provisional {band} PSF · not science-adopted")
     return {
         "status": "EXPERIMENTAL_PSF_NOT_ADOPTED",
+        "review_band": band,
         "result": result,
         "star_review": result.review_snapshot,
         "source_hashes": dict(result.source_hashes),
