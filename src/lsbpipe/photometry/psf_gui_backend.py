@@ -197,17 +197,17 @@ def run_gui_psf0(
     frame = load_native_legacy_quartet(
         project.data_root, release=release, region=region, brick=brick,
         band=band, hash_inputs=True, require_explicit_bunit=True)
-    previous_review = _saved_manual_exclusions(
-        project, dict(frame.source_evidence.get("local_hashes", {})),
-        release=release, region=region, brick=brick, band=band,
-        config=config, radius=float(protection_arcsec),
-        catalog_sha256=(catalogue.source_sha256 if catalogue else None))
     catalogue = None
     if config.star_catalog_policy == "gaia_strict":
         _progress(progress, "Validating native DR11 Tractor + Gaia DR3 identities")
         catalogue = read_native_tractor_gaia(
             project.data_root, release=release, region=region,
             brick=brick, frame=frame)
+    previous_review = _saved_manual_exclusions(
+        project, dict(frame.source_evidence.get("local_hashes", {})),
+        release=release, region=region, brick=brick, band=band,
+        config=config, radius=float(protection_arcsec),
+        catalog_sha256=(catalogue.source_sha256 if catalogue else None))
     _progress(progress, f"Building provisional {band} PSF · star selection, sky, holdout")
     try:
         result = build_empirical_coadd_psf(
