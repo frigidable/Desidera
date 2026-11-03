@@ -122,3 +122,25 @@ def test_synthetic_native_legacy_fits_runs_leo_p_pilot_without_false_science(
     assert again["band_results"][0]["status"]=="PSF0_FAILED_NOT_ADOPTED"
     assert "already exists" in again["band_results"][0]["reason"]
     assert (p.root/"lsbpipe-object.json").is_file()
+
+
+def test_gui_preview_refuses_export_after_original_fits_changed(tmp_path, monkeypatch):
+    from lsbpipe.photometry.psf_gui_backend import run_gui_psf0, save_gui_psf0
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = _project(tmp_path)
+    paths = _synthetic_legacy_files(project)
+    preview = run_gui_psf0(
+        project.root, band="r",
+        config=PSF0Config(max_training_stars=30,
+                          min_train_stars=6, min_holdout_stars=2),
+        protection_arcsec=12.)
+    assert preview["status"] == "EXPERIMENTAL_PSF_NOT_ADOPTED"
+    assert preview["result"].lineage_id is not None
+    assert not (project.root/"analyses"/"psf-pilots").exists()
+    # Intentional change after successful preview invalidates source SHA.
+    with paths["image"].open("ab") as stream:
+        stream.write(b"extra bytes after original preview")
+    with pytest.raises(ValueError, match="changed since PSF build"):
+        save_gui_psf0(preview)
+    assert not (project.root/"analyses"/"psf-pilots").exists()
