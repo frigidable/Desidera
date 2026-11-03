@@ -30,6 +30,7 @@ class PSF0Panel(QGroupBox):
 
     runRequested = Signal(object)
     saveRequested = Signal(object)
+    autoFwhmRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__("04 · Empirical PSF · first pilot Leo P", parent)
@@ -69,7 +70,17 @@ class PSF0Panel(QGroupBox):
         self.fwhm.setToolTip(
             "DAOStarFinder detection-width GUESS, not a measured FWHM. "
             "Changing it does not repair a scientifically rejected ePSF.")
-        form.addRow("Detection FWHM guess", self.fwhm)
+        fwhm_row = QHBoxLayout()
+        fwhm_row.addWidget(self.fwhm, 2)
+        self.auto_fwhm_btn = QPushButton("From DESI PSFSIZE…")
+        self.auto_fwhm_btn.setObjectName("psf0_auto_fwhm")
+        self.auto_fwhm_btn.setToolTip(
+            "Read an OPTIONAL local DR11 native PSFSIZE map at Leo P; "
+            "validate original WCS, and propose a per-band seeing guess. "
+            "Never downloads files or adopts a measured PSF.")
+        self.auto_fwhm_btn.clicked.connect(self._request_auto_fwhm)
+        fwhm_row.addWidget(self.auto_fwhm_btn, 1)
+        form.addRow("Detection FWHM guess", fwhm_row)
         self.experiment = QComboBox()
         self.experiment.setObjectName("psf0_diagnostic_experiment")
         self.experiment.setAccessibleName("Controlled PSF reconstruction diagnostic")
@@ -94,6 +105,13 @@ class PSF0Panel(QGroupBox):
             "against diffuse galaxy light before science-quality PSF.")
         form.addRow("Protect target radius", self.protection)
         layout.addLayout(form)
+        self.prior_source = QLabel(
+            "FWHM: 4.80 px is a USER-OVERRIDABLE DEFAULT, not measured seeing. "
+            "Target protection: project radius with 90″ conservative floor; "
+            "not inferred from DESI seeing.")
+        self.prior_source.setWordWrap(True)
+        self.prior_source.setObjectName("psf0_prior_provenance")
+        layout.addWidget(self.prior_source)
 
         actions = QHBoxLayout()
         self.run_btn = QPushButton("Build PSF preview")
@@ -242,6 +260,11 @@ class PSF0Panel(QGroupBox):
                 self.band.setCurrentIndex(self.band.findData(chosen))
             self.protection.setValue(
                 min(1800., snapshot["target_protection_default_arcsec"]))
+            self.prior_source.setText(
+                "FWHM: initial 4.80 px code default (not measured). "
+                f"Target protection: max(saved project radius, 90″) = "
+                f"{snapshot['target_protection_default_arcsec']:.1f}″. "
+                "The galaxy protection radius cannot be inferred from PSF seeing.")
             self.status.setText(
                 "Original FITS paths found, but not yet validated. "
                 "Click Build PSF preview to verify FITS/WCS/units and run.")
@@ -289,6 +312,7 @@ class PSF0Panel(QGroupBox):
         self.fwhm.setEnabled(not self._busy)
         self.protection.setEnabled(not self._busy)
         self.experiment.setEnabled(not self._busy)
+        self.auto_fwhm_btn.setEnabled(eligible and not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
         self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)
 
@@ -319,6 +343,41 @@ class PSF0Panel(QGroupBox):
             "manual_review_confirmed": review_confirmed,
             "target_protection_arcsec": self.protection.value(),
         })
+
+    def _request_auto_fwhm(self):
+        if self._busy or self._project_root is None or self.band.currentData() is None:
+            return
+        self.autoFwhmRequested.emit({
+            "project_root": str(self._project_root),
+            "band": self.band.currentData(),
+        })
+
+    def show_fwhm_suggestion(self, payload):
+        if (self._project_root is None or
+                str(self._project_root) != str(payload.get("project_root")) or
+                self.band.currentData() != payload.get("band")):
+            self.status.setText(
+                "PSFSIZE suggestion belongs to a different project/band; discarded.")
+            return
+        seeing = payload["seeing"]
+        if seeing.get("available") is not True:
+            self.status.setText(
+                seeing.get("message", "No matching local PSFSIZE map available"))
+            self.prior_source.setText(
+                "FWHM remains explicit manual heuristic · "
+                "no native PSFSIZE map was supplied. Target protection is "
+                "the saved project radius with 90″ floor.")
+            return
+        pix = float(seeing["suggested_detection_fwhm_pix"])
+        self.fwhm.setValue(round(pix, 2))
+        self.prior_source.setText(
+            f"FWHM suggestion: {seeing['psfsize_arcsec']:.3f}″ from local "
+            f"Legacy PSFSIZE map / {seeing['image_pixel_scale_arcsec']:.4f} "
+            f"arcsec/pix = {pix:.2f} pix. NOT fitted or adopted PSF. "
+            "Protect radius unchanged; it requires a galaxy footprint.")
+        self.status.setText(
+            "Local DESI PSFSIZE prior applied to the initial detection "
+            "width. Review before Build PSF preview.")
 
     def _open_star_review(self):
         if self._busy or self._star_review_data is None:
