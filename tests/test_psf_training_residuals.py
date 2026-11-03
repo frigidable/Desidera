@@ -10,8 +10,14 @@ from lsbpipe.photometry.psf_training_residuals import (
 def _trial(star_id, *, neighbor_amp=0., local_noise=.2):
     yy, xx = np.indices((51, 51), dtype=float)
     x0, y0 = 25.2, 24.8
-    model = np.exp(-.5*((xx-x0)**2+(yy-y0)**2)/(2.1**2))
-    image = 100.*model
+    # PSF model is centered on its *own* native integer grid; the
+    # synthetic star image is shifted to the measured fractional center
+    # using the SAME interpolation as the evaluation path.
+    from scipy.ndimage import shift
+    model = np.exp(-.5*((xx-25.)**2+(yy-25.)**2)/(2.1**2))
+    image = 100.*shift(
+        model, (y0-25., x0-25.), order=3,
+        mode="constant", cval=0., prefilter=True)
     if neighbor_amp:
         image = image + neighbor_amp*np.exp(
             -.5*((xx-34.)**2+(yy-31.)**2)/(1.6**2))
