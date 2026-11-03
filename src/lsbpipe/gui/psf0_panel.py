@@ -391,8 +391,22 @@ class PSF0Panel(QGroupBox):
         if raw is not None:
             self._show_signed_rejected_kernel(raw)
         solver = diagnostic.get("solver_diagnostics", {})
+        stable = solver.get("final_converged_fraction_if_reported")
+        stable_target = solver.get("convergence_fraction_target_if_reported")
+        last_step = (solver.get("iteration_history_if_reported") or [{}])[-1]
         solver_text = (
-            f"\n\nPhotutils version: {solver.get('photutils_version', 'unknown')}"
+            f"\n\nStable-centroid fraction: "
+            f"{stable:.1%}" if stable is not None else
+            "\n\nStable-centroid fraction: unavailable")
+        solver_text += (
+            f" (required ≥ {stable_target:.1%})"
+            if stable_target is not None else "")
+        solver_text += (
+            f"\nLast relative center shift (pix): "
+            f"{last_step['max_center_shift']:.4g}"
+            if last_step.get("max_center_shift") is not None else "")
+        solver_text += (
+            f"\nPhotutils version: {solver.get('photutils_version', 'unknown')}"
             f"\nBuilder smoothing: "
             f"{solver.get('smoothing_kernel_final_if_reported', 'unknown')}"
             f"\nBuilder fit box: {solver.get('fit_shape_final_if_reported', 'unknown')}"
