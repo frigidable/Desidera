@@ -22,6 +22,10 @@ from lsbpipe.photometry.psf_empirical import (
     PSF0Config, PSF0Result, PSF0QualityError, build_empirical_coadd_psf,
 )
 from lsbpipe.photometry.psf_export import export_psf0_diagnostic
+from lsbpipe.photometry.psf_tractor_gaia import (
+    tractor_catalog_location, read_native_tractor_gaia,
+    download_native_tractor_gaia,
+)
 from lsbpipe.surveys.dataset_integrity import _expected_paths
 from lsbpipe.surveys.object_projects import read_object_project
 
@@ -105,11 +109,21 @@ def inspect_psf0_bands(project_root: str | Path) -> dict:
             "paths_present_unverified": all(present.values()),
             "files": present,
         })
+    catalog_path = None
+    catalog_present = False
+    if release == "dr11" and region == "south":
+        candidate_path, _ = tractor_catalog_location(
+            project.data_root, release=release, region=region, brick=brick)
+        catalog_path = str(candidate_path)
+        catalog_present = (
+            candidate_path.is_file() and not candidate_path.is_symlink())
     return {
         "project_id": project.project_id,
         "project_root": str(project.root),
         "dataset": (release, region, brick, selected),
         "bands": entries,
+        "gaia_tractor_path": catalog_path,
+        "gaia_tractor_present_unverified": catalog_present,
         "target_protection_default_arcsec": max(project.target_radius_arcsec, 90.),
         "status": "PATHS_ONLY_NOT_SCIENCE_VALIDATED",
     }
@@ -124,7 +138,8 @@ def _progress(progress: Callable | None, text: str):
 
 
 def _saved_manual_exclusions(project, source_hashes, *,
-                             release, region, brick, band, config, radius):
+                             release, region, brick, band, config, radius,
+                             catalog_sha256=None):
     """Read only matching source+recipe reviews; never silently apply one."""
     directory = project.root / "analyses" / "psf-pilots" / "star-reviews"
     if not directory.is_dir() or directory.is_symlink():
@@ -146,6 +161,7 @@ def _saved_manual_exclusions(project, source_hashes, *,
                     or data.get("project_id") != project.project_id
                     or data.get("dataset") != [release, region, brick, band]
                     or data.get("source_sha256_local") != source_hashes
+                    or data.get("catalog_sha256_local") != catalog_sha256
                     or data.get("target_protection_arcsec") != radius
                     or original_recipe != required_recipe
                     or not isinstance(ids, list) or
@@ -184,12 +200,20 @@ def run_gui_psf0(
     previous_review = _saved_manual_exclusions(
         project, dict(frame.source_evidence.get("local_hashes", {})),
         release=release, region=region, brick=brick, band=band,
-        config=config, radius=float(protection_arcsec))
+        config=config, radius=float(protection_arcsec),
+        catalog_sha256=(catalogue.source_sha256 if catalogue else None))
+    catalogue = None
+    if config.star_catalog_policy == "gaia_strict":
+        _progress(progress, "Validating native DR11 Tractor + Gaia DR3 identities")
+        catalogue = read_native_tractor_gaia(
+            project.data_root, release=release, region=region,
+            brick=brick, frame=frame)
     _progress(progress, f"Building provisional {band} PSF · star selection, sky, holdout")
     try:
         result = build_empirical_coadd_psf(
             frame, target_icrs_deg=LEO_P_CENTER,
-            target_protection_arcsec=float(protection_arcsec), config=config)
+            target_protection_arcsec=float(protection_arcsec), config=config,
+            catalog_matcher=catalogue)
     except PSF0QualityError as exc:
         # This is a *normal scientific rejection* with useful candidate-star
         # evidence, not an exception that should lose context in a GUI popup.
@@ -218,6 +242,38 @@ def run_gui_psf0(
         "project_id": snapshot["project_id"],
         "project_root": snapshot["project_root"],
         "dataset": snapshot["dataset"],
+    }
+
+
+def acquire_gui_psf0_tractor(project_root, *, progress=None):
+    """Explicit user-requested native DR11 Tractor acquisition in Galaxy Workspace."""
+    project = _leo_p_project(project_root)
+    release, region, brick, _ = project.selected_dataset
+    _progress(progress, "Getting original release- and brick-matched DR11 Tractor catalog")
+    result = download_native_tractor_gaia(
+        project.data_root, release=release, region=region,
+        brick=brick, progress=progress)
+    # Verify the same-brick source table immediately for an available band.
+    snapshot = inspect_psf0_bands(project_root)
+    bands = [row["band"] for row in snapshot["bands"]
+             if row["paths_present_unverified"]]
+    if not bands:
+        raise ValueError("Tractor acquired but no complete optical FITS quartet")
+    frame = load_native_legacy_quartet(
+        project.data_root, release=release, region=region,
+        brick=brick, band=bands[0], hash_inputs=False,
+        require_explicit_bunit=True)
+    matcher = read_native_tractor_gaia(
+        project.data_root, release=release, region=region,
+        brick=brick, frame=frame)
+    return {
+        **result,
+        "project_id":project.project_id,
+        "project_root":str(project.root),
+        "n_catalog_sources":len(matcher.rows),
+        "sha256_local":matcher.source_sha256,
+        "verified_against_native_fits":True,
+        "not_science_adopted":True,
     }
 
 
@@ -304,6 +360,7 @@ def commit_psf0_manual_review(preview, *, explicitly_confirmed=False):
         "project_id": project.project_id,
         "dataset": [release, region, brick, band],
         "source_sha256_local": dict(source_hashes),
+        "catalog_sha256_local": star_review.get("catalog_sha256"),
         "target_protection_arcsec": float(preview["target_protection_arcsec"]),
         "recipe": (preview["result"].report()["recipe"] if "result" in preview
                    else preview["diagnostics"]["psf_recipe"]),
