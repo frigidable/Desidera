@@ -23,6 +23,7 @@ from lsbpipe.surveys.local_project import open_local_project
 from lsbpipe.gui.target_input import parse_coordinate_pair
 from .survey_explorer import SurveyExplorer
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
+from .analysis_configurations_dialog import AnalysisConfigurationsDialog
 from lsbpipe.surveys.galaxy_knowledge import latest_simbad_confirmation
 
 
@@ -309,6 +310,13 @@ class ProjectHub(QMainWindow):
             "requires explicit Search and cannot change target coordinates.")
         self.knowledge_btn.clicked.connect(self._open_knowledge)
         right.addWidget(self.knowledge_btn)
+        self.config_btn = QPushButton("Analysis configurations…")
+        self.config_btn.setObjectName("hub_analysis_configurations")
+        self.config_btn.setToolTip(
+            "Review immutable project setup snapshots. Freezing requires "
+            "explicit action and never runs or adopts scientific results.")
+        self.config_btn.clicked.connect(self._open_configurations)
+        right.addWidget(self.config_btn)
         self.remove_btn = QPushButton("Remove from recent…")
         self.remove_btn.setObjectName("hub_remove_recent")
         self.remove_btn.setToolTip(
@@ -412,6 +420,9 @@ class ProjectHub(QMainWindow):
         self.continue_btn.setEnabled(selected)
         self.remove_btn.setEnabled(selected and self.workspace is None)
         self.knowledge_btn.setEnabled(
+            selected and self.workspace is None and
+            bool(record.get("available")) and not bool(record.get("legacy")))
+        self.config_btn.setEnabled(
             selected and self.workspace is None and
             bool(record.get("available")) and not bool(record.get("legacy")))
         self.continue_btn.setText(
@@ -589,6 +600,21 @@ class ProjectHub(QMainWindow):
             return False
         self._enter_project(project)
         return True
+
+    def _open_configurations(self):
+        item = self.projects.currentItem()
+        if item is None or item.isHidden() or self.workspace is not None:
+            return
+        record = item.data(Qt.UserRole)
+        if (not isinstance(record, dict) or not record.get("available")
+                or record.get("legacy")):
+            return
+        try:
+            dialog = AnalysisConfigurationsDialog(record["root"], self)
+            dialog.exec()
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            QMessageBox.warning(
+                self, "Cannot open analysis configurations", str(exc))
 
     def _open_knowledge(self):
         item = self.projects.currentItem()
