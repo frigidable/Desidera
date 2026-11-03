@@ -66,85 +66,102 @@ class GalaxyDetailCard(QFrame):
         self._pixmap: QPixmap | None = None
 
         container = QVBoxLayout(self)
-        container.setContentsMargins(14, 14, 14, 14)
-        container.setSpacing(9)
+        container.setContentsMargins(12, 12, 12, 12)
+        container.setSpacing(8)
 
         kicker = QLabel("SELECTED GALAXY")
         kicker.setObjectName("galaxy_card_section")
         container.addWidget(kicker)
 
-        self.name = QLabel("Choose a galaxy")
-        self.name.setObjectName("galaxy_card_name")
-        self.name.setWordWrap(True)
-        container.addWidget(self.name)
-
-        self.coordinates = _metadata("Select a project from the list.")
-        self.coordinates.setObjectName("galaxy_card_coordinates")
-        self.coordinates.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        container.addWidget(self.coordinates)
-
-        # Scroll the scientific details, not the action button. Keep the
-        # inspector usable at laptop heights and with scaled system fonts.
+        # Preview and passport share one horizontally arranged, scrollable
+        # content surface. Keep the image square at every inspector width.
         scroll = QScrollArea(self)
         scroll.setObjectName("galaxy_card_scroll")
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
-        detail = QVBoxLayout(inner)
+        detail = QHBoxLayout(inner)
         detail.setContentsMargins(0, 0, 0, 0)
-        detail.setSpacing(9)
+        detail.setSpacing(12)
 
-        self.preview = QLabel("No cached local preview")
+        self.preview_holder = QWidget()
+        self.preview_holder.setObjectName("galaxy_card_preview_column")
+        preview_col = QVBoxLayout(self.preview_holder)
+        preview_col.setContentsMargins(0, 0, 0, 0)
+        preview_col.setSpacing(5)
+
+        self.preview = QLabel("No preview")
         self.preview.setObjectName("galaxy_card_preview")
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setWordWrap(True)
-        self.preview.setMinimumHeight(115)
-        self.preview.setMaximumHeight(155)
-        self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        detail.addWidget(self.preview)
+        self.preview.setTextFormat(Qt.PlainText)
+        self.preview.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        preview_col.addWidget(self.preview)
+
         self.preview_note = _metadata("")
         self.preview_note.setObjectName("galaxy_card_preview_note")
-        detail.addWidget(self.preview_note)
+        self.preview_note.setTextFormat(Qt.PlainText)
+        preview_col.addWidget(self.preview_note)
+        preview_col.addStretch(1)
+        detail.addWidget(self.preview_holder, 0, Qt.AlignTop)
+
+        metadata = QWidget()
+        metadata.setObjectName("galaxy_card_metadata_column")
+        passport = QVBoxLayout(metadata)
+        passport.setContentsMargins(0, 0, 0, 0)
+        passport.setSpacing(8)
+
+        self.name = QLabel("Choose a galaxy")
+        self.name.setObjectName("galaxy_card_name")
+        self.name.setWordWrap(True)
+        passport.addWidget(self.name)
+
+        self.coordinates = _metadata("Select a project from the list.")
+        self.coordinates.setObjectName("galaxy_card_coordinates")
+        self.coordinates.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        passport.addWidget(self.coordinates)
 
         knowledge_header = QLabel("CATALOGUE IDENTITY")
         knowledge_header.setObjectName("galaxy_card_section")
-        detail.addWidget(knowledge_header)
+        passport.addWidget(knowledge_header)
         self.catalogue = _metadata("No user-confirmed catalogue identity")
         self.catalogue.setObjectName("galaxy_card_catalogue")
         self.catalogue.setTextFormat(Qt.PlainText)
-        detail.addWidget(self.catalogue)
+        passport.addWidget(self.catalogue)
         self.catalogue_provenance = _metadata("", selectable=True)
-        self.catalogue_provenance.setObjectName("galaxy_card_catalogue_provenance")
+        self.catalogue_provenance.setObjectName(
+            "galaxy_card_catalogue_provenance")
         self.catalogue_provenance.setTextFormat(Qt.PlainText)
-        detail.addWidget(self.catalogue_provenance)
+        passport.addWidget(self.catalogue_provenance)
 
         observation = QLabel("OBSERVATIONS")
         observation.setObjectName("galaxy_card_section")
-        detail.addWidget(observation)
+        passport.addWidget(observation)
         self.dataset = _metadata("No dataset selected", selectable=True)
         self.dataset.setObjectName("galaxy_card_dataset")
-        detail.addWidget(self.dataset)
+        passport.addWidget(self.dataset)
         self.fits = _metadata("FITS: not inspected")
         self.fits.setObjectName("galaxy_card_fits")
-        detail.addWidget(self.fits)
+        passport.addWidget(self.fits)
 
         research = QLabel("PROJECT INFORMATION")
         research.setObjectName("galaxy_card_section")
-        detail.addWidget(research)
+        passport.addWidget(research)
         self.aliases = _metadata("")
         self.aliases.setObjectName("galaxy_card_aliases")
-        detail.addWidget(self.aliases)
+        passport.addWidget(self.aliases)
         self.last_opened = _metadata("")
         self.last_opened.setObjectName("galaxy_card_last_opened")
-        detail.addWidget(self.last_opened)
+        passport.addWidget(self.last_opened)
         self.path = _metadata("", selectable=True)
         self.path.setObjectName("galaxy_card_path")
-        detail.addWidget(self.path)
+        passport.addWidget(self.path)
         self.note = _metadata("")
         self.note.setObjectName("galaxy_card_note")
-        detail.addWidget(self.note)
-        detail.addStretch(1)
+        passport.addWidget(self.note)
+        passport.addStretch(1)
+        detail.addWidget(metadata, 1)
 
         scroll.setWidget(inner)
         container.addWidget(scroll, 1)
@@ -155,11 +172,20 @@ class GalaxyDetailCard(QFrame):
         self.open_button.clicked.connect(self._request_open)
         container.addWidget(self.open_button)
         self.safety = _metadata(
-            "Opening does not download FITS or approve previous scientific QA."
-        )
+            "Opening does not download FITS or approve previous scientific QA.")
         self.safety.setObjectName("galaxy_card_safety")
         container.addWidget(self.safety)
+        self._set_preview_side(184)
         self.set_snapshot(None)
+
+    def _set_preview_side(self, side: int):
+        """Square preview, responsive down to the 300 px narrow inspector."""
+        if self.preview.width() == side and self.preview.height() == side:
+            return
+        self.preview.setFixedSize(side, side)
+        self.preview_holder.setFixedWidth(side)
+        if self._pixmap is not None:
+            self._update_preview()
 
     def set_snapshot(self, snapshot: GalaxyCardSnapshot | None) -> None:
         self.snapshot = snapshot
@@ -255,13 +281,22 @@ class GalaxyDetailCard(QFrame):
         self.preview.setPixmap(QPixmap())
         self.preview.setText("No cached local preview")
         self.preview_note.setVisible(snapshot.thumbnail is not None)
-        self.preview_note.setText(
-            "Cached original-FITS IMAGE preview · display only; "
-            "FITS integrity not rehashed on opening."
-            if snapshot.preview_status == "READY_RECENT_STAT_NOT_FITS_REHASHED"
-            else "Previously generated preview · source provenance unverified.")
+        if snapshot.preview_source == "REMOTE_LEGACY_RGB":
+            self.preview_note.setText(
+                "Legacy Surveys RGB · display only · cached")
+        elif snapshot.preview_status == "READY_RECENT_STAT_NOT_FITS_REHASHED":
+            self.preview_note.setText("Local FITS · display only")
+        else:
+            self.preview_note.setText(
+                "Local preview · unverified provenance")
         if snapshot.thumbnail is not None:
             image = QPixmap(str(snapshot.thumbnail))
+            if (image.isNull()
+                    and snapshot.preview_source == "REMOTE_LEGACY_RGB"
+                    and snapshot.local_thumbnail is not None):
+                image = QPixmap(str(snapshot.local_thumbnail))
+                self.preview_note.setText(
+                    "Remote RGB unreadable · local FITS fallback · display only")
             if not image.isNull():
                 self._pixmap = image
                 self._update_preview()
@@ -275,6 +310,7 @@ class GalaxyDetailCard(QFrame):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._set_preview_side(124 if self.width() < 540 else 184)
         self._update_preview()
 
     def _request_open(self) -> None:

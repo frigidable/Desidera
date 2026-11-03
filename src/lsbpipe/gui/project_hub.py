@@ -26,6 +26,7 @@ from .survey_explorer import SurveyExplorer
 from .galaxy_cards import GalaxyDetailCard
 from .galaxy_card_model import snapshot_from_record
 from .card_previews import build_local_preview, has_local_image_source
+from .remote_card_previews import fetch_remote_rgb_preview, request_for_project
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
 from .ned_knowledge_dialog import NedKnowledgeDialog
 from .analysis_configurations_dialog import AnalysisConfigurationsDialog
@@ -35,6 +36,8 @@ from lsbpipe.surveys.knowledge_summary import load_galaxy_knowledge
 
 _PREVIEW_POOL = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="desidera-card-preview")
+_RGB_POOL = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="desidera-legacy-rgb")
 
 
 class CreateProjectDialog(QDialog):
@@ -214,6 +217,12 @@ class ProjectHub(QMainWindow):
         self._preview_timer = QTimer(self)
         self._preview_timer.setInterval(100)
         self._preview_timer.timeout.connect(self._finish_preview)
+        self._rgb_future = None
+        self._rgb_project_id = None
+        self._rgb_errors = {}
+        self._rgb_timer = QTimer(self)
+        self._rgb_timer.setInterval(100)
+        self._rgb_timer.timeout.connect(self._finish_rgb_preview)
 
         content = QWidget()
         outer = QVBoxLayout(content)
@@ -328,6 +337,18 @@ class ProjectHub(QMainWindow):
             "local Legacy FITS; never alter originals or run photometry.")
         self.preview_btn.clicked.connect(self._regenerate_preview)
         right.addWidget(self.preview_btn)
+        self.rgb_btn = QPushButton("Fetch Legacy Surveys colour preview")
+        self.rgb_btn.setObjectName("hub_fetch_legacy_rgb")
+        self.rgb_btn.setToolTip(
+            "Explicit network request to official Legacy JPEG cutout service. "
+            "Cached display-only RGB does not replace original FITS.")
+        self.rgb_btn.clicked.connect(self._fetch_rgb_preview)
+        right.addWidget(self.rgb_btn)
+        self.rgb_feedback = QLabel("")
+        self.rgb_feedback.setObjectName("hub_remote_preview_feedback")
+        self.rgb_feedback.setWordWrap(True)
+        self.rgb_feedback.setVisible(False)
+        right.addWidget(self.rgb_feedback)
         self.knowledge_btn = QPushButton("Galaxy Knowledge · SIMBAD…")
         self.knowledge_btn.setObjectName("hub_knowledge_simbad")
         self.knowledge_btn.setToolTip(
@@ -483,6 +504,20 @@ class ProjectHub(QMainWindow):
             and bool(record.get("available")) and not bool(record.get("legacy")))
         self.preview_btn.setEnabled(
             can_preview and self._preview_future is None)
+        allow_rgb = False
+        if can_preview:
+            try:
+                request_for_project(read_object_project(record["root"]))
+                allow_rgb = True
+            except (ValueError, OSError, KeyError, TypeError):
+                pass
+        self.rgb_btn.setEnabled(allow_rgb and self._rgb_future is None)
+        error = (self._rgb_errors.get(record["project_id"], "")
+                 if selected else "")
+        self.rgb_feedback.setText(
+            "Colour preview unavailable: " + error
+            + " · local FITS preview retained." if error else "")
+        self.rgb_feedback.setVisible(bool(error))
         self.remove_btn.setEnabled(selected and self.workspace is None)
         if can_preview and card is not None:
             self._auto_preview_selected(record, card)
@@ -627,6 +662,43 @@ class ProjectHub(QMainWindow):
             return
         self._preview_errors.pop(record["project_id"], None)
         self._start_preview(record)
+
+    def _fetch_rgb_preview(self):
+        """Only a direct button click can initiate a remote RGB request."""
+        record = self._selected_preview_record()
+        if record is None or self._rgb_future is not None:
+            return
+        try:
+            request_for_project(read_object_project(record["root"]))
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            self._rgb_errors[record["project_id"]] = str(exc)
+            self._selection_changed()
+            return
+        self._rgb_project_id = record["project_id"]
+        self._rgb_errors.pop(self._rgb_project_id, None)
+        self._rgb_future = _RGB_POOL.submit(
+            fetch_remote_rgb_preview, record["root"])
+        self.rgb_btn.setEnabled(False)
+        self.rgb_feedback.setText(
+            "Requesting official Legacy Surveys RGB cutout…")
+        self.rgb_feedback.setVisible(True)
+        self._rgb_timer.start()
+
+    def _finish_rgb_preview(self):
+        if self._rgb_future is None or not self._rgb_future.done():
+            return
+        completed, project_id = self._rgb_future, self._rgb_project_id
+        self._rgb_future = None
+        self._rgb_project_id = None
+        self._rgb_timer.stop()
+        try:
+            completed.result()
+            self._rgb_errors.pop(project_id, None)
+        except Exception as exc:
+            self._rgb_errors[project_id] = (
+                f"{type(exc).__name__}: {exc}")
+        # A changed selection never inherits another galaxy's preview.
+        self._selection_changed()
 
     def _open_card_project(self, project_id: str):
         """Activate the currently selected original project by immutable ID."""

@@ -12,6 +12,7 @@ from typing import Callable, Iterable
 
 from lsbpipe.surveys.local_project import open_local_project
 from .card_previews import inspect_cached_preview
+from .remote_card_previews import inspect_cached_remote_preview
 from lsbpipe.surveys.object_projects import read_object_project
 from lsbpipe.surveys.knowledge_summary import (
     CatalogueIdentity, load_galaxy_knowledge, NO_CONFIRMATION,
@@ -33,6 +34,9 @@ class GalaxyCardSnapshot:
     aliases: tuple[str, ...] = ()
     thumbnail: Path | None = None
     preview_status: str = "NOT_GENERATED"
+    preview_source: str = "NONE"
+    local_thumbnail: Path | None = None
+    remote_preview_status: str = "REMOTE_RGB_NOT_CACHED"
     knowledge_status: str = NO_CONFIRMATION
     catalogue_identity: CatalogueIdentity | None = None
     catalogue_identities: tuple[CatalogueIdentity, ...] = ()
@@ -137,14 +141,31 @@ def snapshot_from_record(
             thumbnail, preview_state = inspect_cached_preview(project)
         except (OSError, ValueError, KeyError, AttributeError, TypeError):
             thumbnail, preview_state = _thumbnail(root), "LEGACY_PREVIEW_UNVERIFIED"
+        try:
+            color, remote_state = inspect_cached_remote_preview(project)
+        except (OSError, ValueError, KeyError, AttributeError, TypeError):
+            color, remote_state = None, "INVALID_REMOTE_RGB_CACHE"
+        # RGB is a separate decorative representation. If unavailable,
+        # retain the existing local FITS thumbnail without network access.
+        if color is not None:
+            display_thumbnail = color
+            display_status = remote_state
+            display_source = "REMOTE_LEGACY_RGB"
+        else:
+            display_thumbnail = thumbnail
+            display_status = preview_state
+            display_source = "LOCAL_FITS_GRAYSCALE" if thumbnail else "NONE"
         return GalaxyCardSnapshot(
             **{**common, "display_name": str(project.display_name)},
             coordinates=_coordinates(project.field),
             dataset=dataset,
             fits_status=fits_status,
             aliases=tuple(project.aliases),
-            thumbnail=thumbnail,
-            preview_status=preview_state,
+            thumbnail=display_thumbnail,
+            preview_status=display_status,
+            preview_source=display_source,
+            local_thumbnail=thumbnail,
+            remote_preview_status=remote_state,
             knowledge_status=knowledge_status,
             catalogue_identity=catalogue_identity,
             catalogue_identities=catalogue_identities,
