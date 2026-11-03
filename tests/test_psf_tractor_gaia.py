@@ -20,8 +20,8 @@ def _row(**updates):
     r = {
         "ref_cat":"G3","ref_id":1029384756111,"objid":17,
         "type":"PSF","fitbits":0,"maskbits":0,
-        "gaia_duplicated_source":False,"flux_ivar":200.,
-        "gaia_g_mag":18.6,
+        "gaia_duplicated_source":False,"flux":2.,
+        "flux_ivar":200.,"gaia_g_mag":18.6,
     }
     r.update(updates)
     return r
@@ -96,6 +96,7 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     catalog["OBJID"]=[1,2,3]
     catalog["FITBITS"]=np.zeros(3,dtype=np.int16)
     catalog["MASKBITS"]=np.zeros(3,dtype=np.int32)
+    catalog["FLUX_G"]=np.array([5.,6.,2.],dtype=np.float32)
     catalog["FLUX_IVAR_G"]=np.array([100.,200.,2.],dtype=np.float32)
     catalog["GAIA_DUPLICATED_SOURCE"]=[False,False,False]
     catalog["GAIA_PHOT_G_MEAN_MAG"]=np.array([18.,19.,0.],dtype=np.float32)
@@ -135,3 +136,24 @@ def test_star_cutout_image_quality_screens_nonstellar_elongation():
     width=assess_sample_widths([("a",good)]*6)
     assert width["reference_core_sigma_pix"] > 0
     assert width["calibration"] == "HEURISTIC_UNVALIDATED"
+
+
+def test_catalog_matches_reject_low_snr_and_faint_undetected_neighbors():
+    p=np.array([[50.,50.],[69.,50.],[130.,90.]])
+    rows=(
+        _row(ref_id=100,flux=4.,flux_ivar=100.),
+        _row(ref_id=101,flux=.5,flux_ivar=400.),
+        _row(ref_id=102,flux=1.,flux_ivar=100.),
+    )
+    matcher=TractorGaiaMatcher(
+        "synthetic","d"*64,"dr11/south/1554p180/g",rows,p)
+    # Same object is clean at a small neighbor radius, contaminated
+    # at a radius covering the PSF/star sky annulus.
+    ok,reason=matcher.match(
+        50.,50.,band="g",neighbor_search_radius_pix=10.)
+    assert reason is None and ok["tractor_band_snr_diagonal_only"]==pytest.approx(40.)
+    none,reason=matcher.match(
+        50.,50.,band="g",neighbor_search_radius_pix=22.)
+    assert none is None and reason=="TRACTOR_NEIGHBOR_WITHIN_PSF_CUTOUT"
+    none,reason=matcher.match(130.,90.,band="g")
+    assert none is None and reason=="TRACTOR_LOW_BAND_SIGNAL_TO_NOISE"
