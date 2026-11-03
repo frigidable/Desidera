@@ -1,0 +1,67 @@
+"""Experimental star-level rejection is independent of heldout stars."""
+import numpy as np
+import pytest
+
+from lsbpipe.photometry.psf_training_residuals import (
+    training_star_residual, choose_training_outliers,
+)
+
+
+def _trial(star_id, *, neighbor_amp=0., local_noise=.2):
+    yy, xx = np.indices((51, 51), dtype=float)
+    x0, y0 = 25.2, 24.8
+    model = np.exp(-.5*((xx-x0)**2+(yy-y0)**2)/(2.1**2))
+    image = 100.*model
+    if neighbor_amp:
+        image = image + neighbor_amp*np.exp(
+            -.5*((xx-34.)**2+(yy-31.)**2)/(1.6**2))
+    cutout = {
+        "image":image,
+        "weights":np.full(image.shape,1./local_noise),
+        "center_in_cutout":(x0,y0),
+        "rms_nMgy":local_noise,
+    }
+    entry=(star_id,12.,15.,155.4,18.1,100.,cutout)
+    return entry, model
+
+
+def test_psfex_style_score_rejects_neighbor_contamination_without_holdout():
+    clean,model=_trial("star-0001")
+    contaminated,_=_trial("star-0015",neighbor_amp=35.)
+    good=training_star_residual(clean,model,guessed_fwhm_pix=4.8)
+    bad=training_star_residual(contaminated,model,guessed_fwhm_pix=4.8)
+    assert good["score"] < 0.01
+    assert bad["score"] > 3.
+    sample=[]
+    for j in range(14):
+        entry,_=_trial(f"star-{j+1:04d}",neighbor_amp=0.)
+        sample.append(training_star_residual(
+            entry,model,guessed_fwhm_pix=4.8))
+    sample.append(bad)
+    rejected, evidence=choose_training_outliers(sample,min_train=10)
+    assert rejected==("star-0015",)
+    assert evidence["n_above_cutoff"]==1
+    assert evidence["metric"]=="TRAIN_ONLY_PROVISIONAL_NONCALIBRATED"
+
+
+def test_trimming_is_bounded_even_if_many_stars_are_bad():
+    good=[{"star_id":f"star-{j:04d}","score":1.+.03*(j%5)}
+          for j in range(1,19)]
+    bad=[{"star_id":f"star-{j:04d}","score":30.+j}
+         for j in range(19,24)]
+    selected, summary=choose_training_outliers(
+        good+bad,min_train=10,max_remove_fraction=.12)
+    assert len(selected) <= int(.12*len(good+bad))
+    assert summary["n_above_cutoff"] >= len(selected)
+    assert summary["n_removed_this_pass"] == len(selected)
+
+
+def test_unvalidated_train_residuals_do_not_claim_chi_square():
+    entry,model=_trial("star-0001",neighbor_amp=8.)
+    metric=training_star_residual(entry,model,guessed_fwhm_pix=4.8)
+    assert "NOT_CHI_SQUARE" in metric["metric"]
+    with pytest.raises(ValueError,match="pixels"):
+        training_star_residual(
+            ("star-0001",None,None,None,None,None,{
+                **entry[-1],"weights":np.zeros((51,51)),
+            }),model,guessed_fwhm_pix=4.8)
