@@ -74,6 +74,16 @@ a descriptive coordinate difference and unadopted NED redshift.
 Automated cross-catalogue identity reconciliation, positional TAP search,
 and comprehensive literature measurements remain future work.
 
+Galaxy Projects now shows a **source-aware scientific passport**. It
+explains why linking SIMBAD and NED is useful, displays only saved and
+confirmed catalogue identities and optional NED object-type/redshift claims
+as external unadopted values, and offers a contextual next step based on
+the selected dataset and the presence of the four original Legacy FITS
+products. Local file presence is never presented as validated FITS or
+scientific QA. Missing images use a neutral placeholder rather than a
+technical error; detailed provenance remains expandable. See
+`docs/architecture/SCIENTIFIC_GALAXY_PASSPORT_P10G.md`.
+
 User-confirmed SIMBAD and NED identifiers are also **clickable official
 object links** in the passport and catalogue confirmation dialogs. Links
 are derived solely from validated receipts; unconfirmed neighbours and
