@@ -667,6 +667,8 @@ def build_empirical_coadd_psf(
         summary.update({
             "iteration":iteration+1,
             "screened_stars":scores,
+            "n_proposed_before_brightness_guard":len(candidate_ids),
+            "n_removed_this_pass":len(rejected_ids),
             "selected_for_exclusion":list(rejected_ids),
             "cumulative_exclusion_budget":cap,
             "uses_holdout_to_select":False,
