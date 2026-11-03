@@ -832,20 +832,18 @@ class SurveyExplorer(QMainWindow):
             return payload
 
         def finished(payload):
-            if payload.get("manual_review_receipt"):
-                panel.status.setText(
-                    "Manual training-star exclusions saved in Leo P project. "
-                    "PSF remains experimental and not adopted.")
             if payload.get("status") == "PSF0_QUALITY_REJECTED_NOT_ADOPTED":
                 panel.show_quality_rejection(payload)
                 self.message.setText(
                     f"PSF-0 {band} REJECTED by scientific QA. "
                     "Inspect negative ringing and candidate stars in Photometry.")
-                return
-            panel.show_result(payload)
-            self.message.setText(
-                f"PSF-0 {band} completed as EXPERIMENTAL_NOT_ADOPTED. "
-                "Review holdout stars and QA before saving a diagnostic.")
+            else:
+                panel.show_result(payload)
+                self.message.setText(
+                    f"PSF-0 {band} completed as EXPERIMENTAL_NOT_ADOPTED. "
+                    "Review holdout stars and QA before saving a diagnostic.")
+            if payload.get("manual_review_receipt"):
+                panel.show_review_saved(payload["manual_review_receipt"])
 
         def failed(message):
             panel.show_failure(message)
