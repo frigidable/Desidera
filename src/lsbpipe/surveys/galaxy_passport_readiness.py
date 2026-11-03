@@ -81,7 +81,7 @@ def inspect_passport_readiness(project) -> PassportReadiness:
         candidates = (root / relative, root / "data" / relative)
         try:
             exists = any(
-                item.is_file() and not item.is_symlink()
+                not item.is_symlink() and item.is_file()
                 and item.stat().st_size > 0
                 for item in candidates)
         except OSError:
