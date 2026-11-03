@@ -25,9 +25,12 @@ LEO_P_CENTER = (155.438012, 18.088025)
 BANDS = ("g", "r", "i", "z")
 KINDS = ("image", "invvar", "nexp", "maskbits")
 
-# Controlled single-factor, preregistered diagnostic alternatives. All
-# experiments are non-adopted. Their stellar samples can differ when the
-# isolation footprint changes; no inferred "best PSF" from these outputs.
+# Reproducible diagnostic alternatives. Wing-smoothing and iteration
+# modes each change one PSFBuilder parameter; the larger-sky mode must
+# jointly increase cutout, sky-annulus and isolation footprints. Its
+# stellar sample can therefore differ: do not claim a controlled
+# single-variable causal inference or select a "best PSF" from these QA
+# summaries. Every experiment remains non-adopted.
 PSF0_DIAGNOSTIC_EXPERIMENTS = {
     "baseline": {
         "label": "Baseline · 31 px, sky 10–15, 8 iterations",
