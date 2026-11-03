@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from lsbpipe.surveys.object_projects import read_object_project
+from .catalogue_links import confirmed_name_link
 from lsbpipe.surveys.ned_knowledge import (
     query_ned_identity, save_ned_snapshot, latest_ned_snapshot,
     confirm_ned_identity, latest_ned_confirmation,
@@ -68,6 +69,10 @@ class NedKnowledgeDialog(QDialog):
         self.confirmed = QLabel("No user-confirmed NED association.")
         self.confirmed.setObjectName("ned_confirmed")
         self.confirmed.setWordWrap(True)
+        self.confirmed.setTextFormat(Qt.RichText)
+        self.confirmed.setTextInteractionFlags(
+            Qt.TextBrowserInteraction | Qt.TextSelectableByMouse)
+        self.confirmed.setOpenExternalLinks(True)
         outer.addWidget(self.confirmed)
 
         actions = QHBoxLayout()
@@ -88,6 +93,7 @@ class NedKnowledgeDialog(QDialog):
         self._load_offline()
 
     def _load_offline(self):
+        self.confirmed.setText("No user-confirmed NED association.")
         try:
             query = latest_ned_snapshot(self.project_root)
             if query:
@@ -96,9 +102,10 @@ class NedKnowledgeDialog(QDialog):
                     "Saved NED lookup · offline. Search again to refresh.")
             confirmed = latest_ned_confirmation(self.project_root)
             if confirmed:
+                link = confirmed_name_link(
+                    "NED", confirmed["candidate"]["main_id"])
                 self.confirmed.setText(
-                    "User-confirmed NED association: "
-                    + confirmed["candidate"]["main_id"]
+                    "User-confirmed NED association: " + link
                     + " · project ICRS and science values unchanged.")
         except (ValueError, OSError, KeyError, TypeError) as exc:
             self.status.setText(f"Saved NED evidence cannot be trusted: {exc}")

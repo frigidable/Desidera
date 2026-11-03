@@ -63,6 +63,9 @@ def test_passport_identity_search_and_offline_reopen(qtbot, tmp_path):
     confirm_simbad_identity(p.root, d, "NAME Leo P")
     hub.refresh()
     assert "NAME Leo P" in hub.galaxy_card.catalogue.text()
+    assert 'href="https://simbad.harvard.edu/simbad/sim-id?Ident=NAME+Leo+P"' in (
+        hub.galaxy_card.catalogue.text())
+    assert hub.galaxy_card.catalogue.openExternalLinks()
     assert "user-confirmed" in hub.galaxy_card.catalogue.toolTip()
     assert "Project coordinates unchanged" in (
         hub.galaxy_card.catalogue_provenance.text())
@@ -103,6 +106,7 @@ def test_corrupt_knowledge_displays_an_error_not_a_confirmed_match(
     qtbot.addWidget(hub)
     hub.show()
     assert "requires inspection" in hub.galaxy_card.catalogue.text()
+    assert "<a " not in hub.galaxy_card.catalogue.text()
     assert "Corrupt" in hub.galaxy_card.catalogue_provenance.text()
     hub.filter.setText("NAME Leo P")
     assert hub.galaxy_card.snapshot is None

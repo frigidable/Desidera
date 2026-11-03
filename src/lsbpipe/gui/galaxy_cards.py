@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from .galaxy_card_model import GalaxyCardSnapshot, snapshots_from_records
+from .catalogue_links import confirmed_name_link
 from lsbpipe.surveys.object_projects import recent_projects
 
 
@@ -124,7 +125,10 @@ class GalaxyDetailCard(QFrame):
         identity_col.addWidget(self.coordinates)
         self.catalogue = _metadata("No confirmed catalogue identity")
         self.catalogue.setObjectName("galaxy_card_catalogue")
-        self.catalogue.setTextFormat(Qt.PlainText)
+        self.catalogue.setTextFormat(Qt.RichText)
+        self.catalogue.setTextInteractionFlags(
+            Qt.TextBrowserInteraction | Qt.TextSelectableByMouse)
+        self.catalogue.setOpenExternalLinks(True)
         self.catalogue.setToolTip(
             "Only user-confirmed catalogue identities. External evidence "
             "does not change project coordinates or adopt measurements.")
@@ -252,8 +256,14 @@ class GalaxyDetailCard(QFrame):
             self.catalogue_provenance.show()
             self.details_toggle.setChecked(True)
         elif catalogues:
-            self.catalogue.setText("\n".join(
-                f"{entry.provider}: {entry.main_id}"
+            # CatalogueIdentity instances are produced exclusively by the
+            # receipt-validated knowledge read model. Neither unidentified
+            # cone candidates nor corrupt receipts receive browser links.
+            self.catalogue.setText("<br>".join(
+                f"{entry.provider}: "
+                + confirmed_name_link(
+                    entry.provider, entry.main_id,
+                    endpoint_host=entry.endpoint_host)
                 for entry in catalogues))
             details = []
             for entry in catalogues:

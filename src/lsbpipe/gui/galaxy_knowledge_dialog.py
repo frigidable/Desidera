@@ -13,10 +13,11 @@ from PySide6.QtWidgets import (
 )
 
 from lsbpipe.surveys.object_projects import read_object_project
+from .catalogue_links import confirmed_name_link
 from lsbpipe.surveys.galaxy_knowledge import (
     query_simbad_candidates, store_simbad_snapshot,
     latest_simbad_snapshot, latest_simbad_confirmation,
-    confirm_simbad_identity,
+    read_simbad_snapshot, confirm_simbad_identity,
 )
 
 # Bounded shared worker pool: opening or closing a dialog never owns/destroys
@@ -93,6 +94,10 @@ class GalaxyKnowledgeDialog(QDialog):
         self.confirmed = QLabel("No confirmed SIMBAD catalogue association.")
         self.confirmed.setObjectName("knowledge_confirmed")
         self.confirmed.setWordWrap(True)
+        self.confirmed.setTextFormat(Qt.RichText)
+        self.confirmed.setTextInteractionFlags(
+            Qt.TextBrowserInteraction | Qt.TextSelectableByMouse)
+        self.confirmed.setOpenExternalLinks(True)
         root.addWidget(self.confirmed)
 
         lower = QHBoxLayout()
@@ -113,6 +118,7 @@ class GalaxyKnowledgeDialog(QDialog):
         self._load_offline()
 
     def _load_offline(self):
+        self.confirmed.setText("No confirmed SIMBAD catalogue association.")
         try:
             existing = latest_simbad_snapshot(self.project_root)
             if existing:
@@ -122,8 +128,15 @@ class GalaxyKnowledgeDialog(QDialog):
             receipt = latest_simbad_confirmation(self.project_root)
             if receipt:
                 c = receipt["candidate"]
+                source = read_simbad_snapshot(
+                    self.project_root, receipt["snapshot_sha256"])
+                endpoint = source.get("endpoint_evidence") or {}
+                host = (endpoint.get("endpoint_host")
+                        if isinstance(endpoint, dict) else None)
+                link = confirmed_name_link(
+                    "SIMBAD", c["main_id"], endpoint_host=host)
                 self.confirmed.setText(
-                    f"User-confirmed SIMBAD identity: {c['main_id']}. "
+                    "User-confirmed SIMBAD identity: " + link + ". "
                     "External reference only; ICRS target and science results unchanged.")
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.status.setText(f"Stored evidence cannot be trusted: {exc}")
