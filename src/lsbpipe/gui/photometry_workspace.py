@@ -68,7 +68,7 @@ class PhotometryWorkspace(QWidget):
         self.title.setStyleSheet("font-size: 21px; font-weight: 600;")
         root.addWidget(self.title)
         self.subtitle = QLabel(
-            "Planned PSF-first scientific workflow · no PSF, sky or photometry has been measured")
+            "PSF-0 diagnostics are experimental · no adopted PSF, sky or galaxy photometry")
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
@@ -92,7 +92,7 @@ class PhotometryWorkspace(QWidget):
             stage = QVBoxLayout(block)
             caption = QLabel(description)
             caption.setWordWrap(True)
-            caption.setStyleSheet("color: palette(mid);")
+            caption.setStyleSheet("font-size: 11px;")
             stage.addWidget(caption)
             left.addWidget(block)
         left.addStretch(1)
