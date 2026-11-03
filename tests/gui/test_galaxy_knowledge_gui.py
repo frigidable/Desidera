@@ -51,6 +51,7 @@ def test_knowledge_dialog_offline_then_manual_query_and_confirm(
     assert len(calls) == 1
     assert dialog.table.rowCount() == 2
     assert not dialog.confirm_btn.isEnabled()
+    assert "<a " not in dialog.confirmed.text()
     dialog.table.selectRow(1)
     assert dialog.confirm_btn.isEnabled()
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
@@ -58,6 +59,9 @@ def test_knowledge_dialog_offline_then_manual_query_and_confirm(
     saved = latest_simbad_confirmation(project.root)
     assert saved["candidate"]["main_id"] == "Nearby object"
     assert "Nearby object" in dialog.confirmed.text()
+    assert "simbad.cds.unistra.fr/simbad/sim-id?Ident=Nearby+object" in (
+        dialog.confirmed.text())
+    assert dialog.confirmed.openExternalLinks()
     assert saved["coordinate_adoption"] is False
     assert (project.root / "lsbpipe-object.json").read_bytes() == manifest
 
