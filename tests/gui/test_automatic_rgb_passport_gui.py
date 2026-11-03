@@ -146,8 +146,8 @@ def test_failed_auto_download_is_not_retried_on_selection_or_refresh(
     monkeypatch.setattr(hub_module, "fetch_remote_rgb_preview", broken)
     hub = _hub(qtbot)
     qtbot.waitUntil(
-        lambda: hub._rgb_future is None and seen and
-                "TimeoutError" in hub.rgb_feedback.text(),
+        lambda: bool(hub._rgb_future is None and seen and
+                     "TimeoutError" in hub.rgb_feedback.text()),
         timeout=12000)
     assert len(seen) == 1
     hub.refresh()
