@@ -705,6 +705,15 @@ class ProjectHub(QMainWindow):
     def _auto_preview_selected(self, record, card):
         if card.thumbnail is not None or self._preview_future is not None:
             return
+        try:
+            project = read_object_project(record["root"])
+            if not has_local_image_source(project):
+                # No local IMAGE source is a normal state of a new galaxy
+                # project, not an error. Never show a prior exception here.
+                self._preview_errors.pop(record.get("project_id"), None)
+                return
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return
         project_id = record.get("project_id")
         if project_id in self._preview_errors:
             self.galaxy_card.preview.setText("Preview unavailable")
@@ -712,12 +721,6 @@ class ProjectHub(QMainWindow):
                 "Preview generation failed; diagnostics: "
                 + self._preview_errors[project_id]
                 + ". Use Project tools to retry when original FITS exist.")
-            return
-        try:
-            project = read_object_project(record["root"])
-            if not has_local_image_source(project):
-                return
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             return
         self._start_preview(record)
 
