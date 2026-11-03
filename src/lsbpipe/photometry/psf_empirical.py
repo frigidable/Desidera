@@ -29,7 +29,7 @@ from lsbpipe.photometry.psf_star_quality import (
     assess_psf_star_cutout, assess_sample_widths,
 )
 from lsbpipe.photometry.psf_training_residuals import (
-    training_star_residual, choose_training_outliers,
+    training_star_residual, choose_training_outliers, brightness_bias_audit,
 )
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
@@ -647,6 +647,18 @@ def build_empirical_coadd_psf(
                                "metric":"UNSCORABLE_TRAIN_STAR"})
         rejected_ids, summary = choose_training_outliers(
             scores, min_train=cfg.min_train_stars)
+        brightness = brightness_bias_audit(scores, rejected_ids)
+        # Do not silently remove the brightest ePSF stars when their
+        # shape-residual score is effectively a brightness rank. This
+        # was observed on *real* Leo P (rho~0.89), where six such
+        # exclusions degraded negative-wing and heldout QA.
+        # The potential exclusions remain available in the report for
+        # manual review, but are not applied to the science inventory.
+        candidate_ids = rejected_ids
+        if brightness["auto_trim_blocked"]:
+            rejected_ids = ()
+        summary["brightness_score_coupling_qa"] = brightness
+        summary["proposed_before_brightness_guard"] = list(candidate_ids)
         # Cumulative cap to protect real spatial PSF variation from a
         # feedback loop that progressively deletes hard-to-fit regions.
         cap = max(1, int(.20 * len(original_training_entries)))
@@ -671,6 +683,10 @@ def build_empirical_coadd_psf(
             if entry[0] not in auto_excluded_ids]
         builder, fitted = build_for_training(training_entries)
     train = tuple(metadata(v, "train") for v in training_entries)
+    score_amplitude_guard_triggered = any(
+        item.get("brightness_score_coupling_qa", {}).get(
+            "auto_trim_blocked", False)
+        for item in outlier_history)
     solver_diagnostics = {
         "photutils_version": str(photutils.__version__),
         "smoothing_kernel_requested_or_default": str(
@@ -830,6 +846,8 @@ def build_empirical_coadd_psf(
         "sky_and_psf_wings_jointly_estimated":False,
         "training_residual_screening_history": outlier_history,
         "automatic_training_rejections": sorted(auto_excluded_ids),
+        "brightness_score_coupling_blocked_auto_trim":
+            score_amplitude_guard_triggered,
         "n_train_gaia_matched": sum(s.gaia_source_id is not None for s in train),
         "n_holdout_gaia_matched": sum(s.gaia_source_id is not None for s in holdout),
         "psf_star_cleanliness_certified": False,
@@ -914,9 +932,12 @@ def build_empirical_coadd_psf(
          "GAIA_IDENTITIES_VERIFIED_CUTOUT_CLEANLINESS_UNCALIBRATED"),
         "CUTOUT_SKY_MAY_ABSORB_WINGS",
         "FITTED_STAR_FLUX_NOT_TOTAL_FLUX",
+        "TRAINING_RESIDUAL_SCORE_IN_SAMPLE_NOT_CROSSVALIDATED",
         "HOLDOUT_RESIDUAL_NOT_CALIBRATED_CHI_SQUARE",
         "TARGET_PROTECTION_LOCAL_WCS_APPROXIMATION",
     ]
+    if score_amplitude_guard_triggered:
+        flags.append("AUTO_TRAINING_TRIM_BLOCKED_BY_SCORE_FLUX_COUPLING")
     if negative_fraction > 1e-4:
         flags.append("EPSF_NEGATIVE_RINGING_CLIPPED")
     if hasattr(fitted, "converged") and not fitted.converged:
