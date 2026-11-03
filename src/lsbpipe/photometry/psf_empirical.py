@@ -492,7 +492,11 @@ def build_empirical_coadd_psf(
     for ix, (x, y, peak) in enumerate(candidates[:max_candidates]):
         identity = None
         if catalog_matcher is not None:
-            identity, failure = catalog_matcher.match(x, y, band=frame.band)
+            identity, failure = catalog_matcher.match(
+                x, y, band=frame.band,
+                neighbor_search_radius_pix=min(
+                    50., max(3*cfg.guessed_fwhm_pix,
+                             .65*cfg.cutout_size_pix)))
             if failure is not None:
                 reject(failure)
                 continue
