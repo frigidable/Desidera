@@ -12,6 +12,9 @@ from typing import Callable, Iterable
 
 from lsbpipe.surveys.local_project import open_local_project
 from lsbpipe.surveys.object_projects import read_object_project
+from lsbpipe.surveys.knowledge_summary import (
+    CatalogueIdentity, load_galaxy_knowledge, NO_CONFIRMATION,
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,9 @@ class GalaxyCardSnapshot:
     note: str = ""
     aliases: tuple[str, ...] = ()
     thumbnail: Path | None = None
+    knowledge_status: str = NO_CONFIRMATION
+    catalogue_identity: CatalogueIdentity | None = None
+    knowledge_error: str = ""
 
     def matches(self, search: str) -> bool:
         query = search.casefold().strip()
@@ -36,6 +42,8 @@ class GalaxyCardSnapshot:
             for value in (
                 self.display_name, str(self.root), self.project_id,
                 self.coordinates, self.dataset, *self.aliases,
+                self.catalogue_identity.main_id
+                if self.catalogue_identity is not None else "",
             )
         )
 
@@ -99,6 +107,20 @@ def snapshot_from_record(
             fits_status = "Saved FITS path unavailable"
         else:
             fits_status = "FITS linked · integrity not checked"
+        # Knowledge is an independent read-only projection, not project
+        # metadata. A corrupt receipt is shown as an evidence error and must
+        # never be reinterpreted as an accepted SIMBAD association.
+        knowledge_status = NO_CONFIRMATION
+        catalogue_identity = None
+        knowledge_error = ""
+        try:
+            knowledge = load_galaxy_knowledge(project.root, project=project)
+            knowledge_status = knowledge.status
+            catalogue_identity = (
+                knowledge.identities[0] if knowledge.identities else None)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            knowledge_status = "EVIDENCE_ERROR"
+            knowledge_error = f"{type(exc).__name__}: {exc}"
         return GalaxyCardSnapshot(
             **{**common, "display_name": str(project.display_name)},
             coordinates=_coordinates(project.field),
@@ -106,6 +128,9 @@ def snapshot_from_record(
             fits_status=fits_status,
             aliases=tuple(project.aliases),
             thumbnail=_thumbnail(root),
+            knowledge_status=knowledge_status,
+            catalogue_identity=catalogue_identity,
+            knowledge_error=knowledge_error,
         )
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         return GalaxyCardSnapshot(
