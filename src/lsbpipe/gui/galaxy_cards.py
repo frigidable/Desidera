@@ -151,9 +151,15 @@ class GalaxyDetailCard(QFrame):
         self.literature.setObjectName("galaxy_card_literature")
         self.literature.setTextInteractionFlags(Qt.TextSelectableByMouse)
         body.addWidget(self.literature)
+        self.literature.setStyleSheet(
+            "QLabel#galaxy_card_literature {"
+            "background: palette(alternate-base);"
+            "border: 1px solid palette(mid);"
+            "border-radius: 6px; padding: 10px; }")
         self.cross_catalogue = _metadata("")
         self.cross_catalogue.setObjectName("galaxy_card_catalogue_offset")
-        body.addWidget(self.cross_catalogue)
+        # Coordinate disagreement is scientific provenance, not a long
+        # default-card warning: render it in the expandable evidence view.
 
         observations = QLabel("OBSERVATIONS")
         observations.setObjectName("galaxy_card_section")
@@ -167,8 +173,7 @@ class GalaxyDetailCard(QFrame):
         self.observation_explanation = _metadata("")
         self.observation_explanation.setObjectName(
             "galaxy_card_observation_explanation")
-        body.addWidget(self.observation_explanation)
-
+        # Exact source/coverage caveats belong in the expanded evidence.
         self.qa_heading = QLabel("SAVED DATASET QA")
         self.qa_heading.setObjectName("galaxy_card_section")
         body.addWidget(self.qa_heading)
@@ -177,7 +182,6 @@ class GalaxyDetailCard(QFrame):
         body.addWidget(self.qa_status)
         self.qa_note = _metadata("")
         self.qa_note.setObjectName("galaxy_card_qa_note")
-        body.addWidget(self.qa_note)
         self.qa_heading.hide()
         self.qa_status.hide()
         self.qa_note.hide()
@@ -194,7 +198,7 @@ class GalaxyDetailCard(QFrame):
         self.next_step_title.hide()
         self.next_step.hide()
 
-        self.details_toggle = QPushButton("Catalogue & project details  ▾")
+        self.details_toggle = QPushButton("Sources & QA details  ▾")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
         self.details_toggle.setCheckable(True)
         self.details_toggle.setChecked(False)
@@ -214,6 +218,18 @@ class GalaxyDetailCard(QFrame):
             "galaxy_card_catalogue_provenance")
         self.catalogue_provenance.setTextFormat(Qt.PlainText)
         extended.addWidget(self.catalogue_provenance)
+        extended.addWidget(self.cross_catalogue)
+        self.cross_catalogue.hide()
+        observation_title = QLabel("OBSERVATION EVIDENCE")
+        observation_title.setObjectName("galaxy_card_section")
+        extended.addWidget(observation_title)
+        extended.addWidget(self.observation_explanation)
+        self.observation_explanation.hide()
+        audit_title = QLabel("FITS/WCS AUDIT DETAILS")
+        audit_title.setObjectName("galaxy_card_section")
+        extended.addWidget(audit_title)
+        extended.addWidget(self.qa_note)
+        self.qa_note.hide()
         self.audit_receipt_note = _metadata("", selectable=True)
         self.audit_receipt_note.setObjectName("galaxy_card_audit_provenance")
         extended.addWidget(self.audit_receipt_note)
@@ -261,8 +277,8 @@ class GalaxyDetailCard(QFrame):
     def _details_toggled(self, checked: bool):
         self.details_panel.setVisible(checked)
         self.details_toggle.setText(
-            "Hide catalogue & project details  ▴" if checked
-            else "Catalogue & project details  ▾")
+            "Hide sources & QA details  ▴" if checked
+            else "Sources & QA details  ▾")
 
     def _set_preview_side(self, side: int):
         """Square preview, responsive down to the 300 px narrow inspector."""
@@ -381,21 +397,17 @@ class GalaxyDetailCard(QFrame):
             providers = {entry.provider for entry in catalogues}
             if not providers:
                 self.catalogue_help.setText(
-                    "Why identify this galaxy? Confirm a SIMBAD/NED match "
-                    "to connect published names, source references and "
-                    "comparable catalogue values to this project. "
-                    "Use Catalogues ▾ to review candidates; no scientific "
-                    "results or ICRS coordinates are adopted automatically.")
+                    "Why identify this galaxy? SIMBAD connects names and "
+                    "literature; NED provides published galaxy properties. "
+                    "Use Catalogues to confirm a match; no science is adopted.")
                 self.catalogue_help.show()
             elif "SIMBAD" not in providers:
                 self.catalogue_help.setText(
-                    "SIMBAD is not linked yet. Confirm a match to connect "
-                    "literature names and bibliography to this project.")
+                    "Link SIMBAD for alternative names and literature references.")
                 self.catalogue_help.show()
             elif "NED" not in providers:
                 self.catalogue_help.setText(
-                    "NED is not linked yet. Confirm a match to review "
-                    "published extragalactic properties with source references.")
+                    "Link NED for sourced extragalactic properties.")
                 self.catalogue_help.show()
             ned = next((entry for entry in catalogues
                         if entry.provider == "NED"), None)
