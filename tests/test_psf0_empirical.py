@@ -340,3 +340,55 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
     assert len(reduced)==len(train)-1
     assert next(item for item in review_again["stars"]
                 if item["star_id"]==selected)["role"]=="excluded"
+
+
+def test_baseline_sky_annulus_has_explicit_star_wing_degeneracy_warning():
+    from lsbpipe.photometry.psf_empirical import _star_cutout
+    frame=fake_frame()
+    mask=np.zeros(frame.shape,dtype=bool)
+    src, reason=_star_cutout(
+        frame,78.,78.,PSF0Config(),mask)
+    assert reason is None
+    assert src["sky_qa"]["method"] == "ROBUST_LOCAL_PLANE_ON_STELLAR_ANNULUS"
+    assert src["sky_qa"]["wing_sky_degeneracy_warning"] is True
+    assert src["sky_qa"]["annulus_inner_in_guessed_fwhm"] == pytest.approx(
+        10./4.8)
+    assert src["sky_qa"]["sky_uncertainty_covariance_calibrated"] is False
+    assert src["sky_qa"]["sky_versus_psf_wings_separable_from_this_cutout"] is False
+    assert 0 < src["sky_qa"]["annulus_sigma_clip_retained_fraction"] <= 1
+
+
+def test_training_outlier_screening_does_not_touch_fixed_holdouts():
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from lsbpipe.photometry.psf_empirical import PSF0QualityError
+
+    frame=fake_frame()
+    initial=PSF0Config(
+        min_train_stars=6,min_holdout_stars=2,
+        max_training_stars=30,min_neighbor_separation_pix=32.)
+    def run(cfg):
+        try:
+            result=build_empirical_coadd_psf(
+                frame,target_icrs_deg=LEO_P,
+                target_protection_arcsec=13.,config=cfg)
+            return result.training,result.holdout,result.review_snapshot
+        except PSF0QualityError as exc:
+            return (
+                [SimpleNamespace(**row) for row in exc.diagnostics["training"]],
+                [SimpleNamespace(**row) for row in exc.diagnostics["holdout"]],
+                exc.review_snapshot)
+    train0,holdout0,_=run(initial)
+    train1,holdout1,review=run(
+        replace(initial,training_outlier_passes=2))
+    assert {s.star_id for s in holdout0} == {s.star_id for s in holdout1}
+    assert len(train1) >= 6
+    assert review["training_residual_screening_history"]
+    assert all(h["uses_holdout_to_select"] is False
+               for h in review["training_residual_screening_history"])
+    assert all(h["coadd_chi_square_calibrated"] is False
+               for h in review["training_residual_screening_history"])
+    auto=set(review["automatic_training_rejections"])
+    assert auto.isdisjoint({s.star_id for s in holdout0})
+    assert auto.isdisjoint({s.star_id for s in train1})
+    assert len(auto) <= max(1,int(.2*len(train0)))
