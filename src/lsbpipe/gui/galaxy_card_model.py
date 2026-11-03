@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from lsbpipe.surveys.local_project import open_local_project
+from .card_previews import inspect_cached_preview
 from lsbpipe.surveys.object_projects import read_object_project
 from lsbpipe.surveys.knowledge_summary import (
     CatalogueIdentity, load_galaxy_knowledge, NO_CONFIRMATION,
@@ -31,6 +32,7 @@ class GalaxyCardSnapshot:
     note: str = ""
     aliases: tuple[str, ...] = ()
     thumbnail: Path | None = None
+    preview_status: str = "NOT_GENERATED"
     knowledge_status: str = NO_CONFIRMATION
     catalogue_identity: CatalogueIdentity | None = None
     catalogue_identities: tuple[CatalogueIdentity, ...] = ()
@@ -131,13 +133,18 @@ def snapshot_from_record(
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             knowledge_status = "EVIDENCE_ERROR"
             knowledge_error = f"{type(exc).__name__}: {exc}"
+        try:
+            thumbnail, preview_state = inspect_cached_preview(project)
+        except (OSError, ValueError, KeyError, AttributeError, TypeError):
+            thumbnail, preview_state = _thumbnail(root), "LEGACY_PREVIEW_UNVERIFIED"
         return GalaxyCardSnapshot(
             **{**common, "display_name": str(project.display_name)},
             coordinates=_coordinates(project.field),
             dataset=dataset,
             fits_status=fits_status,
             aliases=tuple(project.aliases),
-            thumbnail=_thumbnail(root),
+            thumbnail=thumbnail,
+            preview_status=preview_state,
             knowledge_status=knowledge_status,
             catalogue_identity=catalogue_identity,
             catalogue_identities=catalogue_identities,
