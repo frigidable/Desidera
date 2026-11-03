@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from lsbpipe.photometry.psf_gui_backend import (
     inspect_psf0_bands, PSF0_DIAGNOSTIC_EXPERIMENTS,
 )
+from lsbpipe.gui.psf_star_review import PSFStarReviewDialog
 
 
 class PSF0Panel(QGroupBox):
@@ -40,6 +41,8 @@ class PSF0Panel(QGroupBox):
         self._busy = False
         self._experiment_history = []
         self._history_band = None
+        self._star_review_data = None
+        self._active_exclusions = ()
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
@@ -100,6 +103,14 @@ class PSF0Panel(QGroupBox):
             "in the existing background worker; does not write a PSF.")
         self.run_btn.clicked.connect(self._request_run)
         actions.addWidget(self.run_btn)
+        self.review_btn = QPushButton("Review training stars…")
+        self.review_btn.setObjectName("psf0_review_stars_button")
+        self.review_btn.setToolTip(
+            "Open a separate mosaic of all train cutouts, aligned candidate "
+            "PSF and square radial profiles. Exclude stars and recompute "
+            "without changing independent holdouts.")
+        self.review_btn.clicked.connect(self._open_star_review)
+        actions.addWidget(self.review_btn)
         self.save_btn = QPushButton("Save diagnostic FITS + report")
         self.save_btn.setObjectName("psf0_save_button")
         self.save_btn.setEnabled(False)
@@ -186,6 +197,8 @@ class PSF0Panel(QGroupBox):
         self.refresh_sources()
 
     def refresh_sources(self):
+        self._star_review_data = None
+        self._active_exclusions = ()
         self._experiment_history = []
         self._history_band = None
         self._render_comparison()
@@ -245,6 +258,8 @@ class PSF0Panel(QGroupBox):
             self._band_changed()
 
     def _band_changed(self, *_):
+        self._star_review_data = None
+        self._active_exclusions = ()
         # Changing filter invalidates former-band comparison. Changing the
         # experiment retains historical same-band trials in memory.
         band = self.band.currentData()
@@ -275,6 +290,7 @@ class PSF0Panel(QGroupBox):
         self.protection.setEnabled(not self._busy)
         self.experiment.setEnabled(not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
+        self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)
 
     def set_busy(self, state: bool, message: str = ""):
         self._busy = bool(state)
@@ -282,9 +298,10 @@ class PSF0Panel(QGroupBox):
             self.status.setText(message)
         self._update_buttons()
 
-    def _request_run(self):
+    def _request_run(self, *, review_confirmed: bool = False):
         if self._project_root is None or self._busy or self.band.currentData() is None:
             return
+        self._star_review_data = None
         self._preview = None
         self._qa_payload = None
         self.save_btn.setEnabled(False)
@@ -298,8 +315,22 @@ class PSF0Panel(QGroupBox):
             "band": self.band.currentData(),
             "fwhm_pix": self.fwhm.value(),
             "experiment": self.experiment.currentData(),
+            "excluded_training_star_ids": tuple(self._active_exclusions),
+            "manual_review_confirmed": review_confirmed,
             "target_protection_arcsec": self.protection.value(),
         })
+
+    def _open_star_review(self):
+        if self._busy or self._star_review_data is None:
+            return
+        dialog = PSFStarReviewDialog(self._star_review_data, parent=self)
+        if dialog.exec() != PSFStarReviewDialog.Accepted:
+            return
+        selected = dialog.excluded_ids()
+        if selected == self._active_exclusions:
+            return
+        self._active_exclusions = selected
+        self._request_run(review_confirmed=True)
 
     def _request_save(self):
         if self._busy or self._preview is None:
@@ -307,6 +338,7 @@ class PSF0Panel(QGroupBox):
         self.saveRequested.emit(self._preview)
 
     def show_failure(self, error: str):
+        self._star_review_data = None
         self._preview = None
         self._qa_payload = None
         self.save_btn.setEnabled(False)
@@ -333,6 +365,7 @@ class PSF0Panel(QGroupBox):
             self.show_failure("Rejected PSF belongs to another Galaxy Project")
             return
         self._preview = None
+        self._star_review_data = payload.get("star_review")
         self._qa_payload = {
             "science_status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
             "source_project": str(self._project_root),
@@ -552,6 +585,7 @@ class PSF0Panel(QGroupBox):
             return
         result = preview["result"]
         self._preview = preview
+        self._star_review_data = preview.get("star_review")
         report = result.report()
         self._qa_payload = report
         self.status.setText(
