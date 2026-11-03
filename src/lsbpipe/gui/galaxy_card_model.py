@@ -33,6 +33,9 @@ class GalaxyCardSnapshot:
     thumbnail: Path | None = None
     knowledge_status: str = NO_CONFIRMATION
     catalogue_identity: CatalogueIdentity | None = None
+    catalogue_identities: tuple[CatalogueIdentity, ...] = ()
+    provider_offset_arcsec: float | None = None
+    ned_status: str = "NOT_QUERIED"
     knowledge_error: str = ""
 
     def matches(self, search: str) -> bool:
@@ -42,6 +45,7 @@ class GalaxyCardSnapshot:
             for value in (
                 self.display_name, str(self.root), self.project_id,
                 self.coordinates, self.dataset, *self.aliases,
+                *(value.main_id for value in self.catalogue_identities),
                 self.catalogue_identity.main_id
                 if self.catalogue_identity is not None else "",
             )
@@ -112,12 +116,18 @@ def snapshot_from_record(
         # never be reinterpreted as an accepted SIMBAD association.
         knowledge_status = NO_CONFIRMATION
         catalogue_identity = None
+        catalogue_identities = ()
+        provider_offset_arcsec = None
+        ned_status = "NOT_QUERIED"
         knowledge_error = ""
         try:
             knowledge = load_galaxy_knowledge(project.root, project=project)
             knowledge_status = knowledge.status
+            catalogue_identities = knowledge.identities
             catalogue_identity = (
                 knowledge.identities[0] if knowledge.identities else None)
+            provider_offset_arcsec = knowledge.provider_offset_arcsec
+            ned_status = knowledge.ned_status
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
             knowledge_status = "EVIDENCE_ERROR"
             knowledge_error = f"{type(exc).__name__}: {exc}"
@@ -130,6 +140,9 @@ def snapshot_from_record(
             thumbnail=_thumbnail(root),
             knowledge_status=knowledge_status,
             catalogue_identity=catalogue_identity,
+            catalogue_identities=catalogue_identities,
+            provider_offset_arcsec=provider_offset_arcsec,
+            ned_status=ned_status,
             knowledge_error=knowledge_error,
         )
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
