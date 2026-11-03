@@ -26,3 +26,13 @@ __all__ += [
     "read_active_mask_draft", "save_mask_draft",
     "EllipseSeed", "propose_isophotal_seed", "seed_as_sky_geometry",
 ]
+
+# Human-seeded stellar segmentation proposals; no automatic science adoption.
+from .smart_masks import (
+    StarMaskSeed, SmartStarMaskCandidate, propose_seeded_star_mask,
+    SMART_MASK_STATUS,
+)
+__all__ += [
+    "StarMaskSeed", "SmartStarMaskCandidate", "propose_seeded_star_mask",
+    "SMART_MASK_STATUS",
+]
