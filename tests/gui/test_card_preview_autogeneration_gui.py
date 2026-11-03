@@ -56,7 +56,8 @@ def test_selected_leo_p_builds_cache_offline_and_reopens_without_fits(
         timeout=15000)
     assert hub.galaxy_card.preview.pixmap() is not None
     assert not hub.galaxy_card.preview.pixmap().isNull()
-    assert "display only" in hub.galaxy_card.preview_note.text().lower()
+    assert "display only" in hub.galaxy_card.preview.toolTip().lower()
+    assert not hub.galaxy_card.preview_note.isVisible()
     assert hub.preview_btn.isEnabled()
     assert manifest.read_bytes() == saved
     assert source.read_bytes() == before_fits
