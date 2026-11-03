@@ -253,6 +253,7 @@ class GalaxyDetailCard(QFrame):
             self._update_preview()
 
     def set_snapshot(self, snapshot: GalaxyCardSnapshot | None) -> None:
+        previous_id = self.snapshot.project_id if self.snapshot else None
         self.snapshot = snapshot
         self._pixmap = None
         self.open_button.setEnabled(snapshot is not None)
@@ -281,6 +282,10 @@ class GalaxyDetailCard(QFrame):
 
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
+        self.next_step.show()
+        if (previous_id != snapshot.project_id
+                and snapshot.knowledge_status != "EVIDENCE_ERROR"):
+            self.details_toggle.setChecked(False)
         self.dataset.setText(f"Dataset: {snapshot.dataset}")
         self.literature_heading.hide()
         self.literature.hide()
@@ -413,8 +418,7 @@ class GalaxyDetailCard(QFrame):
         self.note.setVisible(bool(snapshot.note))
         self.note.setText(snapshot.note)
         self.preview.setPixmap(QPixmap())
-        self.preview.setText(
-            "No image yet" if snapshot.thumbnail is None else "")
+        self.preview.setText("No image yet")
         self.preview_note.hide()
         if snapshot.preview_source == "REMOTE_LEGACY_RGB":
             tooltip = ("Legacy Surveys Viewer RGB cutout; display only. "
