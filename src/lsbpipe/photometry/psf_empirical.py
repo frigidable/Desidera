@@ -35,8 +35,8 @@ class PSF0Config:
     sky_annulus_outer_pix: float = 15.
     max_invalid_fraction: float = .01
     min_neighbor_separation_pix: float = 32.
-    min_train_stars: int = 6
-    min_holdout_stars: int = 2
+    min_train_stars: int = 10
+    min_holdout_stars: int = 3
     holdout_every: int = 5
     max_training_stars: int = 75
     max_iterations: int = 8
