@@ -197,6 +197,9 @@ class PhotometryWorkspace(QWidget):
         self.refresh()
 
     def refresh(self):
+        # Always clear/rebind the scientific preview first: even a corrupt
+        # project manifest must never leave a previous galaxy's PSF active.
+        self.psf0_panel.bind_project(self._project_root)
         if self._project_root is None:
             self.title.setText("Photometry")
             self.source_state.setText("Open a galaxy project first.")
@@ -239,4 +242,3 @@ class PhotometryWorkspace(QWidget):
             "validates real FITS/WCS and performs an experimental stellar fit, "
             "but PSF wings/spatial representation, galaxy sky, correlated "
             "noise and photometric measurements remain unvalidated.")
-        self.psf0_panel.bind_project(self._project_root)
