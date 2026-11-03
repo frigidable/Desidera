@@ -85,7 +85,8 @@ def test_passport_shows_dataset_qa_caveat_and_survives_legacy_widgets(
     hub.refresh()
     assert "dr11 / south / 1554p180 / r" in hub.galaxy_card.dataset.text()
     assert "No original FITS found" in hub.galaxy_card.fits.text()
-    assert "get original FITS" in hub.galaxy_card.open_button.text()
+    assert hub.galaxy_card.open_button.text() == "Open project"
+    assert "get original FITS" in hub.galaxy_card.open_button.toolTip()
     assert "integrity not checked" in hub.detail_status.text()
     assert read_object_project(p.root).selected_dataset == p.selected_dataset
 
