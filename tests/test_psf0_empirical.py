@@ -306,7 +306,7 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
         "ref_cat":"G3","ref_id":int(1000+i),
         "objid":i,"type":"PSF","fitbits":0,
         "maskbits":0,"gaia_duplicated_source":False,
-        "flux_ivar":100.,"gaia_g_mag":18.,
+        "flux":4.,"flux_ivar":100.,"gaia_g_mag":18.,
     } for i,_ in enumerate(references))
     positions=np.array([(s.x_pix,s.y_pix) for s in references])
     matcher=TractorGaiaMatcher(
