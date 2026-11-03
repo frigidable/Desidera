@@ -300,6 +300,11 @@ def _star_cutout(frame, x, y, cfg, protected):
         if not np.isfinite(scale) or scale <= 0:
             return None, "NO_LOCAL_NOISE_ESTIMATE"
         include = np.abs(resid-np.median(resid[include])) < 3.5*scale
+    if np.count_nonzero(include) < 25:
+        return None, "INSUFFICIENT_LOCAL_SKY"
+    # Refit after the last rejection; the previous iteration's
+    # coefficients otherwise describe a *different* pixel subset.
+    coeff = np.linalg.lstsq(design[include], observed[include], rcond=None)[0]
     full_sky = coeff[0] + coeff[1]*dx + coeff[2]*dy
     residual = src - full_sky
     core = (rr <= max(2.5, cfg.guessed_fwhm_pix))
@@ -307,6 +312,44 @@ def _star_cutout(frame, x, y, cfg, protected):
     if not np.isfinite(star_peak) or star_peak <= cfg.detection_sigma*scale:
         return None, "LOW_LOCAL_STAR_CONTRAST"
     gradient_span = float(np.hypot(coeff[1], coeff[2]) * 2*h / scale)
+    # Independent diagnostics on the annular plane fit, not a calibrated
+    # deblended stellar halo/sky separation. For example, at 4.8 px
+    # FWHM the baseline ring 10–15 px *must* be flagged as wing risk.
+    mid = .5*(cfg.sky_annulus_inner_pix+cfg.sky_annulus_outer_pix)
+    low_ring = annulus & (rr < mid)
+    high_ring = annulus & (rr >= mid)
+    radial_trend_sigma = (
+        float((np.median(residual[low_ring]) -
+               np.median(residual[high_ring])) / scale)
+        if min(np.count_nonzero(low_ring),
+               np.count_nonzero(high_ring)) >= 10 else None)
+    angle = np.mod(np.arctan2(dy,dx), 2*np.pi)
+    sector_medians = []
+    for j in range(8):
+        sector = annulus & (angle >= j*np.pi/4) & (
+            angle < (j+1)*np.pi/4)
+        if np.count_nonzero(sector) >= 5:
+            sector_medians.append(float(np.median(residual[sector])))
+    sector_scatter_sigma = (
+        float(1.4826*np.median(np.abs(
+            np.asarray(sector_medians)-np.median(sector_medians))) / scale)
+        if len(sector_medians) >= 6 else None)
+    sky_qa = {
+        "method":"ROBUST_LOCAL_PLANE_ON_STELLAR_ANNULUS",
+        "annulus_inner_in_guessed_fwhm":
+            float(cfg.sky_annulus_inner_pix/cfg.guessed_fwhm_pix),
+        "annulus_outer_in_guessed_fwhm":
+            float(cfg.sky_annulus_outer_pix/cfg.guessed_fwhm_pix),
+        "wing_sky_degeneracy_warning": (
+            cfg.sky_annulus_inner_pix < 4*cfg.guessed_fwhm_pix),
+        "annulus_sigma_clip_retained_fraction":
+            float(np.count_nonzero(include)/len(observed)),
+        "inner_minus_outer_residual_median_over_noise":
+            radial_trend_sigma,
+        "octant_median_spread_over_noise":sector_scatter_sigma,
+        "sky_uncertainty_covariance_calibrated":False,
+        "sky_versus_psf_wings_separable_from_this_cutout":False,
+    }
     if gradient_span > cfg.max_star_gradient_sigma:
         return None, "STRONG_LOCAL_SKY_GRADIENT"
     # A nonzero masked cutout cannot silently become a reconstructed
@@ -320,6 +363,7 @@ def _star_cutout(frame, x, y, cfg, protected):
         "center_in_cutout": (x-(ix-h), y-(iy-h)),
         "sky_nMgy": float(coeff[0]), "rms_nMgy": float(scale),
         "gradient_sigma_span": gradient_span,
+        "sky_qa":sky_qa,
         "peak_nMgy": star_peak,
         "valid": valid,
     }, None
@@ -725,6 +769,7 @@ def build_empirical_coadd_psf(
             "peak_nMgy": float(c["peak_nMgy"]),
             "sky_nMgy": float(c["sky_nMgy"]),
             "gradient_sigma_span": float(c["gradient_sigma_span"]),
+            "sky_qa": dict(c.get("sky_qa", {})),
         })
     review_snapshot = {
         "schema": "desidera.psf0-star-review-in-memory/1",
@@ -737,6 +782,15 @@ def build_empirical_coadd_psf(
         "excluded_training_star_ids": tuple(cfg.excluded_training_star_ids),
         "automatic_training_rejections": tuple(sorted(auto_excluded_ids)),
         "training_residual_screening_history": outlier_history,
+        "sky_diagnostics": {
+            "current_recipe_inner_annulus_in_guessed_fwhm":
+                float(cfg.sky_annulus_inner_pix/cfg.guessed_fwhm_pix),
+            "current_recipe_outer_annulus_in_guessed_fwhm":
+                float(cfg.sky_annulus_outer_pix/cfg.guessed_fwhm_pix),
+            "sky_wing_absorption_risk_unresolved":True,
+            "sky_plus_psf_model_jointly_fitted":False,
+            "sky_error_covariance_calibrated":False,
+        },
         "stars": review_stars,
     }
     negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
@@ -750,6 +804,10 @@ def build_empirical_coadd_psf(
         "n_tractor_primary_sources": (
             len(catalog_matcher.rows) if catalog_matcher else None),
         "image_moment_width_reference": width_qa,
+        "sky_annulus_to_guessed_fwhm": [
+            float(cfg.sky_annulus_inner_pix/cfg.guessed_fwhm_pix),
+            float(cfg.sky_annulus_outer_pix/cfg.guessed_fwhm_pix)],
+        "sky_and_psf_wings_jointly_estimated":False,
         "training_residual_screening_history": outlier_history,
         "automatic_training_rejections": sorted(auto_excluded_ids),
         "n_train_gaia_matched": sum(s.gaia_source_id is not None for s in train),
