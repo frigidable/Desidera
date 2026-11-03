@@ -526,6 +526,37 @@ class PSF0Panel(QGroupBox):
         else:
             self._star_review_data = current
 
+    @staticmethod
+    def _training_sky_qa_summary(metrics):
+        sky = metrics.get("sky_sample_qa", {})
+        passes = metrics.get("training_residual_screening_history", [])
+        stars = sky.get("per_star", [])
+        example = next((x for x in stars
+                        if "annulus_inner_in_guessed_fwhm" in x), {})
+        ratios = (
+            f"{example['annulus_inner_in_guessed_fwhm']:.2f}–"
+            f"{example.get('annulus_outer_in_guessed_fwhm', 0):.2f}"
+            if example else "unknown")
+        notes = [
+            "PSF background QA (not a joint PSF+sky fit):",
+            f"Sky annulus starts/ends at {ratios} × guessed detection FWHM.",
+            "Stellar wings can bias the fitted sky even after clipping; "
+            "coadd noise covariance is not modeled.",
+            f"Sky ring inside 4× guessed FWHM: "
+            f"{sky.get('ring_starts_inside_four_assumed_fwhm','unknown')}.",
+            "Training-only residual outlier screening (not χ²):",
+        ]
+        for trial in passes:
+            notes.append(
+                f"Pass {trial.get('iteration','?')}: median score "
+                f"{trial.get('median_score','—')}, "
+                f"cutoff {trial.get('cutoff','—')}, "
+                f"auto-removed {len(trial.get('selected_for_exclusion',[]))}; "
+                "holdouts excluded from the decision.")
+        if not passes:
+            notes.append("Disabled in this experiment.")
+        return "\n".join(notes)
+
     def show_quality_rejection(self, payload: dict):
         """Rejected ePSF: inspect its signed structure, never adopt a kernel."""
         if (self._project_root is None or
@@ -647,6 +678,7 @@ class PSF0Panel(QGroupBox):
             + solver_text
             + "\n\nStar catalogue screening: "
             + str(catalog_qa)
+            + "\n\n" + self._training_sky_qa_summary(diagnostic)
             + "\n\nRejected candidates: "
             + str(diagnostic.get("rejected_reasons", {}))
             + "\n\n"
@@ -797,6 +829,7 @@ class PSF0Panel(QGroupBox):
             "Scientific limits:\n" + "\n".join(f"• {f}" for f in result.flags)
             + "\n\nCatalog screening: "
             + str(result.metrics.get("catalog_selection_qa", {}))
+            + "\n\n" + self._training_sky_qa_summary(result.metrics)
             + "\n\nRejected star counts: " + str(result.rejected_reasons)
             + "\nSource SHA-256 lineage: "
             + (result.lineage_id or "not verified"))
