@@ -121,7 +121,9 @@ def _download(url: str) -> tuple[bytes, str, str]:
         parsed = urlparse(final_url)
         if (parsed.scheme != "https" or parsed.hostname != HOST or
                 parsed.path not in ("/viewer/jpeg-cutout",
-                                    "/viewer/jpeg-cutout/")):
+                                    "/viewer/jpeg-cutout/",
+                                    "/viewer/cutout.jpg",
+                                    "/viewer/cutout.jpg/")):
             raise ValueError("Unexpected RGB cutout source URL")
         mime = response.headers.get("Content-Type", "").split(";")[0].lower()
         if mime not in ("image/jpeg", "image/jpg"):
@@ -172,7 +174,8 @@ def fetch_remote_rgb_preview(root: str | Path, *, transport=None) -> dict:
     raw, mime, final_url = downloader(request["url"])
     final = urlparse(final_url)
     if (final.scheme != "https" or final.hostname != HOST or
-            final.path not in ("/viewer/jpeg-cutout", "/viewer/jpeg-cutout/")):
+            final.path not in ("/viewer/jpeg-cutout", "/viewer/jpeg-cutout/",
+                               "/viewer/cutout.jpg", "/viewer/cutout.jpg/")):
         raise ValueError("Unapproved remote RGB provider")
     if mime.lower().split(";")[0] not in ("image/jpeg", "image/jpg"):
         raise ValueError("Remote cutout is not a JPEG")
