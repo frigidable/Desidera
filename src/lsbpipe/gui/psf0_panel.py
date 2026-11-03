@@ -553,6 +553,23 @@ class PSF0Panel(QGroupBox):
                 f"cutoff {trial.get('cutoff','—')}, "
                 f"auto-removed {len(trial.get('selected_for_exclusion',[]))}; "
                 "holdouts excluded from the decision.")
+            bias = trial.get("brightness_score_coupling_qa", {})
+            rho = bias.get("score_amplitude_spearman_rho")
+            if rho is not None:
+                notes.append(
+                    f"Star score versus model amplitude: Spearman "
+                    f"rho={rho:+.3f} (descriptive; not a selection test).")
+            if bias.get("auto_trim_blocked"):
+                proposed = trial.get("proposed_before_brightness_guard", [])
+                notes.append(
+                    "AUTOMATIC TRAINING EXCLUSION BLOCKED: residual "
+                    "score tracks star amplitude too strongly. "
+                    f"Candidates {', '.join(proposed)} remain in training; "
+                    "inspect individually and use a brightness-independent "
+                    "selection model before retrying.")
+                notes.append(
+                    "The current model is the UNTRIMMED training result; "
+                    "no iterative star-removal improvement is claimed.")
         if not passes:
             notes.append("Disabled in this experiment.")
         return "\n".join(notes)
