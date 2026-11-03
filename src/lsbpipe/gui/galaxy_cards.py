@@ -291,6 +291,12 @@ class GalaxyDetailCard(QFrame):
                 "Local preview · unverified provenance")
         if snapshot.thumbnail is not None:
             image = QPixmap(str(snapshot.thumbnail))
+            if (image.isNull()
+                    and snapshot.preview_source == "REMOTE_LEGACY_RGB"
+                    and snapshot.local_thumbnail is not None):
+                image = QPixmap(str(snapshot.local_thumbnail))
+                self.preview_note.setText(
+                    "Remote RGB unreadable · local FITS fallback · display only")
             if not image.isNull():
                 self._pixmap = image
                 self._update_preview()
