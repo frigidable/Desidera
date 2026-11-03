@@ -86,7 +86,8 @@ def test_no_saved_audit_is_not_qa_approval(qtbot, tmp_path, monkeypatch):
     assert "QA pending" in hub.projects.item(0).text()
     assert not card.next_step_title.isVisible()
     assert not card.next_step.isVisible()
-    assert card.open_button.text() == "Open project · inspect FITS"
+    assert card.open_button.text() == "Open project"
+    assert "inspect FITS" in card.open_button.toolTip()
     assert (p.root / "lsbpipe-object.json").read_bytes() == manifest
 
 
@@ -104,10 +105,16 @@ def test_saved_qa_visible_but_not_scientific_certification(
     assert "metadata unchanged" in card.qa_status.text()
     assert "NOT rechecked" in card.qa_note.text()
     assert "NOT certified" in card.qa_note.text()
-    assert "review saved FITS/WCS QA" in card.open_button.text()
+    assert "review saved FITS/WCS QA" in card.open_button.toolTip()
+    assert card.open_button.text() == "Open project"
+    assert not card.qa_note.isVisible()
+    assert not card.observation_explanation.isVisible()
     assert "prior WCS QA" in hub.projects.item(0).text()
     assert not card.audit_receipt_note.isVisible()
     card.details_toggle.click()
+    assert card.qa_note.isVisible()
+    assert "NOT rechecked" in card.qa_note.text()
+    assert card.observation_explanation.isVisible()
     assert "dataset-audits/run123/audit.json" in card.audit_receipt_note.text()
     assert (p.root / "lsbpipe-object.json").read_bytes() == manifest
     assert all((p.data_root / products[k]["relative_path"]).read_bytes()
@@ -126,4 +133,5 @@ def test_changed_original_marks_prior_qa_stale_on_refresh(
     assert card.snapshot.audit.state == "AUDIT_INPUTS_CHANGED"
     assert "needs rerun" in card.qa_status.text()
     assert "QA needs rerun" in hub.projects.item(0).text()
-    assert "rerun dataset QA" in card.open_button.text()
+    assert card.open_button.text() == "Open project"
+    assert "rerun dataset QA" in card.open_button.toolTip()
