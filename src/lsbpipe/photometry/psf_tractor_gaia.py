@@ -272,9 +272,11 @@ def download_native_tractor_gaia(data_root, *, release, region, brick,
             data = tables[0].data
             if len(data) and _value(data["BRICKNAME"][0]) != brick:
                 raise ValueError("Downloaded Tractor FITS brick identity mismatches")
-        if target.exists():
-            raise FileExistsError("Tractor destination created concurrently")
-        os.replace(tmpname, target)
+        # Same-directory atomic hard link is exclusive: unlike os.replace,
+        # it will NEVER overwrite an original catalogue created meanwhile.
+        # The temporary inode is removed by the finally clause only after
+        # the final path is safely linked.
+        os.link(tmpname, target)
         return {"status":"ORIGINAL_TRACTOR_DOWNLOADED_NOT_SCIENCE_ADOPTED",
                 "path":str(target), "url":url,
                 "sha256_local":_hash_file(target),
