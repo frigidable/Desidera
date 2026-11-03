@@ -137,14 +137,15 @@ class PhotometryWorkspace(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(175)
         source_layout.addWidget(self.table)
-        body.addWidget(source_box)
 
-        # The first *real* computing stage lives within the already-opened
-        # object project. No separate project browser, CLI or environment.
+        # Keep the first genuinely runnable scientific stage above the
+        # long original-FITS inventory: PSF controls remain discoverable
+        # without an initial scroll on laptop-sized Windows viewports.
         self.psf0_panel = PSF0Panel(central)
         self.psf0_panel.runRequested.connect(self.psf0RunRequested.emit)
         self.psf0_panel.saveRequested.connect(self.psf0SaveRequested.emit)
         body.addWidget(self.psf0_panel)
+        body.addWidget(source_box)
 
         method_box = QGroupBox("Measurement design")
         method_layout = QVBoxLayout(method_box)
