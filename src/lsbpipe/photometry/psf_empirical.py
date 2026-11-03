@@ -431,6 +431,7 @@ def build_empirical_coadd_psf(
         rejected[reason] = rejected.get(reason, 0)+1
     accepted = []
     cutouts = {}
+    used_gaia_ids = set()
     max_candidates = (
         len(candidates) if cfg.star_catalog_policy == "gaia_strict"
         else max(cfg.max_training_stars*5, 100))
@@ -455,6 +456,11 @@ def build_empirical_coadd_psf(
             if not shape["accepted"]:
                 reject(shape["reason"])
                 continue
+            gaia_id = identity["gaia_source_id"]
+            if gaia_id in used_gaia_ids:
+                reject("GAIA_CATALOG_SOURCE_REUSED")
+                continue
+            used_gaia_ids.add(gaia_id)
             data_cut["star_identity"] = identity
             data_cut["shape_qa"] = shape
         star_id = f"star-{ix+1:04d}"
