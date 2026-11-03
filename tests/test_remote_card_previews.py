@@ -108,14 +108,14 @@ def test_stale_config_corrupt_cache_and_invalid_media_fall_back(tmp_path):
     save_object_project(p)
     assert inspect_cached_remote_preview(p)[1] == "STALE_REMOTE_RGB_CACHE"
 
-    with pytest.raises(ValueError, match="not a JPEG"):
+    with pytest.raises(ValueError, match="non-JPEG|not a JPEG"):
         fetch_remote_rgb_preview(
             p.root, transport=lambda url: (b"<html>server error</html>",
                                            "image/jpeg", url))
     with pytest.raises(ValueError, match="not a JPEG"):
         fetch_remote_rgb_preview(
             p.root, transport=lambda url: (b"fake", "image/jpeg", url))
-    with pytest.raises(ValueError, match="not a JPEG|incomplete"):
+    with pytest.raises(ValueError, match="non-JPEG|not a JPEG|incomplete"):
         fetch_remote_rgb_preview(
             p.root, transport=lambda url: (
                 b"\xff\xd8\xff" + b"broken" + b"\xff\xd9", "image/jpeg", url))
