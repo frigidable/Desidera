@@ -1,5 +1,11 @@
 # P1.2c: Smart Mask — researcher-seeded source-aware contamination masking
 
+> **P1.3 clarification:** this connected-threshold candidate is
+> **PROVISIONAL_PRE_PSF**, not the final PSF-aware contaminant mask.
+> PSF-informed wing/leakage decisions require a separately validated
+> PSF built from selected stars with independently estimated
+> star-cutout backgrounds. See `PSF_SCENE_SKY_ORDER_P13.md`.
+
 Status: **experimental numerical proposal only**. Follows stacked PR #40
 (mask/geometry drafts) and PR #39 (Photometry Workspace). There is no
 image-click UI, full sky estimation, empirical PSF fitting, or automatic
