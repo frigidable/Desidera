@@ -97,7 +97,7 @@ def test_missing_project_shows_relink_without_faking_data(qtbot):
     card.set_snapshot(sample("KKR 25", "missing", available=False))
     assert "Relink" in card.open_button.text()
     assert "Missing" in card.fits.text()
-    assert "No cached local preview" in card.preview.text()
+    assert "No image yet" in card.preview.text()
     assert "No local FITS link" in card.fits.text()
     card.set_snapshot(None)
     assert not card.open_button.isEnabled()
