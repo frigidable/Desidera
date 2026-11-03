@@ -173,6 +173,120 @@ def run_gui_psf0(
     }
 
 
+def suggest_gui_psf0_fwhm(project_root, *, band, progress=None):
+    """Read optional original Legacy PSFSIZE on the current saved project."""
+    from lsbpipe.photometry.psf_survey_defaults import (
+        suggest_detection_fwhm_from_psfsize,
+    )
+    selection = inspect_psf0_bands(project_root)
+    eligible = next((entry for entry in selection["bands"]
+                     if entry["band"] == band), None)
+    if eligible is None or not eligible["paths_present_unverified"]:
+        raise ValueError("Native optical quartet is incomplete for PSFSIZE check")
+    release, region, brick, _ = selection["dataset"]
+    project = _leo_p_project(project_root)
+    _progress(progress, "Checking image WCS and optional local Legacy PSFSIZE map")
+    frame = load_native_legacy_quartet(
+        project.data_root, release=release, region=region,
+        brick=brick, band=band, hash_inputs=False,
+        require_explicit_bunit=True)
+    result = suggest_detection_fwhm_from_psfsize(
+        frame, target_icrs_deg=LEO_P_CENTER)
+    return {
+        "project_id": project.project_id,
+        "project_root": str(project.root),
+        "band": band,
+        "seeing": result,
+        "protection": {
+            "origin": "SAVED_PROJECT_RADIUS_WITH_EXPLICIT_90_ARCSEC_MINIMUM",
+            "project_target_radius_arcsec": project.target_radius_arcsec,
+            "current_default_arcsec": max(project.target_radius_arcsec, 90.),
+            "science_adopted": False,
+            "automatic_from_psf_fwhm": False,
+        },
+    }
+
+
+def commit_psf0_manual_review(preview, *, explicitly_confirmed=False):
+    """Write an immutable, project-bound exclusion receipt by deliberate action.
+
+    No source FITS touched, no overwrite of existing distinct review data.
+    Review decisions refer only to eligible training star IDs and cannot
+    change the holdout set or promote a scientifically rejected PSF.
+    """
+    if explicitly_confirmed is not True:
+        raise ValueError("Manual review must be explicitly applied in GUI")
+    if not isinstance(preview, dict) or preview.get("star_review") is None:
+        raise ValueError("Manual review requires a real completed star inventory")
+    project = _leo_p_project(preview["project_root"])
+    if (project.project_id != preview["project_id"] or
+            tuple(project.selected_dataset) != tuple(preview["dataset"])):
+        raise ValueError("Saved project identity changed during star review")
+    source_hashes = preview.get("source_hashes", {})
+    if set(source_hashes) != set(KINDS):
+        raise ValueError("Missing validated source fingerprints for manual review")
+    star_review = preview["star_review"]
+    exclusions = tuple(star_review["excluded_training_star_ids"])
+    if not exclusions:
+        # An explicit restore-all still needs a derivative receipt; keep
+        # the empty selection as an immutable scientific review decision.
+        pass
+    inventory = {entry["star_id"] for entry in star_review["stars"]}
+    if set(exclusions) - inventory:
+        raise ValueError("Manual exclusion contains a non-training candidate")
+    release, region, brick, _ = project.selected_dataset
+    band = preview.get("band")
+    if band is None:
+        if "result" in preview:
+            band = preview["result"].dataset_id.split("/")[-1]
+        else:
+            band = preview.get("review_band")
+    if band not in BANDS:
+        raise ValueError("Manual review has no confirmed band")
+    paths = _expected_paths(project.data_root, (release, region, brick, band))
+    for kind, path in paths.items():
+        if not path.is_file() or path.is_symlink():
+            raise ValueError("Original source changed before saving star review")
+        if _hash_original_file(path) != source_hashes[kind]:
+            raise ValueError("Original FITS changed during manual star review; rerun")
+    receipt = {
+        "schema": "desidera.psf0-manual-training-review/1",
+        "status": "MANUAL_SELECTION_NOT_PSF_ADOPTION",
+        "science_adopted": False,
+        "project_id": project.project_id,
+        "dataset": [release, region, brick, band],
+        "source_sha256_local": dict(source_hashes),
+        "recipe": (preview["result"].report()["recipe"] if "result" in preview
+                   else preview["diagnostics"]["psf_recipe"]),
+        "excluded_training_star_ids": list(exclusions),
+        "training_candidates": [item["star_id"] for item in star_review["stars"]],
+        "holdout_protected": True,
+    }
+    payload = json.dumps(receipt, sort_keys=True, indent=2,
+                         allow_nan=False).encode("utf8")
+    digest = sha256(payload).hexdigest()
+    directory = project.root / "analyses" / "psf-pilots" / "star-reviews"
+    for p in (directory, *directory.parents):
+        if p.is_symlink():
+            raise ValueError("Symlinked review output directory prohibited")
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / ("review-" + digest + ".json")
+    if destination.exists() or destination.is_symlink():
+        if destination.is_file() and destination.read_bytes() == payload:
+            return str(destination)
+        raise FileExistsError("Review receipt path collides with existing data")
+    fd, tempname = tempfile.mkstemp(prefix=".partial-review-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as writer:
+            writer.write(payload)
+            writer.flush()
+            os.fsync(writer.fileno())
+        os.replace(tempname, destination)
+    finally:
+        Path(tempname).unlink(missing_ok=True)
+    return str(destination)
+
+
 def _hash_original_file(path: Path) -> str:
     sha = sha256()
     with path.open("rb") as reader:
