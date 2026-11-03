@@ -104,6 +104,16 @@ class GalaxyDetailCard(QFrame):
         self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         detail.addWidget(self.preview)
 
+        knowledge_header = QLabel("CATALOGUE IDENTITY")
+        knowledge_header.setObjectName("galaxy_card_section")
+        detail.addWidget(knowledge_header)
+        self.catalogue = _metadata("No user-confirmed catalogue identity")
+        self.catalogue.setObjectName("galaxy_card_catalogue")
+        detail.addWidget(self.catalogue)
+        self.catalogue_provenance = _metadata("", selectable=True)
+        self.catalogue_provenance.setObjectName("galaxy_card_catalogue_provenance")
+        detail.addWidget(self.catalogue_provenance)
+
         observation = QLabel("OBSERVATIONS")
         observation.setObjectName("galaxy_card_section")
         detail.addWidget(observation)
@@ -158,6 +168,8 @@ class GalaxyDetailCard(QFrame):
             self.dataset.clear()
             self.fits.clear()
             self.aliases.hide()
+            self.catalogue.setText("No galaxy selected")
+            self.catalogue_provenance.hide()
             self.last_opened.hide()
             self.path.clear()
             self.note.hide()
@@ -166,6 +178,36 @@ class GalaxyDetailCard(QFrame):
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
         self.dataset.setText(f"Dataset: {snapshot.dataset}")
+        catalogue = snapshot.catalogue_identity
+        self.catalogue_provenance.hide()
+        if snapshot.knowledge_status == "EVIDENCE_ERROR":
+            self.catalogue.setText("Catalogue evidence requires inspection")
+            self.catalogue_provenance.setText(
+                "Stored SIMBAD evidence is invalid or unreadable: "
+                + snapshot.knowledge_error)
+            self.catalogue_provenance.show()
+        elif catalogue is not None:
+            self.catalogue.setText(
+                f"{catalogue.provider}: {catalogue.main_id} · "
+                "user-confirmed association")
+            offset = catalogue.project_offset_arcsec
+            difference = (
+                f"Separation from project centre: {offset:.3f} arcsec. "
+                if offset is not None else
+                "Project position unavailable for comparison. ")
+            self.catalogue_provenance.setText(
+                f"Catalogue ICRS: {catalogue.ra_deg:.8f}°, "
+                f"{catalogue.dec_deg:+.8f}°. "
+                + difference
+                + "Project coordinates unchanged. "
+                + f"Evidence: {catalogue.confirmation_sha256[:12]}. "
+                + "Catalogue association, not a scientific measurement.")
+            self.catalogue_provenance.show()
+        elif snapshot.knowledge_status == "UNVERIFIED_CANDIDATES_ONLY":
+            self.catalogue.setText(
+                "SIMBAD candidates stored · no identity confirmed")
+        else:
+            self.catalogue.setText("No user-confirmed catalogue identity")
         project_state = (
             "On disk" if snapshot.available else "Missing · relink required"
         )
