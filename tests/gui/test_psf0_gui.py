@@ -141,3 +141,20 @@ def test_standalone_panel_has_no_results_or_actions_without_project(qtbot):
     assert not panel.save_btn.isEnabled()
     assert panel.active_preview is None
     assert not panel.copy_qa_btn.isEnabled()
+
+
+def test_star_score_history_is_not_dumped_into_on_screen_catalog_summary():
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    compact=PSF0Panel._catalog_screening_summary({
+        "policy":"gaia_strict",
+        "catalog_source_sha256":"a"*64,
+        "training_residual_screening_history":[{
+            "screened_stars":[{"star_id":"star-0001",
+                              "score":20.,"role":"train"}]}],
+        "automatic_training_rejections":["star-0001"],
+        "brightness_score_coupling_blocked_auto_trim":True,
+    })
+    assert "gaia_strict" in compact
+    assert "brightness_score_coupling_blocked_auto_trim" in compact
+    assert "screened_stars" not in compact
+    assert "star-0001" not in compact
