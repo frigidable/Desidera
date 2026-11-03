@@ -197,7 +197,9 @@ class PSFStarReviewDialog(QDialog):
             box.addLayout(plots)
             check = QCheckBox("Exclude from PSF training")
             check.setObjectName("psf0_exclude_" + sid)
-            check.setChecked(role == "excluded")
+            check.setChecked(
+                role == "excluded" or sid in set(
+                    snapshot.get("excluded_training_star_ids", ())))
             check.toggled.connect(self._update_counts)
             self._controls[sid] = check
             box.addWidget(check)
