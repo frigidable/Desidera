@@ -339,7 +339,20 @@ multiple matches. Require:
    BAILOUT, GALAXY, CLUSTER, RESOLVED regions and relevant saturation
    and ALLMASK bits. The source is thus an actual fitted source, not
    a Gaia-only retained photometric conversion.
-4. Independent *native image* local background/isolation checks, and
+4. The same-band `FLUX_<band>` and `FLUX_IVAR_<band>` must
+   exist, be finite and positive; require the heuristic
+   `flux * sqrt(flux_ivar) >= 20` (PSFEx-style minimum S/N).
+   This *is not* calibrated S/N because Legacy coadds have
+   correlated pixel noise and imperfect model flux uncertainties.
+5. Match the *complete same-brick Tractor catalogue*, including
+   objects too faint for DAO detection, around each star. Reject
+   a nearby source with positive fitted coadd S/N >= 5 and
+   >2% of the candidate's flux within a cutout-scaled neighborhood
+   (the active builder sets approximately 0.65 times the cutout
+   size, never exceeding 50 pixels). This is a provisional
+   conservative contamination heuristic; blending and projected
+   neighbours need direct cutout inspection.
+6. Independent *native image* local background/isolation checks, and
    conservative uncalibrated second-moment shape checks (elongation,
    centroid discrepancy, anomalous field-relative core width).
    A Gaia match is **not** a certified clean stellar cutout.
