@@ -74,6 +74,12 @@ a descriptive coordinate difference and unadopted NED redshift.
 Automated cross-catalogue identity reconciliation, positional TAP search,
 and comprehensive literature measurements remain future work.
 
+User-confirmed SIMBAD and NED identifiers are also **clickable official
+object links** in the passport and catalogue confirmation dialogs. Links
+are derived solely from validated receipts; unconfirmed neighbours and
+corrupt evidence never produce trusted links. No catalogue lookup occurs
+on rendering. See `docs/architecture/CONFIRMED_CATALOGUE_LINKS_P10F.md`.
+
 Galaxy Projects now displays a **compact square galaxy thumbnail**
 beside the name, coordinates and confirmed SIMBAD/NED identifiers. Its
 observational facts flow below the image at full width; verbose source
