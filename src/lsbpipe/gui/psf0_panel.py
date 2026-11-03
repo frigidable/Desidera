@@ -43,6 +43,7 @@ class PSF0Panel(QGroupBox):
         self._busy = False
         self._experiment_history = []
         self._history_band = None
+        self._history_policy = None
         self._star_review_data = None
         self._active_exclusions = ()
 
@@ -250,6 +251,7 @@ class PSF0Panel(QGroupBox):
         self._active_exclusions = ()
         self._experiment_history = []
         self._history_band = None
+        self._history_policy = None
         self._render_comparison()
         self._preview = None
         self._qa_payload = None
@@ -317,6 +319,7 @@ class PSF0Panel(QGroupBox):
                     "Use Manage sources; no automatic download.")
         self.band.blockSignals(False)
         self._history_band = self.band.currentData()
+        self._history_policy = self.catalog_policy.currentData()
         self._update_buttons()
 
     def _parameters_changed(self, *_):
@@ -332,8 +335,10 @@ class PSF0Panel(QGroupBox):
         # Changing filter invalidates former-band comparison. Changing the
         # experiment retains historical same-band trials in memory.
         band = self.band.currentData()
-        if band != self._history_band:
+        policy = self.catalog_policy.currentData()
+        if band != self._history_band or policy != self._history_policy:
             self._history_band = band
+            self._history_policy = policy
             self._experiment_history = []
             self._render_comparison()
         self._preview = None
@@ -545,6 +550,7 @@ class PSF0Panel(QGroupBox):
         self.status.setText(
             "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
         diagnostic = payload.get("diagnostics", {})
+        catalog_qa = diagnostic.get("catalog_selection_qa", {})
         negative = diagnostic.get("negative_absolute_mass_fraction")
         if negative is not None:
             self.summary.setText(
@@ -552,7 +558,8 @@ class PSF0Panel(QGroupBox):
                 f"(experimental limit {diagnostic.get('blocking_threshold_fraction', .025):.2%}); "
                 f"training stars {diagnostic.get('n_train', 0)}, "
                 f"holdout stars {diagnostic.get('n_holdout', 0)}. "
-                "Review the source selection and local backgrounds.")
+                "Review the source selection and local backgrounds. "
+                f"Policy: {catalog_qa.get('policy', 'unknown')}.")
         else:
             self.summary.setText("Provisional PSF rejected before adoption.")
         rows = [(item, "train") for item in diagnostic.get("training", [])]
@@ -638,6 +645,8 @@ class PSF0Panel(QGroupBox):
             + ("\n".join(holdout_lines)
                if holdout_lines else "Unavailable")
             + solver_text
+            + "\n\nStar catalogue screening: "
+            + str(catalog_qa)
             + "\n\nRejected candidates: "
             + str(diagnostic.get("rejected_reasons", {}))
             + "\n\n"
@@ -754,6 +763,7 @@ class PSF0Panel(QGroupBox):
         self.status.setText(
             f"{result.dataset_id} · EXPERIMENTAL_PSF_NOT_ADOPTED")
         self.summary.setText(
+            f"Star selection: {self.catalog_policy.currentText()} · "
             f"Experiment: {self.experiment.currentText()} · "
             f"Training stars: {len(result.training)} · Independent holdout: "
             f"{len(result.holdout)} · Detected candidates: {result.detection_count} · "
@@ -785,6 +795,8 @@ class PSF0Panel(QGroupBox):
                     "median_star_abs_residual_over_peak"))
         self.qa.setPlainText(
             "Scientific limits:\n" + "\n".join(f"• {f}" for f in result.flags)
+            + "\n\nCatalog screening: "
+            + str(result.metrics.get("catalog_selection_qa", {}))
             + "\n\nRejected star counts: " + str(result.rejected_reasons)
             + "\nSource SHA-256 lineage: "
             + (result.lineage_id or "not verified"))
