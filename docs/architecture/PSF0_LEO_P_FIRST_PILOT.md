@@ -248,6 +248,101 @@ galaxy-profile bias. A variant that merely passes the provisional
 2.5% mass threshold **must not** be automatically adopted or
 ranked above a lower-bias alternative.
 
+## PSF training-star mosaic, manual exclusion, survey priors (P1.4b)
+
+### Native-grid review in the existing GUI
+
+After the first successful **or QA-rejected** ePSF run, the same Leo P
+workspace enables **Review training stars…**. A separate scrollable
+review window shows one card per original train candidate:
+
+1. Original background-subtracted 2D native cutout, preserving signed
+   pixel values and visually marking invalid pixels.
+2. The particular candidate ePSF *evaluated at that star's subpixel
+   center and fitted to its inner valid pixels*. Both 2D images use
+   the same native pixel footprint and asinh display scale.
+3. A separate **square** one-dimensional radial profile (native
+   pixel radius vs signed normalized intensity), with observed
+   and signed modeled profiles plotted together. The square
+   graph and 2D cutouts have the same on-screen height/width,
+   but their physical axis units are deliberately different.
+
+Every card shows its stable `star-XXXX` identifier, native (0-based)
+coordinates, sky position, local background and local gradient.
+The training catalogue and entire mosaic are kept in memory by the
+existing Qt worker; **no additional cutout FITS are written**.
+The figure is for assessment and never certifies a PSF.
+
+Check **Exclude from PSF training** for visually contaminated
+candidates (cosmic rays, blends, background gradients, morphological
+non-stellar objects or poor centroid quality). The checkboxes are
+initialized from the review state. Only after **Apply, save exclusions
+& rebuild** are the IDs added to the immutable numerical recipe,
+the same real FITS reloaded and a fresh ePSF computed. This explicit
+action stores a content-addressed JSON review receipt under the
+existing Leo P project's `analyses/psf-pilots/star-reviews/` directory,
+with original-source SHA-256 values. The native source FITS and
+Galaxy Workspace selected band are unaffected.
+
+**Scientific contamination control:** holdout selection happens
+*before* applying manual training exclusions. A holdout star has
+no exclusion checkbox and cannot be shifted into or removed from
+the test set to improve diagnostics. Training exclusions change
+the recipe hash and lineage, and cannot leave fewer than the
+configured minimum training stars. The reviewer may restore all
+train stars and explicitly rebuild.
+
+Receipts and the model are **non-adopted**; successful solver
+execution and a clean looking training sample do not waive the
+independent holdout/wings/spatial representativity criteria.
+The saved manual review refers to a specific source quartet and
+recipe; unrelated filters must not automatically copy pixel-level
+exclusions. Cross-band contamination edits should be expressed
+as shared ICRS footprints through the future Scene/Smart Mask
+workflow, not as PSF training-star exclusions reused blindly.
+
+### Initial FWHM versus Leo P protected footprint
+
+**Current default** `FWHM guess = 4.80 native pixels` originates
+from the hard-coded PSF0Config and is passed to `DAOStarFinder`.
+It is a detection prior, not a fitted seeing value.
+
+**New optional GUI control** `From DESI PSFSIZE…`: if the project
+already contains original `legacysurvey-<brick>-psfsize-<band>.fits.fz`,
+load the local per-pixel **weighted mean PSF FWHM in arcsec** from a
+5x5 area around the object's exact ICRS position. Verify array
+geometry and WCS compatibility with the selected original IMAGE;
+convert arcseconds into native pixels using the true image WCS.
+The resulting proposed FWHM is per-band, recorded with local SHA-256
+and survey source type, and displayed explicitly as a **prior**.
+If no map is available, do NOT download or infer a made-up seeing;
+keep the manual guess with a descriptive notice. The user's native
+quartet has four files, so the separate optional PSFSIZE map may
+not exist locally. A brick catalogue column (`psfsize_g`, etc.)
+is an alternative *future* source, which must not be conflated
+with the spatially varying per-pixel map.
+
+**Current default** `Protect target radius = max(90″,
+project.target_radius_arcsec)`. The saved project data structure's
+initial target radius is itself a 60″ configuration default.
+Neither quantity is a measured Leo P isophotal radius.
+
+Future scientifically grounded **automatic galaxy protection**
+should come from low-threshold, PSF-aware, multi-band segmentation
+and provisional outer isophotes, with an uncertainty margin and
+manual review. The PSFSIZE map does **not** determine the galaxy's
+angular extent. Do not tie the protection radius mechanically to
+seeing, nor declare an automatically fitted isophote as a final
+galaxy size before residual-sky and contamination QA.
+
+### References
+
+- Official DR11 files describing original per-pixel PSFSIZE maps,
+  weighted PSF FWHM in arcsec and brick-level fields:
+  https://www.legacysurvey.org/dr11/files/
+- Photutils 3.1.1 EPSFBuilder, star-fitting and cutout conventions:
+  https://photutils.readthedocs.io/en/3.1.1/api/photutils.psf.EPSFBuilder.html
+
 ## Blocking issues before publishing Leo P science
 
 These items are required, even after successful synthetic unit tests:
