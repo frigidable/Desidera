@@ -314,9 +314,10 @@ Validate both scientific and UX behavior:
    cutout sky, recipe, coadd/CCD and local position;
 4. no new automatic downloads, source-FITS writes or claimed science
    products from opening the Photometry Workspace;
-5. when implemented, test global/local/spatial PSF on holdout stars;
-   compare with NGC2146sat legacy empirical PSFs, then UGC 2162 and
-   crowded/bright-star/PSF-sparse fields;
+5. first run the Leo P control on its validated local DR11 South source;
+   inspect held-out stars and core/wing QA, then compare methodologically
+   with the older NGC2146sat empirical PSFs as a secondary control;
+   subsequently UGC 2162 and crowded/bright-star/PSF-sparse fields;
 6. use injection-recovery for recovered galaxy magnitude, R_e, n,
    mu_0, color gradients and SBF when appropriate.
 
@@ -324,8 +325,10 @@ Validate both scientific and UX behavior:
 
 - P1.3a: this architecture, conditional dependency contract and GUI
   stage order; no fitted sky/PSF or photometry claimed.
-- PSF-0: independent empirical coadd PSF per band, robust star
-  selection, cutout-sky fit, provenance/QA and two-dimensional FITS.
+- PSF-0: Leo P is the **first** real control; construct an independent
+  empirical coadd PSF per available band, review star selection,
+  cutout-sky fit, provenance/QA and two-dimensional diagnostic FITS.
+  NGC2146sat remains a **second** comparison baseline.
 - P1.2b: research-quality FITS mask editor with provisional masks,
   sky-coordinate linked edits, undo/redo and review.
 - PSF-1: local/global/spatial evaluation + CCD PSFEx adapter with
