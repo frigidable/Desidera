@@ -794,13 +794,14 @@ def build_empirical_coadd_psf(
         "stars": review_stars,
     }
     negative_fraction = signed_diagnostics["negative_absolute_mass_fraction"]
+    final_train_ids = {e[0] for e in training_entries}
+    holdout_ids = {e[0] for e in holdout_entries}
     sky_sample_qa = {
         "per_star": [{
             "star_id":entry[0],
-            "role":("train" if entry[0] in
-                    {e[0] for e in training_entries} else
-                    "holdout" if entry[0] in
-                    {e[0] for e in holdout_entries} else
+            "role":("train" if entry[0] in final_train_ids else
+                    "holdout" if entry[0] in holdout_ids else
+                    "auto_rejected" if entry[0] in auto_excluded_ids else
                     "excluded"),
             **entry[-1].get("sky_qa", {}),
         } for entry in original_training_entries+holdout_entries],
