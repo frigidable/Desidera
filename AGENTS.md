@@ -65,3 +65,12 @@ execute tests automatically after pushes, but an ordinary chat does not
 continue working on its own after the conversation ends. Do not imply
 background screenshot review, ongoing autonomous coding, or certification
 without a real executor and observed outputs.
+
+## Imported experimental scene and sky modules (PR #2)
+
+- Scene masks are operation-specific and immutable; `TARGET_PROTECT` never overrides no coverage, saturation or invalid input.
+- Native Legacy MASKBITS carry semantic and passband-dependent flags, not an unconditional reject-every-nonzero rule.
+- Retain signed observed flux and curves of growth, including negative bins; never replace them by monotonic or reconstructed values without explicit provenance.
+- Require WCS/grid identity for cross-image masks and models, not just equal array shapes.
+- Residual background models address *remaining* coadd background only. Sky already subtracted upstream cannot be reconstructed by these diagnostics.
+- Experimental sky-candidate fits and sensitivity deltas are not calibrated uncertainty estimates and may not be automatically adopted.
