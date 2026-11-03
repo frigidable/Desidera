@@ -365,7 +365,7 @@ class PSF0Panel(QGroupBox):
         self.catalog_policy.setEnabled(not self._busy)
         self.get_tractor_btn.setEnabled(
             not self._busy and bool(self._snapshot)
-            and self._snapshot["dataset"][0:2] == ("dr11", "south"))
+            and self._snapshot.get("dataset", ())[0:2] == ("dr11", "south"))
         self.auto_fwhm_btn.setEnabled(eligible and not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
         self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)
