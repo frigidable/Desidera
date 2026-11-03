@@ -1,0 +1,338 @@
+"""Compact, read-only galaxy passport for the existing Project Hub inspector.
+
+Production ProjectHub is intentionally unchanged. This module provides a
+right-hand detail widget and a standalone two-pane integration preview.
+No catalogue requests, science runs, FITS decoding or manifest writes occur.
+"""
+from __future__ import annotations
+
+import sys
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea,
+    QSizePolicy, QSplitter, QVBoxLayout, QWidget,
+)
+
+from .galaxy_card_model import GalaxyCardSnapshot, snapshots_from_records
+from lsbpipe.surveys.object_projects import recent_projects
+
+
+# Widening the previous ~40% right-hand inspector by about 30% yields ~52%.
+INITIAL_SPLITTER_SIZES = (480, 540)
+
+_INSPECTOR_STYLE = """
+QFrame#galaxy_detail_card {
+    border: 1px solid palette(mid);
+    border-radius: 8px;
+}
+QLabel#galaxy_card_preview {
+    background: palette(alternate-base);
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+}
+QLabel#galaxy_card_name { font-size: 20px; font-weight: 600; }
+QLabel#galaxy_card_section { font-size: 11px; font-weight: 600; }
+"""
+
+
+def _metadata(label: str, *, selectable: bool = False) -> QLabel:
+    widget = QLabel(label)
+    widget.setWordWrap(True)
+    if selectable:
+        widget.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    return widget
+
+
+class GalaxyDetailCard(QFrame):
+    """One selected object, sized for the CURRENT right-hand inspector.
+
+    Host integrations can connect openRequested to the existing ProjectHub
+    open/relink behavior by immutable project ID. Rendering never mutates a
+    project, and a linked FITS path is explicitly not a scientific QA pass.
+    """
+
+    openRequested = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("galaxy_detail_card")
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setMinimumWidth(300)
+        self.setStyleSheet(_INSPECTOR_STYLE)
+        self.snapshot: GalaxyCardSnapshot | None = None
+        self._pixmap: QPixmap | None = None
+
+        container = QVBoxLayout(self)
+        container.setContentsMargins(14, 14, 14, 14)
+        container.setSpacing(9)
+
+        kicker = QLabel("SELECTED GALAXY")
+        kicker.setObjectName("galaxy_card_section")
+        container.addWidget(kicker)
+
+        self.name = QLabel("Choose a galaxy")
+        self.name.setObjectName("galaxy_card_name")
+        self.name.setWordWrap(True)
+        container.addWidget(self.name)
+
+        self.coordinates = _metadata("Select a project from the list.")
+        self.coordinates.setObjectName("galaxy_card_coordinates")
+        self.coordinates.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        container.addWidget(self.coordinates)
+
+        # Scroll the scientific details, not the action button. Keep the
+        # inspector usable at laptop heights and with scaled system fonts.
+        scroll = QScrollArea(self)
+        scroll.setObjectName("galaxy_card_scroll")
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        inner = QWidget()
+        detail = QVBoxLayout(inner)
+        detail.setContentsMargins(0, 0, 0, 0)
+        detail.setSpacing(9)
+
+        self.preview = QLabel("No cached local preview")
+        self.preview.setObjectName("galaxy_card_preview")
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setWordWrap(True)
+        self.preview.setMinimumHeight(115)
+        self.preview.setMaximumHeight(155)
+        self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        detail.addWidget(self.preview)
+
+        observation = QLabel("OBSERVATIONS")
+        observation.setObjectName("galaxy_card_section")
+        detail.addWidget(observation)
+        self.dataset = _metadata("No dataset selected", selectable=True)
+        self.dataset.setObjectName("galaxy_card_dataset")
+        detail.addWidget(self.dataset)
+        self.fits = _metadata("FITS: not inspected")
+        self.fits.setObjectName("galaxy_card_fits")
+        detail.addWidget(self.fits)
+
+        research = QLabel("PROJECT INFORMATION")
+        research.setObjectName("galaxy_card_section")
+        detail.addWidget(research)
+        self.aliases = _metadata("")
+        self.aliases.setObjectName("galaxy_card_aliases")
+        detail.addWidget(self.aliases)
+        self.last_opened = _metadata("")
+        self.last_opened.setObjectName("galaxy_card_last_opened")
+        detail.addWidget(self.last_opened)
+        self.path = _metadata("", selectable=True)
+        self.path.setObjectName("galaxy_card_path")
+        detail.addWidget(self.path)
+        self.note = _metadata("")
+        self.note.setObjectName("galaxy_card_note")
+        detail.addWidget(self.note)
+        detail.addStretch(1)
+
+        scroll.setWidget(inner)
+        container.addWidget(scroll, 1)
+
+        self.open_button = QPushButton("Open project")
+        self.open_button.setObjectName("galaxy_card_open")
+        self.open_button.setEnabled(False)
+        self.open_button.clicked.connect(self._request_open)
+        container.addWidget(self.open_button)
+        self.safety = _metadata(
+            "Opening does not download FITS or approve previous scientific QA."
+        )
+        self.safety.setObjectName("galaxy_card_safety")
+        container.addWidget(self.safety)
+        self.set_snapshot(None)
+
+    def set_snapshot(self, snapshot: GalaxyCardSnapshot | None) -> None:
+        self.snapshot = snapshot
+        self._pixmap = None
+        self.open_button.setEnabled(snapshot is not None)
+        if snapshot is None:
+            self.name.setText("Choose a galaxy")
+            self.coordinates.setText("Select a project from the list.")
+            self.preview.setPixmap(QPixmap())
+            self.preview.setText("No galaxy selected")
+            self.dataset.clear()
+            self.fits.clear()
+            self.aliases.hide()
+            self.last_opened.hide()
+            self.path.clear()
+            self.note.hide()
+            return
+
+        self.name.setText(snapshot.display_name)
+        self.coordinates.setText(snapshot.coordinates)
+        self.dataset.setText(f"Dataset: {snapshot.dataset}")
+        project_state = (
+            "On disk" if snapshot.available else "Missing · relink required"
+        )
+        self.fits.setText(f"{project_state} · {snapshot.fits_status}")
+        self.aliases.setVisible(bool(snapshot.aliases))
+        self.aliases.setText("Also known as: " + ", ".join(snapshot.aliases))
+        self.last_opened.setVisible(bool(snapshot.last_opened))
+        self.last_opened.setText("Last opened: " + snapshot.last_opened)
+        self.path.setText("Project folder: " + str(snapshot.root))
+        self.note.setVisible(bool(snapshot.note))
+        self.note.setText(snapshot.note)
+        self.open_button.setText(
+            "Relink project…" if not snapshot.available else "Open project"
+        )
+        self.preview.setPixmap(QPixmap())
+        self.preview.setText("No cached local preview")
+        if snapshot.thumbnail is not None:
+            image = QPixmap(str(snapshot.thumbnail))
+            if not image.isNull():
+                self._pixmap = image
+                self._update_preview()
+
+    def _update_preview(self) -> None:
+        if self._pixmap is not None:
+            self.preview.setPixmap(self._pixmap.scaled(
+                self.preview.size(), Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            ))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_preview()
+
+    def _request_open(self) -> None:
+        if self.snapshot is not None:
+            self.openRequested.emit(self.snapshot.project_id)
+
+
+class GalaxyCardsPreview(QWidget):
+    """Standalone two-pane preview mirroring the CURRENT Galaxy Projects UI.
+
+    Left: an ordinary searchable project list. Right: a single compact card.
+    The splitter defaults near 48/52, remains user-resizable and never
+    creates a second card grid or changes the production launcher.
+    """
+
+    selectionChanged = Signal(str)
+    openRequested = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("galaxy_cards_preview")
+        self._snapshots: dict[str, GalaxyCardSnapshot] = {}
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setObjectName("galaxy_cards_splitter")
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(QLabel("Recent galaxies"))
+        self.search = QLineEdit()
+        self.search.setObjectName("galaxy_cards_search")
+        self.search.setClearButtonEnabled(True)
+        self.search.setPlaceholderText("Search galaxies or folder paths…")
+        left_layout.addWidget(self.search)
+        self.projects = QListWidget()
+        self.projects.setObjectName("galaxy_cards_project_list")
+        self.projects.setWordWrap(True)
+        self.projects.setSpacing(4)
+        left_layout.addWidget(self.projects, 1)
+        left.setMinimumWidth(280)
+        self.splitter.addWidget(left)
+
+        self.detail = GalaxyDetailCard()
+        self.splitter.addWidget(self.detail)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setStretchFactor(0, 48)
+        self.splitter.setStretchFactor(1, 52)
+        self.splitter.setSizes(list(INITIAL_SPLITTER_SIZES))
+        outer.addWidget(self.splitter, 1)
+
+        self.search.textChanged.connect(self._filter_rows)
+        self.projects.itemSelectionChanged.connect(self._selection_changed)
+        self.projects.itemDoubleClicked.connect(lambda _: self._activate())
+        self.detail.openRequested.connect(self.openRequested.emit)
+
+    def set_snapshots(self, snapshots: list[GalaxyCardSnapshot]) -> None:
+        previous = self.selected_id
+        self._snapshots = {s.project_id: s for s in snapshots}
+        self.projects.clear()
+        for snapshot in snapshots:
+            state = "On disk" if snapshot.available else "Missing"
+            item = QListWidgetItem(
+                f"{snapshot.display_name} · {state}\n{snapshot.coordinates}"
+            )
+            item.setData(Qt.UserRole, snapshot.project_id)
+            item.setToolTip(str(snapshot.root))
+            self.projects.addItem(item)
+        self._filter_rows()
+        if previous in self._snapshots:
+            for i in range(self.projects.count()):
+                item = self.projects.item(i)
+                if item.data(Qt.UserRole) == previous and not item.isHidden():
+                    self.projects.setCurrentRow(i)
+                    break
+
+    @property
+    def selected_id(self) -> str | None:
+        item = self.projects.currentItem()
+        if item is None or item.isHidden():
+            return None
+        return item.data(Qt.UserRole)
+
+    def _filter_rows(self, *_args) -> None:
+        query = self.search.text()
+        first_visible = -1
+        for i in range(self.projects.count()):
+            item = self.projects.item(i)
+            snapshot = self._snapshots[item.data(Qt.UserRole)]
+            matches = snapshot.matches(query)
+            item.setHidden(not matches)
+            if matches and first_visible == -1:
+                first_visible = i
+        if self.selected_id is None:
+            self.projects.setCurrentRow(first_visible)
+        self._selection_changed()
+
+    def _selection_changed(self) -> None:
+        selected = self.selected_id
+        self.detail.set_snapshot(
+            self._snapshots.get(selected) if selected is not None else None
+        )
+        if selected is not None:
+            self.selectionChanged.emit(selected)
+
+    def _activate(self) -> None:
+        if self.selected_id is not None:
+            self.openRequested.emit(self.selected_id)
+
+
+def main() -> None:
+    """Opt-in preview. Does not change or replace the real ProjectHub."""
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = QMainWindow()
+    window.setWindowTitle("DESIDERA · Compact Galaxy Passport (preview)")
+    window.resize(1100, 720)
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    preview = GalaxyCardsPreview()
+    preview.set_snapshots(snapshots_from_records(recent_projects()))
+    preview.openRequested.connect(lambda _id: QMessageBox.information(
+        window, "Preview only",
+        "To open or relink a project, use the existing DESIDERA launcher."
+    ))
+    layout.addWidget(preview)
+    hint = QLabel(
+        "Read-only UI preview · no downloads, FITS changes or scientific QA."
+    )
+    hint.setWordWrap(True)
+    layout.addWidget(hint)
+    window.setCentralWidget(host)
+    window.show()
+    sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

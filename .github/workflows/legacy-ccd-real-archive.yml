@@ -1,0 +1,53 @@
+name: P0.6c real Legacy CCD archive acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/accept_legacy_ccd_archives.py"
+      - "tests/test_real_legacy_ccd_acceptance.py"
+      - ".github/workflows/legacy-ccd-real-archive.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  real-archive-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -e ".[astro,test]"
+      - name: Validate acceptance runner without network
+        run: python -m pytest -q tests/test_real_legacy_ccd_acceptance.py
+      - name: Fetch official DR9 DR11 original FITS and audit
+        run: python scripts/accept_legacy_ccd_archives.py --report-dir real-ccd-evidence
+      - name: Print verified source hashes and cross-release overlap
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("real-ccd-evidence/legacy_ccd_real_archive_report.json").read_text())
+          print("ACCEPTANCE:",d["status"])
+          for x in d["samples"]:
+              print(x["release"], x["region"], x["brick"], "sha256", x["sha256"],
+                    "rows", x["row_count"], "cameras", x["camera_counts"],
+                    "bands", {k:v["count"] for k,v in x["bands"].items()})
+          c=d["cross_release"]
+          print("DR9_DR11_SHARED_CCDS:",c.get("shared_ccd_count"),
+                "SHARED_EXPOSURES:",c.get("shared_exposure_count"),
+                "DR9_ONLY:",c.get("dr9_only_count"),
+                "DR11_ONLY:",c.get("dr11_only_count"))
+          PY
+      - name: Preserve actual evidence even when audit fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desidera-p06c-archive-${{ github.run_id }}
+          path: real-ccd-evidence/
+          if-no-files-found: warn
+          retention-days: 90

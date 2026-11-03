@@ -1,4 +1,4 @@
-# LSBpipe v0.2 — Legacy FITS / WCS experimental integration
+# DESIDERA v0.2 — Legacy FITS / WCS experimental integration
 
 **Scientific status: experimental, not publication-ready.** This builds directly
 on the mathematically benchmarked fixed-ellipse v0.1 prototype. It does not
@@ -26,6 +26,48 @@ subtraction, or a complete uncertainty model.
 - `scripts/make_mock_legacy_fits.py` generates three genuinely formatted but
   **entirely synthetic** FITS images for an offline integration test.
 
+## Galaxy Project Hub (experimental)
+
+The default GUI opens an offline-first **Project Hub**, not an automatic
+network/Legacy Viewer session:
+
+```powershell
+python -m pip install -e ".[exact,gui,test]"
+python -m desidera.gui
+```
+
+In the hub:
+
+- **New galaxy project** creates a portable scientific workspace even before
+  identifying ICRS coordinates or downloading FITS. Use the 3-step wizard.
+- **Import existing folder…** can recover an already downloaded object project,
+  e.g. `C:\Users\frigi\Documents\PhD\LSBpipeData\UGC_2162`, and its old
+  immutable QA history, without any redownload.
+- **Recent projects** lists previously opened objects and also detects the last
+  project from the older application version as an import suggestion.
+- **Continue selected** opens a project-bound Explorer. **All galaxy projects**
+  returns to the hub; switching is blocked while a worker is active.
+- **Relink selected** reconnects a moved project by exact UUID.
+- **Remove from recent…** forgets the highlighted project shortcut after explicit
+  confirmation, including missing or obsolete project locations. It does **not**
+  delete the object folder, original FITS, manifest, QA history or scientific
+  outputs. Use **Import existing folder…** to restore it later. A removed
+  older-version session suggestion stays hidden rather than reappearing at
+  every launch. This is deliberately **not** a delete-from-disk command.
+
+Object identity uses an immutable UUID stored in `lsbpipe-object.json`
+(schema `lsbpipe.object-project/1`). The older
+`lsbpipe-project.json` (`lsbpipe.local-project/0.1`) remains intact for
+rollback and old FITS-session compatibility. A user-local registry stores
+recent project paths, while the object manifest makes projects portable.
+No SIMBAD lookup or archive download occurs during Hub startup or project
+creation. SIMBAD-assisted object identification is a separately planned
+opt-in module, not an active synchronization feature.
+
+See `docs/architecture/OBJECT_CENTRIC_PROJECT_HUB_DESIGN.md` for the
+lifecycle and caveats. Old source FITS remain read-only; no QA output is
+promoted to publication-grade photometry by merely importing a project.
+
 ## Install on Windows / Linux
 
 In the extracted directory, Python 3.10+:
@@ -33,7 +75,7 @@ In the extracted directory, Python 3.10+:
 ```bash
 python -m pip install -e ".[exact,test,demo]"
 python -m pytest -q
-python -m lsbpipe --help
+python -m desidera --help
 ```
 
 `exact` installs Astropy + Photutils, required for the recommended exact
@@ -44,7 +86,7 @@ backend, install `.[astro,test,demo]` and pass `--backend subpixel`.
 
 ```bash
 python scripts/make_mock_legacy_fits.py --output mock_fits --size 128
-python -m lsbpipe measure-fits \
+python -m desidera measure-fits \
   --image mock_fits/mock-image-r.fits \
   --ivar mock_fits/mock-invvar-r.fits \
   --maskbits mock_fits/mock-maskbits.fits \
@@ -66,7 +108,7 @@ Provide the co-registered, same-band **science image**, **inverse variance**, an
 The example below is a command template, **not a completed DR9 run**:
 
 ```bash
-python -m lsbpipe measure-fits \
+python -m desidera measure-fits \
   --image "<path-to-coadd-image-r.fits>" \
   --ivar "<path-to-coadd-invvar-r.fits>" \
   --maskbits "<path-to-coadd-maskbits.fits>" \
@@ -124,3 +166,13 @@ See `docs/VALIDATION_REPORT_V02.md` and `docs/TECHNICAL_DESIGN_V02.md`.
 - [Legacy DR9 image files](https://www.legacysurvey.org/dr9/files/)
 - [Astropy Cutout2D](https://docs.astropy.org/en/stable/api/astropy.nddata.utils.Cutout2D.html)
 - [Photutils EllipticalAperture](https://docs.astropy.org/projects/photutils/en/latest/api/photutils.aperture.EllipticalAperture.html)
+
+
+## Name and on-disk compatibility
+
+DESIDERA is the application and distribution name. The original Python
+`lsbpipe` package, CLI aliases, immutable `lsbpipe-object.json` and
+`lsbpipe-project.json` identifiers, survey-cache locations and pre-existing
+`LSBpipeData` / `LSBpipeProjects` paths remain readable without migration.
+New GUI launch: `python -m desidera.gui`. Existing launches such as
+`python -m lsbpipe.gui` remain supported during the migration.

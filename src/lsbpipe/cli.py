@@ -103,7 +103,7 @@ def demo(output: Path, *, seed: int, backend: str, subpixels: int) -> dict:
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="lsbpipe", description="LSBpipe v0.2 prototype: synthetic demonstration and local Legacy FITS measurements")
+    p = argparse.ArgumentParser(prog="desidera", description="DESIDERA v0.2 prototype: synthetic demonstration and local Legacy FITS measurements")
     cmd = p.add_subparsers(dest="command", required=True)
     sim = cmd.add_parser("demo", help="generate reproducible synthetic galaxy and diagnostics")
     sim.add_argument("--output", type=Path, default=Path("demo_output"))
