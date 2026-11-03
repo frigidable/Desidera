@@ -109,7 +109,7 @@ def _checked_product_stats(data_root: Path, dataset: dict) -> bool:
             return False
         relative = product_for(
             hit, kind, None if kind == "maskbits" else band).relative_path
-        if recorded.get("relative_path") != relative.as_posix():
+        if recorded.get("relative_path") != relative:
             return False
         size, mtime, digest = (
             recorded.get("size_bytes"), recorded.get("mtime_ns"),
@@ -131,7 +131,7 @@ def _checked_product_stats(data_root: Path, dataset: dict) -> bool:
 
 def inspect_saved_dataset_audit(project) -> SavedAuditEvidence:
     """Return historical audit status without reading original FITS pixels."""
-    if not project.last_dataset_audit:
+    if not getattr(project, "last_dataset_audit", None):
         return _result(
             "NO_SAVED_AUDIT", "No saved FITS/WCS audit",
             "Run Dataset QA in the galaxy workspace to inspect original "
