@@ -35,6 +35,7 @@ class PhotometryWorkspace(QWidget):
     sourcesRequested = Signal()
     psf0RunRequested = Signal(object)
     psf0SaveRequested = Signal(object)
+    psf0AutoFwhmRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -144,6 +145,8 @@ class PhotometryWorkspace(QWidget):
         self.psf0_panel = PSF0Panel(central)
         self.psf0_panel.runRequested.connect(self.psf0RunRequested.emit)
         self.psf0_panel.saveRequested.connect(self.psf0SaveRequested.emit)
+        self.psf0_panel.autoFwhmRequested.connect(
+            self.psf0AutoFwhmRequested.emit)
         body.addWidget(self.psf0_panel)
         body.addWidget(source_box)
 
