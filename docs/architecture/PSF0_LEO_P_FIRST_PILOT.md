@@ -369,6 +369,109 @@ https://www.legacysurvey.org/dr11/bitmasks/
 https://www.legacysurvey.org/dr11/description/
 https://www.legacysurvey.org/dr11/files/
 
+### Iterative training-star outlier screening and sky audit (P1.4c)
+
+**Motivation (real Leo P):** Gaia-strict baseline selected 74 training
+stars / 19 independent holdouts; 3.06% absolute negative signed
+ePSF mass exceeded the provisional 2.50% rejection limit.
+The extended 51-pixel cutout produced a provisional model with
+0.0194 median holdout core |residual| / star peak. These numbers
+cannot isolate cause: the original 31→51 experiment changes
+cutout size, isolation radius and sky annulus simultaneously.
+A Gaia DR3 ID and Tractor `TYPE=PSF` still do not guarantee an
+isolated, uncontaminated ePSF cutout.
+
+**Reproducible new optional experiment** `outer_sky_robust`,
+explicitly labeled in the same Leo P PSF GUI. It keeps the exact
+51-pixel, radius 19–24 annulus and 55-pixel source-isolation recipe
+of `outer_sky`, but adds up to **two** iterative star-level outlier
+screening passes:
+
+1. Fix the deterministic independent holdout and user-approved
+   manual train-only exclusions **before any modelling**.
+2. Build a preliminary signed ePSF on training stars only using
+   `EPSFBuilder`'s existing pixelwise sigma-clipped stack.
+3. Independently score *each training star* against the trial ePSF
+   shifted to its native subpixel centroid. Fit the star amplitude
+   on valid core pixels; assess 75th-percentile absolute core
+   residual, 90th-percentile outer residual and a 99th-percentile
+   global residual statistic. Normalize with the coadd's diagonal
+   IVAR, local background RMS and a conservative 3% model-error
+   floor; **these are heuristic scores, not covariance-calibrated
+   chi-square**.
+4. Flag exceptionally poor model matches relative to the training
+   distribution's median and robust MAD; require >1.8x median
+   simultaneously. Reject at most 12% of active train candidates
+   per pass and 20% of original train total, never dropping below
+   `min_train_stars`. Create a fresh EPSFBuilder for each refit;
+   stop early if no star meets the outlier threshold.
+5. Report every candidate score, screening cutoff, selected
+   automatic exclusions, iteration number and fixed-holdout
+   evidence. Visualize auto-rejected candidates separately in
+   the read-only mosaic; they cannot be manually restored
+   within this experiment. To restore them, switch to `outer_sky`
+   or another untrimmed experiment.
+6. Validate the *final* signed ePSF, convergence and independent
+   holdout residuals using existing gates; never tune the
+   threshold against holdout metrics. A model that remains
+   QA-rejected remains a rejected model.
+
+This resembles PSFEx's whole-object iterative residual clipping
+only in design; it is **not a reproduction** of PSFEx's calibrated
+detector noise model or spatial PSF fit.
+Official methods: https://psfex.readthedocs.io/en/latest/Working.html ,
+https://psfex.readthedocs.io/en/latest/GettingStarted.html ,
+https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html .
+
+**Sky treatment audit.** Current Desidera does NOT fit a physical
+point-source wing model jointly with local background. For each
+source it clips outliers and robustly fits a **plane in an annulus**
+(10–15 px baseline, 19–24 px extended). The fit is now recomputed
+*after* the final clip; previously the returned coefficients
+corresponded to the preceding selection of pixels. The local
+sky value and gradient are subtracted from the cutout prior to
+`EPSFBuilder`, consistent with Photutils' explicit contract, but
+the measured annulus includes possible stellar-wing light and
+neighbor contributions. Even sigma clipping cannot remove a
+spatially smooth stellar halo.
+
+The model reports the inner/outer annulus radii in units of
+**assumed detection FWHM** (not measured PSF), retained sky fraction,
+within-annulus radial median change and octant-to-octant
+background heterogeneity. These statistics flag sky contamination
+and wing degeneracy but **cannot correct the lost stellar flux**.
+For FWHM guess 4.8 px, the 10–15 px ring starts at 2.08× guessed
+FWHM; the 19–24 px ring starts at 3.96× guessed FWHM. Both require
+real wing validation before use in calibrated photometry.
+
+**Next required scientific step**: a model (D_i=A,P_i+B_0+
+B_x x_i+B_y y_i + N_i + epsilon_i) simultaneously fitting a
+nonnegative physically plausible PSF core/wing model, local
+background, and neighbor models or masks on enlarged original
+FITS regions. Mask all nearby sources before local-sky
+regression; compare annuli at multiple large radii and report
+radial background stability. Use multiscale holdout sky
+perturbations and injection/recovery of simulated winged PSFs,
+close pairs, unresolved galaxies and varying background gradients.
+Use exposure-dependent PSFEx on original CCDs as an external
+reference when available. Existing coadd IVAR is only diagonal,
+so no covariance-calibrated chi-square or confidence intervals
+may be claimed at this stage.
+
+**Disqualifiers before adoption:** persistent signed negative
+ePSF wings, photutils non-convergence, sample spatial or
+magnitude/color dependence, contaminated sky annuli, inadequate
+independent holdout statistics, or evidence that clipping
+only improves in-sample profiles while degrading spatial
+coverage. Avoid relaxing the negative-mass/convergence gates
+just to report a successful PSF.
+
+References:
+https://psfex.readthedocs.io/en/latest/Working.html
+https://iraf.readthedocs.io/en/doc-autoupdate/tasks/noao/digiphot/daophot/allstar.html
+https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html
+https://www.legacysurvey.org/dr11/description/
+
 ### Initial FWHM versus Leo P protected footprint
 
 **Current default** `FWHM guess = 4.80 native pixels` originates
