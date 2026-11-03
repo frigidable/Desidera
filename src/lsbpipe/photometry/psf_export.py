@@ -29,10 +29,12 @@ def export_psf0_diagnostic(result: PSF0Result, output_root: str | Path,
     root = Path(output_root).expanduser().absolute()
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         raise ValueError("Unsafe PSF diagnostic directory")
-    if root.exists():
-        for parent in (root, *root.parents):
-            if parent.is_symlink():
-                raise ValueError("Symlink path not allowed for diagnostic outputs")
+    # Check all existing ancestors even if the output folder is absent.
+    # Otherwise a parent symlink could redirect the write outside the
+    # explicitly selected galaxy workspace.
+    for parent in (root, *root.parents):
+        if parent.is_symlink():
+            raise ValueError("Symlink path not allowed for diagnostic outputs")
     root.mkdir(parents=True, exist_ok=True)
     tag = "psf0-" + result.lineage_id[:24]
     final = root / tag
