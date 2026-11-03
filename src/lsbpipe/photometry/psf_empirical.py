@@ -598,6 +598,7 @@ def build_empirical_coadd_psf(
         "schema": "desidera.psf0-star-review-in-memory/1",
         "status": "RESEARCHER_REVIEW_NOT_SCIENCE_ADOPTED",
         "guessed_fwhm_pix": cfg.guessed_fwhm_pix,
+        "min_train_stars": cfg.min_train_stars,
         "excluded_training_star_ids": tuple(cfg.excluded_training_star_ids),
         "stars": review_stars,
     }
