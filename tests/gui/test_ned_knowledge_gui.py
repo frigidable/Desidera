@@ -71,8 +71,8 @@ def test_ned_dialog_manual_only_then_confirm_and_offline_reopen(
         hub = ProjectHub()
     qtbot.addWidget(hub)
     hub.show()
-    assert hub.ned_btn.isVisible()
-    assert hub.ned_btn.isEnabled()
+    assert hub.catalogues_menu_btn.isVisible()
+    assert hub.ned_action.isEnabled()
     assert "NED: Leo P" in hub.galaxy_card.catalogue.text()
     assert "unadopted" in hub.galaxy_card.catalogue_provenance.text()
     assert manifest.read_bytes() == before
