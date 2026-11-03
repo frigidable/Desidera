@@ -374,6 +374,8 @@ class PSF0Panel(QGroupBox):
                         f"ICRS RA={star['ra_deg']:.7f}°, Dec={star['dec_deg']:.7f}°")
                 self.stars.setItem(index, col, cell)
         signed = diagnostic.get("signed_kernel_qa", {})
+        holdouts = diagnostic.get("signed_holdout_summary", {})
+        holdout_regions = holdouts.get("regions", {})
         annuli = signed.get("annuli", {})
         breakdown = []
         for label, key in (
@@ -387,6 +389,19 @@ class PSF0Panel(QGroupBox):
                     f"{label}: negative mass contribution "
                     f"{annuli[key]['negative_fraction_of_total_absolute_mass']:.2%} "
                     "of total |model|.")
+        holdout_lines = []
+        for label, key in (
+                ("Core", "core_r_le_1x_guessed_fwhm"),
+                ("Intermediate", "intermediate_1x_to_2x_guessed_fwhm"),
+                ("Outer", "outer_r_gt_2x_guessed_fwhm")):
+            zone = holdout_regions.get(key, {})
+            absolute = zone.get("median_star_abs_residual_over_peak")
+            signed_value = zone.get("median_star_signed_residual_over_peak")
+            if absolute is not None and signed_value is not None:
+                holdout_lines.append(
+                    f"{label}: median |residual| / star peak "
+                    f"{absolute:.4g}; signed {signed_value:+.4g}; "
+                    f"stars {zone.get('n_stars', 0)}")
         raw = diagnostic.get("signed_kernel_values_for_qa_only")
         if raw is not None:
             self._show_signed_rejected_kernel(raw)
@@ -422,6 +437,10 @@ class PSF0Panel(QGroupBox):
             + "\n\nNegative contribution by radial zone "
             "(radii use an assumed detection FWHM, NOT a measured FWHM):\n"
             + ("\n".join(breakdown) if breakdown else "Unavailable")
+            + "\n\nIndependent holdout residuals (core-fitted signed model; "
+            "not covariance-calibrated):\n"
+            + ("\n".join(holdout_lines)
+               if holdout_lines else "Unavailable")
             + solver_text
             + "\n\nRejected candidates: "
             + str(diagnostic.get("rejected_reasons", {}))
@@ -434,7 +453,10 @@ class PSF0Panel(QGroupBox):
             negative=negative,
             converged=diagnostic.get(
                 "solver_diagnostics", {}).get("converged_if_reported"),
-            status="QUALITY REJECTED")
+            status="QUALITY REJECTED",
+            outer_holdout_abs=holdout_regions.get(
+                "outer_r_gt_2x_guessed_fwhm", {}
+            ).get("median_star_abs_residual_over_peak"))
         self._update_buttons()
 
     def _show_signed_rejected_kernel(self, values):
@@ -468,7 +490,8 @@ class PSF0Panel(QGroupBox):
             "REJECTED signed ePSF · cyan positive; red negative. "
             "Asinh-stretched for visual diagnosis; no physically accepted PSF.")
 
-    def _record_experiment(self, *, n_train, n_holdout, negative, converged, status):
+    def _record_experiment(self, *, n_train, n_holdout, negative,
+                           converged, status, outer_holdout_abs=None):
         entry = {
             "band": self.band.currentData(),
             "experiment": self.experiment.currentData(),
@@ -479,6 +502,9 @@ class PSF0Panel(QGroupBox):
             "solver_converged": converged,
             "n_train": int(n_train),
             "n_holdout": int(n_holdout),
+            "holdout_outer_median_abs_residual_over_peak": (
+                float(outer_holdout_abs)
+                if outer_holdout_abs is not None else None),
             "science_adopted": False,
         }
         self._experiment_history.append(entry)
@@ -496,9 +522,12 @@ class PSF0Panel(QGroupBox):
                    if entry["negative_fraction"] is not None else "N/A")
             converged = ("yes" if entry["solver_converged"] is True else
                          "no" if entry["solver_converged"] is False else "?")
+            outer = entry.get("holdout_outer_median_abs_residual_over_peak")
+            outer_text = f"{outer:.3g}" if outer is not None else "N/A"
             descriptions.append(
                 f"{entry['experiment']}: neg {pct}, "
                 f"conv {converged}, "
+                f"outer holdout |resid|/peak {outer_text}, "
                 f"stars {entry['n_train']}/{entry['n_holdout']}")
         self.compare.setText(
             "Non-adopted same-band trials · "
@@ -552,7 +581,11 @@ class PSF0Panel(QGroupBox):
             negative=diagnostics.get("negative_absolute_mass_fraction"),
             converged=result.metrics.get(
                 "solver_diagnostics", {}).get("converged_if_reported"),
-            status="EXPERIMENTAL PREVIEW")
+            status="EXPERIMENTAL PREVIEW",
+            outer_holdout_abs=result.metrics.get(
+                "signed_holdout_summary", {}).get("regions", {}).get(
+                "outer_r_gt_2x_guessed_fwhm", {}).get(
+                    "median_star_abs_residual_over_peak"))
         self.qa.setPlainText(
             "Scientific limits:\n" + "\n".join(f"• {f}" for f in result.flags)
             + "\n\nRejected star counts: " + str(result.rejected_reasons)
