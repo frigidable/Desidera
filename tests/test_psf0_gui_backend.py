@@ -47,3 +47,32 @@ def test_psf_gui_refuses_other_project_without_touching_fits(tmp_path, monkeypat
     p = _leo_project(tmp_path, monkeypatch, galaxy="UGC 2162")
     with pytest.raises(ValueError, match="Leo P"):
         inspect_psf0_bands(p.root)
+
+
+def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
+    from lsbpipe.photometry.psf_gui_backend import (
+        PSF0_DIAGNOSTIC_EXPERIMENTS, psf0_experiment_recipe)
+    assert tuple(PSF0_DIAGNOSTIC_EXPERIMENTS) == (
+        "baseline", "outer_sky", "wing_smoothing_off", "longer_convergence")
+    base = psf0_experiment_recipe(4.8, "baseline")
+    extent = psf0_experiment_recipe(4.8, "outer_sky")
+    wings = psf0_experiment_recipe(4.8, "wing_smoothing_off")
+    longer = psf0_experiment_recipe(4.8, "longer_convergence")
+    assert base.cutout_size_pix == 31
+    assert base.sky_annulus_inner_pix == 10.
+    assert base.sky_annulus_outer_pix == 15.
+    assert base.wing_smoothing is True
+    assert base.max_iterations == 8
+    assert extent.cutout_size_pix == 51
+    assert extent.sky_annulus_inner_pix == 19.
+    assert extent.sky_annulus_outer_pix == 24.
+    assert extent.min_neighbor_separation_pix >= 51.
+    assert wings.wing_smoothing is False
+    assert wings.cutout_size_pix == base.cutout_size_pix
+    assert longer.max_iterations == 16
+    assert longer.cutout_size_pix == base.cutout_size_pix
+    assert len({r.digest for r in (base,extent,wings,longer)}) == 4
+    with pytest.raises(ValueError, match="Unknown"):
+        psf0_experiment_recipe(4.8, "automatically_good_psf")
+    assert all(key in PSF0_DIAGNOSTIC_EXPERIMENTS
+               for key in ("baseline","outer_sky","wing_smoothing_off","longer_convergence"))
