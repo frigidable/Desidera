@@ -13,10 +13,8 @@ from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
 import math
-from types import MappingProxyType
 
 import numpy as np
-from scipy.ndimage import shift as shift_image
 from scipy.spatial import cKDTree
 
 from lsbpipe.photometry.contracts import NativeBandFrame
@@ -355,10 +353,19 @@ def build_empirical_coadd_psf(
         raise ValueError("No stellar candidates detected; PSF-0 cannot be built")
     # Split source identification and star-quality selection. All positive
     # detections are used for isolation even if a candidate is later rejected.
+    # Photutils 2.x and 3.x use different finder centroid column names.
+    # Resolve the documented schema explicitly instead of silently losing
+    # candidates or assuming the installed release.
+    names = set(detections.colnames)
+    xkey = "x_centroid" if "x_centroid" in names else "xcentroid"
+    ykey = "y_centroid" if "y_centroid" in names else "ycentroid"
+    if not {xkey, ykey, "peak"}.issubset(names):
+        raise ValueError("Unsupported photutils DAOStarFinder column schema")
     candidates = sorted(
-        [(float(row["xcentroid"]), float(row["ycentroid"]),
-          float(row["peak"])) for row in detections
-         if np.isfinite(row["xcentroid"]) and np.isfinite(row["ycentroid"])],
+        [(float(row[xkey]), float(row[ykey]), float(row["peak"]))
+         for row in detections
+         if np.isfinite(row[xkey]) and np.isfinite(row[ykey])
+         and np.isfinite(row["peak"])],
         key=lambda item: (-item[2], item[1], item[0]))
     if len(candidates) < cfg.min_train_stars+cfg.min_holdout_stars:
         raise ValueError("Too few detected star candidates for an independent PSF holdout")
