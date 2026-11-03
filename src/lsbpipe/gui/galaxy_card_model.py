@@ -35,6 +35,7 @@ class GalaxyCardSnapshot:
     thumbnail: Path | None = None
     preview_status: str = "NOT_GENERATED"
     preview_source: str = "NONE"
+    local_thumbnail: Path | None = None
     remote_preview_status: str = "REMOTE_RGB_NOT_CACHED"
     knowledge_status: str = NO_CONFIRMATION
     catalogue_identity: CatalogueIdentity | None = None
@@ -163,6 +164,7 @@ def snapshot_from_record(
             thumbnail=display_thumbnail,
             preview_status=display_status,
             preview_source=display_source,
+            local_thumbnail=thumbnail,
             remote_preview_status=remote_state,
             knowledge_status=knowledge_status,
             catalogue_identity=catalogue_identity,
