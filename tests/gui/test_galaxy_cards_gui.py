@@ -42,7 +42,10 @@ def test_existing_left_list_and_single_right_passport(qtbot):
     assert view.detail.name.text() == "Leo P"
     assert view.findChildren(GalaxyDetailCard) == [view.detail]
     assert view.detail.minimumWidth() <= view.splitter.sizes()[1]
-    assert view.detail.preview.maximumHeight() <= 155
+    assert view.detail.preview.width() == view.detail.preview.height()
+    assert view.detail.preview.width() in (124, 184)
+    assert view.detail.preview_holder.x() < view.detail.name.x()
+    assert view.detail.preview.size().width() <= 184
 
 
 def test_right_passport_tracks_selected_left_row(qtbot):
