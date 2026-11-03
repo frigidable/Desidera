@@ -382,6 +382,50 @@ https://www.legacysurvey.org/dr11/bitmasks/
 https://www.legacysurvey.org/dr11/description/
 https://www.legacysurvey.org/dr11/files/
 
+### Real Leo P diagnostic: bright-star rejection bias (November 2026)
+
+The *first* two-pass experiment on DR11 south 1554p180, g, using
+the same 51-pixel cutouts and Gaia-strict selection as untrimmed
+Extended, retained 34/40 training stars after dropping 4+2;
+10 held-out stars remained fixed. The observed comparison:
+
+| Metric | Extended | Old unconditional two-pass trim |
+|---|---:|---:|
+| train / holdout | 40 / 10 | 34 / 10 |
+| negative signed ePSF mass | 0.73% | 1.39% |
+| outer held-out median |residual| / peak | 0.00735 | 0.00742 |
+| core held-out median |residual| / peak | ≈0.0200 | 0.0198 |
+| reported ePSF non-convergence | not established from same QA text | flagged |
+
+The raw QA's per-star trial score was found to be **strongly monotonic
+in diagnostic model amplitude**, Spearman rho = 0.891 (40 stars)
+in pass 1 and 0.873 (36) in pass 2. First-pass excluded objects
+had median diagnostic amplitude ≈370 (internal model normalization),
+vs ≈10.2 for retained objects. The reported model-amplitude field
+must NOT be interpreted as an independently calibrated total-flux
+measurement. This is descriptive association, not proof of a specific
+physical cause of mismatch.
+
+**Safety response:** retain the provisional experiment for regression,
+but before *applying* its candidate exclusions, audit the rank
+association between PSF fit amplitude and score. For ≥20 stars and
+positive rank correlation >=0.75 with at least one proposed exclusion,
+**fail closed**: keep all original training stars, record the proposed
+IDs/rho/median amplitude and explicit `AUTO_TRAINING_TRIM_BLOCKED_BY_SCORE_FLUX_COUPLING`
+flag; show it prominently in the GUI. The threshold 0.75 is
+a deliberately conservative *uncalibrated diagnostic guard*, not a
+statistically derived probability or a photometric quality standard.
+
+This prevents a biased clipping procedure from selecting *only*
+apparently well-fitting faint stars and losing the brighter objects
+that constrain wings. It does NOT validate the untrimmed ePSF.
+Critical follow-ups: train-only cross-fitted / leave-one-out residual
+profiles, compare in *flux-matched* strata; inspect excluded-star
+cutouts for blending, background annuli and saturation; model spatial
+PSF variation and color; rerun synthetic injected blends and
+wide-wing backgrounds. Avoid adaptively tuning cuts against the same
+10 holdouts: they are an evaluation set, not training data.
+
 ### Iterative training-star outlier screening and sky audit (P1.4c)
 
 **Motivation (real Leo P):** Gaia-strict baseline selected 74 training
