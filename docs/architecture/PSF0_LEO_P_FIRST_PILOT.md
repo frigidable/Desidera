@@ -189,6 +189,53 @@ CLI flag `--fwhm-pix` sets an explicit *detection guess*, not a
 measured PSF width. The source-image scale in arcsec/pixel must be
 read from WCS; never assume 0.262 exactly on arbitrary CCD files.
 
+## Controlled post-failure diagnosis: Leo P g-band (PSF-0)
+
+The actual GUI screenshot provides **4.09% signed negative absolute ePSF
+mass entirely at radii >2 × the guessed 4.8 px FWHM**, with **zero**
+reported contribution from the two inner zones. The source star cutout
+background was estimated in an annulus at 10–15 pixels. Since the
+reported outer zone begins at 9.6 pixels, overlap makes outer-wing
+sky subtraction a **high-priority hypothesis**, not an established
+cause. The solver also reports `converged=False` after 8 iterations
+in photutils 3.1.1. Those are separate failure indicators.
+
+The GUI now provides four reproducible diagnostic experiments:
+
+| Experiment | Change | Scientific question |
+|---|---|---|
+| `baseline` | 31px stamp, sky 10–15px, isolation 32px, 8 iter | Reproduce the original 4.09% g result |
+| `outer_sky` | 51px stamp, sky 19–24px, isolation 55px, 8 iter | Are the outer negative wings sensitive to a more distant local sky? |
+| `wing_smoothing_off` | 31px, default sky/stars, disable photutils final wing smoothing | Is the photutils 3.1 final wing smoothing contributing to the signed outer residual? |
+| `longer_convergence` | 31px, default sky, 16 iter | Does the ePSF approach centroid/shape convergence with more iterations? |
+
+Each run is still **non-adopted** and uses the existing Leo P FITS
+without downloads, new folders/environments or permanent project-band
+changes. Diagnostic results and cumulative same-band attempt
+summaries remain visible in the Photometry Workspace; **Copy QA
+report** includes the current detailed result and recent attempt
+summary. Neither the comparison history nor a lower negative
+fraction certifies the model.
+
+The `outer_sky` mode alters the cutout, sky annulus **and isolation
+footprint** together. Different stars may be included; the outcome is
+therefore not a clean single-factor causal test. Check stellar
+overlap, number of accepted/heldout stars and their ICRS positions
+before interpreting its effect on negative PSF mass.
+
+Note: in photutils 3.1, `smoothing_kernel='auto'` may return
+`smoothing_kernel=None` for well-behaved native-grid PSF widths,
+while **independent final wing smoothing may still be enabled**.
+The controls report these two mechanisms separately. Official API:
+https://docs.astropy.org/projects/photutils/en/stable/api/photutils.psf.EPSFBuilder.html .
+
+Interpret candidate changes in this order: (a) sufficient and
+comparable clean stars, (b) convergence fraction and held-out core
+residual, (c) signed mass distribution and wide-angle wing
+representativity, (d) estimated galaxy-profile bias. A variant
+that merely passes the provisional 2.5% mass threshold **must not**
+be automatically adopted or ranked above a lower-bias alternative.
+
 ## Blocking issues before publishing Leo P science
 
 These items are required, even after successful synthetic unit tests:
