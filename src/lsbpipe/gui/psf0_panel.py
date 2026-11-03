@@ -434,11 +434,11 @@ class PSF0Panel(QGroupBox):
                 "excluded_training_star_ids": tuple(
                     saved["excluded_training_star_ids"]),
             }
-            self.prior_source.setText(
-                self.prior_source.text()
-                + " Previous training-star exclusions found for these "
-                "original FITS; inspect them in Review training stars. "
-                "They were NOT applied automatically.")
+            note = (" Previous training-star exclusions were found for "
+                    "these original FITS; inspect them in Review training "
+                    "stars. They were NOT applied automatically.")
+            if note.strip() not in self.prior_source.text():
+                self.prior_source.setText(self.prior_source.text() + note)
         else:
             self._star_review_data = current
 
@@ -721,6 +721,16 @@ class PSF0Panel(QGroupBox):
             QPixmap.fromImage(image).scaled(
                 230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
         self._update_buttons()
+
+    def show_review_saved(self, receipt_path: str):
+        """Distinguish immutable manual star selection from PSF adoption."""
+        if self._qa_payload is not None:
+            self._qa_payload["manual_training_review_receipt"] = receipt_path
+        self.qa.appendPlainText(
+            "\nManual training-star review saved (NOT an adopted PSF): "
+            + receipt_path)
+        self.status.setText(
+            self.status.text() + " · manual train exclusions saved")
 
     def show_saved(self, output_path: str):
         self.status.setText(
