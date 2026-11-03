@@ -35,7 +35,21 @@ def capture(output_dir: Path) -> list[dict]:
             field=SkyField(40.096208, 1.22925, 5.))
         widget = PhotometryWorkspace()
         try:
-            for state in ("no_selection", "three_paths_present"):
+            for state in ("no_selection", "three_paths_present",
+                          "leo_p_r_paths_g_selected"):
+                if state == "leo_p_r_paths_g_selected":
+                    project = create_object_project(
+                        "Leo P", root / "Leo_P",
+                        field=SkyField(155.438012, 18.088025, 5.))
+                    project.selected_dataset = ("dr11", "south", "1554p180", "g")
+                    project.data_root = root / "leo_p_inputs"
+                    project.data_root.mkdir(exist_ok=True)
+                    save_object_project(project)
+                    for path in _expected_paths(
+                            project.data_root,
+                            ("dr11", "south", "1554p180", "r")).values():
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b"not a FITS, UI path-only fixture")
                 if state == "three_paths_present":
                     project.selected_dataset = ("dr9", "south", "0401p012", "r")
                     project.data_root = root / "inputs"
@@ -71,6 +85,9 @@ def capture(output_dir: Path) -> list[dict]:
                         "device_pixel_ratio": picture.devicePixelRatio(),
                         "heading_visible": widget.title.isVisible(),
                         "source_table_rows": widget.table.rowCount(),
+                        "psf0_available_band": widget.psf0_panel.band.currentData(),
+                        "psf0_preview_run_enabled": widget.psf0_panel.run_btn.isEnabled(),
+                        "psf0_diagnostic_save_enabled": widget.psf0_panel.save_btn.isEnabled(),
                         "source_panel_geometry": [
                             widget.table.x(), widget.table.y(),
                             widget.table.width(), widget.table.height()],
