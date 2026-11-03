@@ -258,7 +258,7 @@ def render_qa_figure(*, directory: Path, release: str, region: str,
         f"search side {field.width_arcmin:g}′; "
         f"DR {release.upper()} {region} / {brick} / {band}; "
         f"HDU {indices}. Magenta: sky-coordinate boundaries. "
-        ("Plot margin trimmed to original brick; no padded pixels. "
+        + ("Plot margin trimmed to original brick; no padded pixels. "
          if image.shape[0] < _cutout_pixels(field.width_arcmin, wcs)
          or image.shape[1] < _cutout_pixels(field.width_arcmin, wcs)
          else "Full requested display margin within brick. ")
