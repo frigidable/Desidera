@@ -157,13 +157,15 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
         data = tables[0].data
         names = {name.upper():name for name in tables[0].columns.names}
         missing = REQUIRED - set(names)
+        required_band = "FLUX_IVAR_" + frame.band.upper()
+        missing |= {"GAIA_DUPLICATED_SOURCE", required_band} - set(names)
         if missing:
             raise ValueError(f"Tractor Gaia fields missing: {sorted(missing)}")
         if len(data) > 500_000:
             raise ValueError("Tractor table is unexpectedly large")
         catalog_rows = []
         world = []
-        flux_key = names.get("FLUX_IVAR_" + frame.band.upper())
+        flux_key = names[required_band]
         for row in data:
             if _value(row[names["BRICKNAME"]]) != brick:
                 raise ValueError("Tractor FITS contains another brick identity")
@@ -182,11 +184,9 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
                 "type": _value(row[names["TYPE"]]).upper(),
                 "fitbits": int(row[names["FITBITS"]]),
                 "maskbits": int(row[names["MASKBITS"]]),
-                "flux_ivar": (
-                    _number(row[flux_key]) if flux_key else None),
-                "gaia_duplicated_source": (
-                    bool(row[names["GAIA_DUPLICATED_SOURCE"]])
-                    if "GAIA_DUPLICATED_SOURCE" in names else False),
+                "flux_ivar": _number(row[flux_key]),
+                "gaia_duplicated_source": bool(
+                    row[names["GAIA_DUPLICATED_SOURCE"]]),
                 "gaia_g_mag": (
                     _number(row[names["GAIA_PHOT_G_MEAN_MAG"]])
                     if "GAIA_PHOT_G_MEAN_MAG" in names else None),
@@ -267,8 +267,8 @@ def download_native_tractor_gaia(data_root, *, release, region, brick,
             if len(tables) != 1:
                 raise ValueError("Downloaded Tractor is not one binary table")
             names = {n.upper() for n in tables[0].columns.names}
-            if REQUIRED - names:
-                raise ValueError("Downloaded Tractor FITS lacks Gaia reference fields")
+            if REQUIRED - names or "GAIA_DUPLICATED_SOURCE" not in names:
+                raise ValueError("Downloaded Tractor FITS lacks Gaia QA fields")
             data = tables[0].data
             if len(data) and _value(data["BRICKNAME"][0]) != brick:
                 raise ValueError("Downloaded Tractor FITS brick identity mismatches")
