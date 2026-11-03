@@ -113,4 +113,6 @@ def test_right_inspector_remains_resizable_and_scrollable(qtbot):
     view.splitter.setSizes([300, 420])
     assert view.detail.width() >= 300
     assert view.detail.findChild(QScrollArea, "galaxy_card_scroll") is not None
-    assert view.detail.safety.isVisible()
+    assert not view.detail.safety.isVisible()
+    assert "scientific QA" in view.detail.open_button.toolTip()
+    assert not view.detail.details_panel.isVisible()
