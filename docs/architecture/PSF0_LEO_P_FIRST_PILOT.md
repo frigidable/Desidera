@@ -301,6 +301,74 @@ exclusions. Cross-band contamination edits should be expressed
 as shared ICRS footprints through the future Scene/Smart Mask
 workflow, not as PSF training-star exclusions reused blindly.
 
+### DR11 Tractor / Gaia DR3-assisted stellar source screening
+
+The **Leo P original-brick catalogue** is
+`<project.data_root>/dr11/south/tractor/155/tractor-1554p180.fits`.
+This corresponds to the exact original DR11 `south` brick 1554p180;
+it is not a Sky Viewer glyph overlay, a Gaia TAP crossmatch made at an
+arbitrary epoch, or a catalogue from another release.
+
+The GUI exposes two explicit, non-interchangeable policies:
+
+- `dao_diagnostic`: legacy DAOStarFinder candidates, image pixel
+  validity and isolation only. Their stellar identity is **NOT
+  verified**, as demonstrated by the real Leo P mosaic.
+- `gaia_strict`: needs a versioned, locally validated DR11 Tractor FITS
+  and its local SHA256. If absent or invalid, the operation fails
+  closed. The researcher can click **Get DR11 Tractor + Gaia…**
+  in the *existing* Leo P Photometry workspace to request the exact
+  original FITS from the official Legacy Surveys archive. It is
+  added to the same project's original-data tree without modifying
+  the native optical quartets or creating a separate worktree/project.
+  It is never automatically downloaded during a PSF run.
+
+Before fitting, crossmatch each positive DAO detection against the
+project's native Tractor catalogue by the `RA`, `DEC` Tractor
+position projected into the **original IMAGE WCS**, with a bounded
+2.5 native-pixel match radius and explicit rejection of ambiguous
+multiple matches. Require:
+
+1. `REF_CAT='G3'`, positive `REF_ID` (actual Gaia DR3 source ID).
+2. `TYPE='PSF'` **and** `FITBITS` without
+   `FORCED_POINTSOURCE` or `FROZEN`. In mask regions,
+   Legacy Surveys can otherwise force galaxy/foreground sources
+   to `TYPE='PSF'`.
+3. `BRICK_PRIMARY`, no Gaia duplicate and, when provided, positive
+   relevant native-band `FLUX_IVAR`; reject disallowed BRIGHT,
+   BAILOUT, GALAXY, CLUSTER, RESOLVED regions and relevant saturation
+   and ALLMASK bits. The source is thus an actual fitted source, not
+   a Gaia-only retained photometric conversion.
+4. Independent *native image* local background/isolation checks, and
+   conservative uncalibrated second-moment shape checks (elongation,
+   centroid discrepancy, anomalous field-relative core width).
+   A Gaia match is **not** a certified clean stellar cutout.
+
+The definitive sample is split into deterministic training and
+independent holdout **before** subsequent manual training exclusions.
+Both train and holdout must undergo the same initial Gaia and native
+cutout screening; neither controls later manual selection of holdouts.
+The report and mosaic expose Gaia source ID, G magnitude when available,
+crossmatch separation, morphology metrics, catalogue SHA256 and
+detailed rejection counts. Catalogue identity becomes part of
+the PSF lineage digest; old selection receipts cannot silently carry
+across changes in the catalogue, band, protection or recipe.
+
+The 2.5-pixel radius, ellipticity and relative width cuts are
+**provisional screening heuristics**, not statistically calibrated
+selection functions or measurements of the PSF width. Their effect on
+stellar completeness, spatial sampling, color/magnitude dependence
+and independent holdout residuals must be tested on real Leo P
+data. Gaia DR3 misses some faint sources that may be useful ePSF
+stars; neither the Gaia-verified nor DAO baseline mode should be
+declared universally superior without quality and selection-bias QA.
+
+Reference:
+https://www.legacysurvey.org/dr11/catalogs/
+https://www.legacysurvey.org/dr11/bitmasks/
+https://www.legacysurvey.org/dr11/description/
+https://www.legacysurvey.org/dr11/files/
+
 ### Initial FWHM versus Leo P protected footprint
 
 **Current default** `FWHM guess = 4.80 native pixels` originates
