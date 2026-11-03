@@ -1,4 +1,4 @@
-"""P0.5 photometric input contracts; no photometry engines are implied."""
+"""Photometric input contracts and experimental geometry/mask drafts."""
 from .contracts import (
     NativeBandFrame, NativeFrameCollection, MaskPolicy, PSFDescription,
     SkyDescription, PhotometryPreparation, CONTRACT_SCHEMA,
@@ -9,4 +9,20 @@ __all__ = [
     "NativeBandFrame", "NativeFrameCollection", "MaskPolicy",
     "PSFDescription", "SkyDescription", "PhotometryPreparation",
     "CONTRACT_SCHEMA", "load_native_legacy_quartet",
+]
+
+# Experimental preparations are not adopted photometric results.
+from .sky_masks import (
+    SkyMaskShape, SkyMaskEdit, SkyMaskDraft,
+    rasterize_sky_shape, evaluate_mask_draft,
+)
+from .mask_drafts import read_active_mask_draft, save_mask_draft
+from .ellipse_seed import (
+    EllipseSeed, propose_isophotal_seed, seed_as_sky_geometry,
+)
+__all__ += [
+    "SkyMaskShape", "SkyMaskEdit", "SkyMaskDraft",
+    "rasterize_sky_shape", "evaluate_mask_draft",
+    "read_active_mask_draft", "save_mask_draft",
+    "EllipseSeed", "propose_isophotal_seed", "seed_as_sky_geometry",
 ]
