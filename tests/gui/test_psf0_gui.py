@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import pytest
+import numpy as np
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6.QtWebEngineWidgets")
 
 from lsbpipe.gui.survey_explorer import SurveyExplorer
 from lsbpipe.gui.psf0_panel import PSF0Panel
+from PySide6.QtWidgets import QApplication
+from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
 from lsbpipe.surveys.object_projects import create_object_project, save_object_project
 from lsbpipe.surveys.dataset_integrity import _expected_paths
 from lsbpipe.surveys.legacy import SkyField
@@ -43,14 +46,20 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
         assert band == "r"
         assert config.guessed_fwhm_pix == pytest.approx(4.8)
         assert protection_arcsec == pytest.approx(90.)
+        signed = np.zeros((21,21), float)
+        signed[10,10] = 1.
+        signed[10,15] = -(.075/.925)
+        signed_qa = signed_psf_qa(signed, 4.8)
         return {
             "project_root": root, "project_id": project.project_id,
             "dataset": project.selected_dataset,
             "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
             "reason": "Strong negative EPSF ringing: 7.50% exceeds 2.50%",
             "diagnostics": {
-                "negative_absolute_mass_fraction": .075,
+                "negative_absolute_mass_fraction": signed_qa["negative_absolute_mass_fraction"],
                 "blocking_threshold_fraction": .025,
+                "signed_kernel_qa": signed_qa,
+                "signed_kernel_values_for_qa_only": signed.tolist(),
                 "n_train": 10, "n_holdout": 3,
                 "training": [{"x_pix": 20., "y_pix": 30.,
                               "cutout_sky_nMgy": .2,
@@ -77,7 +86,20 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     assert "7.50%" in panel.summary.text()
     assert "Strong negative EPSF ringing" in panel.qa.toPlainText()
     assert panel.stars.rowCount() == 1
+    assert panel.kernel_view.pixmap() is not None
+    assert not panel.kernel_view.pixmap().isNull()
+    assert "Intermediate" in panel.qa.toPlainText()
+    assert panel.copy_qa_btn.isEnabled()
+    panel.copy_qa_btn.click()
+    copied = QApplication.clipboard().text()
+    assert "PSF0_QUALITY_REJECTED_NOT_ADOPTED" in copied
+    assert "signed_kernel_qa" in copied
+    assert "signed_kernel_values_for_qa_only" not in copied
     assert not panel.save_btn.isEnabled()
+    # Changing the recipe must invalidate rejection evidence, not just a
+    # successful result, to prevent accidental cross-recipe reporting.
+    panel.fwhm.setValue(5.5)
+    assert not panel.copy_qa_btn.isEnabled()
     assert not (project.root / "analyses" / "psf-pilots").exists()
     assert all(paths[k].read_bytes() == data for k,data in before.items())
     assert project.selected_dataset == ("dr11", "south", "1554p180", "g")
@@ -92,3 +114,4 @@ def test_standalone_panel_has_no_results_or_actions_without_project(qtbot):
     assert not panel.run_btn.isEnabled()
     assert not panel.save_btn.isEnabled()
     assert panel.active_preview is None
+    assert not panel.copy_qa_btn.isEnabled()
