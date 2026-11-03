@@ -27,6 +27,7 @@ from .galaxy_card_model import snapshot_from_record
 from .galaxy_knowledge_dialog import GalaxyKnowledgeDialog
 from .analysis_configurations_dialog import AnalysisConfigurationsDialog
 from lsbpipe.surveys.galaxy_knowledge import latest_simbad_confirmation
+from lsbpipe.surveys.knowledge_summary import load_galaxy_knowledge
 
 
 class CreateProjectDialog(QDialog):
@@ -371,6 +372,7 @@ class ProjectHub(QMainWindow):
             name = record.get("display_name") or "Unnamed"
             status = "On disk" if exists else "Missing · relink needed"
             detail = ""
+            search_identifiers = []
             if exists:
                 try:
                     if record.get("legacy"):
@@ -381,6 +383,16 @@ class ProjectHub(QMainWindow):
                             f"{prior_project.field.dec_deg:+.6f}°")
                     else:
                         entry = read_object_project(record["root"])
+                        search_identifiers.extend(entry.aliases)
+                        try:
+                            knowledge = load_galaxy_knowledge(
+                                entry.root, project=entry)
+                            # Only explicitly confirmed names are searchable.
+                            # Unverified nearby stars must never be indexed as
+                            # aliases of the galaxy.
+                            search_identifiers.extend(knowledge.confirmed_ids)
+                        except (OSError, ValueError, KeyError, TypeError):
+                            pass  # The selected card shows an evidence error.
                         detail = (
                             f"{entry.field.ra_deg:.6f}°, "
                             f"{entry.field.dec_deg:+.6f}°"
@@ -392,6 +404,7 @@ class ProjectHub(QMainWindow):
                 f"{name}  ·  {status}\n{detail}")
             item.setSizeHint(QSize(100, 64))
             item.setData(Qt.UserRole, record)
+            item.setData(Qt.UserRole + 1, tuple(search_identifiers))
             item.setToolTip(record["root"])
             self.projects.addItem(item)
         selection = next(
@@ -410,7 +423,9 @@ class ProjectHub(QMainWindow):
             record = item.data(Qt.UserRole)
             matches = (query in item.text().casefold() or
                        query in str(record.get("root", "")).casefold() or
-                       query in str(record.get("project_id", "")).casefold())
+                       query in str(record.get("project_id", "")).casefold() or
+                       any(query in value.casefold() for value in
+                           (item.data(Qt.UserRole + 1) or ())))
             item.setHidden(not matches)
             if matches:
                 visible.append(index)
@@ -654,7 +669,9 @@ class ProjectHub(QMainWindow):
         try:
             dialog = GalaxyKnowledgeDialog(record["root"], self)
             dialog.exec()
-            self._selection_changed()
+            # Rebuild aliases/confirmed-ID search and the selected card from
+            # immutable local evidence. No network, FITS or science jobs.
+            self.refresh()
         except (OSError, ValueError, TypeError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open Galaxy Knowledge", str(exc))
 
