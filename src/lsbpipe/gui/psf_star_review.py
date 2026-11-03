@@ -152,7 +152,7 @@ class PSFStarReviewDialog(QDialog):
         included = 0
         for index, star in enumerate(snapshot["stars"]):
             role = star["role"]
-            if role not in ("train", "excluded"):
+            if role not in ("train", "excluded", "auto_rejected"):
                 continue  # holdout stars are never a selectable review control
             included += 1
             sid = star["star_id"]
@@ -166,6 +166,14 @@ class PSFStarReviewDialog(QDialog):
                 f"ICRS {star['ra_deg']:.7f}°, {star['dec_deg']:.7f}°"
                 " · source pixels are not changed")
             box.addWidget(label)
+            if role == "auto_rejected":
+                auto_note = QLabel(
+                    "AUTO-REJECTED from training by experimental "
+                    "PSF-residual screening · view-only; restore by "
+                    "choosing a non-robust experiment.")
+                auto_note.setObjectName("psf0_auto_rejection_" + sid)
+                auto_note.setWordWrap(True)
+                box.addWidget(auto_note)
             gaia = star.get("gaia") or {}
             shape = star.get("shape_qa") or {}
             if gaia.get("gaia_source_id") is not None:
@@ -213,19 +221,34 @@ class PSFStarReviewDialog(QDialog):
                 panel.addWidget(graphic)
                 plots.addLayout(panel)
             box.addLayout(plots)
-            check = QCheckBox("Exclude from PSF training")
-            check.setObjectName("psf0_exclude_" + sid)
-            check.setChecked(
-                role == "excluded" or sid in set(
-                    snapshot.get("excluded_training_star_ids", ())))
-            check.toggled.connect(self._update_counts)
-            self._controls[sid] = check
-            box.addWidget(check)
+            if role == "auto_rejected":
+                auto_check = QCheckBox("Automatically excluded (read-only)")
+                auto_check.setChecked(True)
+                auto_check.setEnabled(False)
+                box.addWidget(auto_check)
+            else:
+                check = QCheckBox("Exclude from PSF training")
+                check.setObjectName("psf0_exclude_" + sid)
+                check.setChecked(
+                    role == "excluded" or sid in set(
+                        snapshot.get("excluded_training_star_ids", ())))
+                check.toggled.connect(self._update_counts)
+                self._controls[sid] = check
+                box.addWidget(check)
             footer = QLabel(
                 f"Sky {star['sky_nMgy']:.3g} nMgy/pix  · "
                 f"gradient/RMS {star['gradient_sigma_span']:.2f}")
             footer.setWordWrap(True)
             box.addWidget(footer)
+            sky = star.get("sky_qa") or {}
+            if sky:
+                metrics = QLabel(
+                    f"Sky ring starts at {sky.get('annulus_inner_in_guessed_fwhm', 0):.2f} "
+                    f"assumed FWHM · wing absorption risk: "
+                    f"{'YES' if sky.get('wing_sky_degeneracy_warning') else 'still unverified'}"
+                    " · fitted plane is NOT a joint PSF/sky estimate")
+                metrics.setWordWrap(True)
+                box.addWidget(metrics)
             grid.addWidget(card, index // 2, index % 2)
         if included < 1:
             raise ValueError("No original training stars available for review")
@@ -254,11 +277,13 @@ class PSFStarReviewDialog(QDialog):
     def _update_counts(self, *_):
         count = len(self._controls)
         excluded = len(self.excluded_ids())
+        auto = len(self.snapshot.get("automatic_training_rejections", ()))
         remaining = count-excluded
         self.count_label.setText(
-            f"Training candidate cards: {count} · excluded manually: "
-            f"{excluded} · to rebuild: {remaining} (minimum {self._min_train}). "
-            "No holdout object is selectable.")
+            f"Training candidates: {count} · excluded manually: "
+            f"{excluded} · auto-excluded in this experiment: {auto} · "
+            f"to rebuild: {remaining} (minimum {self._min_train}). "
+            "Holdouts are never selectable.")
         self.apply_button.setEnabled(remaining >= self._min_train)
 
     def excluded_ids(self):
