@@ -93,7 +93,6 @@ class PhotometryWorkspace(QWidget):
         self.workflow_toggle.setObjectName("photometry_workflow_toggle")
         self.workflow_toggle.setCheckable(True)
         self.workflow_toggle.setMaximumWidth(325)
-        root.addWidget(self.workflow_toggle, 0, Qt.AlignLeft)
         self.workflow_details = QGroupBox("Scientific workflow · planned modules")
         self.workflow_details.setObjectName("photometry_workflow_details")
         workflow_layout = QVBoxLayout(self.workflow_details)
@@ -117,8 +116,6 @@ class PhotometryWorkspace(QWidget):
             lambda checked: self.workflow_toggle.setText(
                 "Scientific roadmap (8 stages)  ▾" if checked else
                 "Scientific roadmap (8 stages)  ▸"))
-        root.addWidget(self.workflow_details, 0, Qt.AlignLeft)
-
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
         center_scroll.setWidgetResizable(True)
@@ -146,6 +143,10 @@ class PhotometryWorkspace(QWidget):
         mode_row.addWidget(self.view_mode)
         mode_row.addStretch(1)
         body.addLayout(mode_row)
+        # Keep the optional scientific roadmap aligned to the same narrow
+        # content column as the PSF controls instead of spanning the window.
+        body.addWidget(self.workflow_toggle, 0, Qt.AlignLeft)
+        body.addWidget(self.workflow_details)
 
         source_box = QGroupBox("Observation selection · saved project state")
         source_layout = QVBoxLayout(source_box)
