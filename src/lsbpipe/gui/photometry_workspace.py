@@ -150,6 +150,7 @@ class PhotometryWorkspace(QWidget):
         body.addWidget(self.workflow_details)
 
         source_box = QGroupBox("Observation selection · saved project state")
+        self.source_box = source_box
         source_layout = QVBoxLayout(source_box)
         self.source_identity = QLabel("No project bound")
         self.source_identity.setObjectName("photometry_source_identity")
@@ -261,13 +262,12 @@ class PhotometryWorkspace(QWidget):
         body.addWidget(batch)
         self.view_mode.currentIndexChanged.connect(
             self._set_view_mode)
-        self._set_view_mode()
-        self._update_band_tab_statuses()
         # Compatibility alias for older callers; resolves to the first
         # available band on bind, not a second shared scientific panel.
         self.psf0_panel = self.psf0_panels["g"]
 
         method_box = QGroupBox("Measurement design")
+        self.method_box = method_box
         method_layout = QVBoxLayout(method_box)
         for heading, detail in (
             ("Preparatory scene",
@@ -316,6 +316,8 @@ class PhotometryWorkspace(QWidget):
         body.addWidget(self.blocker)
         center_scroll.setWidget(central)
         root.addWidget(center_scroll, 1)
+        self._set_view_mode()
+        self._update_band_tab_statuses()
 
     def _set_view_mode(self, *_):
         research = self.view_mode.currentData() == "research"
@@ -327,10 +329,11 @@ class PhotometryWorkspace(QWidget):
         self.workflow_details.setVisible(
             research and self.workflow_toggle.isChecked())
         self.source_details_toggle.setVisible(research)
-        self.source_details_toggle.setChecked(
-            self.source_details_toggle.isChecked())
+        self.source_box.setVisible(
+            research and self.source_details_toggle.isChecked())
         self.method_details_toggle.setVisible(research)
-        method_box = self.method_details_toggle
+        self.method_box.setVisible(
+            research and self.method_details_toggle.isChecked())
         self.copy_full_qa_btn.setVisible(research)
         # Complete JSON export remains accessible in Guided mode.
         self._update_band_tab_statuses()
