@@ -63,8 +63,10 @@ Two noninterchangeable candidate-training policies are now provided:
   and local sky. Both training and holdout stars have Gaia-confirmed IDs.
 - `tractor_psf_validated` (new **EXPERIMENTAL TRAINING POLICY**): same
   original DR11 Tractor brick and the same conservative source/cutout
-  gates, but `TYPE=PSF` stars lacking Gaia IDs are eligible **only for
-  training**. Gaia-confirmed stars are independently reserved for the
+  gates, with the relative core-width reference measured exclusively
+  from Gaia DR3-confirmed stars, but `TYPE=PSF` stars lacking Gaia IDs
+  are eligible **only for training**. The expanded mode rejects the
+  sample if fewer than five Gaia reference cores establish that prior. Gaia-confirmed stars are independently reserved for the
   holdout **before** building or iteratively screening the training PSF.
   It fails closed if there are fewer than the required Gaia holdouts,
   even if many non-Gaia Tractor stars are available.
