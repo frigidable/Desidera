@@ -544,3 +544,36 @@ def test_real_star_median_profile_is_visible_and_not_fabricated(qtbot):
     assert panel.kernel_view.pixmap() is None or panel.kernel_view.pixmap().isNull()
     assert panel.profile_view.pixmap() is None or panel.profile_view.pixmap().isNull()
     assert "Underflow" in panel.model_caption.text()
+
+
+def test_radial_plot_fits_entire_label_without_clipping_on_resize(qtbot):
+    """The source's scientific axes, labels and residuals must stay in view."""
+    from PySide6.QtGui import QPixmap, QColor
+    from lsbpipe.gui.psf0_panel import _AspectFitProfileLabel
+
+    label = _AspectFitProfileLabel()
+    qtbot.addWidget(label)
+    label.setFixedHeight(278)
+    label.resize(450, 278)
+    label.show()
+    src = QPixmap(540, 315)
+    src.fill(QColor(19, 28, 37))
+    label.set_chart(src)
+    QApplication.processEvents()
+    for width in (450, 340, 260, 510):
+        label.resize(width, 278)
+        QApplication.processEvents()
+        actual = label.pixmap()
+        assert actual is not None and not actual.isNull()
+        assert actual.width() <= label.contentsRect().width()
+        assert actual.height() <= label.contentsRect().height()
+        assert actual.width()/actual.height() == pytest.approx(
+            src.width()/src.height(), rel=.012)
+    # A scientific rejection before fitting must never retain the
+    # previous band's or previous run's rendered pixmap.
+    label.set_placeholder("No fitted model; no radial data.")
+    assert label.pixmap() is None or label.pixmap().isNull()
+    assert "No fitted model" in label.text()
+    label.resize(340, 278)
+    QApplication.processEvents()
+    assert label.pixmap() is None or label.pixmap().isNull()
