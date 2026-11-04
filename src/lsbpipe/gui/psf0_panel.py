@@ -325,6 +325,15 @@ class PSF0Panel(QGroupBox):
         self._update_buttons()
 
     def _parameters_changed(self, *_):
+        # The FWHM/target radius changes the detected candidates,
+        # spatial split and the PSF's scientific recipe. Historical
+        # same-band trials from the prior parameter set are NOT
+        # controlled comparisons; invalidate them immediately.
+        self._experiment_history = []
+        self._history_band = self.band.currentData()
+        self._history_policy = self.catalog_policy.currentData()
+        self._render_comparison()
+        self._active_exclusions = ()
         if self._preview is not None or self._qa_payload is not None:
             self._band_changed()
 
