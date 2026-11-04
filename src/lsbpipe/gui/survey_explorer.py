@@ -864,7 +864,8 @@ class SurveyExplorer(QMainWindow):
     def _acquire_project_psf0_tractor(self, request):
         """Explicit official native Gaia/Tractor FITS download in current project."""
         from lsbpipe.photometry.psf_gui_backend import acquire_gui_psf0_tractor
-        panel = self.photometry_workspace.psf0_panel
+        panel = self.photometry_workspace.psf0_panels.get(
+            str(request.get("band")), self.photometry_workspace.psf0_panel)
         if self.thread is not None:
             panel.status.setText("Finish the active task before acquiring Gaia data.")
             return
