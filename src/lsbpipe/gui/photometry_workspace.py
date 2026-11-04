@@ -15,9 +15,8 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QPushButton, QScrollArea, QSplitter, QTableWidget,
-    QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QHeaderView, QLabel, QPushButton, QScrollArea, QTabWidget, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from lsbpipe.photometry.readiness import inspect_photometry_inputs
@@ -86,31 +85,32 @@ class PhotometryWorkspace(QWidget):
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setChildrenCollapsible(False)
-
-        left_scroll = QScrollArea()
-        left_scroll.setWidgetResizable(True)
-        left_scroll.setFrameShape(QScrollArea.NoFrame)
-        left_scroll.setMinimumWidth(235)
-        left_scroll.setMaximumWidth(345)
-        navigation = QWidget()
-        left = QVBoxLayout(navigation)
-        left.setContentsMargins(2, 2, 10, 2)
-        left.setSpacing(9)
-        left.addWidget(QLabel("Scientific workflow"))
+        # The original eight unclickable scientific stage cards consumed
+        # almost a third of the screen. Keep the roadmap accessible, but
+        # the ordinary PSF workflow must have one primary work area.
+        self.workflow_toggle = QPushButton("Scientific roadmap (8 stages)  ▸")
+        self.workflow_toggle.setObjectName("photometry_workflow_toggle")
+        self.workflow_toggle.setCheckable(True)
+        root.addWidget(self.workflow_toggle)
+        self.workflow_details = QGroupBox("Scientific workflow · planned modules")
+        self.workflow_details.setObjectName("photometry_workflow_details")
+        workflow_layout = QVBoxLayout(self.workflow_details)
         for number, name, description in _STAGES:
-            block = QGroupBox(f"{number} · {name}")
-            block.setObjectName(f"photometry_stage_{number}")
-            stage = QVBoxLayout(block)
-            caption = QLabel(description)
-            caption.setWordWrap(True)
-            caption.setStyleSheet("font-size: 11px;")
-            stage.addWidget(caption)
-            left.addWidget(block)
-        left.addStretch(1)
-        left_scroll.setWidget(navigation)
-        splitter.addWidget(left_scroll)
+            item = QLabel(f"{number}  {name} — {description}")
+            item.setWordWrap(True)
+            item.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            workflow_layout.addWidget(item)
+        workflow_layout.addWidget(QLabel(
+            "Only PSF-0 preview is currently implemented. Later stages "
+            "remain plans, not executable actions."))
+        self.workflow_details.setVisible(False)
+        self.workflow_toggle.toggled.connect(
+            self.workflow_details.setVisible)
+        self.workflow_toggle.toggled.connect(
+            lambda checked: self.workflow_toggle.setText(
+                "Scientific roadmap (8 stages)  ▾" if checked else
+                "Scientific roadmap (8 stages)  ▸"))
+        root.addWidget(self.workflow_details)
 
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
@@ -150,22 +150,35 @@ class PhotometryWorkspace(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setMinimumHeight(175)
         source_layout.addWidget(self.table)
+        self.source_details_toggle = QPushButton(
+            "Observation and original FITS details  ▸")
+        self.source_details_toggle.setObjectName(
+            "photometry_source_details_toggle")
+        self.source_details_toggle.setCheckable(True)
+        self.source_details_toggle.toggled.connect(source_box.setVisible)
+        self.source_details_toggle.toggled.connect(
+            lambda checked: self.source_details_toggle.setText(
+                "Observation and original FITS details  ▾" if checked else
+                "Observation and original FITS details  ▸"))
+        source_box.setVisible(False)
+        body.addWidget(self.source_details_toggle)
+        body.addWidget(source_box)
 
-        # Four independent, vertically stacked scientific panels. A band
-        # never shares its preview, star exclusions or QA with another band.
-        # The saved project and its original science files are unchanged.
-        batch = QGroupBox("PSF-0 · four-filter workbench")
+        # Four scientific objects persist, but only one filter is visible
+        # at once. A band never shares its preview, exclusions or QA
+        # with another band, and batch runs still visit all four.
+
+        batch = QGroupBox("PSF preview · optical filters")
         batch.setObjectName("psf0_four_band_toolbar")
         batch_layout = QVBoxLayout(batch)
         batch_note = QLabel(
-            "Each g/r/i/z panel retains its own recipe and experimental "
-            "result. Build all runs available bands sequentially, with each "
-            "band's own original PSFSIZE FWHM unless manually overridden. "
-            "No PSF is science-adopted.")
+            "Choose a band below to work on it, or run all four. "
+            "Each band keeps its own settings and result. "
+            "Experimental previews are never science-adopted.")
         batch_note.setWordWrap(True)
         batch_layout.addWidget(batch_note)
         batch_buttons = QHBoxLayout()
-        self.build_all_psfs_btn = QPushButton("Build PSF previews · all available griz")
+        self.build_all_psfs_btn = QPushButton("Run all available bands")
         self.build_all_psfs_btn.setObjectName("psf0_build_all_bands")
         self.build_all_psfs_btn.setToolTip(
             "Runs one real native FITS/Tractor PSF-0 diagnostic for each "
@@ -174,7 +187,7 @@ class PhotometryWorkspace(QWidget):
             "science adoption or FITS export.")
         self.build_all_psfs_btn.clicked.connect(self._request_all_psfs)
         batch_buttons.addWidget(self.build_all_psfs_btn)
-        self.copy_full_qa_btn = QPushButton("Copy full griz debug report")
+        self.copy_full_qa_btn = QPushButton("Copy complete QA")
         self.copy_full_qa_btn.setObjectName("psf0_copy_full_griz_debug")
         self.copy_full_qa_btn.clicked.connect(self.copy_full_qa)
         self.copy_full_qa_btn.setToolTip(
@@ -182,7 +195,7 @@ class PhotometryWorkspace(QWidget):
             "star IDs, Gaia identity, sky metrics and signed per-star core/"
             "wing residual diagnostics as JSON. No native image pixels.")
         batch_buttons.addWidget(self.copy_full_qa_btn)
-        self.save_full_qa_btn = QPushButton("Save full QA JSON…")
+        self.save_full_qa_btn = QPushButton("Export QA JSON…")
         self.save_full_qa_btn.setObjectName("psf0_save_full_griz_debug")
         self.save_full_qa_btn.clicked.connect(self.save_full_qa)
         self.save_full_qa_btn.setToolTip(
@@ -198,19 +211,23 @@ class PhotometryWorkspace(QWidget):
         batch_layout.addWidget(self.batch_status)
         body.addWidget(batch)
         self.psf0_panels = {}
+        self.band_tabs = QTabWidget(central)
+        self.band_tabs.setObjectName("psf0_single_band_tabs")
+        self.band_tabs.setDocumentMode(True)
+        self.band_tabs.setTabToolTip(0, "Select a band to inspect")
         for native_band in ("g", "r", "i", "z"):
-            panel = PSF0Panel(central, fixed_band=native_band)
+            panel = PSF0Panel(self.band_tabs, fixed_band=native_band)
             panel.setObjectName("psf0_panel_" + native_band)
             panel.runRequested.connect(self.psf0RunRequested.emit)
             panel.saveRequested.connect(self.psf0SaveRequested.emit)
             panel.autoFwhmRequested.connect(self.psf0AutoFwhmRequested.emit)
             panel.tractorRequested.connect(self.psf0TractorRequested.emit)
             self.psf0_panels[native_band] = panel
-            body.addWidget(panel)
+            self.band_tabs.addTab(panel, native_band.upper())
+        body.addWidget(self.band_tabs)
         # Compatibility alias for older callers; resolves to the first
         # available band on bind, not a second shared scientific panel.
         self.psf0_panel = self.psf0_panels["g"]
-        body.addWidget(source_box)
 
         method_box = QGroupBox("Measurement design")
         method_layout = QVBoxLayout(method_box)
@@ -236,6 +253,18 @@ class PhotometryWorkspace(QWidget):
             line.setWordWrap(True)
             line.setMargin(5)
             method_layout.addWidget(line)
+        self.method_details_toggle = QPushButton(
+            "Scientific methodology and planned steps  ▸")
+        self.method_details_toggle.setObjectName(
+            "photometry_methodology_toggle")
+        self.method_details_toggle.setCheckable(True)
+        self.method_details_toggle.toggled.connect(method_box.setVisible)
+        self.method_details_toggle.toggled.connect(
+            lambda checked: self.method_details_toggle.setText(
+                "Scientific methodology and planned steps  ▾" if checked else
+                "Scientific methodology and planned steps  ▸"))
+        method_box.setVisible(False)
+        body.addWidget(self.method_details_toggle)
         body.addWidget(method_box)
 
         self.blocker = QLabel(
@@ -244,14 +273,11 @@ class PhotometryWorkspace(QWidget):
             "File presence alone never establishes source-FITS validity.")
         self.blocker.setObjectName("photometry_blocker")
         self.blocker.setWordWrap(True)
+        self.blocker.setVisible(False)
         body.addWidget(self.blocker)
         body.addStretch(1)
         center_scroll.setWidget(central)
-        splitter.addWidget(center_scroll)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([275, 840])
-        root.addWidget(splitter, 1)
+        root.addWidget(center_scroll, 1)
 
     def set_psf_busy(self, state):
         for panel in self.psf0_panels.values():
