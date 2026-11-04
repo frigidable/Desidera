@@ -390,6 +390,39 @@ class PSF0Panel(QGroupBox):
         self.set_research_mode(False)
         self._update_buttons()
 
+    def _clear_science_visuals(self, reason=None):
+        self.kernel_view.setPixmap(QPixmap())
+        self.kernel_view.setText("No fitted PSF model")
+        self.kernel_view.show()
+        self.model_caption.setText(
+            reason or "No model fitted for this band.")
+        self.profile_view.setPixmap(QPixmap())
+        self.profile_view.setText(
+            "No observed/model radial comparison available.")
+        self.profile_caption.setText(
+            "A real star cutout and aligned fitted model are required. "
+            "No synthetic curves are displayed.")
+
+    def _show_real_radial_profile(self):
+        """Use only real worker cutouts; never render synthetic model data."""
+        plot = ensemble_training_radial_plot(self._star_review_data)
+        if plot is None:
+            self.profile_view.setPixmap(QPixmap())
+            self.profile_view.setText(
+                "No training-star radial comparison is available.")
+            self.profile_caption.setText(
+                "The reconstruction supplied no compatible observed/model "
+                "training cutouts. Independent holdout not evaluated here.")
+            return
+        self.profile_view.setPixmap(plot)
+        n_train = sum(
+            item.get("role") == "train"
+            for item in self._star_review_data["stars"])
+        self.profile_caption.setText(
+            f"Actual native stellar cutouts · N={n_train} training stars. "
+            "Sky-subtracted annular medians and signed model differences "
+            "are in-sample, NOT independent holdout residuals.")
+
     def resizeEvent(self, event):
         # On narrow layouts, a two-column form would reduce space for
         # long catalogue labels. Switch orientation without recreating
@@ -493,7 +526,8 @@ class PSF0Panel(QGroupBox):
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("No empirical PSF image")
-        self.kernel_view.hide()
+        self.kernel_view.show()
+        self._clear_science_visuals()
         self.qa.clear()
         self.summary.setText("No ePSF measurement has been made or adopted.")
         current_band = self.band.currentData()
@@ -636,7 +670,8 @@ class PSF0Panel(QGroupBox):
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("No empirical PSF image")
-        self.kernel_view.hide()
+        self.kernel_view.show()
+        self._clear_science_visuals()
         self.summary.setText("No PSF preview for this band.")
         self.qa.clear()
         self._update_mode_context()
@@ -702,8 +737,7 @@ class PSF0Panel(QGroupBox):
         self.save_btn.setEnabled(False)
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
-        self.kernel_view.setText("PSF calculation running…")
-        self.kernel_view.hide()
+        self._clear_science_visuals("Reconstruction running · no model yet.")
         self.summary.setText("No accepted PSF; calculating provisional model.")
         self.qa.clear()
         self._update_buttons()
@@ -825,8 +859,7 @@ class PSF0Panel(QGroupBox):
         self._last_reported_payload = None
         self.save_btn.setEnabled(False)
         self.kernel_view.setPixmap(QPixmap())
-        self.kernel_view.setText("Rejected ePSF · no kernel adopted")
-        self.kernel_view.hide()
+        self._clear_science_visuals("Reconstruction failed; no adopted model.")
         self.stars.setRowCount(0)
         self.status.setText("PSF-0 failed scientific preparation · NOT ADOPTED")
         if "negative EPSF ringing" in error:
@@ -963,8 +996,8 @@ class PSF0Panel(QGroupBox):
             },
         }
         self.kernel_view.setPixmap(QPixmap())
-        self.kernel_view.setText("No signed model available")
-        self.kernel_view.hide()
+        self._clear_science_visuals(
+            "No fitted model was produced or adopted.")
         self.status.setText(
             "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
         diagnostic = payload.get("diagnostics", {})
@@ -972,7 +1005,8 @@ class PSF0Panel(QGroupBox):
             "stellar_sample_underflow", "gaia_holdout_underflow",
             "gaia_width_reference_underflow")
         if sample_underflow:
-            self.kernel_view.setText("No PSF model: insufficient vetted stars")
+            self.model_caption.setText(
+                "Star-selection underflow: no ePSF was fitted.")
         catalog_qa = diagnostic.get("catalog_selection_qa", {})
         negative = diagnostic.get("negative_absolute_mass_fraction")
         if negative is not None:
@@ -1049,6 +1083,7 @@ class PSF0Panel(QGroupBox):
             self._record_experiment(
                 n_train=0, n_holdout=0, negative=None, converged=None,
                 status="STAR SAMPLE REJECTED")
+            self._show_real_radial_profile()
             self._update_buttons()
             return
         signed = diagnostic.get("signed_kernel_qa", {})
@@ -1128,6 +1163,7 @@ class PSF0Panel(QGroupBox):
             + "\n\n"
             + "\n".join(diagnostic.get("notes", []))
             + "\n\nNo invalid PSF kernel or photometric measurement was saved.")
+        self._show_real_radial_profile()
         self._record_experiment(
             n_train=diagnostic.get("n_train", 0),
             n_holdout=diagnostic.get("n_holdout", 0),
@@ -1168,6 +1204,9 @@ class PSF0Panel(QGroupBox):
         self.kernel_view.setPixmap(QPixmap.fromImage(img).scaled(
             230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
         self.kernel_view.show()
+        self.model_caption.setText(
+            "Signed REJECTED ePSF diagnostic · red negative / cyan positive. "
+            "Not normalized, saved or adopted as a PSF.")
         self.kernel_view.setToolTip(
             "REJECTED signed ePSF · cyan positive; red negative. "
             "Asinh-stretched for visual diagnosis; no physically accepted PSF.")
@@ -1298,6 +1337,10 @@ class PSF0Panel(QGroupBox):
             QPixmap.fromImage(image).scaled(
                 230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
         self.kernel_view.show()
+        self.model_caption.setText(
+            "Experimental nonnegative ePSF kernel · normalized preview, "
+            "not science-adopted. Signed pre-clipping QA remains available.")
+        self._show_real_radial_profile()
         self._update_buttons()
 
     def show_review_saved(self, receipt_path: str):
