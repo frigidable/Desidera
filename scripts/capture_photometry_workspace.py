@@ -14,6 +14,7 @@ import tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo
 
 from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.surveys.object_projects import (
@@ -25,6 +26,31 @@ from lsbpipe.surveys.dataset_integrity import _expected_paths
 def capture(output_dir: Path) -> list[dict]:
     output_dir.mkdir(parents=True, exist_ok=True)
     app = QApplication.instance() or QApplication([])
+    # Windows offscreen QPA may start with an empty font database.
+    # Borrow installed system fonts for screenshot capture ONLY; never
+    # copy or distribute font files as project artifacts.
+    fonts_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    loaded_families = []
+    for font_name in ("segoeui.ttf", "arial.ttf", "tahoma.ttf"):
+        source = fonts_dir / font_name
+        if source.is_file():
+            index = QFontDatabase.addApplicationFont(str(source))
+            if index >= 0:
+                loaded_families.extend(
+                    QFontDatabase.applicationFontFamilies(index))
+    available = set(QFontDatabase.families())
+    family = next((name for name in (
+        "Segoe UI", "Arial", "Tahoma", "DejaVu Sans") if name in available),
+        app.font().family())
+    app.setFont(QFont(family, 10))
+    font_evidence = {
+        "font_family": QFontInfo(app.font()).family(),
+        "registered_system_families": loaded_families,
+        "n_font_families": len(available),
+    }
+    if not available:
+        raise RuntimeError(
+            "Photometry screenshot capture has no renderable font families")
     manifest = []
     sizes = ((1366, 768), (1600, 900), (1920, 1080))
     with tempfile.TemporaryDirectory(prefix="desidera-photo-capture-") as temporary:
@@ -92,6 +118,7 @@ def capture(output_dir: Path) -> list[dict]:
                             widget.table.x(), widget.table.y(),
                             widget.table.width(), widget.table.height()],
                         "visual_reviewed": False,
+                        "font_evidence": font_evidence,
                     }
                     manifest.append(record)
                     if state == "leo_p_r_paths_g_selected":
