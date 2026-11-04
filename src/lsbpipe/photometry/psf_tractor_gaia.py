@@ -88,76 +88,140 @@ class TractorGaiaMatcher:
         object.__setattr__(self, "pixel_positions", points)
         object.__setattr__(self, "_tree", cKDTree(points))
 
-    def match(self, x, y, *, band, neighbor_search_radius_pix=10.):
-        """Return Gaia-confirmed, locally isolated PSF source or explicit refusal.
+    def match(self, x, y, *, band, neighbor_search_radius_pix=10.,
+              require_gaia=True, return_audit=False):
+        """Match a DAO detection to a clean Tractor PSF.
 
-        A nearby Tractor source may be too faint for DAOStarFinder, so
-        isolation is checked against the *full* same-brick catalogue.
+        In the exploratory Tractor-training mode Gaia identity is optional,
+        but never fabricated. Every acceptance still requires the same
+        model, masking, flux, ambiguity and neighbour gates. The optional
+        structured trace records the FIRST failing gate and the available
+        pre-failure evidence; it does not certify the stellar nature.
         """
         if band not in SATURATION_BITS:
             raise ValueError("Unknown optical band for Gaia screening")
+        if type(require_gaia) is not bool:
+            raise TypeError("require_gaia must be Boolean")
+        trace = {
+            "matched_tractor_objid": None,
+            "tractor_ref_cat": None,
+            "gaia_confirmed": False,
+            "gaia_source_id": None,
+            "tractor_type": None,
+            "tractor_fitbits": None,
+            "tractor_maskbits": None,
+            "match_offset_pix": None,
+            "tractor_band_snr_diagonal_only": None,
+            "nearest_catalog_neighbor_pix": None,
+            "nearest_significant_neighbor_pix": None,
+            "n_significant_neighbors": None,
+            "checks_passed": [],
+            "first_failure": None,
+        }
+
+        def finish(identity=None, failure=None):
+            trace["first_failure"] = failure
+            trace["outcome"] = "rejected" if failure else "catalog_accepted"
+            if return_audit:
+                return identity, failure, trace
+            return identity, failure
+
         if not self.rows:
-            return None, "TRACTOR_NO_NATIVE_SOURCES"
-        positions = self.pixel_positions
+            return finish(failure="TRACTOR_NO_NATIVE_SOURCES")
         near = self._tree.query_ball_point(
             [float(x), float(y)], r=self.match_radius_pix)
+        trace["n_catalog_matches"] = len(near)
         if len(near) == 0:
-            return None, "NO_TRACTOR_SOURCE_AT_DAO_CENTROID"
+            return finish(failure="NO_TRACTOR_SOURCE_AT_DAO_CENTROID")
         if len(near) != 1:
-            return None, "AMBIGUOUS_TRACTOR_CROSSMATCH"
+            return finish(failure="AMBIGUOUS_TRACTOR_CROSSMATCH")
         index = int(near[0])
         row = self.rows[index]
-        if row["ref_cat"] != "G3" or row["ref_id"] <= 0:
-            return None, "NOT_GAIA_DR3"
+        trace["checks_passed"].append("unique_tractor_centroid_match")
+        trace.update({
+            "matched_tractor_objid": row["objid"],
+            "tractor_ref_cat": row["ref_cat"],
+            "tractor_type": row["type"],
+            "tractor_fitbits": row["fitbits"],
+            "tractor_maskbits": row["maskbits"],
+            "match_offset_pix": float(np.hypot(
+                self.pixel_positions[index, 0]-x,
+                self.pixel_positions[index, 1]-y)),
+        })
+        is_gaia = row["ref_cat"] == "G3" and row["ref_id"] > 0
+        trace["gaia_confirmed"] = is_gaia
+        if is_gaia:
+            trace["gaia_source_id"] = row["ref_id"]
+            trace["checks_passed"].append("gaia_dr3_identity")
+        elif require_gaia:
+            return finish(failure="NOT_GAIA_DR3")
         if row["type"] != "PSF":
-            return None, "TRACTOR_NONSTELLAR_MODEL"
+            return finish(failure="TRACTOR_NONSTELLAR_MODEL")
+        trace["checks_passed"].append("tractor_psf_model")
         if row["fitbits"] & FIT_REJECT_BITS:
-            return None, "TRACTOR_FORCED_OR_FROZEN_PSF"
+            return finish(failure="TRACTOR_FORCED_OR_FROZEN_PSF")
+        trace["checks_passed"].append("not_forced_or_frozen")
         if row["maskbits"] & MASK_REJECT_BITS:
-            return None, "TRACTOR_BRIGHT_OR_UNSAFE_MASK"
+            return finish(failure="TRACTOR_BRIGHT_OR_UNSAFE_MASK")
         for bit in SATURATION_BITS[band]:
             if row["maskbits"] & (1 << bit):
-                return None, "TRACTOR_SATURATED_OR_ALLMASK"
+                return finish(failure="TRACTOR_SATURATED_OR_ALLMASK")
+        trace["checks_passed"].append("safe_catalog_masks")
         if row["gaia_duplicated_source"]:
-            return None, "GAIA_DUPLICATED_SOURCE"
+            return finish(failure="GAIA_DUPLICATED_SOURCE")
+        trace["checks_passed"].append("not_gaia_duplicate")
         if (row["flux_ivar"] is None or row["flux_ivar"] <= 0 or
                 row["flux"] is None or row["flux"] <= 0):
-            return None, "TRACTOR_NO_FITTED_BAND_FLUX"
+            return finish(failure="TRACTOR_NO_FITTED_BAND_FLUX")
         snr = row["flux"]*math.sqrt(row["flux_ivar"])
-        # PSFEx reference minimum S/N=20. This catalog statistic uses
-        # diagonal coadd errors, not calibrated correlated-noise S/N.
+        trace["tractor_band_snr_diagonal_only"] = float(snr)
         if snr < 20.:
-            return None, "TRACTOR_LOW_BAND_SIGNAL_TO_NOISE"
-        search_radius = float(neighbor_search_radius_pix)
-        if not 2 <= search_radius <= 50 or not math.isfinite(search_radius):
+            return finish(failure="TRACTOR_LOW_BAND_SIGNAL_TO_NOISE")
+        trace["checks_passed"].append("tractor_diagonal_snr_gte_20")
+        radius = float(neighbor_search_radius_pix)
+        if not 2 <= radius <= 50 or not math.isfinite(radius):
             raise ValueError("Invalid Tractor neighbor-search aperture")
-        # Significant neighbors may be missing from DAO detections but
-        # appear as Tractor sources. Reject if their fitted coadd flux is
-        # >2% of target and their catalog S/N is at least 5.
-        for other_idx in self._tree.query_ball_point(
-                [float(x),float(y)],r=search_radius):
-            if int(other_idx) == index:
+        neighbors = self._tree.query_ball_point(
+            [float(x), float(y)], r=radius)
+        separations = sorted(
+            float(np.hypot(self.pixel_positions[int(j), 0]-x,
+                           self.pixel_positions[int(j), 1]-y))
+            for j in neighbors if int(j) != index)
+        trace["nearest_catalog_neighbor_pix"] = (
+            separations[0] if separations else None)
+        significant = []
+        for j in neighbors:
+            if int(j) == index:
                 continue
-            other = self.rows[int(other_idx)]
-            other_flux, other_ivar = (
-                other.get("flux"), other.get("flux_ivar"))
-            if (other_flux is None or other_ivar is None or
-                    other_flux <= .02*row["flux"] or other_ivar <= 0):
+            other = self.rows[int(j)]
+            flux, ivar = other.get("flux"), other.get("flux_ivar")
+            if (flux is None or ivar is None or
+                    flux <= .02*row["flux"] or ivar <= 0):
                 continue
-            if other_flux*math.sqrt(other_ivar) >= 5.:
-                return None, "TRACTOR_NEIGHBOR_WITHIN_PSF_CUTOUT"
-        return {
-            "catalog": "DESI_DR11_TRACTOR_GAIA_DR3",
-            "gaia_source_id": row["ref_id"],
+            if flux*math.sqrt(ivar) >= 5.:
+                significant.append(float(np.hypot(
+                    self.pixel_positions[int(j), 0]-x,
+                    self.pixel_positions[int(j), 1]-y)))
+        trace["n_significant_neighbors"] = len(significant)
+        trace["nearest_significant_neighbor_pix"] = (
+            min(significant) if significant else None)
+        if significant:
+            return finish(failure="TRACTOR_NEIGHBOR_WITHIN_PSF_CUTOUT")
+        trace["checks_passed"].append("no_significant_tractor_neighbors")
+        return finish(identity={
+            "catalog": "DESI_DR11_TRACTOR_GAIA_DR3" if is_gaia
+                       else "DESI_DR11_TRACTOR_PSF_UNVERIFIED_GAIA",
+            "gaia_source_id": row["ref_id"] if is_gaia else None,
+            "gaia_confirmed": is_gaia,
+            "tractor_ref_cat": row["ref_cat"],
             "tractor_objid": row["objid"],
             "tractor_type": row["type"],
-            "match_offset_pix": float(np.hypot(
-                positions[index, 0]-x, positions[index, 1]-y)),
-            "gaia_g_mag": row["gaia_g_mag"],
-            "tractor_band_snr_diagonal_only":float(snr),
+            "match_offset_pix": trace["match_offset_pix"],
+            "gaia_g_mag": row["gaia_g_mag"] if is_gaia else None,
+            "tractor_band_snr_diagonal_only": float(snr),
             "catalog_sha256_local": self.source_sha256,
             "is_clean_psf_proven": False,
-        }, None
+        })
 
 
 def read_native_tractor_gaia(data_root, *, release, region, brick,
