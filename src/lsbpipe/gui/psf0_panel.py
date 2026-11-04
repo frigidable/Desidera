@@ -451,6 +451,7 @@ class PSF0Panel(QGroupBox):
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("No empirical PSF image")
+        self.kernel_view.hide()
         self.qa.clear()
         self.summary.setText("No ePSF measurement has been made or adopted.")
         current_band = self.band.currentData()
@@ -593,6 +594,7 @@ class PSF0Panel(QGroupBox):
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("No empirical PSF image")
+        self.kernel_view.hide()
         self.summary.setText("No PSF preview for this band.")
         self.qa.clear()
         self._update_mode_context()
@@ -659,6 +661,7 @@ class PSF0Panel(QGroupBox):
         self.stars.setRowCount(0)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("PSF calculation running…")
+        self.kernel_view.hide()
         self.summary.setText("No accepted PSF; calculating provisional model.")
         self.qa.clear()
         self._update_buttons()
@@ -781,6 +784,7 @@ class PSF0Panel(QGroupBox):
         self.save_btn.setEnabled(False)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("Rejected ePSF · no kernel adopted")
+        self.kernel_view.hide()
         self.stars.setRowCount(0)
         self.status.setText("PSF-0 failed scientific preparation · NOT ADOPTED")
         if "negative EPSF ringing" in error:
@@ -918,6 +922,7 @@ class PSF0Panel(QGroupBox):
         }
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("No signed model available")
+        self.kernel_view.hide()
         self.status.setText(
             "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
         diagnostic = payload.get("diagnostics", {})
@@ -1120,6 +1125,7 @@ class PSF0Panel(QGroupBox):
         img = QImage(rgb.tobytes(), w, h, w * 3, QImage.Format_RGB888).copy()
         self.kernel_view.setPixmap(QPixmap.fromImage(img).scaled(
             230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
+        self.kernel_view.show()
         self.kernel_view.setToolTip(
             "REJECTED signed ePSF · cyan positive; red negative. "
             "Asinh-stretched for visual diagnosis; no physically accepted PSF.")
@@ -1249,6 +1255,7 @@ class PSF0Panel(QGroupBox):
         self.kernel_view.setPixmap(
             QPixmap.fromImage(image).scaled(
                 230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
+        self.kernel_view.show()
         self._update_buttons()
 
     def show_review_saved(self, receipt_path: str):
