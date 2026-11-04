@@ -34,7 +34,7 @@ def _snapshot():
     }
 
 
-def test_star_review_mosaic_has_three_square_graphics_and_manual_restore(qtbot):
+def test_star_review_mosaic_has_four_square_graphics_and_manual_restore(qtbot):
     dialog = PSFStarReviewDialog(_snapshot())
     qtbot.addWidget(dialog)
     dialog.show()
@@ -46,12 +46,18 @@ def test_star_review_mosaic_has_three_square_graphics_and_manual_restore(qtbot):
             QLabel, "psf0_review_cutout_"+sid)
         model = dialog.findChild(
             QLabel, "psf0_review_psf_model_"+sid)
+        residual = dialog.findChild(
+            QLabel, "psf0_review_2d_residual_"+sid)
         radial = dialog.findChild(
             QLabel, "psf0_review_radial_psf_"+sid)
-        for item in (card, model, radial):
+        for item in (card, model, residual, radial):
             assert item is not None
             assert not item.pixmap().isNull()
             assert item.pixmap().width() == item.pixmap().height()
+        stats = dialog.findChild(
+            QLabel, "psf0_residual_stats_"+sid)
+        assert stats is not None
+        assert "diagnostic only" in stats.text()
     dialog.findChild(QCheckBox, "psf0_exclude_star-0002").setChecked(True)
     assert dialog.excluded_ids() == ("star-0002",)
     assert dialog.changed()
