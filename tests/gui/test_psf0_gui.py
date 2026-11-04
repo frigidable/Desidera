@@ -207,3 +207,64 @@ def test_failed_psfsize_preserves_manual_guess_with_visible_reason(qtbot):
     assert panel.fwhm.value()==pytest.approx(5.25)
     assert "Expected native PSFSIZE file not found" in (
         panel.prior_source.text())
+
+
+def test_gui_stellar_sample_underflow_shows_counts_without_signed_psf(
+        qtbot, tmp_path, monkeypatch):
+    """Reject too-small samples visibly and retain full serializable QA."""
+    from lsbpipe.gui.psf0_full_qa import detailed_band_report
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = create_object_project(
+        "Leo P", tmp_path / "Leo_P",
+        field=SkyField(155.438012, 18.088025, 5.))
+    project.data_root = tmp_path / "Leo_P" / "originals"
+    project.data_root.mkdir()
+    project.selected_dataset = ("dr11", "south", "1554p180", "r")
+    save_object_project(project)
+    paths = _expected_paths(project.data_root, project.selected_dataset)
+    for path in paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"placeholder for GUI metadata; no FITS read")
+    panel = PSF0Panel(fixed_band="r")
+    qtbot.addWidget(panel)
+    panel.bind_project(project.root)
+    assert panel.band.currentData() == "r"
+    payload = {
+        "project_root": str(project.root), "project_id": project.project_id,
+        "dataset": project.selected_dataset, "review_band": "r",
+        "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+        "reason": "Insufficient isolated, unsaturated, sky-screened stars: 10 (minimum 13)",
+        "diagnostics": {
+            "stage": "stellar_sample_underflow",
+            "n_detected_candidates": 35,
+            "n_screened_candidates": 35,
+            "n_accepted_before_width_screen": 12,
+            "n_accepted_stars": 10,
+            "minimum_accepted_stars": 13,
+            "min_train_stars": 10, "min_holdout_stars": 3,
+            "rejected_reasons": {"NEIGHBOR_WITHIN_ISOLATION_RADIUS": 15,
+                                 "GAIA_STELLAR_CORE_SIZE_OUTLIER": 2},
+            "accepted_candidates": [
+                {"star_id": "star-0001", "x_pix": 35., "y_pix": 78.,
+                 "ra_deg": 155.44, "dec_deg": 18.08,
+                 "cutout_sky_nMgy": 1.2, "gradient_sigma_span": .7}],
+            "catalog_selection_qa": {"policy": "gaia_strict"},
+            "notes": ["No PSF was fitted"],
+        },
+    }
+    panel.show_quality_rejection(payload)
+    assert "10 accepted / 13 required" in panel.summary.text()
+    assert "Detected candidates: 35" in panel.qa.toPlainText()
+    assert "NEIGHBOR_WITHIN_ISOLATION_RADIUS" in panel.qa.toPlainText()
+    assert "No ePSF was fitted" in panel.qa.toPlainText()
+    assert panel.stars.rowCount() == 1
+    assert panel.stars.item(0, 1).text() == "candidate"
+    assert not panel.save_btn.isEnabled()
+    report = detailed_band_report(panel)
+    assert report["science_report_or_rejection"]["diagnostics"]["stage"] == (
+        "stellar_sample_underflow")
+    assert report["science_report_or_rejection"]["diagnostics"][
+        "n_accepted_stars"] == 10
+    assert all(path.read_bytes() == b"placeholder for GUI metadata; no FITS read"
+               for path in paths.values())
