@@ -8,7 +8,7 @@ pytest.importorskip("PySide6.QtWebEngineWidgets")
 
 from lsbpipe.gui.survey_explorer import SurveyExplorer
 from lsbpipe.gui.psf0_panel import PSF0Panel
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
 from lsbpipe.surveys.object_projects import create_object_project, save_object_project
 from lsbpipe.surveys.dataset_integrity import _expected_paths
@@ -405,9 +405,9 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
             g.catalog_policy.currentData(), g.experiment.currentData()) == request
 
 
-def test_photometry_owns_navigation_until_returning_to_survey(
+def test_photometry_preserves_sidebar_and_original_survey_navigation(
         qtbot, tmp_path, monkeypatch):
-    """The survey search/sidebar and global tabs must not crowd PSF work."""
+    """Project search/sidebar remains available across science workspaces."""
     monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
     project = create_object_project(
         "Leo P", tmp_path / "Leo_P",
@@ -422,14 +422,55 @@ def test_photometry_owns_navigation_until_returning_to_survey(
     assert window.preview_tabs.tabBar().isVisible()
     window.photometry_btn.click()
     assert window.preview_tabs.currentWidget() is window.photometry_workspace
-    assert not window.navigation_scroll.isVisible()
-    assert not window.preview_tabs.tabBar().isVisible()
-    assert not window.preview_label.isVisible()
+    assert window.navigation_scroll.isVisible()
+    assert window.preview_tabs.tabBar().isVisible()
+    assert not window.preview_label.isVisible()  # redundant heading only
+    assert window.navigation_scroll.width() >= 275
     assert window.photometry_workspace.title.isVisible()
     assert window.photometry_workspace.band_tabs.isVisible()
+    assert window.photometry_workspace.findChild(
+        QWidget, "photometry_narrow_science_column").maximumWidth() == 980
     window.photometry_workspace.back_btn.click()
     assert window.preview_tabs.currentWidget() is not window.photometry_workspace
     assert window.navigation_scroll.isVisible()
     assert window.preview_tabs.tabBar().isVisible()
     assert window.preview_label.isVisible()
     assert project.field.ra_deg == pytest.approx(155.438012)
+
+
+def test_photometry_uses_bounded_vertical_layout_and_fixed_psf_footprint(
+        qtbot):
+    """Wide monitors must not stretch controls or empty PSF previews."""
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1920, 1080)
+    w.show()
+    qtbot.waitExposed(w)
+    column = w.findChild(QWidget, "photometry_narrow_science_column")
+    assert column is not None
+    assert column.maximumWidth() == 980
+    assert column.width() <= 980
+    assert column.width() >= 650
+    assert w.workflow_toggle.maximumWidth() == 325
+    assert w.source_details_toggle.maximumWidth() == 390
+    assert w.band_tabs.maximumWidth() >= 980
+    for band, panel in w.psf0_panels.items():
+        assert panel.kernel_view.size().width() == 240
+        assert panel.kernel_view.size().height() == 240
+        assert panel.catalog_policy.maximumWidth() == 570
+        assert panel.experiment.maximumWidth() == 570
+        assert panel.fwhm.maximumWidth() == 160
+        assert panel.auto_fwhm_btn.maximumWidth() == 230
+        assert panel.inspection_toggle.maximumWidth() == 430
+
+    from PySide6.QtWidgets import QScrollArea
+    scroll = next(
+        area for area in w.findChildren(QScrollArea)
+        if area.widget() is column)
+    assert scroll.horizontalScrollBar().maximum() == 0
+    w.resize(1050, 800)
+    qtbot.wait(50)
+    assert column.width() <= 980
+    assert scroll.horizontalScrollBar().maximum() == 0
