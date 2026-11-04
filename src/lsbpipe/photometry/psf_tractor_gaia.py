@@ -116,6 +116,7 @@ class TractorGaiaMatcher:
             "tractor_band_flux_ivar": None,
             "tractor_band_snr_diagonal_only": None,
             "nearest_catalog_neighbor_pix": None,
+            "nearest_catalog_neighbor_any_distance_pix": None,
             "nearest_significant_neighbor_pix": None,
             "n_significant_neighbors": None,
             "checks_passed": [],
@@ -155,6 +156,17 @@ class TractorGaiaMatcher:
                 self.pixel_positions[index, 0]-x,
                 self.pixel_positions[index, 1]-y)),
         })
+        if len(self.rows) > 1:
+            distances, _indices = self._tree.query(
+                [float(x), float(y)], k=2)
+            trace["nearest_catalog_neighbor_any_distance_pix"] = float(
+                distances[1])
+        if (row["flux"] is not None and row["flux_ivar"] is not None
+                and row["flux"] > 0 and row["flux_ivar"] > 0):
+            # Available even for a non-Gaia reference that fails the
+            # strict identity check; never interpreted as calibrated S/N.
+            trace["tractor_band_snr_diagonal_only"] = float(
+                row["flux"] * math.sqrt(row["flux_ivar"]))
         is_gaia = row["ref_cat"] == "G3" and row["ref_id"] > 0
         trace["gaia_confirmed"] = is_gaia
         if is_gaia:
