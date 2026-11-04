@@ -319,6 +319,10 @@ class PSF0Panel(QGroupBox):
         for action in (self.review_btn, self.save_btn, self.copy_qa_btn,
                        self.advanced_toggle):
             action.setVisible(self._research_mode)
+        # A previously expanded provenance widget must not remain exposed
+        # after hiding its controlling disclosure button in Guided mode.
+        self.advanced_details.setVisible(
+            self._research_mode and self.advanced_toggle.isChecked())
         self._update_mode_context()
 
     def _update_mode_context(self):
