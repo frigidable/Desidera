@@ -479,7 +479,8 @@ def test_photometry_fills_normal_desktop_and_hides_empty_psf_footprint(
     assert w.band_tabs.maximumWidth() >= 1400
     for band, panel in w.psf0_panels.items():
         assert panel.kernel_view.size().width() == 240
-        assert panel.kernel_view.size().height() == 240
+        assert panel.kernel_view.size().height() == 56
+        assert panel.profile_view.height() == 56
         assert not panel.kernel_view.isHidden()
         assert not panel.profile_view.isHidden()
         assert panel._science_row is not None
