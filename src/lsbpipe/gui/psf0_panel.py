@@ -33,8 +33,13 @@ class PSF0Panel(QGroupBox):
     autoFwhmRequested = Signal(object)
     tractorRequested = Signal(object)
 
-    def __init__(self, parent=None):
-        super().__init__("04 · Empirical PSF · first pilot Leo P", parent)
+    def __init__(self, parent=None, *, fixed_band=None):
+        if fixed_band is not None and fixed_band not in ("g", "r", "i", "z"):
+            raise ValueError("Unsupported PSF-0 fixed band")
+        super().__init__("04 · Empirical PSF · " + (fixed_band or "Leo P"), parent)
+        self.fixed_band = fixed_band
+        self._fwhm_manually_edited = False
+        self._last_reported_payload = None
         self.setObjectName("photometry_psf0_panel")
         self._project_root = None
         self._snapshot = None
@@ -245,12 +250,18 @@ class PSF0Panel(QGroupBox):
         return self._preview
 
     def bind_project(self, project_root):
+        # Do not erase a result merely because Galaxy Workspace was reopened.
+        if (self._project_root is not None and project_root is not None
+                and str(project_root) == str(self._project_root)
+                and self._snapshot is not None):
+            return
         self._project_root = project_root
         self.refresh_sources()
 
     def refresh_sources(self):
         self._star_review_data = None
         self._active_exclusions = ()
+        self._last_reported_payload = None
         self._experiment_history = []
         self._history_band = None
         self._history_policy = None
@@ -288,7 +299,8 @@ class PSF0Panel(QGroupBox):
                 if item is not None:
                     item.setEnabled(entry["paths_present_unverified"])
             choices = [e["band"] for e in available]
-            chosen = (current_band if current_band in choices else
+            chosen = (self.fixed_band if self.fixed_band is not None else
+                      current_band if current_band in choices else
                       snapshot["dataset"][3] if snapshot["dataset"][3] in choices
                       else choices[0] if choices else None)
             if chosen is not None:
@@ -325,6 +337,8 @@ class PSF0Panel(QGroupBox):
         self._update_buttons()
 
     def _parameters_changed(self, *_):
+        if self.sender() is self.fwhm:
+            self._fwhm_manually_edited = True
         # The FWHM/target radius changes the detected candidates,
         # spatial split and the PSF's scientific recipe. Historical
         # same-band trials from the prior parameter set are NOT
@@ -374,7 +388,7 @@ class PSF0Panel(QGroupBox):
         self.run_btn.setEnabled(eligible and catalog_ready and not self._busy)
         self.save_btn.setEnabled(self._preview is not None and not self._busy
                                  and self._preview["result"].lineage_id is not None)
-        self.band.setEnabled(not self._busy)
+        self.band.setEnabled(not self._busy and self.fixed_band is None)
         self.fwhm.setEnabled(not self._busy)
         self.protection.setEnabled(not self._busy)
         self.experiment.setEnabled(not self._busy)
@@ -392,9 +406,28 @@ class PSF0Panel(QGroupBox):
             self.status.setText(message)
         self._update_buttons()
 
-    def _request_run(self, *, review_confirmed: bool = False):
-        if self._project_root is None or self._busy or self.band.currentData() is None:
-            return
+    def make_run_request(self, *, review_confirmed=False):
+        if (self._project_root is None or self.band.currentData() is None or
+                self._snapshot is None or not any(
+                    e["band"] == self.band.currentData() and
+                    e["paths_present_unverified"]
+                    for e in self._snapshot["bands"])):
+            return None
+        return {
+            "project_root": str(self._project_root),
+            "band": self.band.currentData(),
+            "fwhm_pix": self.fwhm.value(),
+            "fwhm_strategy": (
+                "manual" if self._fwhm_manually_edited else "local_psfsize"),
+            "experiment": self.experiment.currentData(),
+            "star_catalog_policy": self.catalog_policy.currentData(),
+            "excluded_training_star_ids": tuple(self._active_exclusions),
+            "manual_review_confirmed": review_confirmed,
+            "target_protection_arcsec": self.protection.value(),
+        }
+
+    def prepare_run_display(self):
+        self._last_reported_payload = None
         self._star_review_data = None
         self._preview = None
         self._qa_payload = None
@@ -405,16 +438,15 @@ class PSF0Panel(QGroupBox):
         self.summary.setText("No accepted PSF; calculating provisional model.")
         self.qa.clear()
         self._update_buttons()
-        self.runRequested.emit({
-            "project_root": str(self._project_root),
-            "band": self.band.currentData(),
-            "fwhm_pix": self.fwhm.value(),
-            "experiment": self.experiment.currentData(),
-            "star_catalog_policy": self.catalog_policy.currentData(),
-            "excluded_training_star_ids": tuple(self._active_exclusions),
-            "manual_review_confirmed": review_confirmed,
-            "target_protection_arcsec": self.protection.value(),
-        })
+
+    def _request_run(self, *, review_confirmed: bool = False):
+        if self._busy:
+            return
+        request = self.make_run_request(review_confirmed=review_confirmed)
+        if request is None:
+            return
+        self.prepare_run_display()
+        self.runRequested.emit(request)
 
     def _request_tractor_catalog(self):
         if self._busy or self._project_root is None or self._snapshot is None:
@@ -474,6 +506,7 @@ class PSF0Panel(QGroupBox):
             "nearby DR11 Tractor PSFSIZE band-column median"
             if via_tractor else "original local coadd PSFSIZE pixel map")
         self.fwhm.setValue(round(pix, 2))
+        self._fwhm_manually_edited = False
         resolved = self.fwhm.value()
         caveat = (
             " Catalog positions approximate the local PSF prior; not "
@@ -623,6 +656,7 @@ class PSF0Panel(QGroupBox):
             self.show_failure("Rejected PSF belongs to another Galaxy Project")
             return
         self._preview = None
+        self._last_reported_payload = payload
         self._attach_star_review(payload)
         self._qa_payload = {
             "science_status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
@@ -847,6 +881,7 @@ class PSF0Panel(QGroupBox):
             self.show_failure("Result project is different from the open Galaxy Project")
             return
         result = preview["result"]
+        self._last_reported_payload = preview
         self._preview = preview
         self._attach_star_review(preview)
         report = result.report()
