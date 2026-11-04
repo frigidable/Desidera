@@ -451,7 +451,8 @@ class PSF0Panel(QGroupBox):
     def _request_tractor_catalog(self):
         if self._busy or self._project_root is None or self._snapshot is None:
             return
-        self.tractorRequested.emit({"project_root":str(self._project_root)})
+        self.tractorRequested.emit({"project_root":str(self._project_root),
+                                    "band":self.band.currentData()})
 
     def show_tractor_acquired(self, payload):
         if (self._project_root is None or
