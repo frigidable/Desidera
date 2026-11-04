@@ -318,6 +318,19 @@ class PhotometryWorkspace(QWidget):
         root.addWidget(center_scroll, 1)
         self._set_view_mode()
         self._update_band_tab_statuses()
+        self._apply_science_reflow()
+
+    def _apply_science_reflow(self):
+        if hasattr(self, "psf0_panels"):
+            # Decide from the available workspace viewport BEFORE the
+            # inner tab attempts to enforce a horizontal minimum width.
+            narrow = self.width() < 1140
+            for panel in self.psf0_panels.values():
+                panel.set_narrow_visual_layout(narrow)
+
+    def resizeEvent(self, event):
+        self._apply_science_reflow()
+        super().resizeEvent(event)
 
     def _set_view_mode(self, *_):
         research = self.view_mode.currentData() == "research"
