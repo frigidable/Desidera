@@ -495,11 +495,13 @@ def build_empirical_coadd_psf(
     accepted = []
     cutouts = {}
     used_gaia_ids = set()
+    screened_count = 0
     max_candidates = (
         len(candidates) if cfg.star_catalog_policy == "gaia_strict"
         else max(cfg.max_training_stars*5, 100))
     # Sort by brightness for capping, then spatially sort/split below.
     for ix, (x, y, peak) in enumerate(candidates[:max_candidates]):
+        screened_count += 1
         identity = None
         if catalog_matcher is not None:
             identity, failure = catalog_matcher.match(
@@ -541,6 +543,7 @@ def build_empirical_coadd_psf(
         if len(accepted) >= cfg.max_training_stars + max(
                 cfg.min_holdout_stars, cfg.max_training_stars//(cfg.holdout_every-1)):
             break
+    accepted_before_width_screen = len(accepted)
     width_qa = None
     if catalog_matcher is not None:
         # Compare each core with the field's own Gaia-confirmed seeing
@@ -561,10 +564,54 @@ def build_empirical_coadd_psf(
     # Prevent the brightest section of one brick monopolizing the holdout.
     accepted.sort(key=lambda t: (int(t[2]//(cfg.cutout_size_pix*2)),
                                  int(t[1]//(cfg.cutout_size_pix*2)), t[1], t[0]))
-    if len(accepted) < cfg.min_train_stars + cfg.min_holdout_stars:
-        raise ValueError(
+    minimum_stars = cfg.min_train_stars + cfg.min_holdout_stars
+    if len(accepted) < minimum_stars:
+        # Insufficient vetted stars is a scientific QA rejection, not an
+        # unexpected worker failure. Retain its provenance and screening
+        # counts in the GUI/full-griz JSON without constructing a model or
+        # weakening the independent training/holdout requirement.
+        accepted_candidates = []
+        for star_id, x, y, ra, dec, peak, cut in accepted:
+            accepted_candidates.append({
+                "star_id": star_id, "x_pix": float(x), "y_pix": float(y),
+                "ra_deg": float(ra), "dec_deg": float(dec),
+                "peak_nMgy": float(peak),
+                "cutout_sky_nMgy": float(cut["sky_nMgy"]),
+                "gradient_sigma_span": float(cut["gradient_sigma_span"]),
+                "gaia_source_id": (
+                    (cut.get("star_identity") or {}).get("gaia_source_id")),
+            })
+        raise PSF0QualityError(
             f"Insufficient isolated, unsaturated, sky-screened stars: "
-            f"{len(accepted)} (minimum {cfg.min_train_stars+cfg.min_holdout_stars})")
+            f"{len(accepted)} (minimum {minimum_stars})",
+            {
+                "stage": "stellar_sample_underflow",
+                "n_detected_candidates": len(candidates),
+                "n_screened_candidates": screened_count,
+                "n_accepted_before_width_screen": accepted_before_width_screen,
+                "n_accepted_stars": len(accepted),
+                "minimum_accepted_stars": minimum_stars,
+                "min_train_stars": cfg.min_train_stars,
+                "min_holdout_stars": cfg.min_holdout_stars,
+                "rejected_reasons": dict(rejected),
+                "accepted_candidates": accepted_candidates,
+                "catalog_selection_qa": {
+                    "policy": cfg.star_catalog_policy,
+                    "catalog_sha256": (
+                        catalog_matcher.source_sha256
+                        if catalog_matcher is not None else None),
+                    "width_screen": width_qa,
+                },
+                "psf_recipe": asdict(cfg),
+                "notes": [
+                    "Selection ended before ePSF fitting and before the "
+                    "independent training/holdout split.",
+                    "Do not lower the minimum star count or relax Gaia, "
+                    "isolation, saturation or sky screening without "
+                    "independently validating rejected candidates.",
+                    "Native FITS and original Tractor catalogue were read-only.",
+                ],
+            })
     # Deterministic holdout every fifth source after spatial ordering.
     holdout_idx = {i for i in range(len(accepted)) if i % cfg.holdout_every == 0}
     if len(holdout_idx) < cfg.min_holdout_stars:
