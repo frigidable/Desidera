@@ -97,10 +97,14 @@ class PhotometryWorkspace(QWidget):
         self.workflow_details.setObjectName("photometry_workflow_details")
         workflow_layout = QVBoxLayout(self.workflow_details)
         for number, name, description in _STAGES:
-            item = QLabel(f"{number}  {name} — {description}")
-            item.setWordWrap(True)
-            item.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            workflow_layout.addWidget(item)
+            block = QGroupBox(f"{number} · {name}")
+            block.setObjectName(f"photometry_stage_{number}")
+            stage = QVBoxLayout(block)
+            caption = QLabel(description)
+            caption.setWordWrap(True)
+            caption.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            stage.addWidget(caption)
+            workflow_layout.addWidget(block)
         workflow_layout.addWidget(QLabel(
             "Only PSF-0 preview is currently implemented. Later stages "
             "remain plans, not executable actions."))
