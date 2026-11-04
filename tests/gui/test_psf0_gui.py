@@ -125,6 +125,8 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     # Changing the recipe must invalidate rejection evidence, not just a
     # successful result, to prevent accidental cross-recipe reporting.
     panel.fwhm.setValue(5.5)
+    assert "baseline: neg" not in panel.compare.text()
+    assert "outer_sky: neg" not in panel.compare.text()
     assert not panel.copy_qa_btn.isEnabled()
     assert not (project.root / "analyses" / "psf-pilots").exists()
     assert all(paths[k].read_bytes() == data for k,data in before.items())
@@ -158,3 +160,47 @@ def test_star_score_history_is_not_dumped_into_on_screen_catalog_summary():
     assert "brightness_score_coupling_blocked_auto_trim" in compact
     assert "screened_stars" not in compact
     assert "star-0001" not in compact
+
+
+def test_gui_psfsize_suggestion_uses_real_provenance_and_updates_spinbox(qtbot):
+    from pathlib import Path
+    panel = PSF0Panel()
+    qtbot.addWidget(panel)
+    panel._project_root = Path("C:/Leo_P")
+    panel.band.addItem("g · native", "g")
+    result = {
+        "project_root":str(panel._project_root), "band":"g",
+        "seeing":{
+            "available":True,
+            "source":"LOCAL_DR11_TRACTOR_NEARBY_PSF_SIZE_NOT_PIXEL_MAP",
+            "path":"C:/Leo_P/dr11/south/tractor/155/tractor-1554p180.fits",
+            "sample":"median of 40 local BRICK_PRIMARY PSFSIZE_G entries",
+            "psfsize_arcsec":1.2, "image_pixel_scale_arcsec":.262,
+            "suggested_detection_fwhm_pix":1.2/.262,
+            "native_map_status":"Native PSFSIZE map rejected: WCS mismatch",
+        },
+    }
+    panel.show_fwhm_suggestion(result)
+    assert panel.fwhm.value() == pytest.approx(4.58)
+    assert "Tractor" in panel.prior_source.text()
+    assert "WCS mismatch" in panel.prior_source.text()
+    assert "4.58 px" in panel.status.text()
+    assert "Not an empirical ePSF" in panel.prior_source.text()
+
+
+def test_failed_psfsize_preserves_manual_guess_with_visible_reason(qtbot):
+    from pathlib import Path
+    panel=PSF0Panel()
+    qtbot.addWidget(panel)
+    panel._project_root=Path("C:/Leo_P")
+    panel.band.addItem("g", "g")
+    panel.fwhm.setValue(5.25)
+    panel.show_fwhm_suggestion({
+        "project_root":str(panel._project_root),"band":"g",
+        "seeing":{"available":False,
+                  "source":"NO_VALID_LOCAL_DR11_PSF_SIZE_PRIOR",
+                  "message":"Expected native PSFSIZE file not found"},
+    })
+    assert panel.fwhm.value()==pytest.approx(5.25)
+    assert "Expected native PSFSIZE file not found" in (
+        panel.prior_source.text())
