@@ -192,3 +192,19 @@ Implementation reuses \`psf_star_review.py\` rather than introducing an
 additional image pipeline or directories. All images are rendered in the Qt
 GUI from previously computed arrays, without network access, FITS writes,
 or changes to any scientific fitting/selection thresholds.
+
+### 2026-11-04: real dark-theme screenshot readability repair
+
+A local Leo P quality-rejected (`G`, training 75, negative-mass 3.23%)
+screenshot exposed a **GUI-only** regression: the 540×315 radial chart
+was placed into a narrower/shorter QLabel with native-size pixmap
+semantics. Qt clipped the header, parts of the axes and residual labels.
+The dedicated `_AspectFitProfileLabel` preserves the original plot as an
+immutable presentation source and scales it on every resize with
+`Qt.KeepAspectRatio`; the fixed-height viewport always displays the
+entire scientific diagram. The chart itself now labels the signed
+residual as `observed − aligned model / measured stellar peak`, reports
+its actual plotting scale and the native-pixel radius ticks, and clips
+curves to their respective upper/log and lower/signed plot rectangles.
+A Qt regression test covers multiple widths and stale-plot invalidation.
+No photometric, training/holdout or science-adoption logic changes.
