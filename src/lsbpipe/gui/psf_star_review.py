@@ -343,3 +343,135 @@ class PSFStarReviewDialog(QDialog):
     def changed(self):
         return self.excluded_ids() != tuple(
             self.snapshot.get("excluded_training_star_ids", ()))
+
+
+def ensemble_training_radial_plot(snapshot: dict, *,
+                                  width: int = 482,
+                                  height: int = 266) -> QPixmap | None:
+    """Plot *real* per-star observed/model annular profiles and differences.
+
+    Identical native-image annuli are applied to each star's local-sky
+    subtracted cutout and its aligned, core-amplitude-fitted signed model.
+    Only stars still marked 'train' are pooled; manually/automatically
+    excluded stars and independent holdouts are NOT mixed in. The median
+    is IN-SAMPLE, uncalibrated and must not be labelled as holdout QA.
+    Returns None when there is no physically computed star/model pair.
+    """
+    if not snapshot or snapshot.get("schema") != (
+            "desidera.psf0-star-review-in-memory/1"):
+        return None
+    profiles = []
+    for star in snapshot.get("stars", ()):
+        if star.get("role") != "train":
+            continue
+        observed = np.asarray(star.get("cutout"), dtype=float)
+        model = np.asarray(star.get("model"), dtype=float)
+        mask = np.asarray(star.get("valid"), dtype=bool)
+        if (observed.ndim != 2 or model.shape != observed.shape
+                or mask.shape != observed.shape or min(observed.shape) < 9):
+            continue
+        peak = float(star.get("peak_nMgy", 0))
+        xy = np.asarray(star.get("center_in_cutout"), dtype=float)
+        if (not np.isfinite(peak) or peak <= 0 or xy.shape != (2,)
+                or not np.all(np.isfinite(xy))):
+            continue
+        rr = np.hypot(
+            np.indices(observed.shape)[1] - xy[0],
+            np.indices(observed.shape)[0] - xy[1])
+        n_bins = max(0, min(observed.shape)//2)
+        obs = np.full(n_bins, np.nan)
+        pred = np.full(n_bins, np.nan)
+        for radius in range(n_bins):
+            annulus = (mask & (rr >= radius) & (rr < radius + 1)
+                       & np.isfinite(observed) & np.isfinite(model))
+            if annulus.any():
+                obs[radius] = np.median(observed[annulus]) / peak
+                pred[radius] = np.median(model[annulus]) / peak
+        profiles.append((obs, pred))
+    if not profiles:
+        return None
+    common = min(min(len(x), len(y)) for x, y in profiles)
+    if common < 4:
+        return None
+    obs_matrix = np.array([x[:common] for x, _ in profiles])
+    model_matrix = np.array([x[:common] for _, x in profiles])
+    valid = np.isfinite(obs_matrix) & np.isfinite(model_matrix)
+    obs = np.full(common, np.nan)
+    pred = np.full(common, np.nan)
+    diff = np.full(common, np.nan)
+    for i in range(common):
+        if valid[:, i].any():
+            obs[i] = np.median(obs_matrix[valid[:, i], i])
+            pred[i] = np.median(model_matrix[valid[:, i], i])
+            diff[i] = np.median(
+                obs_matrix[valid[:, i], i] - model_matrix[valid[:, i], i])
+
+    image = QImage(width, height, QImage.Format_RGB32)
+    image.fill(QColor(27, 31, 38))
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    left, right = 47., float(width)-15.
+    top, top_end = 29., height*.64
+    bot_start, bot_end = height*.73, float(height)-24.
+    x_max = float(common - 1)
+
+    def xx(i):
+        return left + (right-left)*i/max(x_max, 1.)
+
+    def yy_log(value):
+        return top_end - (np.log10(value)+4.)/4.*(top_end-top)
+
+    residual_scale = max(
+        .025, float(np.nanpercentile(np.abs(diff[np.isfinite(diff)]), 95))
+        if np.isfinite(diff).any() else .025)
+    residual_scale = min(residual_scale*1.3, 2.)
+
+    def yy_res(value):
+        return (bot_start+bot_end)/2. - value/residual_scale*(
+            bot_end-bot_start)/2.
+
+    painter.setPen(QPen(QColor(73, 84, 97), 1))
+    for exponent in range(-4, 1):
+        y = yy_log(10.**exponent)
+        painter.drawLine(QPointF(left, y), QPointF(right, y))
+        painter.setPen(QPen(QColor(174, 187, 202), 1))
+        painter.drawText(QPointF(3., y+3), f"1e{exponent}")
+        painter.setPen(QPen(QColor(73, 84, 97), 1))
+    painter.drawRect(QRectF(left, top, right-left, top_end-top))
+    painter.drawRect(QRectF(
+        left, bot_start, right-left, bot_end-bot_start))
+    painter.setPen(QPen(QColor(143, 155, 168), 1, Qt.DashLine))
+    painter.drawLine(QPointF(left, yy_res(0.)),
+                     QPointF(right, yy_res(0.)))
+
+    def draw_series(values, color, *, log=False):
+        painter.setPen(QPen(QColor(*color), 1.9))
+        last = None
+        for i, value in enumerate(values):
+            if not np.isfinite(value) or (log and value <= 0):
+                last = None
+                continue
+            p = QPointF(xx(i), yy_log(value) if log else yy_res(value))
+            if last is not None:
+                painter.drawLine(last, p)
+            last = p
+
+    draw_series(obs, (136, 203, 240), log=True)
+    draw_series(pred, (244, 182, 109), log=True)
+    draw_series(diff, (140, 201, 232))
+    painter.setPen(QColor(212, 222, 234))
+    painter.drawText(QPointF(left, 16.), f"Training-star medians · N={len(profiles)}")
+    painter.setPen(QPen(QColor(136, 203, 240), 2))
+    painter.drawLine(QPointF(left, 24), QPointF(left+14, 24))
+    painter.setPen(QColor(178, 195, 210))
+    painter.drawText(QPointF(left+18, 27), "observed")
+    painter.setPen(QPen(QColor(244, 182, 109), 2))
+    painter.drawLine(QPointF(left+115, 24), QPointF(left+129, 24))
+    painter.setPen(QColor(178, 195, 210))
+    painter.drawText(QPointF(left+135, 27), "aligned model")
+    painter.drawText(QPointF(4, bot_start+9), "+")
+    painter.drawText(QPointF(4, bot_end), "−")
+    painter.drawText(
+        QPointF((left+right)/2-38, height-6), "Radius [native px]")
+    painter.end()
+    return QPixmap.fromImage(image)
