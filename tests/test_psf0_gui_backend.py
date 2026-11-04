@@ -62,10 +62,10 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
     assert base.sky_annulus_outer_pix == 15.
     assert base.wing_smoothing is True
     assert base.max_iterations == 8
-    assert extent.cutout_size_pix == 51
-    assert extent.sky_annulus_inner_pix == 19.
-    assert extent.sky_annulus_outer_pix == 24.
-    assert extent.min_neighbor_separation_pix >= 51.
+    assert extent.cutout_size_pix == 61
+    assert extent.sky_annulus_inner_pix == 22.
+    assert extent.sky_annulus_outer_pix == 28.
+    assert extent.min_neighbor_separation_pix >= 61.
     assert robust.cutout_size_pix == extent.cutout_size_pix
     assert robust.sky_annulus_inner_pix == extent.sky_annulus_inner_pix
     assert robust.sky_annulus_outer_pix == extent.sky_annulus_outer_pix
@@ -77,3 +77,47 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
         psf0_experiment_recipe(4.8, "automatically_good_psf")
     assert all(key in PSF0_DIAGNOSTIC_EXPERIMENTS
                for key in ("baseline","outer_sky","outer_sky_robust"))
+
+
+def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    import pytest
+    prior = 6.57  # Real Leo P DR11 g-map FWHM prior (not actual ePSF).
+    baseline = psf0_experiment_recipe(prior, "baseline")
+    wide = psf0_experiment_recipe(prior, "outer_sky")
+    guarded = psf0_experiment_recipe(prior, "outer_sky_robust")
+    assert (baseline.cutout_size_pix,
+            baseline.sky_annulus_inner_pix,
+            baseline.sky_annulus_outer_pix) == (31, 10., 15.)
+    assert (wide.cutout_size_pix,
+            wide.sky_annulus_inner_pix,
+            wide.sky_annulus_outer_pix) == (81, 30., 38.)
+    assert wide.sky_annulus_inner_pix / prior >= 4.5
+    assert wide.sky_annulus_outer_pix <= wide.cutout_size_pix//2 - 2
+    assert wide.min_neighbor_separation_pix >= wide.cutout_size_pix
+    assert guarded.cutout_size_pix == wide.cutout_size_pix
+    assert guarded.training_outlier_passes == 2
+    assert wide.training_outlier_passes == 0
+    assert wide.digest != psf0_experiment_recipe(4.80, "outer_sky").digest
+    # The sky geometry cannot silently fall back to a closer annulus
+    # for bad seeing. The scientist must choose a different experiment.
+    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
+        psf0_experiment_recipe(8.5, "outer_sky")
+    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
+        psf0_experiment_recipe(8.5, "outer_sky_robust")
+
+
+def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    for seeing in (2.5, 3.2, 4.8, 5.5, 6.57, 7.2):
+        for mode in ("outer_sky", "outer_sky_robust"):
+            recipe = psf0_experiment_recipe(seeing, mode)
+            assert recipe.sky_annulus_inner_pix >= 4.5*seeing
+            assert recipe.sky_annulus_outer_pix >= 5.75*seeing
+            assert recipe.sky_annulus_outer_pix <= recipe.cutout_size_pix//2
+            assert recipe.min_neighbor_separation_pix >= recipe.cutout_size_pix
+    assert set(("baseline","outer_sky","outer_sky_robust")) == set(
+        __import__(
+            "lsbpipe.photometry.psf_gui_backend",
+            fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
+        ).PSF0_DIAGNOSTIC_EXPERIMENTS)
