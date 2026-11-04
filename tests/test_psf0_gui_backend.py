@@ -137,3 +137,50 @@ def test_psf_source_key_uses_observing_brick_not_saved_default_band():
         None,
     ):
         assert not _same_observation_source(source, other)
+
+
+def test_tractor_psf_training_keeps_non_gaia_identity_and_audits_every_gate():
+    import numpy as np
+    from lsbpipe.photometry.psf_empirical import PSF0Config
+    from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
+
+    def source(objid, ref_cat, ref_id, *, kind="PSF"):
+        return {
+            "ref_cat": ref_cat, "ref_id": ref_id, "objid": objid,
+            "type": kind, "fitbits": 0, "maskbits": 0,
+            "flux": 30., "flux_ivar": 1.,
+            "gaia_duplicated_source": False, "gaia_g_mag": 18.,
+        }
+
+    matcher = TractorGaiaMatcher(
+        source_path="original-tractor-test.fits",
+        source_sha256="b"*64,
+        dataset_id="dr11/south/1554p180/r",
+        rows=(source(1, "G3", 999),
+              source(2, "", -1),
+              source(3, "", -1, kind="REX")),
+        pixel_positions=np.array([[10., 10.], [110., 110.],
+                                  [210., 210.]]))
+    gaia, failure, audit = matcher.match(
+        10., 10., band="r", require_gaia=True, return_audit=True)
+    assert failure is None
+    assert gaia["gaia_source_id"] == 999
+    assert audit["gaia_confirmed"] is True
+    strict, reason, strict_audit = matcher.match(
+        110., 110., band="r", require_gaia=True, return_audit=True)
+    assert strict is None
+    assert reason == strict_audit["first_failure"] == "NOT_GAIA_DR3"
+    vetted, failure, trace = matcher.match(
+        110., 110., band="r", require_gaia=False, return_audit=True)
+    assert failure is None
+    assert vetted["gaia_source_id"] is None
+    assert vetted["gaia_confirmed"] is False
+    assert trace["gaia_confirmed"] is False
+    assert trace["tractor_band_snr_diagonal_only"] == 30.
+    assert trace["checks_passed"][-1] == "no_significant_tractor_neighbors"
+    invalid, failure, _ = matcher.match(
+        210., 210., band="r", require_gaia=False, return_audit=True)
+    assert invalid is None
+    assert failure == "TRACTOR_NONSTELLAR_MODEL"
+    assert PSF0Config(star_catalog_policy="tractor_psf_validated").star_catalog_policy == (
+        "tractor_psf_validated")
