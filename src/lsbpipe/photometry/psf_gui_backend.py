@@ -238,8 +238,8 @@ def run_gui_psf0(
         project.data_root, release=release, region=region, brick=brick,
         band=band, hash_inputs=True, require_explicit_bunit=True)
     catalogue = None
-    if config.star_catalog_policy == "gaia_strict":
-        _progress(progress, "Validating native DR11 Tractor + Gaia DR3 identities")
+    if config.star_catalog_policy in ("gaia_strict", "tractor_psf_validated"):
+        _progress(progress, "Validating native DR11 Tractor, Gaia and PSF identities")
         catalogue = read_native_tractor_gaia(
             project.data_root, release=release, region=region,
             brick=brick, frame=frame)
