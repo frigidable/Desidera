@@ -711,11 +711,27 @@ class PSF0Panel(QGroupBox):
             notes.append("Disabled in this experiment.")
         return "\n".join(notes)
 
+    def _result_matches_band_source(self, payload):
+        if (self._project_root is None or
+                self._snapshot is None or
+                str(self._project_root) != str(payload.get("project_root")) or
+                self.band.currentData() != payload.get("review_band")):
+            return False
+        if (payload.get("project_id") is not None and
+                payload["project_id"] != self._snapshot.get("project_id")):
+            return False
+        dataset = payload.get("dataset")
+        if (dataset is not None and
+                tuple(dataset[:3]) != tuple(self._snapshot["dataset"][:3])):
+            return False
+        return True
+
     def show_quality_rejection(self, payload: dict):
         """Rejected ePSF: inspect its signed structure, never adopt a kernel."""
-        if (self._project_root is None or
-                str(self._project_root) != str(payload.get("project_root"))):
-            self.show_failure("Rejected PSF belongs to another Galaxy Project")
+        if not self._result_matches_band_source(payload):
+            self.show_failure(
+                "Rejected PSF belongs to another galaxy/band/release/brick; "
+                "this panel was NOT updated with a foreign result.")
             return
         self._preview = None
         self._last_reported_payload = payload
@@ -938,9 +954,10 @@ class PSF0Panel(QGroupBox):
         self.qa.appendPlainText("\nQA report copied to clipboard (no FITS written).")
 
     def show_result(self, preview: dict):
-        if (self._project_root is None or
-                str(self._project_root) != str(preview["project_root"])):
-            self.show_failure("Result project is different from the open Galaxy Project")
+        if not self._result_matches_band_source(preview):
+            self.show_failure(
+                "PSF result belongs to another galaxy/band/release/brick; "
+                "foreign result was NOT presented or adopted.")
             return
         result = preview["result"]
         self._last_reported_payload = preview
