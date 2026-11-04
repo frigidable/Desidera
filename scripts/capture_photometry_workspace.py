@@ -94,6 +94,38 @@ def capture(output_dir: Path) -> list[dict]:
                         "visual_reviewed": False,
                     }
                     manifest.append(record)
+                    if state == "leo_p_r_paths_g_selected":
+                        # Four sequential native-band panels, even if only
+                        # one native quartet is present in this offline
+                        # non-FITS fixture. Capture each panel in the scroll
+                        # viewport; no claimed real star/PSF measurement.
+                        from PySide6.QtWidgets import QScrollArea
+                        areas = widget.findChildren(QScrollArea)
+                        inspector_scroll = areas[-1]
+                        for band, panel in widget.psf0_panels.items():
+                            inspector_scroll.ensureWidgetVisible(panel, 0, 0)
+                            app.processEvents()
+                            frame = widget.grab()
+                            target = output_dir / (
+                                f"psf0_fourband_{band}_{width}x{height}.png")
+                            if frame.isNull() or not frame.save(str(target),"PNG"):
+                                raise RuntimeError(f"Cannot capture {target}")
+                            manifest.append({
+                                "path":str(target),
+                                "state":f"four_band_panel_{band}",
+                                "band":band,
+                                "selected_band":panel.band.currentData(),
+                                "available":panel.run_btn.isEnabled(),
+                                "visible_panel":panel.isVisible(),
+                                "n_experiment_modes":panel.experiment.count(),
+                                "build_all_button":widget.build_all_psfs_btn.text(),
+                                "full_qa_button":widget.copy_full_qa_btn.text(),
+                                "size_logical":[width,height],
+                                "size_image":[frame.width(),frame.height()],
+                                "fixture":"SYNTHETIC_NON_FITS_METADATA",
+                                "scientific_status":"NOT_MEASURED_NOT_ADOPTED",
+                                "visual_reviewed":False,
+                            })
             # Explicitly synthetic gallery: no real Leo P image bytes are
             # accessible to CI. Capture equal-square cutout, PSF and radial
             # previews plus manual exclusion controls at practical sizes.
