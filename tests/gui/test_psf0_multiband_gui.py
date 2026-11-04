@@ -223,3 +223,44 @@ def test_foreign_band_and_project_psf_payloads_never_enter_panel(
 
     window._returning_to_hub=True
     window.close()
+
+
+def test_batch_refuses_stale_reviewed_star_ids_after_psfsize_shift(
+        qtbot, tmp_path, monkeypatch):
+    """PSFSIZE changing from 4.8 to 6.57 must not reuse star-0002 IDs."""
+    window, project = _setup(qtbot, tmp_path, monkeypatch)
+    from lsbpipe.gui import psf0_batch_controller as controller
+    workspace = window.photometry_workspace
+    g = workspace.psf0_panels["g"]
+    g._active_exclusions = ("star-0002",)
+    calls = []
+
+    def fake_seeing(root, *, band):
+        return {
+            "project_root":str(project.root),"band":band,
+            "seeing":{
+                "available":True,
+                "source":"LOCAL_NATIVE_PSF_SIZE_MAP",
+                "suggested_detection_fwhm_pix":6.57,
+                "psfsize_arcsec":1.721,
+                "image_pixel_scale_arcsec":.262,
+                "path":f"/synthetic/psfsize-{band}.fits.fz",
+                "sample":"synthetic seeing",
+            },
+        }
+
+    def fake_run(root, *, band, config, protection_arcsec):
+        calls.append((band,tuple(config.excluded_training_star_ids)))
+        return _rejected(project.root,band)
+
+    monkeypatch.setattr(controller,"suggest_gui_psf0_fwhm",fake_seeing)
+    monkeypatch.setattr(controller,"run_gui_psf0",fake_run)
+    workspace.build_all_psfs_btn.click()
+    qtbot.waitUntil(lambda:window.thread is None,timeout=30000)
+    assert not any(band=="g" for band,_ in calls)
+    assert len(calls) == 3
+    assert "Stored star-XXXX exclusions" in g.qa.toPlainText()
+    assert "g: ERROR" in workspace.batch_status.text()
+    assert workspace.psf0_panels["r"]._qa_payload is not None
+    window._returning_to_hub=True
+    window.close()
