@@ -44,6 +44,16 @@ def launch(window, batch):
                     fwhm = float(req["fwhm_pix"])
                 else:
                     raise ValueError("Unsupported FWHM source")
+                if (req.get("excluded_training_star_ids") and
+                        abs(fwhm - float(req["fwhm_pix"])) > .015):
+                    raise ValueError(
+                        "Stored star-XXXX exclusions were reviewed with "
+                        f"FWHM {float(req['fwhm_pix']):.2f} px but current "
+                        f"{band}-band PSFSIZE gives {fwhm:.2f} px. The "
+                        "source detection inventory can change. Apply "
+                        "the new seeing prior, rebuild the PSF, then "
+                        "review train stars again. No stale exclusions "
+                        "were applied.")
                 cfg = replace(
                     psf0_experiment_recipe(fwhm, req["experiment"]),
                     star_catalog_policy=req["star_catalog_policy"],
