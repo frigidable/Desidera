@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 
-def suggest_detection_fwhm_from_psfsize(frame, *, target_icrs_deg):
+def _suggest_detection_fwhm_from_native_map(frame, *, target_icrs_deg):
     from astropy.io import fits
     from astropy.wcs import WCS
     from astropy.wcs.utils import proj_plane_pixel_scales
@@ -108,4 +108,159 @@ def suggest_detection_fwhm_from_psfsize(frame, *, target_icrs_deg):
         "sample": "5x5 median at project ICRS coordinate",
         "is_measured_empirical_psf": False,
         "requires_researcher_review": True,
+    }
+
+
+def _suggest_from_native_tractor_psfsize(frame, *, target_icrs_deg):
+    """Local-only alternative when a same-band coadd PSFSIZE map is unusable.
+
+    Legacy DR11 Tractor PSFSIZE_<band> is the weighted-average seeing
+    FWHM at each source *position*, not a stellar ePSF measurement.
+    Use the median of nearby brick-primary rows, never a whole-brick
+    mean or one arbitrary galaxy's entry.
+    """
+    from astropy.io import fits
+    from astropy.wcs.utils import proj_plane_pixel_scales
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+
+    from lsbpipe.photometry.psf_tractor_gaia import (
+        MAX_CATALOG_BYTES, tractor_catalog_location,
+    )
+
+    image_path = Path(frame.source_evidence.get("files", {}).get("image", ""))
+    if not image_path.is_file() or image_path.is_symlink():
+        return None
+    if frame.release != "dr11" or frame.region != "south":
+        return None
+    path, _ = tractor_catalog_location(
+        frame.source_evidence.get("data_root", image_path.parent),
+        release=frame.release, region=frame.region, brick=frame.brick)
+    if not path.is_file() or path.is_symlink():
+        return None
+    stat = path.stat()
+    if not 200 < stat.st_size <= MAX_CATALOG_BYTES:
+        raise ValueError("Local Tractor catalogue outside safe size range")
+    band_col = "PSFSIZE_" + frame.band.upper()
+    with fits.open(path, memmap=True) as hdus:
+        tables = [h for h in hdus if isinstance(h, fits.BinTableHDU)]
+        if len(tables) != 1:
+            raise ValueError("Native Tractor seeing prior requires one table")
+        table = tables[0].data
+        names = {name.upper(): name for name in tables[0].columns.names}
+        required = {"RA", "DEC", "BRICKNAME", "BRICK_PRIMARY", band_col}
+        if required - names:
+            return None
+        ras, decs, sizes = [], [], []
+        for row in table:
+            label = row[names["BRICKNAME"]]
+            label = (label.decode("ascii", errors="replace")
+                     if isinstance(label, bytes) else str(label)).strip()
+            if label != frame.brick:
+                raise ValueError(
+                    "Tractor PSFSIZE source has wrong brick identity")
+            if not bool(row[names["BRICK_PRIMARY"]]):
+                continue
+            ra = float(row[names["RA"]])
+            dec = float(row[names["DEC"]])
+            value = float(row[names[band_col]])
+            if (np.isfinite(ra) and 0 <= ra < 360 and
+                    np.isfinite(dec) and -90 <= dec <= 90 and
+                    np.isfinite(value) and .2 <= value <= 8.):
+                ras.append(ra)
+                decs.append(dec)
+                sizes.append(value)
+    if len(sizes) < 8:
+        return None
+    target = SkyCoord(
+        ra=float(target_icrs_deg[0])*u.deg,
+        dec=float(target_icrs_deg[1])*u.deg, frame="icrs")
+    locations = SkyCoord(
+        ra=np.asarray(ras)*u.deg,
+        dec=np.asarray(decs)*u.deg, frame="icrs")
+    offsets = locations.separation(target).arcsec
+    selection = None
+    radius = None
+    for candidate_radius in (90., 180., 240.):
+        candidate = offsets <= candidate_radius
+        if np.count_nonzero(candidate) >= 8:
+            selection = candidate
+            radius = candidate_radius
+            break
+    if selection is None:
+        return None
+    sample = np.asarray(sizes, dtype=float)[selection]
+    arcsec = float(np.median(sample))
+    scales = np.asarray(
+        proj_plane_pixel_scales(frame.wcs.celestial),
+        dtype=float)*3600.
+    if (not np.isfinite(scales).all() or np.min(scales) <= 0 or
+            np.max(scales)/np.min(scales) > 1.05):
+        raise ValueError(
+            "Invalid native image WCS pixel scale for Tractor PSFSIZE")
+    scale = float(np.mean(scales))
+    fwhm = arcsec / scale
+    if not 2.5 <= fwhm <= 20.:
+        raise ValueError(
+            f"Tractor PSFSIZE {arcsec:.3f} arcsec -> {fwhm:.3f} px "
+            "outside conservative DAOStarFinder guess range")
+    before = path.stat()
+    digest = sha256()
+    with path.open("rb") as reader:
+        for block in iter(lambda: reader.read(4*1024*1024), b""):
+            digest.update(block)
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (
+            after.st_size, after.st_mtime_ns):
+        raise RuntimeError("Native Tractor seeing source changed during read")
+    return {
+        "available": True,
+        "source": "LOCAL_DR11_TRACTOR_NEARBY_PSF_SIZE_NOT_PIXEL_MAP",
+        "path": str(path),
+        "source_sha256_local": digest.hexdigest(),
+        "band": frame.band,
+        "psfsize_arcsec": arcsec,
+        "image_pixel_scale_arcsec": scale,
+        "suggested_detection_fwhm_pix": fwhm,
+        "sample": (
+            f"median of {len(sample)} local BRICK_PRIMARY "
+            f"PSFSIZE_{frame.band.upper()} entries within {radius:.0f} arcsec"),
+        "n_tractor_psfsize_samples": int(len(sample)),
+        "angular_radius_arcsec": radius,
+        "is_measured_empirical_psf": False,
+        "requires_researcher_review": True,
+        "seeing_at_target_exactly_measured": False,
+    }
+
+
+def suggest_detection_fwhm_from_psfsize(frame, *, target_icrs_deg):
+    """Try exact local coadd PSFSIZE map, then a *labeled* DR11 Tractor prior.
+
+    An invalid map is never quietly accepted: report the rejected map
+    and distinct fallback provenance. If neither product can provide
+    a trustworthy seeing prior, keep the explicit manual FWHM guess.
+    """
+    missing_map = None
+    try:
+        result = _suggest_detection_fwhm_from_native_map(
+            frame, target_icrs_deg=target_icrs_deg)
+    except (ValueError, OSError) as exc:
+        missing_map = f"Native PSFSIZE map rejected: {exc}"
+    else:
+        if result["available"]:
+            return result
+        missing_map = result["message"]
+
+    tractor = _suggest_from_native_tractor_psfsize(
+        frame, target_icrs_deg=target_icrs_deg)
+    if tractor is not None:
+        tractor["native_map_status"] = missing_map
+        return tractor
+    return {
+        "available": False,
+        "source": "NO_VALID_LOCAL_DR11_PSF_SIZE_PRIOR",
+        "message": (
+            f"{missing_map}. No usable nearby same-band native Tractor "
+            "PSFSIZE entries. Initial FWHM stays manual; verify the exact "
+            "PSFSIZE file beside this project's native IMAGE FITS."),
     }
