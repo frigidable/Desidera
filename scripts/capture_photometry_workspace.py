@@ -122,30 +122,32 @@ def capture(output_dir: Path) -> list[dict]:
                     }
                     manifest.append(record)
                     if state == "leo_p_r_paths_g_selected":
-                        # Four sequential native-band panels, even if only
-                        # one native quartet is present in this offline
-                        # non-FITS fixture. Capture each panel in the scroll
-                        # viewport; no claimed real star/PSF measurement.
+                        # One visible optical band tab at a time, even if
+                        # only r has an offline native quartet. All four
+                        # per-band states persist while the visible tab
+                        # switches; no FITS is opened in this capture.
                         from PySide6.QtWidgets import QScrollArea
                         from PySide6.QtCore import QPoint
                         inspector_scroll = next(
                             area for area in widget.findChildren(QScrollArea)
                             if area.widget() is
-                            widget.psf0_panels["g"].parentWidget())
+                            widget.band_tabs.parentWidget())
                         for band, panel in widget.psf0_panels.items():
-                            inner_y = panel.mapTo(
+                            widget.band_tabs.setCurrentWidget(panel)
+                            app.processEvents()
+                            inner_y = widget.band_tabs.mapTo(
                                 inspector_scroll.widget(), QPoint(0, 0)).y()
                             scrollbar = inspector_scroll.verticalScrollBar()
-                            scrollbar.setValue(max(0,inner_y-8))
+                            scrollbar.setValue(max(0, inner_y-8))
                             app.processEvents()
-                            actual_y = panel.mapTo(
-                                inspector_scroll.viewport(), QPoint(0, 0)).y()
-                            if not 0 <= actual_y < inspector_scroll.viewport().height():
+                            if not panel.isVisible():
                                 raise RuntimeError(
-                                    f"Panel {band} not visible in fourband "
-                                    f"capture despite scroll request: "
-                                    f"y={actual_y}, scroll={scrollbar.value()}, "
-                                    f"maximum={scrollbar.maximum()}")
+                                    f"Selected PSF tab {band} is not visible")
+                            if any(other.isVisible() for key, other
+                                   in widget.psf0_panels.items()
+                                   if key != band):
+                                raise RuntimeError(
+                                    "Multiple independent PSF bands visible at once")
                             frame = widget.grab()
                             target = output_dir / (
                                 f"psf0_fourband_{band}_{width}x{height}.png")
