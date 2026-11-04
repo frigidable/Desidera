@@ -575,8 +575,14 @@ def build_empirical_coadd_psf(
         accepted.append((star_id, x, y, float(ra)%360, float(dec),
                          peak, data_cut))
         cutouts[star_id] = data_cut
-        if len(accepted) >= cfg.max_training_stars + max(
-                cfg.min_holdout_stars, cfg.max_training_stars//(cfg.holdout_every-1)):
+        # In catalog-vetted modes screen the entire DAO inventory so
+        # the Gaia validation pool is not silently truncated by the
+        # brighter Tractor-only training stars. The training cap is
+        # applied AFTER a fixed, independent Gaia holdout has been set.
+        if (cfg.star_catalog_policy == "dao_diagnostic"
+                and len(accepted) >= cfg.max_training_stars + max(
+                    cfg.min_holdout_stars,
+                    cfg.max_training_stars//(cfg.holdout_every-1))):
             break
     accepted_before_width_screen = len(accepted)
     width_qa = None
