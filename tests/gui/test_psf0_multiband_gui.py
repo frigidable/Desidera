@@ -123,3 +123,48 @@ def test_four_band_batch_preserves_independent_results_and_reports(
     assert not (project.root/"analyses"/"psf-pilots").exists()
     w._returning_to_hub = True
     w.close()
+
+
+def test_manual_band_fwhm_override_is_preserved_in_batch(
+        qtbot, tmp_path, monkeypatch):
+    window, project = _setup(qtbot, tmp_path, monkeypatch)
+    from lsbpipe.gui import psf0_batch_controller as controller
+    workspace = window.photometry_workspace
+    workspace.psf0_panels["r"].fwhm.setValue(5.25)
+    workspace.psf0_panels["z"].experiment.setCurrentIndex(
+        workspace.psf0_panels["z"].experiment.findData("outer_sky_robust"))
+    measurements = []
+    seeing_calls = []
+
+    def fake_seeing(root, *, band):
+        seeing_calls.append(band)
+        return {
+            "project_root":str(project.root), "band":band,
+            "seeing":{
+                "available":True,"source":"LOCAL_NATIVE_PSF_SIZE_MAP",
+                "psfsize_arcsec":1.31,
+                "image_pixel_scale_arcsec":.262,
+                "suggested_detection_fwhm_pix":5.0,
+                "path":f"/synthetic/psfsize-{band}.fits.fz",
+                "sample":"synthetic fixture",
+            },
+        }
+
+    def fake_run(root, *, band, config, protection_arcsec):
+        measurements.append((band,config.guessed_fwhm_pix,
+                             config.training_outlier_passes))
+        return _rejected(project.root,band)
+
+    monkeypatch.setattr(controller,"suggest_gui_psf0_fwhm",fake_seeing)
+    monkeypatch.setattr(controller,"run_gui_psf0",fake_run)
+    workspace.build_all_psfs_btn.click()
+    qtbot.waitUntil(lambda:window.thread is None, timeout=30000)
+    assert seeing_calls == ["g","i","z"]
+    assert measurements == [
+        ("g",5.0,0),("r",5.25,0),("i",5.0,0),("z",5.0,2)]
+    qa=workspace.full_qa_report()
+    assert qa["bands"]["r"]["fwhm_strategy"] == "manual"
+    assert qa["bands"]["g"]["fwhm_strategy"] == "local_psfsize"
+    assert qa["bands"]["z"]["experiment"] == "outer_sky_robust"
+    window._returning_to_hub=True
+    window.close()
