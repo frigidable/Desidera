@@ -346,8 +346,8 @@ class PSFStarReviewDialog(QDialog):
 
 
 def ensemble_training_radial_plot(snapshot: dict, *,
-                                  width: int = 482,
-                                  height: int = 266) -> QPixmap | None:
+                                  width: int = 540,
+                                  height: int = 315) -> QPixmap | None:
     """Plot *real* per-star observed/model annular profiles and differences.
 
     Identical native-image annuli are applied to each star's local-sky
@@ -410,9 +410,9 @@ def ensemble_training_radial_plot(snapshot: dict, *,
     image.fill(QColor(27, 31, 38))
     painter = QPainter(image)
     painter.setRenderHint(QPainter.Antialiasing, True)
-    left, right = 47., float(width)-15.
-    top, top_end = 29., height*.64
-    bot_start, bot_end = height*.73, float(height)-24.
+    left, right = 58., float(width)-16.
+    top, top_end = 48., height*.63
+    bot_start, bot_end = height*.73, float(height)-27.
     x_max = float(common - 1)
 
     def xx(i):
@@ -435,7 +435,7 @@ def ensemble_training_radial_plot(snapshot: dict, *,
         y = yy_log(10.**exponent)
         painter.drawLine(QPointF(left, y), QPointF(right, y))
         painter.setPen(QPen(QColor(174, 187, 202), 1))
-        painter.drawText(QPointF(3., y+3), f"1e{exponent}")
+        painter.drawText(QPointF(6., y+3), f"1e{exponent}")
         painter.setPen(QPen(QColor(73, 84, 97), 1))
     painter.drawRect(QRectF(left, top, right-left, top_end-top))
     painter.drawRect(QRectF(
@@ -456,22 +456,46 @@ def ensemble_training_radial_plot(snapshot: dict, *,
                 painter.drawLine(last, p)
             last = p
 
+    # Keep the data inside their own plot rectangles; low-S/N negative
+    # flux cannot be rendered on the logarithmic top axis.
+    painter.save()
+    painter.setClipRect(QRectF(left, top, right-left, top_end-top))
     draw_series(obs, (136, 203, 240), log=True)
     draw_series(pred, (244, 182, 109), log=True)
+    painter.restore()
+    painter.save()
+    painter.setClipRect(QRectF(
+        left, bot_start, right-left, bot_end-bot_start))
     draw_series(diff, (140, 201, 232))
+    painter.restore()
+
     painter.setPen(QColor(212, 222, 234))
-    painter.drawText(QPointF(left, 16.), f"Training-star medians · N={len(profiles)}")
+    painter.drawText(QPointF(left, 15.),
+                     f"Training-star radial medians  ·  N={len(profiles)}")
+    painter.drawText(QPointF(left, 31.), "Log intensity / measured peak")
     painter.setPen(QPen(QColor(136, 203, 240), 2))
-    painter.drawLine(QPointF(left, 24), QPointF(left+14, 24))
+    painter.drawLine(QPointF(left+210, 27.), QPointF(left+224, 27.))
     painter.setPen(QColor(178, 195, 210))
-    painter.drawText(QPointF(left+18, 27), "observed")
+    painter.drawText(QPointF(left+229, 31.), "observed")
     painter.setPen(QPen(QColor(244, 182, 109), 2))
-    painter.drawLine(QPointF(left+115, 24), QPointF(left+129, 24))
+    painter.drawLine(QPointF(left+308, 27.), QPointF(left+322, 27.))
     painter.setPen(QColor(178, 195, 210))
-    painter.drawText(QPointF(left+135, 27), "aligned model")
-    painter.drawText(QPointF(4, bot_start+9), "+")
-    painter.drawText(QPointF(4, bot_end), "−")
+    painter.drawText(QPointF(left+327, 31.), "model")
+
+    painter.setPen(QColor(178, 195, 210))
+    painter.drawText(QPointF(left, bot_start-7.),
+                     "Signed residual: observed − model / peak")
+    # Residual scale was independently auto-selected; show its physical
+    # display units rather than unlabeled plus/minus indicators.
+    painter.drawText(QPointF(4., bot_start+7.),
+                     f"+{residual_scale:.2g}")
+    painter.drawText(QPointF(19., yy_res(0.)+4.), "0")
+    painter.drawText(QPointF(4., bot_end),
+                     f"−{residual_scale:.2g}")
+    for radius in (0, int(x_max/2), int(x_max)):
+        painter.drawText(QPointF(xx(radius)-5., bot_end+13.),
+                         str(radius))
     painter.drawText(
-        QPointF((left+right)/2-38, height-6), "Radius [native px]")
+        QPointF(right-123., height-5.), "Radius [native px]")
     painter.end()
     return QPixmap.fromImage(image)
