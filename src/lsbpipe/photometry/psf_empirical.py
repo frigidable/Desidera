@@ -279,6 +279,16 @@ def _star_cutout(frame, x, y, cfg, protected):
     gy, gx = np.indices(src.shape)
     dx, dy = gx-(x-(ix-h)), gy-(y-(iy-h))
     rr = np.hypot(dx, dy)
+    # A bright star may have one or two invalid pixels inside the
+    # PSF-fitting core while the entire 51x51 cutout still passes the
+    # <=1% masked-area heuristic. The original check only inspected
+    # the nearest INTEGER central pixel. Leo P's real star-0003 showed
+    # two ochre-masked pixels near the subpixel centroid in the GUI.
+    # Reject a star with ANY invalid native pixel inside one assumed
+    # FWHM, even if the cutout-wide bad fraction is tiny. It must not
+    # contribute a damaged core to the ePSF sample or holdout.
+    if np.any((~valid) & (rr <= cfg.guessed_fwhm_pix)):
+        return None, "MASKED_STELLAR_PSF_CORE_PIXELS"
     annulus = (valid & (rr >= cfg.sky_annulus_inner_pix)
                & (rr < cfg.sky_annulus_outer_pix))
     if np.count_nonzero(annulus) < 35:
