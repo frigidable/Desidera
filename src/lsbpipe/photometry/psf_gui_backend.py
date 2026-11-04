@@ -246,6 +246,8 @@ def run_gui_psf0(
         return {
             "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
             "review_band": band,
+            "effective_recipe": asdict(config),
+            "recipe_sha256": config.digest,
             "reason": str(exc),
             "diagnostics": exc.diagnostics,
             "star_review": exc.review_snapshot,
@@ -260,6 +262,8 @@ def run_gui_psf0(
     return {
         "status": "EXPERIMENTAL_PSF_NOT_ADOPTED",
         "review_band": band,
+        "effective_recipe": asdict(config),
+        "recipe_sha256": config.digest,
         "result": result,
         "star_review": result.review_snapshot,
         "saved_manual_review": previous_review,
