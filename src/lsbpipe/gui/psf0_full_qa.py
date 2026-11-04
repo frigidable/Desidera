@@ -56,6 +56,22 @@ def detailed_band_report(panel):
         "detection_fwhm_guess_pix_not_measured": panel.fwhm.value(),
         "fwhm_strategy": ("manual" if panel._fwhm_manually_edited
                           else "local_psfsize"),
+        "last_verified_band_seeing": panel._latest_seeing_payload,
+        "exact_result_recipe": (
+            panel._last_reported_payload.get("effective_recipe")
+            if panel._last_reported_payload else None),
+        "exact_result_recipe_sha256": (
+            panel._last_reported_payload.get("recipe_sha256")
+            if panel._last_reported_payload else None),
+        "original_source_sha256": (
+            panel._last_reported_payload.get("source_hashes")
+            if panel._last_reported_payload else None),
+        "source_project_uuid": (
+            panel._last_reported_payload.get("project_id")
+            if panel._last_reported_payload else None),
+        "source_dataset": (
+            panel._last_reported_payload.get("dataset")
+            if panel._last_reported_payload else None),
         "target_protection_arcsec": panel.protection.value(),
         "seeing_provenance": panel.prior_source.text(),
         "gaia_catalogue_provenance": panel.gaia_source.text(),
