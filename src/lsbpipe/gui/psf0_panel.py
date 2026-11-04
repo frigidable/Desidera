@@ -755,6 +755,9 @@ class PSF0Panel(QGroupBox):
         self.status.setText(
             "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
         diagnostic = payload.get("diagnostics", {})
+        sample_underflow = diagnostic.get("stage") == "stellar_sample_underflow"
+        if sample_underflow:
+            self.kernel_view.setText("No PSF model: insufficient vetted stars")
         catalog_qa = diagnostic.get("catalog_selection_qa", {})
         negative = diagnostic.get("negative_absolute_mass_fraction")
         if negative is not None:
@@ -765,10 +768,21 @@ class PSF0Panel(QGroupBox):
                 f"holdout stars {diagnostic.get('n_holdout', 0)}. "
                 "Review the source selection and local backgrounds. "
                 f"Policy: {catalog_qa.get('policy', 'unknown')}.")
+        elif sample_underflow:
+            self.summary.setText(
+                "Star selection rejected: "
+                f"{diagnostic.get('n_accepted_stars', 0)} accepted / "
+                f"{diagnostic.get('minimum_accepted_stars', '?')} required "
+                "(train + independent holdout). "
+                f"Policy: {catalog_qa.get('policy', 'unknown')}. "
+                "No model fitted, no PSF adopted.")
         else:
             self.summary.setText("Provisional PSF rejected before adoption.")
         rows = [(item, "train") for item in diagnostic.get("training", [])]
         rows += [(item, "holdout") for item in diagnostic.get("holdout", [])]
+        if sample_underflow:
+            rows += [(item, "candidate")
+                     for item in diagnostic.get("accepted_candidates", [])]
         self.stars.setRowCount(len(rows))
         for index, (star, role) in enumerate(rows):
             for col, label in enumerate((
@@ -781,6 +795,32 @@ class PSF0Panel(QGroupBox):
                     cell.setToolTip(
                         f"ICRS RA={star['ra_deg']:.7f}°, Dec={star['dec_deg']:.7f}°")
                 self.stars.setItem(index, col, cell)
+        if sample_underflow:
+            self.qa.setPlainText(
+                payload.get("reason", "Insufficient vetted PSF stars")
+                + "\n\nDetected candidates: "
+                + str(diagnostic.get("n_detected_candidates", "?"))
+                + "\nExamined by star screening: "
+                + str(diagnostic.get("n_screened_candidates", "?"))
+                + "\nAccepted before field-relative width screening: "
+                + str(diagnostic.get("n_accepted_before_width_screen", "?"))
+                + "\nAccepted after all screening: "
+                + str(diagnostic.get("n_accepted_stars", "?"))
+                + "\nRequired train / holdout: "
+                + str(diagnostic.get("min_train_stars", "?")) + " / "
+                + str(diagnostic.get("min_holdout_stars", "?"))
+                + "\n\nCatalog screening: "
+                + self._catalog_screening_summary(catalog_qa)
+                + "\n\nRejected candidates by reason: "
+                + str(diagnostic.get("rejected_reasons", {}))
+                + "\n\n" + "\n".join(diagnostic.get("notes", []))
+                + "\n\nNo ePSF was fitted, no holdout was evaluated, "
+                  "and no scientific model or measurement was saved.")
+            self._record_experiment(
+                n_train=0, n_holdout=0, negative=None, converged=None,
+                status="STAR SAMPLE REJECTED")
+            self._update_buttons()
+            return
         signed = diagnostic.get("signed_kernel_qa", {})
         holdouts = diagnostic.get("signed_holdout_summary", {})
         holdout_regions = holdouts.get("regions", {})
