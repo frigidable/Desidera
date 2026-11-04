@@ -97,3 +97,55 @@ replace Gaia-strict as the default, and it cannot be science-adopted.
 The native FITS/Tractor sources remain read-only. Further acceptance
 requires explicit per-band injection/recovery, sky-wing and spatial
 PSF validation and covariance-aware heldout residual assessment.
+
+
+## Independent real-image follow-up: Tractor-vetted pilot (2026-11-04 15:09 UTC filename)
+
+The uncommitted local researcher export
+`Desidera_LeoP_PSF0_griz_debug_20261104_150909.json` uses the exact
+DR11 south `1554p180` Tractor SHA-256
+`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`.
+These figures are **observed diagnostics only**, not clean PSF measurements:
+
+| Band | Total DAO examined | Train (Gaia/Tractor-only) | Gaia-only holdout | Signed negative absolute mass | Solver/QA outcome |
+|---|---:|---:|---:|---:|---|
+| g | 972 | 11 candidates before split (10 Gaia, 1 Tractor-only) | no model | n/a | Insufficient total 11 vs 13 required |
+| r | 882 | 16/10 | 4 | 1.707% | Converged, still NOT_ADOPTED |
+| i | 1427 | 10/12 | 3 | 4.825% | Not converged after 8 iterations, blocked |
+| z | 675 | 36/39 | 10 | 2.719% | Converged but 2.5% experimental screen failed |
+
+In r/i/z the **training** median native positive-moment core sigmas for
+Gaia and Tractor-only are respectively
+2.30/3.15, 2.34/3.18, and 2.19/2.68 pixels. The corresponding
+median native **peak** fluxes in nMgy/pix are
+2.879/0.094, 2.654/0.106, and 2.970/0.214. Comparing unmatched
+medians is **not a causal test for galaxy contamination**:
+positive-clipped moments are S/N dependent. For example, in the
+z 0.2–0.5 nMgy/pix peak bin, already observed median widths
+were 2.46 pixels for six Gaia-associated objects and 2.58 for
+19 Tractor-only objects. The other bands have poor faint-end Gaia
+coverage and hence insufficient brightness-matched controls.
+
+The negative power remains concentrated in the model's **outer**
+radii: i contributes about 4.70% of total unsigned mass beyond
+2 assumed FWHM and z about 2.72% beyond 2 assumed FWHM. Negative
+absolute mass is an uncalibrated shape heuristic, NOT an error rate
+or negative physical light. Photutils `converged` is the actual
+builder-level Boolean, not just the fraction of recentered stars;
+i had a final converged fraction of 1.0 but `converged=False`
+because an additional center-shift criterion was unmet.
+
+**Instrumentation repair in this PR:** preserve exact candidate and
+training-cap roles in the full QA JSON (including underflow and
+cap-unused rows), record median peak flux, native peak/RMS and
+positive-core moment width separately for Gaia and Tractor-only,
+and provide fixed, **descriptive** peak-flux strata with sample-size
+gates on the interpretation. No new automated classifier, PSF
+acceptance criterion or loosened selection threshold is introduced.
+
+**Next physical validation:** match Gaia holdout `REF_ID` and source
+hashes between strict and pilot runs, perform matched-brightness
+train-set comparisons where actual overlap exists, test cutout
+background/ring sensitivity, and then investigate PSF spatial
+variation and broad wings on real data. Do not use more Tractor-only
+stars as evidence of better ePSF by itself.
