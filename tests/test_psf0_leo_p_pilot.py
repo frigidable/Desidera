@@ -334,6 +334,18 @@ def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fi
     assert any(row.get("tractor_screen", {}).get("gaia_confirmed") is False
                and row.get("selection_role") == "TRAIN_CANDIDATE"
                for row in audit)
+    assert qa["accepted_identity_population_qa"]["is_selection_gate"] is False
+    training_pop = qa["training_identity_population_qa"]["populations"]
+    assert training_pop["gaia_dr3"]["n"] == qa["n_train_gaia_matched"]
+    assert (training_pop["tractor_psf_without_gaia"]["n"]
+            == qa["n_train_tractor_only"])
+    role_counts = {
+        role: sum(row.get("final_selection_role") == role for row in audit)
+        for role in ("TRAIN_SELECTED", "GAIA_HOLDOUT", "UNUSED_TRAINING_CAP")}
+    assert role_counts["TRAIN_SELECTED"] == result.report()["n_train"]
+    assert role_counts["GAIA_HOLDOUT"] == result.report()["n_holdout"]
+    assert role_counts["UNUSED_TRAINING_CAP"] == (
+        qa["n_unused_training_candidates_after_cap"])
     assert all(path.read_bytes() == originals[kind]
                for kind, path in paths.items())
     # The number of Tractor-only training candidates must NEVER repair
@@ -350,5 +362,12 @@ def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fi
     assert diagnostic["n_accepted_stars"] >= 13
     assert diagnostic["n_gaia_holdout_eligible"] < 7
     assert diagnostic["n_screened_candidates"] == diagnostic["n_detected_candidates"]
+    assert diagnostic["catalog_selection_qa"][
+        "accepted_identity_population_qa"]["populations"][
+            "tractor_psf_without_gaia"]["n"] > 0
+    assert sum(x.get("selection_role") ==
+               "ACCEPTED_BUT_SAMPLE_REJECTED_BEFORE_SPLIT"
+               for x in diagnostic["candidate_screening_audit"]) == (
+                   diagnostic["n_accepted_stars"])
     assert all(path.read_bytes() == originals[kind]
                for kind, path in paths.items())
