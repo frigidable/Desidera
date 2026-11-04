@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
 from lsbpipe.photometry.psf_gui_backend import (
     inspect_psf0_bands, PSF0_DIAGNOSTIC_EXPERIMENTS,
 )
-from lsbpipe.gui.psf_star_review import PSFStarReviewDialog
+from lsbpipe.gui.psf_star_review import (
+    PSFStarReviewDialog, ensemble_training_radial_plot,
+)
 
 
 class PSF0Panel(QGroupBox):
@@ -65,25 +67,37 @@ class PSF0Panel(QGroupBox):
         # A concise summary replaces long methodological prose in the
         # ordinary workspace; the full text stays available as a tooltip.
         self.setToolTip(explanation.text())
-        # Compact two-column science view: parameters on the left, actual
-        # scientific outcome on the right. At laptop widths, stack them
-        # vertically rather than forcing a horizontal scrollbar.
-        self._work_columns = QBoxLayout(QBoxLayout.LeftToRight)
-        self._work_columns.setSpacing(14)
-        self._controls_column = QWidget(self)
-        self._controls_column.setObjectName("psf0_controls_column")
-        controls = QVBoxLayout(self._controls_column)
-        controls.setContentsMargins(0, 0, 0, 0)
-        controls.setSpacing(9)
-        self._result_column = QWidget(self)
+        # Approved science-first layout: never bury the model or the
+        # observed-vs-model radial diagnostic in a disclosure. Source
+        # cutouts enter the renderer only from real in-memory worker QA.
+        self._work_columns = QBoxLayout(QBoxLayout.TopToBottom)
+        self._work_columns.setSpacing(12)
+        self._science_row = QBoxLayout(QBoxLayout.LeftToRight)
+        self._science_row.setSpacing(10)
+        self._model_card = QGroupBox("PSF model", self)
+        self._model_card.setObjectName("psf0_visual_model_card")
+        model_layout = QVBoxLayout(self._model_card)
+        model_layout.setContentsMargins(10, 12, 10, 10)
+        self._profile_card = QGroupBox(
+            "Radial profile & residuals", self)
+        self._profile_card.setObjectName("psf0_visual_profile_card")
+        profile_layout = QVBoxLayout(self._profile_card)
+        profile_layout.setContentsMargins(10, 12, 10, 10)
+        self._result_column = QGroupBox("PSF quality", self)
         self._result_column.setObjectName("psf0_result_column")
         result_layout = QVBoxLayout(self._result_column)
-        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setContentsMargins(10, 12, 10, 10)
         result_layout.setSpacing(8)
-        self._work_columns.addWidget(
-            self._controls_column, 5, Qt.AlignTop)
-        self._work_columns.addWidget(
-            self._result_column, 4, Qt.AlignTop)
+        self._science_row.addWidget(self._model_card, 3, Qt.AlignTop)
+        self._science_row.addWidget(self._profile_card, 5, Qt.AlignTop)
+        self._science_row.addWidget(self._result_column, 3, Qt.AlignTop)
+        self._work_columns.addLayout(self._science_row)
+        self._controls_column = QGroupBox("PSF reconstruction · settings", self)
+        self._controls_column.setObjectName("psf0_controls_column")
+        controls = QVBoxLayout(self._controls_column)
+        controls.setContentsMargins(10, 12, 10, 10)
+        controls.setSpacing(9)
+        self._work_columns.addWidget(self._controls_column, 0, Qt.AlignTop)
         layout.addLayout(self._work_columns)
         form = QFormLayout()
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
@@ -268,9 +282,9 @@ class PSF0Panel(QGroupBox):
         actions.addStretch(1)
         controls.addLayout(actions)
 
-        self._result_heading = QLabel("Result · experimental")
+        self._result_heading = QLabel("Experimental · not adopted")
         self._result_heading.setObjectName("psf0_result_heading")
-        self._result_heading.setStyleSheet("font-weight: 600;")
+        self._result_heading.setWordWrap(True)
         result_layout.addWidget(self._result_heading)
         self.status = QLabel(
             "Open saved Leo P project; source bands have not been checked.")
@@ -302,10 +316,34 @@ class PSF0Panel(QGroupBox):
         self.kernel_view.setToolTip(
             "Contrast-stretched diagnostic discrete kernel, NOT measured "
             "seeing or a calibrated wide-angle PSF.")
-        # There is nothing to preview before a diagnostic has produced a
-        # signed kernel. Do not reserve a 240-px blank image rectangle.
-        self.kernel_view.setVisible(False)
-        result_layout.addWidget(self.kernel_view, 0, Qt.AlignLeft | Qt.AlignTop)
+        # The visual cards themselves remain visible; an unavailable
+        # model explicitly says that NO fitted pixels exist.
+        self.kernel_view.setText("No fitted PSF model")
+        model_layout.addWidget(
+            self.kernel_view, 0, Qt.AlignHCenter | Qt.AlignTop)
+        self.model_caption = QLabel(
+            "Model unavailable until a real PSF fit exists.")
+        self.model_caption.setObjectName("psf0_model_caption")
+        self.model_caption.setWordWrap(True)
+        model_layout.addWidget(self.model_caption)
+        self.profile_view = QLabel(
+            "No observed/model radial comparison.\n"
+            "Build a PSF to inspect real stellar cutouts.")
+        self.profile_view.setObjectName("psf0_radial_profile_preview")
+        self.profile_view.setAlignment(Qt.AlignCenter)
+        self.profile_view.setWordWrap(True)
+        self.profile_view.setMinimumSize(295, 245)
+        self.profile_view.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.profile_view.setToolTip(
+            "Real medians over in-sample training-star native cutouts and "
+            "core-amplitude-aligned signed model. Not independent holdout QA.")
+        profile_layout.addWidget(self.profile_view, 0, Qt.AlignTop)
+        self.profile_caption = QLabel(
+            "No training-star model comparison available.")
+        self.profile_caption.setObjectName("psf0_profile_caption")
+        self.profile_caption.setWordWrap(True)
+        profile_layout.addWidget(self.profile_caption)
         self.stars = QTableWidget(0, 6)
         self.stars.setObjectName("psf0_star_audit")
         self.stars.setHorizontalHeaderLabels(
@@ -356,11 +394,11 @@ class PSF0Panel(QGroupBox):
         # On narrow layouts, a two-column form would reduce space for
         # long catalogue labels. Switch orientation without recreating
         # controls, FITS provenance or non-adopted per-band evidence.
-        if hasattr(self, "_work_columns"):
-            direction = (QBoxLayout.TopToBottom if event.size().width() < 850
+        if hasattr(self, "_science_row"):
+            direction = (QBoxLayout.TopToBottom if event.size().width() < 1090
                          else QBoxLayout.LeftToRight)
-            if self._work_columns.direction() != direction:
-                self._work_columns.setDirection(direction)
+            if self._science_row.direction() != direction:
+                self._science_row.setDirection(direction)
         super().resizeEvent(event)
 
     def set_research_mode(self, enabled: bool):
