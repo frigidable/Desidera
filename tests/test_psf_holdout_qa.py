@@ -46,7 +46,12 @@ def test_outer_residual_is_reported_by_independent_star_sample():
     assert outer["median_signed_residual_over_peak"] > 0.
     assert outer["median_absolute_residual_over_peak"] > inner[
         "median_absolute_residual_over_peak"]
-    summary=summarize_signed_holdouts([qa,qa])
+    another = heldout_signed_residual(
+        source_id="holdout-3", image=95.*kernel + np.where(r>9.6, .07, 0.),
+        sqrt_ivar=np.ones(kernel.shape), signed_kernel=kernel,
+        local_center_xy=(15., 15.), guessed_fwhm_pix=4.8,
+        measured_peak=95.)
+    summary=summarize_signed_holdouts([qa, another])
     assert summary["n_usable_holdout_stars"] == 2
     assert summary["regions"]["outer_r_gt_2x_guessed_fwhm"]["n_stars"] == 2
     assert summary["regions"]["outer_r_gt_2x_guessed_fwhm"][
@@ -65,3 +70,20 @@ def test_empty_or_bad_holdout_does_not_fabricate_qa():
             sqrt_ivar=np.zeros(kernel.shape), signed_kernel=kernel,
             local_center_xy=(15.,15.), guessed_fwhm_pix=4.8,
             measured_peak=1.)
+
+
+def test_repeated_source_id_cannot_create_fake_independent_holdout_evidence():
+    kernel = _source()
+    qa = heldout_signed_residual(
+        source_id="gaia-physical-star-42", image=90.*kernel,
+        sqrt_ivar=np.ones(kernel.shape), signed_kernel=kernel,
+        local_center_xy=(15., 15.), guessed_fwhm_pix=4.8,
+        measured_peak=90.)
+    with pytest.raises(ValueError, match="Duplicate holdout source_id"):
+        summarize_signed_holdouts([qa, qa])
+    with pytest.raises(ValueError, match="Duplicate holdout source_id"):
+        summarize_signed_holdouts([qa, {**qa, "source_id": " gaia-physical-star-42 "}])
+    with pytest.raises(ValueError, match="nonempty source_id"):
+        summarize_signed_holdouts([{**qa, "source_id": "  "}])
+    with pytest.raises(TypeError, match="mapping"):
+        summarize_signed_holdouts([None])
