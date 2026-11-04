@@ -763,7 +763,8 @@ class PSF0Panel(QGroupBox):
             "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
         diagnostic = payload.get("diagnostics", {})
         sample_underflow = diagnostic.get("stage") in (
-            "stellar_sample_underflow", "gaia_holdout_underflow")
+            "stellar_sample_underflow", "gaia_holdout_underflow",
+            "gaia_width_reference_underflow")
         if sample_underflow:
             self.kernel_view.setText("No PSF model: insufficient vetted stars")
         catalog_qa = diagnostic.get("catalog_selection_qa", {})
@@ -777,18 +778,26 @@ class PSF0Panel(QGroupBox):
                 "Review the source selection and local backgrounds. "
                 f"Policy: {catalog_qa.get('policy', 'unknown')}.")
         elif sample_underflow:
-            gaia_holdout_short = diagnostic.get("stage") == "gaia_holdout_underflow"
+            stage = diagnostic.get("stage")
+            if stage == "gaia_holdout_underflow":
+                finding = (
+                    "Gaia-only validation unavailable: "
+                    f"{diagnostic.get('n_gaia_holdout_eligible', 0)} eligible / "
+                    f"{diagnostic.get('min_holdout_stars', '?')} required.")
+            elif stage == "gaia_width_reference_underflow":
+                finding = (
+                    "Gaia core-width reference unavailable (requires "
+                    "at least 5 confirmed reference cores).")
+            else:
+                finding = (
+                    "Star selection rejected: "
+                    f"{diagnostic.get('n_accepted_stars', 0)} accepted / "
+                    f"{diagnostic.get('minimum_accepted_stars', '?')} required "
+                    "(train + independent holdout).")
             self.summary.setText(
-                ("Gaia-only validation unavailable: "
-                 f"{diagnostic.get('n_gaia_holdout_eligible', 0)} eligible / "
-                 f"{diagnostic.get('min_holdout_stars', '?')} required. "
-                 if gaia_holdout_short else
-                 "Star selection rejected: "
-                 f"{diagnostic.get('n_accepted_stars', 0)} accepted / "
-                 f"{diagnostic.get('minimum_accepted_stars', '?')} required "
-                 "(train + independent holdout). ")
-                + f"Policy: {catalog_qa.get('policy', 'unknown')}. "
-                  "No model fitted, no PSF adopted.")
+                finding + " Policy: "
+                + str(catalog_qa.get("policy", "unknown"))
+                + ". No model fitted, no PSF adopted.")
         else:
             self.summary.setText("Provisional PSF rejected before adoption.")
         rows = [(item, "train") for item in diagnostic.get("training", [])]
