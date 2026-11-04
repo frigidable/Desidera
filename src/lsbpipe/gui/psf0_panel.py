@@ -610,6 +610,9 @@ class PSF0Panel(QGroupBox):
         self._star_review_data = None
         self._preview = None
         self._qa_payload = None
+        # Do not attach the previous successful/rejected lineage to a
+        # newer failed run or to a rejected foreign-band payload.
+        self._last_reported_payload = None
         self.save_btn.setEnabled(False)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("Rejected ePSF · no kernel adopted")
