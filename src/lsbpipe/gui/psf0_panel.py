@@ -423,15 +423,17 @@ class PSF0Panel(QGroupBox):
             "Sky-subtracted annular medians and signed model differences "
             "are in-sample, NOT independent holdout residuals.")
 
+    def set_narrow_visual_layout(self, narrow: bool):
+        """Reflow before Qt computes a too-wide tab's minimum size."""
+        direction = (QBoxLayout.TopToBottom if narrow else
+                     QBoxLayout.LeftToRight)
+        if self._science_row.direction() != direction:
+            self._science_row.setDirection(direction)
+            self.updateGeometry()
+
     def resizeEvent(self, event):
-        # On narrow layouts, a two-column form would reduce space for
-        # long catalogue labels. Switch orientation without recreating
-        # controls, FITS provenance or non-adopted per-band evidence.
         if hasattr(self, "_science_row"):
-            direction = (QBoxLayout.TopToBottom if event.size().width() < 1090
-                         else QBoxLayout.LeftToRight)
-            if self._science_row.direction() != direction:
-                self._science_row.setDirection(direction)
+            self.set_narrow_visual_layout(event.size().width() < 1090)
         super().resizeEvent(event)
 
     def set_research_mode(self, enabled: bool):
