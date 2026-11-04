@@ -553,6 +553,7 @@ class PSF0Panel(QGroupBox):
             if via_tractor else "original local coadd PSFSIZE pixel map")
         self.fwhm.setValue(round(pix, 2))
         self._fwhm_manually_edited = False
+        self._show_recipe_geometry()
         resolved = self.fwhm.value()
         caveat = (
             " Catalog positions approximate the local PSF prior; not "
