@@ -433,31 +433,50 @@ class PSF0Panel(QGroupBox):
         # Before a galaxy is bound, no action may appear runnable.
         self._show_recipe_geometry()
         self.set_research_mode(False)
+        # A new/empty band has NO scientific image. Keep unmistakable
+        # placeholders, but avoid two large blank visualization canvases.
+        self._clear_science_visuals()
         self._update_buttons()
 
     def _clear_science_visuals(self, reason=None):
+        """Compact, explicit empty state: no fitted PSF and no real diagram.
+
+        Preserve visible science-card headings and source fidelity, while
+        never allocating a 240/278 px plot canvas for uncomputed pixels.
+        The cards expand independently when a real model/plot is delivered.
+        """
+        self.kernel_view.setFixedSize(240, 56)
         self.kernel_view.setPixmap(QPixmap())
         self.kernel_view.setText("No fitted PSF model")
         self.kernel_view.show()
         self.model_caption.setText(
             reason or "No model fitted for this band.")
+        self.model_caption.hide()
+        self.profile_view.setFixedHeight(56)
         self.profile_view.set_placeholder(
             "No observed/model radial comparison available.")
         self.profile_caption.setText(
             "A real star cutout and aligned fitted model are required. "
             "No synthetic curves are displayed.")
+        self.profile_caption.hide()
+        self._model_card.updateGeometry()
+        self._profile_card.updateGeometry()
 
     def _show_real_radial_profile(self):
         """Use only real worker cutouts; never render synthetic model data."""
         plot = ensemble_training_radial_plot(self._star_review_data)
         if plot is None:
+            self.profile_view.setFixedHeight(56)
             self.profile_view.set_placeholder(
                 "No training-star radial comparison is available.")
             self.profile_caption.setText(
                 "The reconstruction supplied no compatible observed/model "
                 "training cutouts. Independent holdout not evaluated here.")
+            self.profile_caption.hide()
             return
+        self.profile_view.setFixedHeight(278)
         self.profile_view.set_chart(plot)
+        self.profile_caption.show()
         n_train = sum(
             item.get("role") == "train"
             for item in self._star_review_data["stars"])
@@ -1249,9 +1268,11 @@ class PSF0Panel(QGroupBox):
         rgb[negative, 2] = 45
         h, w = data.shape
         img = QImage(rgb.tobytes(), w, h, w * 3, QImage.Format_RGB888).copy()
+        self.kernel_view.setFixedSize(240, 240)
         self.kernel_view.setPixmap(QPixmap.fromImage(img).scaled(
             230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
         self.kernel_view.show()
+        self.model_caption.show()
         self.model_caption.setText(
             "Signed REJECTED ePSF diagnostic · red negative / cyan positive. "
             "Not normalized, saved or adopted as a PSF.")
@@ -1381,10 +1402,12 @@ class PSF0Panel(QGroupBox):
         pixels = np.clip(np.rint(mapped*255), 0, 255).astype(np.uint8)
         h, w = pixels.shape
         image = QImage(pixels.tobytes(), w, h, w, QImage.Format_Grayscale8).copy()
+        self.kernel_view.setFixedSize(240, 240)
         self.kernel_view.setPixmap(
             QPixmap.fromImage(image).scaled(
                 230, 230, Qt.KeepAspectRatio, Qt.FastTransformation))
         self.kernel_view.show()
+        self.model_caption.show()
         self.model_caption.setText(
             "Experimental nonnegative ePSF kernel · normalized preview, "
             "not science-adopted. Signed pre-clipping QA remains available.")
