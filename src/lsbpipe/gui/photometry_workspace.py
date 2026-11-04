@@ -118,6 +118,7 @@ class PhotometryWorkspace(QWidget):
                 "Scientific roadmap (8 stages)  ▸"))
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
+        center_scroll.setMinimumWidth(0)
         center_scroll.setWidgetResizable(True)
         center_scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         central = QWidget()
@@ -126,6 +127,7 @@ class PhotometryWorkspace(QWidget):
         # The former 980-px cap created wide, useless outer gutters on
         # standard monitors; inner controls retain their own width limits.
         central.setMaximumWidth(1400)
+        central.setMinimumWidth(0)
         central.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         body = QVBoxLayout(central)
         body.setContentsMargins(8, 2, 8, 2)
@@ -243,8 +245,12 @@ class PhotometryWorkspace(QWidget):
         self.band_tabs = QTabWidget(central)
         self.band_tabs.setObjectName("psf0_single_band_tabs")
         self.band_tabs.setDocumentMode(True)
+        self.band_tabs.setMinimumWidth(0)
+        # The tab's initial three-card horizontal size hint must not
+        # impose a hard minimum on the entire desktop window. Reflow is
+        # decided by the parent before the tab gets its viewport.
         self.band_tabs.setSizePolicy(
-            QSizePolicy.Preferred, QSizePolicy.Maximum)
+            QSizePolicy.Ignored, QSizePolicy.Maximum)
         for native_band in ("g", "r", "i", "z"):
             panel = PSF0Panel(self.band_tabs, fixed_band=native_band)
             panel.setObjectName("psf0_panel_" + native_band)
