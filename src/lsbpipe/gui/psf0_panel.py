@@ -37,8 +37,7 @@ class PSF0Panel(QGroupBox):
     def __init__(self, parent=None, *, fixed_band=None):
         if fixed_band is not None and fixed_band not in ("g", "r", "i", "z"):
             raise ValueError("Unsupported PSF-0 fixed band")
-        super().__init__("PSF reconstruction · " + (fixed_band.upper()
-                         if fixed_band else "Leo P"), parent)
+        super().__init__("PSF reconstruction", parent)
         self.fixed_band = fixed_band
         self._fwhm_manually_edited = False
         self._latest_seeing_payload = None
@@ -67,14 +66,21 @@ class PSF0Panel(QGroupBox):
         # ordinary workspace; the full text stays available as a tooltip.
         self.setToolTip(explanation.text())
         form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(9)
         self._control_form = form
         self.band = QComboBox()
         self.band.setObjectName("psf0_band")
         self.band.setAccessibleName("Native optical band for provisional PSF")
         self.band.currentIndexChanged.connect(self._band_changed)
         form.addRow("Native band", self.band)
-        catalogue_row = QHBoxLayout()
+        catalogue_row = QVBoxLayout()
+        catalogue_row.setSpacing(5)
         self.catalog_policy = QComboBox()
+        self.catalog_policy.setMaximumWidth(570)
         self.catalog_policy.setObjectName("psf0_star_catalog_policy")
         self.catalog_policy.addItem(
             "Gaia DR3 + Tractor PSF + clean-image QA (strict)", "gaia_strict")
@@ -91,15 +97,16 @@ class PSF0Panel(QGroupBox):
             "validation. Both require the exact original DR11 brick "
             "Tractor FITS and enforce image/cutout, isolation, SNR, mask "
             "and morphology gates. DAO-only is explicitly unverified.")
-        catalogue_row.addWidget(self.catalog_policy, 2)
+        catalogue_row.addWidget(self.catalog_policy)
         self.get_tractor_btn = QPushButton("Get DR11 Tractor + Gaia…")
+        self.get_tractor_btn.setMaximumWidth(260)
         self.get_tractor_btn.setObjectName("psf0_get_tractor_gaia")
         self.get_tractor_btn.clicked.connect(self._request_tractor_catalog)
         self.get_tractor_btn.setToolTip(
             "Explicitly download the ORIGINAL DR11 south Tractor brick "
             "catalogue from the official Legacy Surveys archive into "
             "the current Leo P project's data root. No new project.")
-        catalogue_row.addWidget(self.get_tractor_btn, 1)
+        catalogue_row.addWidget(self.get_tractor_btn, 0, Qt.AlignLeft)
         form.addRow("PSF star selection", catalogue_row)
         self.fwhm = QDoubleSpinBox()
         self.fwhm.setObjectName("psf0_fwhm_guess")
@@ -107,13 +114,16 @@ class PSF0Panel(QGroupBox):
         self.fwhm.setDecimals(2)
         self.fwhm.setSingleStep(.25)
         self.fwhm.setValue(4.8)
+        self.fwhm.setMaximumWidth(160)
         self.fwhm.setSuffix(" px")
         self.fwhm.setToolTip(
             "DAOStarFinder detection-width GUESS, not a measured FWHM. "
             "Changing it does not repair a scientifically rejected ePSF.")
         fwhm_row = QHBoxLayout()
-        fwhm_row.addWidget(self.fwhm, 2)
+        fwhm_row.setSpacing(8)
+        fwhm_row.addWidget(self.fwhm)
         self.auto_fwhm_btn = QPushButton("From DESI PSFSIZE…")
+        self.auto_fwhm_btn.setMaximumWidth(230)
         self.auto_fwhm_btn.setObjectName("psf0_auto_fwhm")
         self.auto_fwhm_btn.setToolTip(
             "Check the exact native DR11 coadd PSFSIZE map first. If missing "
@@ -122,9 +132,11 @@ class PSF0Panel(QGroupBox):
             "catalogue. Every source and any map rejection is shown. "
             "Never downloads or adopts a scientific PSF.")
         self.auto_fwhm_btn.clicked.connect(self._request_auto_fwhm)
-        fwhm_row.addWidget(self.auto_fwhm_btn, 1)
+        fwhm_row.addWidget(self.auto_fwhm_btn)
+        fwhm_row.addStretch(1)
         form.addRow("Detection FWHM guess", fwhm_row)
         self.experiment = QComboBox()
+        self.experiment.setMaximumWidth(570)
         self.experiment.setObjectName("psf0_diagnostic_experiment")
         self.experiment.setAccessibleName("Controlled PSF reconstruction diagnostic")
         for key, info in PSF0_DIAGNOSTIC_EXPERIMENTS.items():
@@ -148,6 +160,7 @@ class PSF0Panel(QGroupBox):
         self.protection.setRange(1., 1800.)
         self.protection.setDecimals(1)
         self.protection.setValue(90.)
+        self.protection.setMaximumWidth(165)
         self.fwhm.valueChanged.connect(self._parameters_changed)
         self.protection.valueChanged.connect(self._parameters_changed)
         self.fwhm.valueChanged.connect(self._show_recipe_geometry)
@@ -179,7 +192,8 @@ class PSF0Panel(QGroupBox):
             "Advanced settings provenance  ▸")
         self.advanced_toggle.setObjectName("psf0_advanced_toggle")
         self.advanced_toggle.setCheckable(True)
-        layout.addWidget(self.advanced_toggle)
+        self.advanced_toggle.setMaximumWidth(340)
+        layout.addWidget(self.advanced_toggle, 0, Qt.AlignLeft)
         self.advanced_details = QWidget()
         self.advanced_details.setObjectName("psf0_advanced_details")
         advanced_layout = QVBoxLayout(self.advanced_details)
@@ -251,16 +265,19 @@ class PSF0Panel(QGroupBox):
             "Different cutout sizes can change the stellar sample; no "
             "scientific best model is selected automatically.")
         details = QHBoxLayout()
+        details.setContentsMargins(0, 4, 0, 4)
         self.kernel_view = QLabel("No empirical PSF image")
         self.kernel_view.setObjectName("psf0_kernel_preview")
-        self.kernel_view.setMinimumSize(160, 160)
-        self.kernel_view.setMaximumSize(245, 245)
+        # Fixed preview footprint prevents a blank, vertically centered
+        # placeholder from occupying most of the PSF workspace.
+        self.kernel_view.setFixedSize(240, 240)
         self.kernel_view.setAlignment(Qt.AlignCenter)
         self.kernel_view.setWordWrap(True)
         self.kernel_view.setToolTip(
             "Contrast-stretched diagnostic discrete kernel, NOT measured "
             "seeing or a calibrated wide-angle PSF.")
-        details.addWidget(self.kernel_view, 0)
+        details.addWidget(self.kernel_view, 0, Qt.AlignLeft | Qt.AlignTop)
+        details.addStretch(1)
         self.stars = QTableWidget(0, 6)
         self.stars.setObjectName("psf0_star_audit")
         self.stars.setHorizontalHeaderLabels(
@@ -286,7 +303,8 @@ class PSF0Panel(QGroupBox):
             "Star selection, comparisons and scientific QA  ▸")
         self.inspection_toggle.setObjectName("psf0_inspection_toggle")
         self.inspection_toggle.setCheckable(True)
-        layout.addWidget(self.inspection_toggle)
+        self.inspection_toggle.setMaximumWidth(430)
+        layout.addWidget(self.inspection_toggle, 0, Qt.AlignLeft)
         self.inspection_details = QWidget()
         self.inspection_details.setObjectName("psf0_inspection_details")
         inspection_layout = QVBoxLayout(self.inspection_details)
