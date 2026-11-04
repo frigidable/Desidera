@@ -122,10 +122,11 @@ class PhotometryWorkspace(QWidget):
         center_scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         central = QWidget()
         central.setObjectName("photometry_narrow_science_column")
-        # A bounded work column is readable on 1600–2560 px displays and
-        # naturally contracts beside the persistent project sidebar.
-        central.setMaximumWidth(980)
-        central.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        # Fill the actual space beside the persistent survey sidebar.
+        # The former 980-px cap created wide, useless outer gutters on
+        # standard monitors; inner controls retain their own width limits.
+        central.setMaximumWidth(1400)
+        central.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         body = QVBoxLayout(central)
         body.setContentsMargins(8, 2, 8, 2)
         body.setSpacing(12)
