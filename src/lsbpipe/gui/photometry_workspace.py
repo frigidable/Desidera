@@ -52,6 +52,7 @@ class PhotometryWorkspace(QWidget):
         self._project_root = None
         self._bound_project_id = None
         self._bound_source_identity = None
+        self._tab_source_identity = None
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
         root.setSpacing(12)
@@ -214,7 +215,6 @@ class PhotometryWorkspace(QWidget):
         self.band_tabs = QTabWidget(central)
         self.band_tabs.setObjectName("psf0_single_band_tabs")
         self.band_tabs.setDocumentMode(True)
-        self.band_tabs.setTabToolTip(0, "Select a band to inspect")
         for native_band in ("g", "r", "i", "z"):
             panel = PSF0Panel(self.band_tabs, fixed_band=native_band)
             panel.setObjectName("psf0_panel_" + native_band)
@@ -223,7 +223,10 @@ class PhotometryWorkspace(QWidget):
             panel.autoFwhmRequested.connect(self.psf0AutoFwhmRequested.emit)
             panel.tractorRequested.connect(self.psf0TractorRequested.emit)
             self.psf0_panels[native_band] = panel
-            self.band_tabs.addTab(panel, native_band.upper())
+            index = self.band_tabs.addTab(panel, native_band.upper())
+            self.band_tabs.setTabToolTip(
+                index, "Independent " + native_band + "-band settings, "
+                "scientific QA and non-adopted preview")
         body.addWidget(self.band_tabs)
         # Compatibility alias for older callers; resolves to the first
         # available band on bind, not a second shared scientific panel.
@@ -446,6 +449,15 @@ class PhotometryWorkspace(QWidget):
         self.psf0_panel = next(
             (panel for panel in self.psf0_panels.values()
              if panel.run_btn.isEnabled()), self.psf0_panels["g"])
+        source_key = (self._bound_project_id, self._bound_source_identity)
+        if source_key != self._tab_source_identity:
+            # A newly bound project opens on its first usable band.
+            # Re-entering an unchanged project preserves the user's
+            # currently inspected band and every in-memory PSF result.
+            selected_index = self.band_tabs.indexOf(self.psf0_panel)
+            self.band_tabs.setCurrentIndex(
+                selected_index if selected_index >= 0 else 0)
+            self._tab_source_identity = source_key
         self.build_all_psfs_btn.setEnabled(any(
             panel.run_btn.isEnabled() for panel in self.psf0_panels.values()))
         if self._project_root is None:
