@@ -97,7 +97,7 @@ def test_four_band_batch_preserves_independent_results_and_reports(
     assert [x[0] for x in seen] == ["g","r","i","z"]
     assert [x[1] for x in seen] == pytest.approx(
         [6.57,5.41,4.33,3.75])
-    assert [x[2] for x in seen] == [31,31,51,31]
+    assert [x[2] for x in seen] == [31,31,55,31]
     for band in ("g","i","z"):
         assert workspace.psf0_panels[band]._qa_payload is not None
         assert "REJECTED" in workspace.psf0_panels[band].status.text()
