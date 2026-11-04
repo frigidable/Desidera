@@ -389,6 +389,8 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
     assert g.review_btn.isVisible()
     assert g.save_btn.isVisible()
     assert workspace.copy_full_qa_btn.isVisible()
+    g.advanced_toggle.click()
+    assert g.advanced_details.isVisible()
     assert g.mode_context.text().startswith("Research controls visible")
     assert (g.fwhm.value(), g.protection.value(),
             g.catalog_policy.currentData(), g.experiment.currentData()) == request
@@ -397,6 +399,7 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
         workspace.view_mode.findData("guided"))
     workspace.band_tabs.setCurrentWidget(g)
     assert not g.protection.isVisible()
+    assert not g.advanced_details.isVisible()
     assert "123.0 arcsec" in g.mode_context.text()
     assert (g.fwhm.value(), g.protection.value(),
             g.catalog_policy.currentData(), g.experiment.currentData()) == request
