@@ -124,6 +124,15 @@ class PSF0Panel(QGroupBox):
             "Leo P outer-wing failure. These tests are not scientific PSF "
             "selection and may change the selected star sample.")
         form.addRow("Diagnostic experiment", self.experiment)
+        self.recipe_geometry = QLabel(
+            "Recipe geometry will be shown here. The initial FWHM is a "
+            "guess, not a validated PSF measurement.")
+        self.recipe_geometry.setObjectName("psf0_recipe_geometry")
+        self.recipe_geometry.setWordWrap(True)
+        self.recipe_geometry.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        layout.addWidget(self.recipe_geometry)
+        self.experiment.currentIndexChanged.connect(
+            self._show_recipe_geometry)
         self.protection = QDoubleSpinBox()
         self.protection.setObjectName("psf0_target_protection")
         self.protection.setRange(1., 1800.)
@@ -131,6 +140,7 @@ class PSF0Panel(QGroupBox):
         self.protection.setValue(90.)
         self.fwhm.valueChanged.connect(self._parameters_changed)
         self.protection.valueChanged.connect(self._parameters_changed)
+        self.fwhm.valueChanged.connect(self._show_recipe_geometry)
         self.protection.setSuffix(" arcsec")
         self.protection.setToolTip(
             "Preliminary exclusion circle around Leo P. Must be reviewed "
@@ -243,6 +253,7 @@ class PSF0Panel(QGroupBox):
             "PSF quality flags and source limitations appear here.")
         layout.addWidget(self.qa)
         # Before a galaxy is bound, no action may appear runnable.
+        self._show_recipe_geometry()
         self._update_buttons()
 
     @property
@@ -335,6 +346,40 @@ class PSF0Panel(QGroupBox):
         self._history_band = self.band.currentData()
         self._history_policy = self.catalog_policy.currentData()
         self._update_buttons()
+
+    def _show_recipe_geometry(self, *_):
+        """Preview exact configured footprint; never imply wing-free sky."""
+        from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+        mode = self.experiment.currentData()
+        if mode is None:
+            return
+        try:
+            cfg = psf0_experiment_recipe(self.fwhm.value(), mode)
+        except (ValueError, TypeError) as exc:
+            self.recipe_geometry.setText(
+                "Recipe BLOCKED for current FWHM: " + str(exc))
+            self.recipe_geometry.setToolTip(
+                "The baseline remains a wing-sensitive diagnostic, "
+                "not a scientifically acceptable substitute.")
+            return
+        self.recipe_geometry.setText(
+            f"Preview geometry: {cfg.cutout_size_pix}×"
+            f"{cfg.cutout_size_pix} native px; local sky "
+            f"{cfg.sky_annulus_inner_pix:.0f}–"
+            f"{cfg.sky_annulus_outer_pix:.0f} px = "
+            f"{cfg.sky_annulus_inner_pix/cfg.guessed_fwhm_pix:.2f}–"
+            f"{cfg.sky_annulus_outer_pix/cfg.guessed_fwhm_pix:.2f}× "
+            "guessed FWHM; min neighbour isolation "
+            f"{cfg.min_neighbor_separation_pix:.0f} px. "
+            "Stellar wings and background remain degenerate."
+            + (" Batch will recompute from this band's native PSFSIZE "
+               "unless FWHM was manually overridden."
+               if not self._fwhm_manually_edited else
+               " Manual FWHM override will be respected."))
+        self.recipe_geometry.setToolTip(
+            "Derived from the CURRENT visible FWHM guess for preview. "
+            "The actual full-griz batch separately resolves each original "
+            "band PSFSIZE before selecting its final recipe.")
 
     def _parameters_changed(self, *_):
         if self.sender() is self.fwhm:
