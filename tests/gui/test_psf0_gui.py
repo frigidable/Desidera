@@ -400,3 +400,33 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
     assert "123.0 arcsec" in g.mode_context.text()
     assert (g.fwhm.value(), g.protection.value(),
             g.catalog_policy.currentData(), g.experiment.currentData()) == request
+
+
+def test_photometry_owns_navigation_until_returning_to_survey(
+        qtbot, tmp_path, monkeypatch):
+    """The survey search/sidebar and global tabs must not crowd PSF work."""
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = create_object_project(
+        "Leo P", tmp_path / "Leo_P",
+        field=SkyField(155.438012, 18.088025, 5.))
+    with offline_legacy_viewer():
+        window = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(window)
+    window.attach_object_project(project)
+    window.resize(1450, 850)
+    window.show()
+    assert window.navigation_scroll.isVisible()
+    assert window.preview_tabs.tabBar().isVisible()
+    window.photometry_btn.click()
+    assert window.preview_tabs.currentWidget() is window.photometry_workspace
+    assert not window.navigation_scroll.isVisible()
+    assert not window.preview_tabs.tabBar().isVisible()
+    assert not window.preview_label.isVisible()
+    assert window.photometry_workspace.title.isVisible()
+    assert window.photometry_workspace.band_tabs.isVisible()
+    window.photometry_workspace.back_btn.click()
+    assert window.preview_tabs.currentWidget() is not window.photometry_workspace
+    assert window.navigation_scroll.isVisible()
+    assert window.preview_tabs.tabBar().isVisible()
+    assert window.preview_label.isVisible()
+    assert project.field.ra_deg == pytest.approx(155.438012)
