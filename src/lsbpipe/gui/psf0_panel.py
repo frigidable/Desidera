@@ -98,7 +98,8 @@ class PSF0Panel(QGroupBox):
         controls.setContentsMargins(10, 12, 10, 10)
         controls.setSpacing(9)
         self._work_columns.addWidget(self._controls_column, 0, Qt.AlignTop)
-        layout.addLayout(self._work_columns)
+        self._work_columns.setAlignment(Qt.AlignTop)
+        layout.addLayout(self._work_columns, 0)
         form = QFormLayout()
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -385,6 +386,9 @@ class PSF0Panel(QGroupBox):
                 if checked else
                 "Star selection, comparisons and scientific QA  ▸"))
         layout.addWidget(self.inspection_details)
+        # Any excess vertical space belongs below the scientific work,
+        # never between the always-visible plots and their settings.
+        layout.addStretch(1)
         # Before a galaxy is bound, no action may appear runnable.
         self._show_recipe_geometry()
         self.set_research_mode(False)
