@@ -336,3 +336,19 @@ def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fi
                for row in audit)
     assert all(path.read_bytes() == originals[kind]
                for kind, path in paths.items())
+    # The number of Tractor-only training candidates must NEVER repair
+    # a shortfall in independently Gaia-confirmed holdout stars.
+    from dataclasses import replace
+    with pytest.raises(PSF0QualityError) as failure:
+        build_empirical_coadd_psf(
+            frame, target_icrs_deg=LEO_P_WORKING_ICRS,
+            target_protection_arcsec=12.,
+            config=replace(config, min_holdout_stars=7),
+            catalog_matcher=matcher)
+    diagnostic = failure.value.diagnostics
+    assert diagnostic["stage"] == "gaia_holdout_underflow"
+    assert diagnostic["n_accepted_stars"] >= 13
+    assert diagnostic["n_gaia_holdout_eligible"] < 7
+    assert diagnostic["n_screened_candidates"] == diagnostic["n_detected_candidates"]
+    assert all(path.read_bytes() == originals[kind]
+               for kind, path in paths.items())
