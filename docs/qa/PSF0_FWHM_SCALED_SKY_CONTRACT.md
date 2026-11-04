@@ -149,3 +149,46 @@ train-set comparisons where actual overlap exists, test cutout
 background/ring sensitivity, and then investigate PSF spatial
 variation and broad wings on real data. Do not use more Tractor-only
 stars as evidence of better ePSF by itself.
+
+
+## Approved PSF-page visualization contract (2026-11-04)
+
+The approved GUI prototype at the project level requires a **persistent**
+per-selected-band scientific view: a native PSF model image, a radial
+profile/residual diagram and a quality/status summary. These three science
+surfaces must never be hidden behind the detailed-QA disclosure. The left
+Galaxy Workspace navigation and independent g/r/i/z states remain intact;
+per-band configuration and griz batch/export follow the science results.
+
+Data binding is deliberately stricter than a cosmetic illustration:
+
+- **Successful experimental fit:** the 2D model is the *actual in-memory*
+  normalized, nonnegative \`PSF0Result.kernel\`. It remains labelled as
+  provisional/non-adopted; its signed pre-clipping diagnostic is preserved
+  separately in QA. The radial diagram is generated from the real,
+  in-memory, local-sky-subtracted native cutouts and the *signed aligned*
+  model from the existing star-review worker snapshot. Each training star
+  uses its measured native peak as a display normalization and identical
+  1-pixel annular masks in observed and model arrays. Each displayed radius
+  pools valid stars using the median, for observed intensity, matched-model
+  intensity and **observed−model signed residual**.
+- **Signed-kernel quality rejection:** an actual computed but
+  scientifically rejected signed model may be shown in diagnostic colors
+  with explicit REJECTED/non-adopted status. Radial plots are permitted
+  only if the worker also supplied the actual paired cutouts/model.
+- **Selection underflow / no computed fit / missing inputs:** model and
+  radial cards show explicit unavailable explanations. The GUI does **not**
+  invent a PSF model, normalize an unavailable model, fabricate residual
+  curves or reuse a prior-band model. The complete selection failure
+  remains accessible in per-band full QA.
+- The radial diagram is **TRAINING-IN-SAMPLE**, not an independent Gaia
+  holdout, calibrated chi-square, full PSF-wing validation, or spatial
+  PSF constraint. Only stars still marked \`train\` are aggregated;
+  \`excluded\` and \`auto_rejected\` cutouts cannot silently contribute.
+  The original independent heldout metrics and immutable source
+  provenance remain accessible through the same QA surface.
+
+Implementation reuses \`psf_star_review.py\` rather than introducing an
+additional image pipeline or directories. All images are rendered in the Qt
+GUI from previously computed arrays, without network access, FITS writes,
+or changes to any scientific fitting/selection thresholds.
