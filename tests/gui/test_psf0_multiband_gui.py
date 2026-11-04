@@ -192,3 +192,34 @@ def test_full_griz_report_saves_new_atomic_json_without_overwriting(
     assert not (project.root/"analyses"/"psf-pilots").exists()
     window._returning_to_hub=True
     window.close()
+
+
+def test_foreign_band_and_project_psf_payloads_never_enter_panel(
+        qtbot, tmp_path, monkeypatch):
+    window, project = _setup(qtbot, tmp_path, monkeypatch)
+    panel = window.photometry_workspace.psf0_panels["g"]
+    # Valid rejected data must pass a matching native band / source.
+    valid = _rejected(project.root,"g")
+    panel.show_quality_rejection(valid)
+    assert panel._qa_payload is not None
+    assert panel._qa_payload["band"] == "g"
+
+    # Same directory, wrong science band is NOT a safe GUI state.
+    wrong_band = _rejected(project.root,"r")
+    panel.show_quality_rejection(wrong_band)
+    assert panel._qa_payload is None
+    assert "foreign result" in panel.qa.toPlainText()
+
+    wrong_uuid = _rejected(project.root,"g")
+    wrong_uuid["project_id"] = "00000000-0000-0000-0000-000000000000"
+    panel.show_quality_rejection(wrong_uuid)
+    assert panel._qa_payload is None
+
+    wrong_brick = _rejected(project.root,"g")
+    wrong_brick["dataset"] = ("dr11","south","0000p000","g")
+    panel.show_quality_rejection(wrong_brick)
+    assert panel._qa_payload is None
+    assert not panel.save_btn.isEnabled()
+
+    window._returning_to_hub=True
+    window.close()
