@@ -305,3 +305,53 @@ def test_tractor_vetted_gui_mode_requires_exact_native_catalogue(qtbot, tmp_path
     assert request["star_catalog_policy"] == "tractor_psf_validated"
     assert request["band"] == "r"
     assert panel.active_preview is None
+
+
+def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
+    """One main band surface instead of four stacked full scientific reports."""
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+
+    workspace = PhotometryWorkspace()
+    qtbot.addWidget(workspace)
+    workspace.show()
+    tabs = workspace.band_tabs
+    assert tabs.objectName() == "psf0_single_band_tabs"
+    assert tabs.count() == 4
+    assert [tabs.tabText(i) for i in range(tabs.count())] == [
+        "G", "R", "I", "Z"]
+    assert tuple(workspace.psf0_panels) == ("g", "r", "i", "z")
+    assert tabs.currentWidget() is workspace.psf0_panels["g"]
+    assert not workspace.workflow_details.isVisible()
+    assert not workspace.psf0_panels["g"].inspection_details.isVisible()
+    assert not workspace.psf0_panels["g"].advanced_details.isVisible()
+    assert workspace.source_details_toggle.isCheckable()
+    assert workspace.method_details_toggle.isCheckable()
+
+    # Scientific configuration of an inactive band must not be reset.
+    g = workspace.psf0_panels["g"]
+    r = workspace.psf0_panels["r"]
+    g.fwhm.setValue(5.75)
+    g.inspection_toggle.click()
+    assert g.inspection_details.isVisible()
+    assert g.qa.isVisible()
+    assert g.stars.isVisible()
+    g.advanced_toggle.click()
+    assert g.advanced_details.isVisible()
+
+    tabs.setCurrentIndex(1)
+    assert tabs.currentWidget() is r
+    assert not g.isVisible()
+    assert r.isVisible()
+    assert not r.inspection_details.isVisible()
+    tabs.setCurrentIndex(0)
+    assert g.fwhm.value() == pytest.approx(5.75)
+    assert g.inspection_details.isVisible()
+    assert g.advanced_details.isVisible()
+
+    workspace.workflow_toggle.click()
+    assert workspace.workflow_details.isVisible()
+    workspace.source_details_toggle.click()
+    assert workspace.source_details_toggle.isChecked()
+    workspace.method_details_toggle.click()
+    assert workspace.method_details_toggle.isChecked()
+    # No mock project/FITS is required; these are presentation-only controls.
