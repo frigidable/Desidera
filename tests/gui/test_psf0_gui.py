@@ -447,7 +447,7 @@ def test_photometry_uses_bounded_vertical_layout_and_fixed_psf_footprint(
     qtbot.addWidget(w)
     w.resize(1920, 1080)
     w.show()
-    qtbot.waitExposed(w)
+    QApplication.processEvents()
     column = w.findChild(QWidget, "photometry_narrow_science_column")
     assert column is not None
     assert column.maximumWidth() == 980
