@@ -261,6 +261,8 @@ def test_gui_stellar_sample_underflow_shows_counts_without_signed_psf(
     assert "no ePSF was fitted" in panel.model_caption.text()
     assert panel.kernel_view.pixmap() is None or panel.kernel_view.pixmap().isNull()
     assert panel.profile_view.pixmap() is None or panel.profile_view.pixmap().isNull()
+    assert panel.kernel_view.height() == 56
+    assert panel.profile_view.height() == 56
     assert panel.stars.rowCount() == 1
     assert panel.stars.item(0, 1).text() == "candidate"
     assert not panel.save_btn.isEnabled()
@@ -324,6 +326,12 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
         "G · No FITS", "R · No FITS", "I · No FITS", "Z · No FITS"]
     assert tuple(workspace.psf0_panels) == ("g", "r", "i", "z")
     assert tabs.currentWidget() is workspace.psf0_panels["g"]
+    assert workspace.band_selector.count() == 4
+    assert workspace.band_selector.isVisible()
+    assert not tabs.tabBar().isVisible()
+    assert [workspace.band_selector.tabText(i)
+            for i in range(4)] == [
+        "G · No FITS", "R · No FITS", "I · No FITS", "Z · No FITS"]
     assert not workspace.workflow_details.isVisible()
     assert not workspace.psf0_panels["g"].inspection_details.isVisible()
     assert not workspace.psf0_panels["g"].advanced_details.isVisible()
@@ -348,11 +356,15 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert g.advanced_details.isVisible()
 
     tabs.setCurrentIndex(1)
+    assert workspace.band_selector.currentIndex() == 1
     assert tabs.currentWidget() is r
     assert not g.isVisible()
     assert r.isVisible()
     assert not r.inspection_details.isVisible()
+    workspace.band_selector.setCurrentIndex(3)
+    assert tabs.currentIndex() == 3
     tabs.setCurrentIndex(0)
+    assert workspace.band_selector.currentIndex() == 0
     assert g.fwhm.value() == pytest.approx(5.75)
     assert g.inspection_details.isVisible()
     assert g.advanced_details.isVisible()
