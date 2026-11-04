@@ -127,11 +127,25 @@ def capture(output_dir: Path) -> list[dict]:
                         # non-FITS fixture. Capture each panel in the scroll
                         # viewport; no claimed real star/PSF measurement.
                         from PySide6.QtWidgets import QScrollArea
-                        areas = widget.findChildren(QScrollArea)
-                        inspector_scroll = areas[-1]
+                        from PySide6.QtCore import QPoint
+                        inspector_scroll = next(
+                            area for area in widget.findChildren(QScrollArea)
+                            if area.widget() is
+                            widget.psf0_panels["g"].parentWidget())
                         for band, panel in widget.psf0_panels.items():
-                            inspector_scroll.ensureWidgetVisible(panel, 0, 0)
+                            inner_y = panel.mapTo(
+                                inspector_scroll.widget(), QPoint(0, 0)).y()
+                            scrollbar = inspector_scroll.verticalScrollBar()
+                            scrollbar.setValue(max(0,inner_y-8))
                             app.processEvents()
+                            actual_y = panel.mapTo(
+                                inspector_scroll.viewport(), QPoint(0, 0)).y()
+                            if not 0 <= actual_y < inspector_scroll.viewport().height():
+                                raise RuntimeError(
+                                    f"Panel {band} not visible in fourband "
+                                    f"capture despite scroll request: "
+                                    f"y={actual_y}, scroll={scrollbar.value()}, "
+                                    f"maximum={scrollbar.maximum()}")
                             frame = widget.grab()
                             target = output_dir / (
                                 f"psf0_fourband_{band}_{width}x{height}.png")
