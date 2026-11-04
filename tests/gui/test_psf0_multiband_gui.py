@@ -264,3 +264,26 @@ def test_batch_refuses_stale_reviewed_star_ids_after_psfsize_shift(
     assert workspace.psf0_panels["r"]._qa_payload is not None
     window._returning_to_hub=True
     window.close()
+
+
+def test_saved_dataset_change_invalidates_all_psf_bands_and_seeing(
+        qtbot, tmp_path, monkeypatch):
+    """Same project folder but changed source selection cannot retain PSF."""
+    window, project = _setup(qtbot, tmp_path, monkeypatch)
+    workspace = window.photometry_workspace
+    g = workspace.psf0_panels["g"]
+    g.fwhm.setValue(6.57)
+    g.show_quality_rejection(_rejected(project.root,"g"))
+    assert g._qa_payload is not None
+    assert g._fwhm_manually_edited
+    project.selected_dataset = ("dr11","south","1554p180","r")
+    save_object_project(project)
+    workspace.bind_project(project)
+    assert g._qa_payload is None
+    assert g._preview is None
+    assert g.fwhm.value() == pytest.approx(4.8)
+    assert not g._fwhm_manually_edited
+    assert "No empirical PSF" in g.kernel_view.text()
+    assert workspace.psf0_panels["r"].band.currentData() == "r"
+    window._returning_to_hub=True
+    window.close()
