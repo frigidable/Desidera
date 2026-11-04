@@ -432,7 +432,10 @@ class PSF0Panel(QGroupBox):
             self.updateGeometry()
 
     def resizeEvent(self, event):
-        if hasattr(self, "_science_row"):
+        # Workspace-owned fixed-band panels reflow from the PARENT's
+        # viewport width; otherwise an over-wide child can repeatedly
+        # restore horizontal orientation before the parent can shrink.
+        if self.fixed_band is None and hasattr(self, "_science_row"):
             self.set_narrow_visual_layout(event.size().width() < 1090)
         super().resizeEvent(event)
 
