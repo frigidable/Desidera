@@ -168,3 +168,27 @@ def test_manual_band_fwhm_override_is_preserved_in_batch(
     assert qa["bands"]["z"]["experiment"] == "outer_sky_robust"
     window._returning_to_hub=True
     window.close()
+
+
+def test_full_griz_report_saves_new_atomic_json_without_overwriting(
+        qtbot, tmp_path, monkeypatch):
+    window, project = _setup(qtbot, tmp_path, monkeypatch)
+    workspace = window.photometry_workspace
+    target = tmp_path / "PSF0_all_filters_for_ChatGPT.json"
+    from lsbpipe.gui import photometry_workspace as module
+    monkeypatch.setattr(
+        module.QFileDialog, "getSaveFileName",
+        lambda *args, **kwargs: (str(target), "JSON (*.json)"))
+    workspace.save_full_qa_btn.click()
+    assert target.is_file()
+    raw = target.read_bytes()
+    report = json.loads(raw.decode("utf-8"))
+    assert report["science_adopted"] is False
+    assert sorted(report["bands"]) == list("girz")
+    assert report["no_raw_fits_or_stamp_pixels_in_clipboard"] is True
+    workspace.save_full_qa_btn.click()
+    assert target.read_bytes() == raw
+    assert "Existing files" in workspace.batch_status.text()
+    assert not (project.root/"analyses"/"psf-pilots").exists()
+    window._returning_to_hub=True
+    window.close()
