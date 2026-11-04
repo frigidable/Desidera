@@ -335,14 +335,20 @@ class PSF0Panel(QGroupBox):
 
     def overview_state(self):
         """Short, honest status for the g/r/i/z tab strip."""
-        if self._busy:
-            return "Running"
+        # The GUI worker blocks all four panels while ONE run executes.
+        # Do not label untouched filters as "Running" merely because
+        # their controls are temporarily disabled.
+        if self.status.text().startswith("Diagnostic ePSF + QA saved"):
+            return "Saved QA"
         if self._preview is not None:
             return "Preview"
         if self._qa_payload is not None:
             return "Rejected"
         if self.status.text().startswith("PSF-0 failed scientific"):
             return "Failed"
+        if self.summary.text().startswith(
+                "No accepted PSF; calculating provisional model."):
+            return "Queued"
         available = bool(self._snapshot) and any(
             row["band"] == self.band.currentData()
             and row["paths_present_unverified"]
