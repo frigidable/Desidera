@@ -904,9 +904,13 @@ class SurveyExplorer(QMainWindow):
         def finished(payload):
             panel.show_fwhm_suggestion(payload)
         def failed(message):
-            panel.status.setText(
-                "Local DESI PSFSIZE could not be verified: " + message
-                + ". Manual initial FWHM guess remains unchanged.")
+            detail = (
+                "Local DESI PSFSIZE cannot be verified: " + message
+                + ". Initial FWHM guess unchanged; inspect the exact "
+                "coadd PSFSIZE map or original Tractor PSFSIZE band "
+                "column in the active Leo P project.")
+            panel.status.setText(detail)
+            panel.prior_source.setText(detail)
         self._start(run, finished, failed, operation_name="psf0-seeing-prior")
         if self.thread is not None:
             panel.set_busy(True, "Checking original FITS WCS and optional "
