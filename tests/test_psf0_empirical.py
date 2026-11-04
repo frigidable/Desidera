@@ -466,3 +466,45 @@ def test_one_masked_subpixel_near_core_fails_even_if_cutout_mask_fraction_small(
     assert reason == "MASKED_STELLAR_PSF_CORE_PIXELS"
     assert (1./51**2) < cfg.max_invalid_fraction
     assert ivar[78,78] > 0
+
+
+def test_identity_population_diagnostic_never_rejects_or_infers_morphology():
+    from lsbpipe.photometry.psf_empirical import _identity_population_qa
+
+    def entry(star_id, *, gaia, peak, width):
+        cut = {
+            "star_identity": {"gaia_source_id":star_id if gaia else None},
+            "shape_qa": {"sigma_eff_pix":width},
+            "peak_nMgy":peak,
+            "rms_nMgy":.01,
+        }
+        return (star_id, 0., 0., 0., 0., peak, cut)
+
+    selected = [
+        entry(f"gaia-{j}", gaia=True, peak=.2, width=2.2)
+        for j in range(3)] + [
+        entry(f"tractor-{j}", gaia=False, peak=.2, width=2.8)
+        for j in range(3)]
+    report = _identity_population_qa(selected)
+    assert len(selected) == 6  # no in-place filtering
+    assert report["is_selection_gate"] is False
+    assert report["populations"]["gaia_dr3"]["n"] == 3
+    assert report["populations"]["tractor_psf_without_gaia"]["n"] == 3
+    assert report["unmatched_median_width_ratio_tractor_to_gaia"] == (
+        pytest.approx(2.8/2.2))
+    assert report["n_strata_with_at_least_3_per_population"] == 1
+    match = [row for row in report["peak_strata"]
+             if row["brightness_matched_comparison_supported"]]
+    assert len(match) == 1
+    assert match[0]["gaia_median_positive_core_sigma_pix"] == 2.2
+    assert match[0]["tractor_only_median_positive_core_sigma_pix"] == 2.8
+    assert report["peak_strata"][-1][
+        "peak_upper_exclusive_nMgy_per_pix"] is None
+    import json
+    json.dumps(report, allow_nan=False)
+
+    no_overlap = _identity_population_qa(
+        [entry("bright-g", gaia=True, peak=100., width=2.2),
+         entry("faint-t", gaia=False, peak=.05, width=3.1)])
+    assert no_overlap["n_strata_with_at_least_3_per_population"] == 0
+    assert no_overlap["populations"]["gaia_dr3"]["n"] == 1
