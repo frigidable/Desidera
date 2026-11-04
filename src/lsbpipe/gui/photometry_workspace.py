@@ -15,7 +15,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
-    QComboBox, QHeaderView, QLabel, QPushButton, QScrollArea, QTabWidget, QTableWidget,
+    QComboBox, QHeaderView, QLabel, QPushButton, QScrollArea, QTabBar, QTabWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget, QSizePolicy,
 )
 
@@ -85,6 +85,17 @@ class PhotometryWorkspace(QWidget):
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
+
+        # One persistent selector, not a tab strip that disappears behind
+        # the scroll area when the user examines PSF settings or QA.
+        self.band_selector = QTabBar(self)
+        self.band_selector.setObjectName("psf0_sticky_band_selector")
+        self.band_selector.setDocumentMode(True)
+        self.band_selector.setExpanding(False)
+        self.band_selector.setToolTip(
+            "Select g/r/i/z to inspect its independent PSF model, "
+            "radial comparison and scientific rejection status.")
+        root.addWidget(self.band_selector)
 
         # The original eight unclickable scientific stage cards consumed
         # almost a third of the screen. Keep the roadmap accessible, but
@@ -264,6 +275,14 @@ class PhotometryWorkspace(QWidget):
             self.band_tabs.setTabToolTip(
                 index, "Independent " + native_band + "-band settings, "
                 "scientific QA and non-adopted preview")
+            self.band_selector.addTab(native_band.upper())
+        # The fixed selector above the scroll replaces this inner tab bar;
+        # both selectors use the same existing QTabWidget state.
+        self.band_tabs.tabBar().hide()
+        self.band_selector.currentChanged.connect(
+            self.band_tabs.setCurrentIndex)
+        self.band_tabs.currentChanged.connect(
+            self.band_selector.setCurrentIndex)
         body.addWidget(self.band_tabs)
         body.addWidget(batch)
         self.view_mode.currentIndexChanged.connect(
@@ -363,11 +382,14 @@ class PhotometryWorkspace(QWidget):
             if index < 0:
                 continue
             state = panel.overview_state()
-            self.band_tabs.setTabText(
-                index, f"{band.upper()} · {state}")
-            self.band_tabs.setTabToolTip(
-                index, f"{band}-band: {state}. Independent controls, "
+            label = f"{band.upper()} · {state}"
+            tooltip = (
+                f"{band}-band: {state}. Independent controls, "
                 "science result and source provenance; not adopted.")
+            self.band_tabs.setTabText(index, label)
+            self.band_tabs.setTabToolTip(index, tooltip)
+            self.band_selector.setTabText(index, label)
+            self.band_selector.setTabToolTip(index, tooltip)
 
     def set_psf_busy(self, state):
         for panel in self.psf0_panels.values():
