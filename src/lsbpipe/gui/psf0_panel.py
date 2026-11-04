@@ -13,9 +13,9 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QComboBox, QDoubleSpinBox,
+    QAbstractItemView, QApplication, QBoxLayout, QComboBox, QDoubleSpinBox,
     QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-    QPlainTextEdit, QPushButton,
+    QPlainTextEdit, QPushButton, QSizePolicy,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -65,6 +65,26 @@ class PSF0Panel(QGroupBox):
         # A concise summary replaces long methodological prose in the
         # ordinary workspace; the full text stays available as a tooltip.
         self.setToolTip(explanation.text())
+        # Compact two-column science view: parameters on the left, actual
+        # scientific outcome on the right. At laptop widths, stack them
+        # vertically rather than forcing a horizontal scrollbar.
+        self._work_columns = QBoxLayout(QBoxLayout.LeftToRight)
+        self._work_columns.setSpacing(14)
+        self._controls_column = QWidget(self)
+        self._controls_column.setObjectName("psf0_controls_column")
+        controls = QVBoxLayout(self._controls_column)
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(9)
+        self._result_column = QWidget(self)
+        self._result_column.setObjectName("psf0_result_column")
+        result_layout = QVBoxLayout(self._result_column)
+        result_layout.setContentsMargins(0, 0, 0, 0)
+        result_layout.setSpacing(8)
+        self._work_columns.addWidget(
+            self._controls_column, 5, Qt.AlignTop)
+        self._work_columns.addWidget(
+            self._result_column, 4, Qt.AlignTop)
+        layout.addLayout(self._work_columns)
         form = QFormLayout()
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -169,13 +189,13 @@ class PSF0Panel(QGroupBox):
             "Preliminary exclusion circle around Leo P. Must be reviewed "
             "against diffuse galaxy light before science-quality PSF.")
         form.addRow("Protect target radius", self.protection)
-        layout.addLayout(form)
+        controls.addLayout(form)
         # A visible summary in guided mode prevents hidden protection or
         # non-default settings being mistaken for absent settings.
         self.mode_context = QLabel("")
         self.mode_context.setObjectName("psf0_guided_setup_context")
         self.mode_context.setWordWrap(True)
-        layout.addWidget(self.mode_context)
+        controls.addWidget(self.mode_context)
         self.prior_source = QLabel(
             "FWHM: 4.80 px is a USER-OVERRIDABLE DEFAULT, not measured seeing. "
             "Target protection: project radius with 90″ conservative floor; "
@@ -193,7 +213,7 @@ class PSF0Panel(QGroupBox):
         self.advanced_toggle.setObjectName("psf0_advanced_toggle")
         self.advanced_toggle.setCheckable(True)
         self.advanced_toggle.setMaximumWidth(340)
-        layout.addWidget(self.advanced_toggle, 0, Qt.AlignLeft)
+        controls.addWidget(self.advanced_toggle, 0, Qt.AlignLeft)
         self.advanced_details = QWidget()
         self.advanced_details.setObjectName("psf0_advanced_details")
         advanced_layout = QVBoxLayout(self.advanced_details)
@@ -208,7 +228,7 @@ class PSF0Panel(QGroupBox):
             lambda checked: self.advanced_toggle.setText(
                 "Advanced settings provenance  ▾" if checked else
                 "Advanced settings provenance  ▸"))
-        layout.addWidget(self.advanced_details)
+        controls.addWidget(self.advanced_details)
 
         actions = QHBoxLayout()
         self.run_btn = QPushButton("Build PSF preview")
@@ -242,19 +262,23 @@ class PSF0Panel(QGroupBox):
         self.copy_qa_btn.clicked.connect(self._copy_qa)
         actions.addWidget(self.copy_qa_btn)
         actions.addStretch(1)
-        layout.addLayout(actions)
+        controls.addLayout(actions)
 
+        self._result_heading = QLabel("Result · experimental")
+        self._result_heading.setObjectName("psf0_result_heading")
+        self._result_heading.setStyleSheet("font-weight: 600;")
+        result_layout.addWidget(self._result_heading)
         self.status = QLabel(
             "Open saved Leo P project; source bands have not been checked.")
         self.status.setObjectName("psf0_status")
         self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        result_layout.addWidget(self.status)
 
         self.summary = QLabel("No ePSF result. No stellar sample has been verified.")
         self.summary.setObjectName("psf0_summary")
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(self.summary)
+        result_layout.addWidget(self.summary)
         self.compare = QLabel(
             "Experiment comparison (same band): no completed trials.")
         self.compare.setObjectName("psf0_experiment_comparison")
@@ -264,8 +288,6 @@ class PSF0Panel(QGroupBox):
             "Historical non-adopted diagnostic trials on the current band. "
             "Different cutout sizes can change the stellar sample; no "
             "scientific best model is selected automatically.")
-        details = QHBoxLayout()
-        details.setContentsMargins(0, 4, 0, 4)
         self.kernel_view = QLabel("No empirical PSF image")
         self.kernel_view.setObjectName("psf0_kernel_preview")
         # Fixed preview footprint prevents a blank, vertically centered
@@ -276,8 +298,10 @@ class PSF0Panel(QGroupBox):
         self.kernel_view.setToolTip(
             "Contrast-stretched diagnostic discrete kernel, NOT measured "
             "seeing or a calibrated wide-angle PSF.")
-        details.addWidget(self.kernel_view, 0, Qt.AlignLeft | Qt.AlignTop)
-        details.addStretch(1)
+        # There is nothing to preview before a diagnostic has produced a
+        # signed kernel. Do not reserve a 240-px blank image rectangle.
+        self.kernel_view.setVisible(False)
+        result_layout.addWidget(self.kernel_view, 0, Qt.AlignLeft | Qt.AlignTop)
         self.stars = QTableWidget(0, 6)
         self.stars.setObjectName("psf0_star_audit")
         self.stars.setHorizontalHeaderLabels(
@@ -290,8 +314,6 @@ class PSF0Panel(QGroupBox):
         self.stars.setToolTip(
             "Training and held-out PSF stars. Coordinates are native FITS "
             "pixel indices (0-based); fields are not Gaia-confirmed.")
-        layout.addLayout(details)
-
         self.qa = QPlainTextEdit()
         self.qa.setObjectName("psf0_qa_details")
         self.qa.setReadOnly(True)
@@ -325,6 +347,17 @@ class PSF0Panel(QGroupBox):
         self._show_recipe_geometry()
         self.set_research_mode(False)
         self._update_buttons()
+
+    def resizeEvent(self, event):
+        # On narrow layouts, a two-column form would reduce space for
+        # long catalogue labels. Switch orientation without recreating
+        # controls, FITS provenance or non-adopted per-band evidence.
+        if hasattr(self, "_work_columns"):
+            direction = (QBoxLayout.TopToBottom if event.size().width() < 850
+                         else QBoxLayout.LeftToRight)
+            if self._work_columns.direction() != direction:
+                self._work_columns.setDirection(direction)
+        super().resizeEvent(event)
 
     def set_research_mode(self, enabled: bool):
         """Presentation only: never rewrite a recipe or discard a preview."""
