@@ -40,40 +40,61 @@ KINDS = ("image", "invvar", "nexp", "maskbits")
 # summaries. Every experiment remains non-adopted.
 PSF0_DIAGNOSTIC_EXPERIMENTS = {
     "baseline": {
-        "label": "Baseline · 31 px, sky 10–15, 8 iterations",
+        "label": "Baseline · fixed 31 px / sky 10–15 px (wing-sensitive)",
         "kwargs": {},
     },
     "outer_sky": {
-        "label": "Extended cutouts · 51 px, sky 19–24",
-        "kwargs": {
-            "cutout_size_pix": 51,
-            "sky_annulus_inner_pix": 19.,
-            "sky_annulus_outer_pix": 24.,
-            "min_neighbor_separation_pix": 55.,
-        },
+        "label": "Extended · FWHM-scaled sky 4.5–5.75× (pilot)",
+        "kwargs": {"training_outlier_passes": 0},
     },
     "outer_sky_robust": {
-        "label": "Extended + guarded iterative training QA (2 passes)",
-        "kwargs": {
-            "cutout_size_pix": 51,
-            "sky_annulus_inner_pix": 19.,
-            "sky_annulus_outer_pix": 24.,
-            "min_neighbor_separation_pix": 55.,
-            "training_outlier_passes": 2,
-        },
+        "label": "Extended sky + guarded iterative star QA (2 passes)",
+        "kwargs": {"training_outlier_passes": 2},
     },
-
 }
 
 
-def psf0_experiment_recipe(guessed_fwhm_pix: float, experiment: str) -> PSF0Config:
+def psf0_experiment_recipe(
+    guessed_fwhm_pix: float, experiment: str,
+) -> PSF0Config:
+    """Return a traceable experimental sky geometry, not a certified PSF.
+
+    A fixed annulus at 19–24 pix was inside 3×–4× FWHM for the REAL Leo P
+    DR11 g PSFSIZE prior of 6.57 pix. Extended modes therefore express the
+    *initial* sky-sampling radius in FWHM units and fail closed if the
+    necessary cutout cannot fit safely under the 91-pixel PSF0 limit.
+
+    Even 4.5× FWHM does NOT guarantee wing-free sky. The science report
+    continues to flag the sky/PSF degeneracy and correlated-coadd noise.
+    The baseline is deliberately fixed for a diagnostic reference only.
+    """
     if experiment not in PSF0_DIAGNOSTIC_EXPERIMENTS:
-        raise ValueError("Unknown controlled PSF-0 diagnostic experiment")
-    return PSF0Config(
-        guessed_fwhm_pix=float(guessed_fwhm_pix),
-        **PSF0_DIAGNOSTIC_EXPERIMENTS[experiment]["kwargs"])
-
-
+        raise ValueError("Unknown PSF-0 diagnostic experiment")
+    fwhm = float(guessed_fwhm_pix)
+    if not math.isfinite(fwhm) or not 2.5 <= fwhm <= 20:
+        raise ValueError("PSF FWHM prior must be finite and in 2.5..20 pix")
+    kw = dict(PSF0_DIAGNOSTIC_EXPERIMENTS[experiment]["kwargs"])
+    if experiment != "baseline":
+        # Integer annulus boundaries are deterministic, in native pixels;
+        # enforce 2 pixels beyond outer sky before the square stamp edge.
+        inner = float(math.ceil(4.5*fwhm))
+        outer = float(math.ceil(5.75*fwhm))
+        half = int(outer)+2
+        size = max(51, 2*half+1)
+        if size > 91:
+            raise ValueError(
+                f"FWHM-scaled sky annulus needs {size} px for assumed "
+                f"FWHM {fwhm:.2f} px, above the 91 px PSF0 limit. "
+                "Choose baseline as a wing-sensitive diagnostic, not as "
+                "a substitute for validated extended-wing background; "
+                "do not silently shrink the annulus.")
+        kw.update(
+            cutout_size_pix=size,
+            sky_annulus_inner_pix=inner,
+            sky_annulus_outer_pix=outer,
+            min_neighbor_separation_pix=float(size+4),
+        )
+    return PSF0Config(guessed_fwhm_pix=fwhm, **kw)
 
 
 def _leo_p_project(project_root):
