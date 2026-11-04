@@ -15,7 +15,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QPushButton, QScrollArea, QTabWidget, QTableWidget,
+    QComboBox, QHeaderView, QLabel, QPushButton, QScrollArea, QTabWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -124,6 +124,20 @@ class PhotometryWorkspace(QWidget):
         body = QVBoxLayout(central)
         body.setContentsMargins(8, 2, 6, 2)
         body.setSpacing(12)
+        mode_row = QHBoxLayout()
+        mode_caption = QLabel("Workspace view")
+        mode_caption.setObjectName("psf0_workspace_view_caption")
+        mode_row.addWidget(mode_caption)
+        self.view_mode = QComboBox()
+        self.view_mode.setObjectName("psf0_workspace_view_mode")
+        self.view_mode.addItem("Guided · essentials", "guided")
+        self.view_mode.addItem("Research · all controls", "research")
+        self.view_mode.setToolTip(
+            "Changes which controls are visible, never the PSF recipe, "
+            "source FITS, independent holdouts or scientific QA.")
+        mode_row.addWidget(self.view_mode)
+        mode_row.addStretch(1)
+        body.addLayout(mode_row)
 
         source_box = QGroupBox("Observation selection · saved project state")
         source_layout = QVBoxLayout(source_box)
@@ -228,10 +242,15 @@ class PhotometryWorkspace(QWidget):
             panel.tractorRequested.connect(self.psf0TractorRequested.emit)
             self.psf0_panels[native_band] = panel
             index = self.band_tabs.addTab(panel, native_band.upper())
+            panel.overviewChanged.connect(self._update_band_tab_statuses)
             self.band_tabs.setTabToolTip(
                 index, "Independent " + native_band + "-band settings, "
                 "scientific QA and non-adopted preview")
         body.addWidget(self.band_tabs)
+        self.view_mode.currentIndexChanged.connect(
+            self._set_view_mode)
+        self._set_view_mode()
+        self._update_band_tab_statuses()
         # Compatibility alias for older callers; resolves to the first
         # available band on bind, not a second shared scientific panel.
         self.psf0_panel = self.psf0_panels["g"]
@@ -285,6 +304,26 @@ class PhotometryWorkspace(QWidget):
         body.addStretch(1)
         center_scroll.setWidget(central)
         root.addWidget(center_scroll, 1)
+
+    def _set_view_mode(self, *_):
+        research = self.view_mode.currentData() == "research"
+        for panel in self.psf0_panels.values():
+            panel.set_research_mode(research)
+        self.copy_full_qa_btn.setVisible(research)
+        # Complete JSON export remains accessible in Guided mode.
+        self._update_band_tab_statuses()
+
+    def _update_band_tab_statuses(self):
+        for band, panel in self.psf0_panels.items():
+            index = self.band_tabs.indexOf(panel)
+            if index < 0:
+                continue
+            state = panel.overview_state()
+            self.band_tabs.setTabText(
+                index, f"{band.upper()} · {state}")
+            self.band_tabs.setTabToolTip(
+                index, f"{band}-band: {state}. Independent controls, "
+                "science result and source provenance; not adopted.")
 
     def set_psf_busy(self, state):
         for panel in self.psf0_panels.values():
@@ -464,6 +503,7 @@ class PhotometryWorkspace(QWidget):
             self._tab_source_identity = source_key
         self.build_all_psfs_btn.setEnabled(any(
             panel.run_btn.isEnabled() for panel in self.psf0_panels.values()))
+        self._update_band_tab_statuses()
         if self._project_root is None:
             self.title.setText("Photometry")
             self.source_state.setText("Open a galaxy project first.")
