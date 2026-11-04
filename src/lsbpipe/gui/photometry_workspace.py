@@ -305,6 +305,8 @@ class PhotometryWorkspace(QWidget):
     def copy_full_qa(self):
         """Always available for both successful and rejected PSF runs."""
         def native_json(value):
+            if isinstance(value, np.bool_):
+                return bool(value)
             if isinstance(value, np.integer):
                 return int(value)
             if isinstance(value, np.floating):
