@@ -74,13 +74,18 @@ class PSF0Panel(QGroupBox):
         self.catalog_policy.addItem(
             "Gaia DR3 + Tractor PSF + clean-image QA (strict)", "gaia_strict")
         self.catalog_policy.addItem(
+            "Tractor PSF vetted · Gaia-only independent holdout (pilot)",
+            "tractor_psf_validated")
+        self.catalog_policy.addItem(
             "DAO detections only · unverified diagnostic", "dao_diagnostic")
         self.catalog_policy.currentIndexChanged.connect(self._band_changed)
         self.catalog_policy.setToolTip(
-            "Gaia DR3 REF_CAT=G3 and TYPE=PSF plus native-image quality "
-            "checks. Forced/frozen models, duplicates, masks, saturation, "
-            "ambiguous matches and abnormal shapes are rejected. "
-            "Missing Tractor catalogue blocks strict runs.")
+            "Gaia-strict uses only G3/PSF stars for training and validation. "
+            "Tractor-vetted (EXPERIMENTAL) also permits non-Gaia Tractor "
+            "TYPE=PSF stars in TRAINING, never in Gaia-only heldout "
+            "validation. Both require the exact original DR11 brick "
+            "Tractor FITS and enforce image/cutout, isolation, SNR, mask "
+            "and morphology gates. DAO-only is explicitly unverified.")
         catalogue_row.addWidget(self.catalog_policy, 2)
         self.get_tractor_btn = QPushButton("Get DR11 Tractor + Gaia…")
         self.get_tractor_btn.setObjectName("psf0_get_tractor_gaia")
@@ -441,9 +446,10 @@ class PSF0Panel(QGroupBox):
             e["band"] == selected and e["paths_present_unverified"]
             for e in self._snapshot["bands"])
         catalog_ready = (
-            self.catalog_policy.currentData() != "gaia_strict" or
-            bool(self._snapshot.get("gaia_tractor_present_unverified"))
-            if self._snapshot is not None else False)
+            bool(self._snapshot) and (
+                self.catalog_policy.currentData() not in (
+                    "gaia_strict", "tractor_psf_validated")
+                or bool(self._snapshot.get("gaia_tractor_present_unverified"))))
         self.run_btn.setEnabled(eligible and catalog_ready and not self._busy)
         self.save_btn.setEnabled(self._preview is not None and not self._busy
                                  and self._preview["result"].lineage_id is not None)
@@ -662,6 +668,7 @@ class PSF0Panel(QGroupBox):
         omit = {
             "training_residual_screening_history",
             "automatic_training_rejections",
+            "candidate_screening_audit",
         }
         return str({key:value for key,value in catalog.items()
                     if key not in omit})
@@ -755,7 +762,8 @@ class PSF0Panel(QGroupBox):
         self.status.setText(
             "PSF-0 QUALITY REJECTED · no PSF model adopted or saved")
         diagnostic = payload.get("diagnostics", {})
-        sample_underflow = diagnostic.get("stage") == "stellar_sample_underflow"
+        sample_underflow = diagnostic.get("stage") in (
+            "stellar_sample_underflow", "gaia_holdout_underflow")
         if sample_underflow:
             self.kernel_view.setText("No PSF model: insufficient vetted stars")
         catalog_qa = diagnostic.get("catalog_selection_qa", {})
@@ -769,13 +777,18 @@ class PSF0Panel(QGroupBox):
                 "Review the source selection and local backgrounds. "
                 f"Policy: {catalog_qa.get('policy', 'unknown')}.")
         elif sample_underflow:
+            gaia_holdout_short = diagnostic.get("stage") == "gaia_holdout_underflow"
             self.summary.setText(
-                "Star selection rejected: "
-                f"{diagnostic.get('n_accepted_stars', 0)} accepted / "
-                f"{diagnostic.get('minimum_accepted_stars', '?')} required "
-                "(train + independent holdout). "
-                f"Policy: {catalog_qa.get('policy', 'unknown')}. "
-                "No model fitted, no PSF adopted.")
+                ("Gaia-only validation unavailable: "
+                 f"{diagnostic.get('n_gaia_holdout_eligible', 0)} eligible / "
+                 f"{diagnostic.get('min_holdout_stars', '?')} required. "
+                 if gaia_holdout_short else
+                 "Star selection rejected: "
+                 f"{diagnostic.get('n_accepted_stars', 0)} accepted / "
+                 f"{diagnostic.get('minimum_accepted_stars', '?')} required "
+                 "(train + independent holdout). ")
+                + f"Policy: {catalog_qa.get('policy', 'unknown')}. "
+                  "No model fitted, no PSF adopted.")
         else:
             self.summary.setText("Provisional PSF rejected before adoption.")
         rows = [(item, "train") for item in diagnostic.get("training", [])]
@@ -806,6 +819,8 @@ class PSF0Panel(QGroupBox):
                 + str(diagnostic.get("n_accepted_before_width_screen", "?"))
                 + "\nAccepted after all screening: "
                 + str(diagnostic.get("n_accepted_stars", "?"))
+                + "\nGaia-verified stars eligible for holdout: "
+                + str(diagnostic.get("n_gaia_holdout_eligible", "?"))
                 + "\nRequired train / holdout: "
                 + str(diagnostic.get("min_train_stars", "?")) + " / "
                 + str(diagnostic.get("min_holdout_stars", "?"))
@@ -1010,11 +1025,16 @@ class PSF0Panel(QGroupBox):
         self._qa_payload = report
         self.status.setText(
             f"{result.dataset_id} · EXPERIMENTAL_PSF_NOT_ADOPTED")
+        catalog_qa = result.metrics.get("catalog_selection_qa", {})
+        tractor_training = catalog_qa.get("n_train_tractor_only", 0)
         self.summary.setText(
             f"Star selection: {self.catalog_policy.currentText()} · "
             f"Experiment: {self.experiment.currentText()} · "
-            f"Training stars: {len(result.training)} · Independent holdout: "
-            f"{len(result.holdout)} · Detected candidates: {result.detection_count} · "
+            f"Training stars: {len(result.training)} "
+            f"(Tractor-only, not Gaia-confirmed: {tractor_training}) · "
+            f"Independent holdout: {len(result.holdout)} "
+            f"(Gaia confirmed: {catalog_qa.get('n_holdout_gaia_matched', 0)}) · "
+            f"Detected candidates: {result.detection_count} · "
             f"Median heldout core |residual|/peak: "
             f"{result.metrics['holdout_median_abs_core_residual_over_peak']:.3g}. "
             "This is NOT a calibrated science PSF or FWHM.")
