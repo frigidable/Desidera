@@ -101,6 +101,8 @@ class PSF0Panel(QGroupBox):
         catalogue_row.setSpacing(5)
         self.catalog_policy = QComboBox()
         self.catalog_policy.setMaximumWidth(570)
+        self.catalog_policy.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.catalog_policy.setObjectName("psf0_star_catalog_policy")
         self.catalog_policy.addItem(
             "Gaia DR3 + Tractor PSF + clean-image QA (strict)", "gaia_strict")
@@ -157,6 +159,8 @@ class PSF0Panel(QGroupBox):
         form.addRow("Detection FWHM guess", fwhm_row)
         self.experiment = QComboBox()
         self.experiment.setMaximumWidth(570)
+        self.experiment.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.experiment.setObjectName("psf0_diagnostic_experiment")
         self.experiment.setAccessibleName("Controlled PSF reconstruction diagnostic")
         for key, info in PSF0_DIAGNOSTIC_EXPERIMENTS.items():
