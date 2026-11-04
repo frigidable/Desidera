@@ -682,6 +682,9 @@ class SurveyExplorer(QMainWindow):
             self._suggest_project_psf0_fwhm)
         self.photometry_workspace.psf0TractorRequested.connect(
             self._acquire_project_psf0_tractor)
+        from lsbpipe.gui.psf0_batch_controller import launch as launch_psf0_batch
+        self.photometry_workspace.psf0BatchRequested.connect(
+            lambda request: launch_psf0_batch(self, request))
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -802,7 +805,8 @@ class SurveyExplorer(QMainWindow):
             commit_psf0_manual_review,
         )
 
-        panel = self.photometry_workspace.psf0_panel
+        panel = self.photometry_workspace.psf0_panels.get(
+            str(request.get("band")), self.photometry_workspace.psf0_panel)
         if self.thread is not None:
             panel.status.setText("Another workspace task is active. "
                                  "Finish or stop it before starting PSF-0.")
@@ -889,7 +893,8 @@ class SurveyExplorer(QMainWindow):
     def _suggest_project_psf0_fwhm(self, request):
         """Use existing project native WCS and local optional PSFSIZE map."""
         from lsbpipe.photometry.psf_gui_backend import suggest_gui_psf0_fwhm
-        panel = self.photometry_workspace.psf0_panel
+        panel = self.photometry_workspace.psf0_panels.get(
+            str(request.get("band")), self.photometry_workspace.psf0_panel)
         if self.thread is not None:
             panel.status.setText("Workspace task active; finish it before PSFSIZE lookup")
             return
@@ -920,7 +925,11 @@ class SurveyExplorer(QMainWindow):
         """User requested an immutable derivative; recheck original FITS first."""
         from lsbpipe.photometry.psf_gui_backend import save_gui_psf0
 
-        panel = self.photometry_workspace.psf0_panel
+        band = (str(preview.get("review_band")) if preview.get("review_band")
+                else str(preview["result"].dataset_id.rsplit("/", 1)[-1])
+                if preview.get("result") is not None else "")
+        panel = self.photometry_workspace.psf0_panels.get(
+            band, self.photometry_workspace.psf0_panel)
         if self.thread is not None:
             panel.status.setText("Another workspace task is active; save was not started.")
             return
@@ -1783,7 +1792,7 @@ class SurveyExplorer(QMainWindow):
         # and QThread shutdown have both been acknowledged.
         result = self._task_controller.idle()
         if hasattr(self, "photometry_workspace"):
-            self.photometry_workspace.psf0_panel.set_busy(False)
+            self.photometry_workspace.set_psf_busy(False)
         return result
 
     def _progress(self, item):
