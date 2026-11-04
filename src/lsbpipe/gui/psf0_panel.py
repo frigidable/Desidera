@@ -36,7 +36,8 @@ class PSF0Panel(QGroupBox):
     def __init__(self, parent=None, *, fixed_band=None):
         if fixed_band is not None and fixed_band not in ("g", "r", "i", "z"):
             raise ValueError("Unsupported PSF-0 fixed band")
-        super().__init__("04 · Empirical PSF · " + (fixed_band or "Leo P"), parent)
+        super().__init__("PSF reconstruction · " + (fixed_band.upper()
+                         if fixed_band else "Leo P"), parent)
         self.fixed_band = fixed_band
         self._fwhm_manually_edited = False
         self._latest_seeing_payload = None
@@ -60,8 +61,9 @@ class PSF0Panel(QGroupBox):
             "Run only the available band; preview is read-only. "
             "A model is experimental until stellar, wing and spatial QA pass.")
         explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-
+        # A concise summary replaces long methodological prose in the
+        # ordinary workspace; the full text stays available as a tooltip.
+        self.setToolTip(explanation.text())
         form = QFormLayout()
         self.band = QComboBox()
         self.band.setObjectName("psf0_band")
@@ -136,7 +138,6 @@ class PSF0Panel(QGroupBox):
         self.recipe_geometry.setObjectName("psf0_recipe_geometry")
         self.recipe_geometry.setWordWrap(True)
         self.recipe_geometry.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        layout.addWidget(self.recipe_geometry)
         self.experiment.currentIndexChanged.connect(
             self._show_recipe_geometry)
         self.protection = QDoubleSpinBox()
@@ -159,14 +160,32 @@ class PSF0Panel(QGroupBox):
             "not inferred from DESI seeing.")
         self.prior_source.setWordWrap(True)
         self.prior_source.setObjectName("psf0_prior_provenance")
-        layout.addWidget(self.prior_source)
         self.gaia_source = QLabel(
             "No Gaia/Tractor source checked. Strict mode requires the original "
             "catalogue for this DR11 brick; Gaia identity does not prove "
             "an uncontaminated stellar cutout.")
         self.gaia_source.setObjectName("psf0_gaia_catalog_source")
         self.gaia_source.setWordWrap(True)
-        layout.addWidget(self.gaia_source)
+        self.advanced_toggle = QPushButton(
+            "Advanced settings provenance  ▸")
+        self.advanced_toggle.setObjectName("psf0_advanced_toggle")
+        self.advanced_toggle.setCheckable(True)
+        layout.addWidget(self.advanced_toggle)
+        self.advanced_details = QWidget()
+        self.advanced_details.setObjectName("psf0_advanced_details")
+        advanced_layout = QVBoxLayout(self.advanced_details)
+        advanced_layout.setContentsMargins(2, 0, 2, 0)
+        advanced_layout.addWidget(self.recipe_geometry)
+        advanced_layout.addWidget(self.prior_source)
+        advanced_layout.addWidget(self.gaia_source)
+        self.advanced_details.setVisible(False)
+        self.advanced_toggle.toggled.connect(
+            self.advanced_details.setVisible)
+        self.advanced_toggle.toggled.connect(
+            lambda checked: self.advanced_toggle.setText(
+                "Advanced settings provenance  ▾" if checked else
+                "Advanced settings provenance  ▸"))
+        layout.addWidget(self.advanced_details)
 
         actions = QHBoxLayout()
         self.run_btn = QPushButton("Build PSF preview")
@@ -222,8 +241,6 @@ class PSF0Panel(QGroupBox):
             "Historical non-adopted diagnostic trials on the current band. "
             "Different cutout sizes can change the stellar sample; no "
             "scientific best model is selected automatically.")
-        layout.addWidget(self.compare)
-
         details = QHBoxLayout()
         self.kernel_view = QLabel("No empirical PSF image")
         self.kernel_view.setObjectName("psf0_kernel_preview")
@@ -247,7 +264,6 @@ class PSF0Panel(QGroupBox):
         self.stars.setToolTip(
             "Training and held-out PSF stars. Coordinates are native FITS "
             "pixel indices (0-based); fields are not Gaia-confirmed.")
-        details.addWidget(self.stars, 1)
         layout.addLayout(details)
 
         self.qa = QPlainTextEdit()
@@ -257,7 +273,27 @@ class PSF0Panel(QGroupBox):
         self.qa.setMaximumHeight(210)
         self.qa.setPlaceholderText(
             "PSF quality flags and source limitations appear here.")
-        layout.addWidget(self.qa)
+        self.inspection_toggle = QPushButton(
+            "Star selection, comparisons and scientific QA  ▸")
+        self.inspection_toggle.setObjectName("psf0_inspection_toggle")
+        self.inspection_toggle.setCheckable(True)
+        layout.addWidget(self.inspection_toggle)
+        self.inspection_details = QWidget()
+        self.inspection_details.setObjectName("psf0_inspection_details")
+        inspection_layout = QVBoxLayout(self.inspection_details)
+        inspection_layout.setContentsMargins(2, 0, 2, 0)
+        inspection_layout.addWidget(self.compare)
+        inspection_layout.addWidget(self.stars)
+        inspection_layout.addWidget(self.qa)
+        self.inspection_details.setVisible(False)
+        self.inspection_toggle.toggled.connect(
+            self.inspection_details.setVisible)
+        self.inspection_toggle.toggled.connect(
+            lambda checked: self.inspection_toggle.setText(
+                "Star selection, comparisons and scientific QA  ▾"
+                if checked else
+                "Star selection, comparisons and scientific QA  ▸"))
+        layout.addWidget(self.inspection_details)
         # Before a galaxy is bound, no action may appear runnable.
         self._show_recipe_geometry()
         self._update_buttons()
