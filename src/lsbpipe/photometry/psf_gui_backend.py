@@ -33,9 +33,8 @@ LEO_P_CENTER = (155.438012, 18.088025)
 BANDS = ("g", "r", "i", "z")
 KINDS = ("image", "invvar", "nexp", "maskbits")
 
-# Reproducible diagnostic alternatives. Wing-smoothing and iteration
-# modes each change one PSFBuilder parameter; the larger-sky mode must
-# jointly increase cutout, sky-annulus and isolation footprints. Its
+# Three reproducible diagnostic modes. The extended modes jointly change
+# cutout, sky-annulus and isolation footprints. Their
 # stellar sample can therefore differ: do not claim a controlled
 # single-variable causal inference or select a "best PSF" from these QA
 # summaries. Every experiment remains non-adopted.
@@ -54,7 +53,7 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
         },
     },
     "outer_sky_robust": {
-        "label": "Extended + iterative train-star rejection (2 passes)",
+        "label": "Extended + guarded iterative training QA (2 passes)",
         "kwargs": {
             "cutout_size_pix": 51,
             "sky_annulus_inner_pix": 19.,
@@ -63,14 +62,7 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
             "training_outlier_passes": 2,
         },
     },
-    "wing_smoothing_off": {
-        "label": "Disable final wing smoothing · 31 px",
-        "kwargs": {"wing_smoothing": False},
-    },
-    "longer_convergence": {
-        "label": "Extended convergence · 16 iterations",
-        "kwargs": {"max_iterations": 16},
-    },
+
 }
 
 
