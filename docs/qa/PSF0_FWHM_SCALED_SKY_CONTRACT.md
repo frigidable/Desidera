@@ -31,3 +31,67 @@ If an adequate annulus would require a cutout larger than the PSF-0 safety limit
 7. Future science QA: injection–recovery under a simulated smooth wing, blend, bright/saturated star and sky-gradient grid; multi-annulus background sensitivity; stratified heldout star comparisons (magnitude, colour, position), photutils subpixel-phase diagnostics, and covariance-aware goodness of fit. None are completed here.
 
 **Scientific status:** `EXPERIMENTAL_NOT_ADOPTED` / `DIAGNOSTIC_NOT_ADOPTED`. Input source files have not been modified.
+
+
+## Leo P griz evidence (2026-11-04) and two scientifically distinct catalog policies
+
+The real DR11 south brick `1554p180` four-band QA was inspected on the local
+native FITS, with independently verified Tractor source SHA-256 and per-band
+PSFSIZE priors. Under the FWHM-scaled `outer_sky` recipe:
+
+| Band | Prior FWHM (native px) | Strict Gaia/Tractor train+holdout | Signed negative mass | ePSFBuilder converged |
+|---|---:|---:|---:|---|
+| g | 6.57 | selection underflow: 10 accepted, minimum 13 | not fitted | not fitted |
+| r | 4.88 | 16+4 | 1.235% | yes |
+| i | 5.12 | 10+3 | 2.133% | **no** (8 iterations) |
+| z | 3.99 | 39+10 | 1.430% | yes |
+
+This is observational diagnostic evidence, not a calibrated model adoption.
+The g run examined 969 DAO candidates, of which 692 were first rejected by
+`NOT_GAIA_DR3`; this category includes **unverified sources of all types**,
+not automatically usable stars. Other leading g reasons were 109 strict
+Tractor neighbours and 109 missing centroid crossmatches. The i model is
+not converged even though its final fitted-star centroid convergence
+fraction is 100%: the Photutils build stopped at the configured maximum,
+so the complete convergence status must be used. The negative-mass figures
+are measured on **signed pre-clipping kernels**, not photometric flux losses.
+
+Two noninterchangeable candidate-training policies are now provided:
+
+- `gaia_strict` (unchanged): original native DR11 Tractor `TYPE=PSF`
+  and `REF_CAT=G3`, valid Gaia ID, masks, fitted flux, isolation, shape
+  and local sky. Both training and holdout stars have Gaia-confirmed IDs.
+- `tractor_psf_validated` (new **EXPERIMENTAL TRAINING POLICY**): same
+  original DR11 Tractor brick and the same conservative source/cutout
+  gates, but `TYPE=PSF` stars lacking Gaia IDs are eligible **only for
+  training**. Gaia-confirmed stars are independently reserved for the
+  holdout **before** building or iteratively screening the training PSF.
+  It fails closed if there are fewer than the required Gaia holdouts,
+  even if many non-Gaia Tractor stars are available.
+
+Neither `TYPE=PSF` nor a fitted-flux S/N from a coadd is an independent
+spectroscopic or high-resolution proof of stellar morphology. Gaia
+holdouts are independent of the *ePSF fitting and train-only trimming*, but
+the initial candidate preselection (e.g. masks, core moment width) still
+uses their cutout pixels. Consequently, Gaia-only holdout residuals are
+not an unbiased validation of the preselection classifier. Different
+training policies may yield different PSF star samples. Compare
+source-ID overlap and report brightness, position, and noise dependence
+before attributing residual changes to any individual gate.
+
+A per-candidate `candidate_screening_audit` in the full griz QA JSON now
+records each inspected DAO detection's position, peak, nearest DAO
+neighbour, catalog-match evidence (including ref-cat, optional Gaia ID,
+Tractor type, fitted flux/S/N, mask/fit bits and nearest catalog neighbour),
+first refusal reason, passed gates, local-sky QA and shape QA where they
+were actually reached, and its pre-model train/holdout role. **Missing
+metrics mean that the earlier failure prevented that test**; they are
+not imputed. The audit reports `n_screened_candidates` and
+`n_unexamined_candidates`, so DAO-only diagnostic caps cannot be
+mistaken for complete census. No full native pixel arrays are exported.
+
+The training-only policy is a research control, not a recommendation to
+replace Gaia-strict as the default, and it cannot be science-adopted.
+The native FITS/Tractor sources remain read-only. Further acceptance
+requires explicit per-band injection/recovery, sky-wing and spatial
+PSF validation and covariance-aware heldout residual assessment.
