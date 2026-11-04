@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
     QComboBox, QHeaderView, QLabel, QPushButton, QScrollArea, QTabWidget, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from lsbpipe.photometry.readiness import inspect_photometry_inputs
@@ -92,7 +92,8 @@ class PhotometryWorkspace(QWidget):
         self.workflow_toggle = QPushButton("Scientific roadmap (8 stages)  ▸")
         self.workflow_toggle.setObjectName("photometry_workflow_toggle")
         self.workflow_toggle.setCheckable(True)
-        root.addWidget(self.workflow_toggle)
+        self.workflow_toggle.setMaximumWidth(325)
+        root.addWidget(self.workflow_toggle, 0, Qt.AlignLeft)
         self.workflow_details = QGroupBox("Scientific workflow · planned modules")
         self.workflow_details.setObjectName("photometry_workflow_details")
         workflow_layout = QVBoxLayout(self.workflow_details)
@@ -109,20 +110,27 @@ class PhotometryWorkspace(QWidget):
             "Only PSF-0 preview is currently implemented. Later stages "
             "remain plans, not executable actions."))
         self.workflow_details.setVisible(False)
+        self.workflow_details.setMaximumWidth(980)
         self.workflow_toggle.toggled.connect(
             self.workflow_details.setVisible)
         self.workflow_toggle.toggled.connect(
             lambda checked: self.workflow_toggle.setText(
                 "Scientific roadmap (8 stages)  ▾" if checked else
                 "Scientific roadmap (8 stages)  ▸"))
-        root.addWidget(self.workflow_details)
+        root.addWidget(self.workflow_details, 0, Qt.AlignLeft)
 
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
         center_scroll.setWidgetResizable(True)
+        center_scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         central = QWidget()
+        central.setObjectName("photometry_narrow_science_column")
+        # A bounded work column is readable on 1600–2560 px displays and
+        # naturally contracts beside the persistent project sidebar.
+        central.setMaximumWidth(980)
+        central.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         body = QVBoxLayout(central)
-        body.setContentsMargins(8, 2, 6, 2)
+        body.setContentsMargins(8, 2, 8, 2)
         body.setSpacing(12)
         mode_row = QHBoxLayout()
         mode_caption = QLabel("Workspace view")
@@ -174,13 +182,14 @@ class PhotometryWorkspace(QWidget):
         self.source_details_toggle.setObjectName(
             "photometry_source_details_toggle")
         self.source_details_toggle.setCheckable(True)
+        self.source_details_toggle.setMaximumWidth(390)
         self.source_details_toggle.toggled.connect(source_box.setVisible)
         self.source_details_toggle.toggled.connect(
             lambda checked: self.source_details_toggle.setText(
                 "Observation and original FITS details  ▾" if checked else
                 "Observation and original FITS details  ▸"))
         source_box.setVisible(False)
-        body.addWidget(self.source_details_toggle)
+        body.addWidget(self.source_details_toggle, 0, Qt.AlignLeft)
         body.addWidget(source_box)
 
         # Four scientific objects persist, but only one filter is visible
@@ -233,6 +242,8 @@ class PhotometryWorkspace(QWidget):
         self.band_tabs = QTabWidget(central)
         self.band_tabs.setObjectName("psf0_single_band_tabs")
         self.band_tabs.setDocumentMode(True)
+        self.band_tabs.setSizePolicy(
+            QSizePolicy.Preferred, QSizePolicy.Maximum)
         for native_band in ("g", "r", "i", "z"):
             panel = PSF0Panel(self.band_tabs, fixed_band=native_band)
             panel.setObjectName("psf0_panel_" + native_band)
@@ -284,13 +295,14 @@ class PhotometryWorkspace(QWidget):
         self.method_details_toggle.setObjectName(
             "photometry_methodology_toggle")
         self.method_details_toggle.setCheckable(True)
+        self.method_details_toggle.setMaximumWidth(390)
         self.method_details_toggle.toggled.connect(method_box.setVisible)
         self.method_details_toggle.toggled.connect(
             lambda checked: self.method_details_toggle.setText(
                 "Scientific methodology and planned steps  ▾" if checked else
                 "Scientific methodology and planned steps  ▸"))
         method_box.setVisible(False)
-        body.addWidget(self.method_details_toggle)
+        body.addWidget(self.method_details_toggle, 0, Qt.AlignLeft)
         body.addWidget(method_box)
 
         self.blocker = QLabel(
@@ -301,7 +313,6 @@ class PhotometryWorkspace(QWidget):
         self.blocker.setWordWrap(True)
         self.blocker.setVisible(False)
         body.addWidget(self.blocker)
-        body.addStretch(1)
         center_scroll.setWidget(central)
         root.addWidget(center_scroll, 1)
 
