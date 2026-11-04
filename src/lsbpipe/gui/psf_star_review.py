@@ -280,6 +280,25 @@ class PSFStarReviewDialog(QDialog):
                     " · fitted plane is NOT a joint PSF/sky estimate")
                 metrics.setWordWrap(True)
                 box.addWidget(metrics)
+                # These *per-star* statistics are more informative than
+                # repeating the same recipe-level wing warning 40 times.
+                radial = sky.get("inner_minus_outer_residual_median_over_noise")
+                sector = sky.get("octant_median_spread_over_noise")
+                retained = sky.get("annulus_sigma_clip_retained_fraction")
+                qa = QLabel(
+                    "Sky annulus checks · "
+                    + (f"inner−outer median/RMS {radial:+.2f}" if
+                       radial is not None else "radial trend unavailable")
+                    + " · "
+                    + (f"octant spread/RMS {sector:.2f}" if
+                       sector is not None else "octant spread unavailable")
+                    + " · "
+                    + (f"clipped annulus retained {100*retained:.1f}%" if
+                       retained is not None else "retained fraction unknown")
+                    + " · uncalibrated")
+                qa.setObjectName("psf0_sky_stats_"+sid)
+                qa.setWordWrap(True)
+                box.addWidget(qa)
             grid.addWidget(card, index // 2, index % 2)
         if included < 1:
             raise ValueError("No original training stars available for review")
