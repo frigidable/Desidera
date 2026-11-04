@@ -99,7 +99,22 @@ def summarize_signed_holdouts(reports: list[dict]) -> dict:
         "intermediate_1x_to_2x_guessed_fwhm",
         "outer_r_gt_2x_guessed_fwhm",
     )
-    result = {"n_usable_holdout_stars":len(reports), "regions": {}}
+    # Repeated reports from one physical star are not independent trials.
+    # This is an integrity guard, not a certification of distinct source IDs
+    # as astrophysically independent stars or survey exposures.
+    seen_ids: set[str] = set()
+    for row in reports:
+        if not isinstance(row, dict):
+            raise TypeError("Each signed holdout report must be a mapping")
+        source_id = row.get("source_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise ValueError("Each holdout report requires a nonempty source_id")
+        source_id = source_id.strip()
+        if source_id in seen_ids:
+            raise ValueError(
+                f"Duplicate holdout source_id cannot count as an independent star: {source_id}")
+        seen_ids.add(source_id)
+    result = {"n_usable_holdout_stars": len(seen_ids), "regions": {}}
     for name in names:
         signed = []
         absolute = []
