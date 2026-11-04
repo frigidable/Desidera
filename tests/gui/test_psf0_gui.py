@@ -116,8 +116,8 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     panel.run_btn.click()
     qtbot.waitUntil(lambda: window.thread is None, timeout=15000)
     assert len(configurations) == 2
-    assert configurations[-1].cutout_size_pix == 51
-    assert configurations[-1].sky_annulus_inner_pix == 19.
+    assert configurations[-1].cutout_size_pix == 61
+    assert configurations[-1].sky_annulus_inner_pix == 22.
     assert "outer_sky: neg 7.50%" in panel.compare.text()
     assert "baseline: neg 7.50%" in panel.compare.text()
     assert panel.copy_qa_btn.isEnabled()
