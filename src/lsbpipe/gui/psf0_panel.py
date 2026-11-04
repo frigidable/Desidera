@@ -100,9 +100,11 @@ class PSF0Panel(QGroupBox):
         self.auto_fwhm_btn = QPushButton("From DESI PSFSIZE…")
         self.auto_fwhm_btn.setObjectName("psf0_auto_fwhm")
         self.auto_fwhm_btn.setToolTip(
-            "Read an OPTIONAL local DR11 native PSFSIZE map at Leo P; "
-            "validate original WCS, and propose a per-band seeing guess. "
-            "Never downloads files or adopts a measured PSF.")
+            "Check the exact native DR11 coadd PSFSIZE map first. If missing "
+            "or invalid, try a separately identified nearby sample of "
+            "PSFSIZE values in the already-downloaded original DR11 Tractor "
+            "catalogue. Every source and any map rejection is shown. "
+            "Never downloads or adopts a scientific PSF.")
         self.auto_fwhm_btn.clicked.connect(self._request_auto_fwhm)
         fwhm_row.addWidget(self.auto_fwhm_btn, 1)
         form.addRow("Detection FWHM guess", fwhm_row)
@@ -446,23 +448,42 @@ class PSF0Panel(QGroupBox):
             return
         seeing = payload["seeing"]
         if seeing.get("available") is not True:
-            self.status.setText(
-                seeing.get("message", "No matching local PSFSIZE map available"))
+            message = seeing.get(
+                "message", "Neither exact coadd map nor nearby Tractor "
+                "PSFSIZE values can be verified")
+            self.status.setText(message)
             self.prior_source.setText(
-                "FWHM remains explicit manual heuristic · "
-                "no native PSFSIZE map was supplied. Target protection is "
-                "the saved project radius with 90″ floor.")
+                "PSFSIZE lookup unsuccessful — " + message +
+                " FWHM unchanged. Verify project native-image path and the "
+                "matching original map/Tractor FITS; no silent default.")
             return
         pix = float(seeing["suggested_detection_fwhm_pix"])
+        source_id = seeing.get("source", "UNKNOWN")
+        via_tractor = source_id == (
+            "LOCAL_DR11_TRACTOR_NEARBY_PSF_SIZE_NOT_PIXEL_MAP")
+        source_name = (
+            "nearby DR11 Tractor PSFSIZE band-column median"
+            if via_tractor else "original local coadd PSFSIZE pixel map")
         self.fwhm.setValue(round(pix, 2))
+        resolved = self.fwhm.value()
+        caveat = (
+            " Catalog positions approximate the local PSF prior; not "
+            "a per-pixel seeing measurement at Leo P."
+            if via_tractor else "")
+        map_note = seeing.get("native_map_status")
         self.prior_source.setText(
-            f"FWHM suggestion: {seeing['psfsize_arcsec']:.3f}″ from local "
-            f"Legacy PSFSIZE map / {seeing['image_pixel_scale_arcsec']:.4f} "
-            f"arcsec/pix = {pix:.2f} pix. NOT fitted or adopted PSF. "
-            "Protect radius unchanged; it requires a galaxy footprint.")
+            f"FWHM suggested from {source_name}: "
+            f"{seeing['psfsize_arcsec']:.3f}″ / "
+            f"{seeing['image_pixel_scale_arcsec']:.4f} arcsec/pix "
+            f"= {pix:.3f} px (GUI {resolved:.2f} px). "
+            f"Evidence: {seeing.get('sample', 'source sample unknown')}; "
+            f"file {seeing.get('path', 'unknown')}. "
+            + (f"Original map status: {map_note}. " if map_note else "")
+            + caveat
+            + " Not an empirical ePSF; target protection unchanged.")
         self.status.setText(
-            "Local DESI PSFSIZE prior applied to the initial detection "
-            "width. Review before Build PSF preview.")
+            f"Applied DESI {source_name} to the initial detection FWHM "
+            f"guess: {resolved:.2f} px. Review and rebuild PSF.")
 
     def _open_star_review(self):
         if self._busy or self._star_review_data is None:
