@@ -197,3 +197,47 @@ def test_explicit_manual_psf_star_exclusions_persist_without_modifying_fits(
         changed.write(b"external source modification")
     with pytest.raises(ValueError, match="Original FITS changed"):
         commit_psf0_manual_review(reviewed, explicitly_confirmed=True)
+
+
+
+def test_gui_r_band_lineage_survives_project_default_band_switch(
+        tmp_path, monkeypatch):
+    """End-to-end native synthetic FITS: analyzed r != saved default g/i."""
+    from lsbpipe.photometry.psf_gui_backend import (
+        run_gui_psf0, save_gui_psf0, commit_psf0_manual_review)
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path/"session"))
+    project = _project(tmp_path)
+    paths = _synthetic_legacy_files(project)
+    originals = {kind: p.read_bytes() for kind, p in paths.items()}
+    project.selected_dataset = ("dr11", "south", "1554p180", "g")
+    save_object_project(project)
+    preview = run_gui_psf0(
+        project.root, band="r",
+        config=PSF0Config(
+            max_training_stars=30, min_train_stars=6, min_holdout_stars=2),
+        protection_arcsec=12.)
+    assert preview["status"] == "EXPERIMENTAL_PSF_NOT_ADOPTED"
+    assert preview["dataset"] == ("dr11", "south", "1554p180", "r")
+    assert preview["result"].dataset_id.endswith("/r")
+
+    # Another default filter is just project navigation, not a change to
+    # the original r FITS. Both immutable user-initiated derivatives remain
+    # tied to the actual native r science source.
+    project.selected_dataset = ("dr11", "south", "1554p180", "i")
+    save_object_project(project)
+    receipt = Path(commit_psf0_manual_review(
+        preview, explicitly_confirmed=True))
+    assert receipt.is_file()
+    output = Path(save_gui_psf0(preview))
+    assert (output/"empirical_psf.fits").is_file()
+    with fits.open(output/"empirical_psf.fits") as hdul:
+        assert hdul[0].header["BAND"] == "r"
+        assert hdul[0].header["PSFVALID"] is False
+    assert all(paths[k].read_bytes() == original
+               for k, original in originals.items())
+
+    project.selected_dataset = ("dr11", "south", "1555p180", "r")
+    save_object_project(project)
+    with pytest.raises(ValueError, match="selected dataset changed"):
+        save_gui_psf0(preview)
