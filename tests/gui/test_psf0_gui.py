@@ -429,7 +429,7 @@ def test_photometry_preserves_sidebar_and_original_survey_navigation(
     assert window.photometry_workspace.title.isVisible()
     assert window.photometry_workspace.band_tabs.isVisible()
     assert window.photometry_workspace.findChild(
-        QWidget, "photometry_narrow_science_column").maximumWidth() == 980
+        QWidget, "photometry_narrow_science_column").maximumWidth() == 1400
     window.photometry_workspace.back_btn.click()
     assert window.preview_tabs.currentWidget() is not window.photometry_workspace
     assert window.navigation_scroll.isVisible()
@@ -438,9 +438,9 @@ def test_photometry_preserves_sidebar_and_original_survey_navigation(
     assert project.field.ra_deg == pytest.approx(155.438012)
 
 
-def test_photometry_uses_bounded_vertical_layout_and_fixed_psf_footprint(
+def test_photometry_fills_normal_desktop_and_hides_empty_psf_footprint(
         qtbot):
-    """Wide monitors must not stretch controls or empty PSF previews."""
+    """Preserve readable controls without wasting desktop width or height."""
     from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 
     w = PhotometryWorkspace()
@@ -450,15 +450,18 @@ def test_photometry_uses_bounded_vertical_layout_and_fixed_psf_footprint(
     QApplication.processEvents()
     column = w.findChild(QWidget, "photometry_narrow_science_column")
     assert column is not None
-    assert column.maximumWidth() == 980
-    assert column.width() <= 980
-    assert column.width() >= 650
+    assert column.maximumWidth() == 1400
+    assert column.width() <= 1400
+    assert column.width() >= 1300
     assert w.workflow_toggle.maximumWidth() == 325
     assert w.source_details_toggle.maximumWidth() == 390
-    assert w.band_tabs.maximumWidth() >= 980
+    assert w.band_tabs.maximumWidth() >= 1400
     for band, panel in w.psf0_panels.items():
         assert panel.kernel_view.size().width() == 240
         assert panel.kernel_view.size().height() == 240
+        assert not panel.kernel_view.isVisible()
+        assert panel._result_column.objectName() == "psf0_result_column"
+        assert panel._controls_column.objectName() == "psf0_controls_column"
         assert panel.catalog_policy.maximumWidth() == 570
         assert panel.experiment.maximumWidth() == 570
         assert panel.fwhm.maximumWidth() == 160
@@ -472,5 +475,14 @@ def test_photometry_uses_bounded_vertical_layout_and_fixed_psf_footprint(
     assert scroll.horizontalScrollBar().maximum() == 0
     w.resize(1050, 800)
     qtbot.wait(50)
-    assert column.width() <= 980
+    assert column.width() <= 1050
     assert scroll.horizontalScrollBar().maximum() == 0
+    from PySide6.QtWidgets import QBoxLayout
+    assert w.psf0_panels["g"]._work_columns.direction() in (
+        QBoxLayout.LeftToRight, QBoxLayout.TopToBottom)
+    w.resize(760, 750)
+    qtbot.wait(50)
+    assert column.width() <= 760
+    assert scroll.horizontalScrollBar().maximum() == 0
+    assert w.psf0_panels["g"]._work_columns.direction() == (
+        QBoxLayout.TopToBottom)
