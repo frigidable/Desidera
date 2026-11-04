@@ -266,24 +266,51 @@ def test_batch_refuses_stale_reviewed_star_ids_after_psfsize_shift(
     window.close()
 
 
-def test_saved_dataset_change_invalidates_all_psf_bands_and_seeing(
+def test_saved_default_band_change_preserves_all_psf_bands_and_seeing(
         qtbot, tmp_path, monkeypatch):
-    """Same project folder but changed source selection cannot retain PSF."""
+    """The saved default g/r navigation band is NOT a different data source."""
+    window, project = _setup(qtbot, tmp_path, monkeypatch)
+    workspace = window.photometry_workspace
+    g, r = (workspace.psf0_panels[b] for b in ("g", "r"))
+    g.fwhm.setValue(6.57)
+    g.show_quality_rejection(_rejected(project.root, "g"))
+    r.show_quality_rejection(_rejected(project.root, "r"))
+    previous_g_qa = g.qa.toPlainText()
+    previous_r_qa = r.qa.toPlainText()
+    assert g._fwhm_manually_edited
+    project.selected_dataset = ("dr11", "south", "1554p180", "r")
+    save_object_project(project)
+    workspace.bind_project(project)
+    assert g._qa_payload is not None
+    assert r._qa_payload is not None
+    assert g.qa.toPlainText() == previous_g_qa
+    assert r.qa.toPlainText() == previous_r_qa
+    assert g.fwhm.value() == pytest.approx(6.57)
+    assert g._fwhm_manually_edited
+    assert "1554p180 / r" in workspace.source_identity.text()
+    assert workspace.psf0_panels["r"].band.currentData() == "r"
+    window._returning_to_hub = True
+    window.close()
+
+
+def test_saved_brick_change_invalidates_all_psf_bands_and_seeing(
+        qtbot, tmp_path, monkeypatch):
+    """Same galaxy folder but a different brick must discard stale evidence."""
     window, project = _setup(qtbot, tmp_path, monkeypatch)
     workspace = window.photometry_workspace
     g = workspace.psf0_panels["g"]
     g.fwhm.setValue(6.57)
-    g.show_quality_rejection(_rejected(project.root,"g"))
+    g.show_quality_rejection(_rejected(project.root, "g"))
+    workspace.psf0_panels["r"].show_quality_rejection(_rejected(project.root, "r"))
     assert g._qa_payload is not None
     assert g._fwhm_manually_edited
-    project.selected_dataset = ("dr11","south","1554p180","r")
+    project.selected_dataset = ("dr11", "south", "1555p180", "r")
     save_object_project(project)
     workspace.bind_project(project)
-    assert g._qa_payload is None
-    assert g._preview is None
+    assert all(p._qa_payload is None and p._preview is None
+               for p in workspace.psf0_panels.values())
     assert g.fwhm.value() == pytest.approx(4.8)
     assert not g._fwhm_manually_edited
     assert "No empirical PSF" in g.kernel_view.text()
-    assert workspace.psf0_panels["r"].band.currentData() == "r"
-    window._returning_to_hub=True
+    window._returning_to_hub = True
     window.close()

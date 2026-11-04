@@ -121,3 +121,19 @@ def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
             "lsbpipe.photometry.psf_gui_backend",
             fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
         ).PSF0_DIAGNOSTIC_EXPERIMENTS)
+
+
+def test_psf_source_key_uses_observing_brick_not_saved_default_band():
+    from lsbpipe.photometry.psf_gui_backend import _same_observation_source
+    source = ("dr11", "south", "1554p180", "g")
+    # An r-band PSF can be analyzed while the project default is g.
+    assert _same_observation_source(source, ("dr11","south","1554p180","r"))
+    assert _same_observation_source(source, source)
+    for other in (
+        ("dr9","south","1554p180","g"),
+        ("dr11","north","1554p180","g"),
+        ("dr11","south","1555p180","g"),
+        ("dr11","south","1554p180"),
+        None,
+    ):
+        assert not _same_observation_source(source, other)

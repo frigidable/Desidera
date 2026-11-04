@@ -394,7 +394,7 @@ class PhotometryWorkspace(QWidget):
             raise ValueError("Photometry workspace project identity mismatch")
         identity = (
             str(saved.data_root) if saved.data_root is not None else None,
-            tuple(saved.selected_dataset) if saved.selected_dataset else None)
+            tuple(saved.selected_dataset[:3]) if saved.selected_dataset else None)
         same_project = (
             self._project_root is not None
             and Path(saved.root) == self._project_root
@@ -403,8 +403,9 @@ class PhotometryWorkspace(QWidget):
         self._project_root = Path(saved.root)
         self._bound_project_id = saved.project_id
         self._bound_source_identity = identity
-        # A new UUID, selected observation or data root invalidates PSFs.
-        # Reopening the SAME immutable galaxy source keeps all four views.
+        # A new UUID, release/region/brick or data root invalidates PSFs.
+        # Changing only the saved default band does NOT change the four
+        # native per-band input datasets, so existing PSF evidence survives.
         self.refresh(force=not same_project)
 
     def refresh(self, *, force=False):

@@ -33,6 +33,20 @@ LEO_P_CENTER = (155.438012, 18.088025)
 BANDS = ("g", "r", "i", "z")
 KINDS = ("image", "invvar", "nexp", "maskbits")
 
+def _same_observation_source(current, recorded) -> bool:
+    """Saved default band is navigation state, not PSF source identity.
+
+    A PSF is bound to its own band through dataset_id/review_band, while
+    the observation source for all four panels is release/region/brick.
+    Invalid or partial identities always fail closed.
+    """
+    if not isinstance(current, (tuple, list)) or not isinstance(recorded, (tuple, list)):
+        return False
+    if len(current) != 4 or len(recorded) != 4:
+        return False
+    return tuple(current[:3]) == tuple(recorded[:3])
+
+
 # Three reproducible diagnostic modes. The extended modes jointly change
 # cutout, sky-annulus and isolation footprints. Their
 # stellar sample can therefore differ: do not claim a controlled
@@ -256,7 +270,7 @@ def run_gui_psf0(
             "source_hashes": dict(frame.source_evidence.get("local_hashes", {})),
             "project_id": snapshot["project_id"],
             "project_root": snapshot["project_root"],
-            "dataset": snapshot["dataset"],
+            "dataset": (release, region, brick, band),
         }
     _progress(progress, f"Completed provisional {band} PSF · not science-adopted")
     return {
@@ -271,7 +285,7 @@ def run_gui_psf0(
         "source_hashes": dict(result.source_hashes),
         "project_id": snapshot["project_id"],
         "project_root": snapshot["project_root"],
-        "dataset": snapshot["dataset"],
+        "dataset": (release, region, brick, band),
     }
 
 
@@ -354,7 +368,7 @@ def commit_psf0_manual_review(preview, *, explicitly_confirmed=False):
         raise ValueError("Manual review requires a real completed star inventory")
     project = _leo_p_project(preview["project_root"])
     if (project.project_id != preview["project_id"] or
-            tuple(project.selected_dataset) != tuple(preview["dataset"])):
+            not _same_observation_source(project.selected_dataset, preview.get("dataset"))):
         raise ValueError("Saved project identity changed during star review")
     source_hashes = preview.get("source_hashes", {})
     if set(source_hashes) != set(KINDS):
@@ -449,7 +463,7 @@ def save_gui_psf0(preview: dict, progress: Callable | None = None) -> str:
         raise ValueError("Verified source hashes required before diagnostic save")
     project = _leo_p_project(preview["project_root"])
     if (project.project_id != preview["project_id"]
-            or tuple(project.selected_dataset) != tuple(preview["dataset"])):
+            or not _same_observation_source(project.selected_dataset, preview.get("dataset"))):
         raise ValueError("Galaxy project or selected dataset changed; rerun the diagnostic")
     release, region, brick, _ = project.selected_dataset
     if result.dataset_id != f"{release}/{region}/{brick}/{result.dataset_id.split('/')[-1]}":
