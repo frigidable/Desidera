@@ -56,6 +56,7 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
         return {
             "project_root": root, "project_id": project.project_id,
             "dataset": project.selected_dataset,
+            "review_band": band,
             "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
             "reason": "Strong negative EPSF ringing: 7.50% exceeds 2.50%",
             "diagnostics": {
