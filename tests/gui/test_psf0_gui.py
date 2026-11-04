@@ -268,3 +268,40 @@ def test_gui_stellar_sample_underflow_shows_counts_without_signed_psf(
         "n_accepted_stars"] == 10
     assert all(path.read_bytes() == b"placeholder for GUI metadata; no FITS read"
                for path in paths.values())
+
+
+def test_tractor_vetted_gui_mode_requires_exact_native_catalogue(qtbot, tmp_path, monkeypatch):
+    """Pilot policy cannot silently fall back to DAO without its Tractor file."""
+    from lsbpipe.photometry.psf_tractor_gaia import tractor_catalog_location
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = create_object_project(
+        "Leo P", tmp_path / "Leo_P",
+        field=SkyField(155.438012, 18.088025, 5.))
+    project.data_root = tmp_path / "Leo_P" / "originals"
+    project.data_root.mkdir()
+    project.selected_dataset = ("dr11", "south", "1554p180", "r")
+    save_object_project(project)
+    paths = _expected_paths(project.data_root, project.selected_dataset)
+    for p in paths.values():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"offline test source path only")
+    panel = PSF0Panel(fixed_band="r")
+    qtbot.addWidget(panel)
+    panel.bind_project(project.root)
+    idx = panel.catalog_policy.findData("tractor_psf_validated")
+    assert idx >= 0
+    panel.catalog_policy.setCurrentIndex(idx)
+    assert not panel.run_btn.isEnabled()
+    tractor_path, _ = tractor_catalog_location(
+        project.data_root, release="dr11", region="south", brick="1554p180")
+    tractor_path.parent.mkdir(parents=True, exist_ok=True)
+    tractor_path.write_bytes(b"original exact-brick presence not verified")
+    panel.refresh_sources()
+    panel.catalog_policy.setCurrentIndex(
+        panel.catalog_policy.findData("tractor_psf_validated"))
+    assert panel.run_btn.isEnabled()
+    request = panel.make_run_request()
+    assert request["star_catalog_policy"] == "tractor_psf_validated"
+    assert request["band"] == "r"
+    assert panel.active_preview is None
