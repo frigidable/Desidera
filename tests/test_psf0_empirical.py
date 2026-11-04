@@ -435,3 +435,34 @@ def test_brightness_rank_guard_preserves_original_training_and_holdout(
         s.star_id for s in initial.training}
     assert np.allclose(guarded.kernel,initial.kernel,atol=1e-12)
     assert "AUTO_TRAINING_TRIM_BLOCKED_BY_SCORE_FLUX_COUPLING" in guarded.flags
+
+
+def test_one_masked_subpixel_near_core_fails_even_if_cutout_mask_fraction_small():
+    # Real Leo P mosaic star-0003 had two invalid core pixels
+    # but only a tiny masked fraction across its 51x51 cutout.
+    from lsbpipe.photometry.psf_empirical import _star_cutout
+    baseline = fake_frame()
+    ivar = np.array(baseline.invvar_nMgy2, copy=True)
+    # Nearest whole central pixel is (78, 78). A hole offset by 2
+    # pixels lies IN the PSF fitting core but NOT at the center pixel.
+    ivar[78, 80] = 0.
+    frame = NativeBandFrame(
+        image_nMgy=baseline.image_nMgy,
+        invvar_nMgy2=ivar,
+        nexp=baseline.nexp,
+        maskbits=baseline.maskbits,
+        native_wcs=baseline.wcs,
+        release=baseline.release,region=baseline.region,
+        brick=baseline.brick,band=baseline.band,
+        source_evidence={"synthetic":True},
+    )
+    cfg=PSF0Config(
+        cutout_size_pix=51,
+        sky_annulus_inner_pix=19.,sky_annulus_outer_pix=24.,
+        min_neighbor_separation_pix=55.)
+    cutout,reason=_star_cutout(
+        frame,78.,78.,cfg,np.zeros(frame.shape,dtype=bool))
+    assert cutout is None
+    assert reason == "MASKED_STELLAR_PSF_CORE_PIXELS"
+    assert (1./51**2) < cfg.max_invalid_fraction
+    assert ivar[78,78] > 0
