@@ -2166,14 +2166,15 @@ class SurveyExplorer(QMainWindow):
         self._refresh_workflow()
 
     def _preview_tab_changed(self, tab):
-        # Photometry owns its own project navigation, source link and
-        # band tabs. The survey RA/Dec/search sidebar is irrelevant here
-        # and used to consume 275–425 px. Restore it without resetting
-        # values as soon as another workspace is selected.
+        # The project/coordinates sidebar remains a stable navigation
+        # anchor even inside Photometry. Removing it forced the scientific
+        # controls to stretch across the whole screen and hid the user's
+        # familiar path back to the dataset browser. Preserve the original
+        # sidebar and tabs, but suppress the redundant remote-sky heading.
         photometry_active = (
             self.preview_tabs.currentWidget() is self.photometry_workspace)
-        self.navigation_scroll.setVisible(not photometry_active)
-        self.preview_tabs.tabBar().setVisible(not photometry_active)
+        self.navigation_scroll.show()
+        self.preview_tabs.tabBar().show()
         self.preview_label.setVisible(not photometry_active)
         if tab != 0:
             # Survey downloads and Science QA live in a separate inspector.
