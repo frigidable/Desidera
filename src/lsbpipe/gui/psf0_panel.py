@@ -312,8 +312,10 @@ class PSF0Panel(QGroupBox):
         """Presentation only: never rewrite a recipe or discard a preview."""
         self._research_mode = bool(enabled)
         self._control_form.setRowVisible(self.protection, self._research_mode)
+        # Standalone panels still require a visible band selector;
+        # fixed-band workspace panels use the shared g/r/i/z tab strip.
         self._control_form.setRowVisible(
-            self.band, self.fixed_band is None and self._research_mode)
+            self.band, self.fixed_band is None)
         for action in (self.review_btn, self.save_btn, self.copy_qa_btn,
                        self.advanced_toggle):
             action.setVisible(self._research_mode)
