@@ -414,6 +414,94 @@ def _holdout_diagnostic(star, cutout, kernel):
     }
 
 
+def _identity_population_qa(entries):
+    """Descriptive brightness/shape comparison; NEVER alters star selection.
+
+    The native positive-core moments are biased for faint cutouts and are
+    not an independent star/galaxy classifier. Compare Gaia vs unverified
+    Tractor PSF detections only in explicitly recorded peak-flux strata.
+    """
+    groups = {"gaia_dr3": [], "tractor_psf_without_gaia": []}
+    for entry in entries:
+        cut = entry[-1]
+        identity = cut.get("star_identity")
+        shape = cut.get("shape_qa") or {}
+        peak = float(cut.get("peak_nMgy", 0.))
+        sigma = shape.get("sigma_eff_pix")
+        rms = float(cut.get("rms_nMgy", 0.))
+        if (identity is None or sigma is None or
+                not np.isfinite(peak) or peak <= 0 or
+                not np.isfinite(float(sigma)) or float(sigma) <= 0):
+            continue
+        group = ("gaia_dr3" if identity.get("gaia_source_id") is not None
+                 else "tractor_psf_without_gaia")
+        groups[group].append({
+            "peak": peak, "width": float(sigma),
+            "peak_to_local_rms": peak/rms if np.isfinite(rms) and rms > 0
+                                 else None,
+        })
+
+    def median_value(rows, key):
+        values = [item[key] for item in rows if item[key] is not None]
+        return float(np.median(values)) if values else None
+
+    result = {
+        "schema": "desidera.psf0-identity-population-diagnostic/1",
+        "is_selection_gate": False,
+        "measurements": "NATIVE_POSITIVE_CORE_MOMENTS_NOT_PSF_FWHM",
+        "populations": {
+            name: {
+                "n": len(rows),
+                "median_peak_nMgy_per_pix": median_value(rows, "peak"),
+                "median_positive_core_sigma_pix": median_value(rows, "width"),
+                "median_native_peak_over_local_rms": median_value(
+                    rows, "peak_to_local_rms"),
+            } for name, rows in groups.items()
+        },
+        "peak_strata": [],
+        "notes": [
+            "Tractor TYPE=PSF does not independently certify a star.",
+            "Positive-only core moments broaden at low S/N; a marginal "
+            "width comparison across mismatched brightness distributions "
+            "cannot demonstrate source contamination.",
+            "Each fixed peak-flux stratum is descriptive, not a pass/fail "
+            "cut; low counts provide insufficient brightness-matched evidence.",
+            "Fitting, holdout reservation, all rejection thresholds and "
+            "science adoption are unaffected by this diagnostic.",
+        ],
+    }
+    edges = (0., .1, .3, 1., 3., 10., float("inf"))
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        gaia = [q for q in groups["gaia_dr3"]
+                if lo <= q["peak"] < hi]
+        tractor = [q for q in groups["tractor_psf_without_gaia"]
+                   if lo <= q["peak"] < hi]
+        result["peak_strata"].append({
+            "peak_lower_inclusive_nMgy_per_pix": float(lo),
+            "peak_upper_exclusive_nMgy_per_pix": (
+                float(hi) if np.isfinite(hi) else None),
+            "gaia_n": len(gaia),
+            "tractor_only_n": len(tractor),
+            "gaia_median_positive_core_sigma_pix": median_value(
+                gaia, "width"),
+            "tractor_only_median_positive_core_sigma_pix": median_value(
+                tractor, "width"),
+            "brightness_matched_comparison_supported": (
+                len(gaia) >= 3 and len(tractor) >= 3),
+        })
+    gaia_width = result["populations"]["gaia_dr3"][
+        "median_positive_core_sigma_pix"]
+    tractor_width = result["populations"]["tractor_psf_without_gaia"][
+        "median_positive_core_sigma_pix"]
+    result["unmatched_median_width_ratio_tractor_to_gaia"] = (
+        tractor_width/gaia_width
+        if gaia_width is not None and tractor_width is not None else None)
+    result["n_strata_with_at_least_3_per_population"] = sum(
+        e["brightness_matched_comparison_supported"]
+        for e in result["peak_strata"])
+    return result
+
+
 def build_empirical_coadd_psf(
     frame: NativeBandFrame, *,
     target_icrs_deg: tuple[float, float],
@@ -627,11 +715,16 @@ def build_empirical_coadd_psf(
     n_gaia_eligible = sum(
         (entry[-1].get("star_identity") or {}).get("gaia_source_id")
         is not None for entry in accepted)
+    accepted_identity_population_qa = (
+        _identity_population_qa(accepted) if catalog_matcher else None)
 
     def selection_rejection(reason, stage):
         # A scientifically insufficient training/validation inventory must
         # never turn into an ordinary task error or an adopted model.
         accepted_candidates = []
+        for entry in accepted:
+            screening_by_id[entry[0]]["selection_role"] = (
+                "ACCEPTED_BUT_SAMPLE_REJECTED_BEFORE_SPLIT")
         for star_id, x, y, ra, dec, peak, cut in accepted:
             identity = cut.get("star_identity") or {}
             accepted_candidates.append({
@@ -664,6 +757,8 @@ def build_empirical_coadd_psf(
                     catalog_matcher.source_sha256
                     if catalog_matcher is not None else None),
                 "width_screen": width_qa,
+                "accepted_identity_population_qa":
+                    accepted_identity_population_qa,
                 "holdout_requires_gaia_dr3": (
                     cfg.star_catalog_policy == "tractor_psf_validated"),
             },
@@ -721,7 +816,15 @@ def build_empirical_coadd_psf(
     holdout_entries = [v for i,v in enumerate(accepted) if i in holdout_idx]
     if len(training_entries) < cfg.min_train_stars:
         raise ValueError("Independent holdout would leave too few training stars")
+    unused_training_entries = training_entries[cfg.max_training_stars:]
     training_entries = training_entries[:cfg.max_training_stars]
+    for entry in unused_training_entries:
+        screening_by_id[entry[0]]["final_selection_role"] = (
+            "UNUSED_TRAINING_CAP")
+    for entry in training_entries:
+        screening_by_id[entry[0]]["final_selection_role"] = "TRAIN_SELECTED"
+    for entry in holdout_entries:
+        screening_by_id[entry[0]]["final_selection_role"] = "GAIA_HOLDOUT"
     # Split before reviewer exclusions. The holdout IDs/coordinates remain
     # identical in the next run, even if several train stars are excluded.
     original_training_entries = list(training_entries)
@@ -735,6 +838,10 @@ def build_empirical_coadd_psf(
     training_entries = [
         entry for entry in original_training_entries
         if entry[0] not in excluded_ids]
+    for entry in original_training_entries:
+        if entry[0] in excluded_ids:
+            screening_by_id[entry[0]]["final_selection_role"] = (
+                "MANUALLY_EXCLUDED_TRAIN")
     if len(training_entries) < cfg.min_train_stars:
         raise ValueError(
             f"Manual exclusion would leave only {len(training_entries)} "
@@ -999,6 +1106,13 @@ def build_empirical_coadd_psf(
         "n_screened_candidates": screened_count,
         "n_unexamined_candidates": len(candidates)-screened_count,
         "candidate_screening_audit": screening_audit,
+        "n_unused_training_candidates_after_cap": len(
+            unused_training_entries),
+        "accepted_identity_population_qa":
+            accepted_identity_population_qa,
+        "training_identity_population_qa": (
+            _identity_population_qa(training_entries)
+            if catalog_matcher else None),
         "catalog_source_sha256": (
             catalog_matcher.source_sha256 if catalog_matcher else None),
         "catalog_path": (
