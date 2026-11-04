@@ -435,9 +435,12 @@ def build_empirical_coadd_psf(
     if cfg.star_catalog_policy in ("gaia_strict", "tractor_psf_validated"):
         from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
         if not isinstance(catalog_matcher, TractorGaiaMatcher):
+            code = ("GAIA_STRICT_REQUIRES_NATIVE_DR11_TRACTOR"
+                    if cfg.star_catalog_policy == "gaia_strict" else
+                    "TRACTOR_PSF_VETTED_REQUIRES_NATIVE_DR11_TRACTOR")
             raise ValueError(
-                "CATALOG_VETTED_PSF_REQUIRES_NATIVE_DR11_TRACTOR: "
-                "download/verify the same-brick Tractor catalogue in GUI")
+                code + ": download/verify the same-brick Tractor "
+                "catalogue in GUI")
         if catalog_matcher.dataset_id != frame.dataset_id:
             raise ValueError("Gaia catalogue does not match exact native FITS band")
     elif catalog_matcher is not None:
