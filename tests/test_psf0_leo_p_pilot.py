@@ -241,3 +241,35 @@ def test_gui_r_band_lineage_survives_project_default_band_switch(
     save_object_project(project)
     with pytest.raises(ValueError, match="selected dataset changed"):
         save_gui_psf0(preview)
+
+
+def test_gui_insufficient_stars_preserves_screening_evidence_and_originals(
+        tmp_path, monkeypatch):
+    """A real scientific selection underflow is reportable, not a worker error."""
+    from lsbpipe.photometry.psf_gui_backend import run_gui_psf0
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = _project(tmp_path)
+    paths = _synthetic_legacy_files(project)
+    originals = {kind: path.read_bytes() for kind, path in paths.items()}
+    outcome = run_gui_psf0(
+        project.root, band="r",
+        config=PSF0Config(
+            min_train_stars=6, min_holdout_stars=2,
+            min_neighbor_separation_pix=60.),
+        protection_arcsec=12.)
+    assert outcome["status"] == "PSF0_QUALITY_REJECTED_NOT_ADOPTED"
+    qa = outcome["diagnostics"]
+    assert qa["stage"] == "stellar_sample_underflow"
+    assert qa["n_detected_candidates"] >= 8
+    assert qa["n_screened_candidates"] >= 8
+    assert qa["n_accepted_stars"] < qa["minimum_accepted_stars"] == 8
+    assert qa["rejected_reasons"]["NEIGHBOR_WITHIN_ISOLATION_RADIUS"] > 0
+    assert qa["catalog_selection_qa"]["policy"] == "dao_diagnostic"
+    assert len(qa["accepted_candidates"]) == qa["n_accepted_stars"]
+    assert outcome["source_hashes"]
+    assert outcome["review_band"] == "r"
+    assert outcome["star_review"] is None
+    assert not (project.root / "analyses" / "psf-pilots").exists()
+    assert all(path.read_bytes() == originals[kind]
+               for kind, path in paths.items())
