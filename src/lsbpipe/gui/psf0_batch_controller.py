@@ -61,3 +61,41 @@ def launch(window, batch):
                       f"PSF-0 {band} finished {index+1}/{len(requests)}"))
         return outcomes
 
+    def finished(outcomes):
+        notes = []
+        for entry in outcomes:
+            band = entry["band"]
+            panel = workspace.psf0_panels[band]
+            if "error" in entry:
+                panel.show_failure(entry["error"]+"\n\n"+entry["traceback"])
+                notes.append(band+": ERROR")
+                continue
+            if entry["seeing"] is not None:
+                panel.show_fwhm_suggestion(entry["seeing"])
+            payload = entry["payload"]
+            if payload.get("status") == "PSF0_QUALITY_REJECTED_NOT_ADOPTED":
+                panel.show_quality_rejection(payload)
+                notes.append(band+": QUALITY REJECTED")
+            else:
+                panel.show_result(payload)
+                notes.append(band+": EXPERIMENTAL")
+        for skipped in batch.get("skipped_bands", ()):
+            notes.append(str(skipped["band"])+": SKIPPED ("+
+                         str(skipped["reason"])+")")
+        workspace.batch_status.setText(
+            "griz batch completed · "+" | ".join(notes)
+            + ". All PSFs remain NOT ADOPTED. No FITS written. "
+              "Use Copy full griz debug report for evidence.")
+        window.message.setText(
+            "Sequential griz PSF-0 diagnostics finished · no PSF adopted.")
+
+    def failed(message):
+        workspace.batch_status.setText(
+            "PSF batch worker failed: "+message+". No PSF adopted.")
+
+    window._start(calculate, finished, failed, operation_name="psf0-griz-batch")
+    if window.thread is not None:
+        workspace.set_psf_busy(True)
+        workspace.batch_status.setText(
+            f"Sequential PSF-0 running for {len(requests)} native bands, "
+            "original FITS read-only.")
