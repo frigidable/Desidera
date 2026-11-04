@@ -318,7 +318,7 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert tabs.objectName() == "psf0_single_band_tabs"
     assert tabs.count() == 4
     assert [tabs.tabText(i) for i in range(tabs.count())] == [
-        "G", "R", "I", "Z"]
+        "G · No FITS", "R · No FITS", "I · No FITS", "Z · No FITS"]
     assert tuple(workspace.psf0_panels) == ("g", "r", "i", "z")
     assert tabs.currentWidget() is workspace.psf0_panels["g"]
     assert not workspace.workflow_details.isVisible()
@@ -355,3 +355,48 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     workspace.method_details_toggle.click()
     assert workspace.method_details_toggle.isChecked()
     # No mock project/FITS is required; these are presentation-only controls.
+
+
+def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
+    """Mode switching must preserve per-band recipes, FWHM and QA."""
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+
+    workspace = PhotometryWorkspace()
+    qtbot.addWidget(workspace)
+    workspace.resize(1400, 850)
+    workspace.show()
+    g = workspace.psf0_panels["g"]
+    r = workspace.psf0_panels["r"]
+    assert workspace.view_mode.currentData() == "guided"
+    assert not g.protection.isVisible()
+    assert not g.review_btn.isVisible()
+    assert not g.save_btn.isVisible()
+    assert not workspace.copy_full_qa_btn.isVisible()
+    assert g.fwhm.isVisible()
+    assert "target protected" in g.mode_context.text()
+    # Native project selection is absent, but the recipe is still editable.
+    g.fwhm.setValue(6.25)
+    g.protection.setValue(123.)
+    g.catalog_policy.setCurrentIndex(
+        g.catalog_policy.findData("tractor_psf_validated"))
+    g.experiment.setCurrentIndex(g.experiment.findData("outer_sky"))
+    request = (g.fwhm.value(), g.protection.value(),
+               g.catalog_policy.currentData(), g.experiment.currentData())
+
+    workspace.view_mode.setCurrentIndex(
+        workspace.view_mode.findData("research"))
+    assert g.protection.isVisible()
+    assert g.review_btn.isVisible()
+    assert g.save_btn.isVisible()
+    assert workspace.copy_full_qa_btn.isVisible()
+    assert g.mode_context.text().startswith("Research controls visible")
+    assert (g.fwhm.value(), g.protection.value(),
+            g.catalog_policy.currentData(), g.experiment.currentData()) == request
+    workspace.band_tabs.setCurrentWidget(r)
+    workspace.view_mode.setCurrentIndex(
+        workspace.view_mode.findData("guided"))
+    workspace.band_tabs.setCurrentWidget(g)
+    assert not g.protection.isVisible()
+    assert "123.0 arcsec" in g.mode_context.text()
+    assert (g.fwhm.value(), g.protection.value(),
+            g.catalog_policy.currentData(), g.experiment.currentData()) == request
