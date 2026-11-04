@@ -577,3 +577,61 @@ def test_radial_plot_fits_entire_label_without_clipping_on_resize(qtbot):
     label.resize(340, 278)
     QApplication.processEvents()
     assert label.pixmap() is None or label.pixmap().isNull()
+
+
+def test_psf0_empty_cards_are_compact_and_expand_only_for_real_data(qtbot):
+    """No-fit must not allocate 240/278 px canvases; real arrays restore them."""
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+
+    panel = PSF0Panel(fixed_band="g")
+    qtbot.addWidget(panel)
+    panel.resize(1200, 700)
+    panel.show()
+    QApplication.processEvents()
+    assert panel.kernel_view.isVisible()
+    assert panel.profile_view.isVisible()
+    assert panel.kernel_view.height() == 56
+    assert panel.profile_view.height() == 56
+    assert not panel.model_caption.isVisible()
+    assert not panel.profile_caption.isVisible()
+    assert panel.kernel_view.pixmap() is None or panel.kernel_view.pixmap().isNull()
+    assert panel.profile_view.pixmap() is None or panel.profile_view.pixmap().isNull()
+
+    panel._clear_science_visuals("Star-selection underflow: 11 of 13.")
+    assert panel.kernel_view.height() == 56
+    assert panel.profile_view.height() == 56
+    assert "11 of 13" in panel.model_caption.text()
+
+    y, x = np.mgrid[:31, :31]
+    model = np.exp(-((x-15.)**2 + (y-15.)**2) / 25.)
+    signed = model - .002
+    panel._show_signed_rejected_kernel(signed)
+    assert panel.kernel_view.height() == 240
+    assert panel.kernel_view.pixmap() is not None
+    assert panel.model_caption.isVisible()
+    assert "REJECTED" in panel.model_caption.text()
+    assert panel.profile_view.height() == 56
+
+    panel._star_review_data = {
+        "schema": "desidera.psf0-star-review-in-memory/1",
+        "stars": [{
+            "star_id": "train-1", "role": "train",
+            "cutout": model*1.01, "model": model,
+            "valid": np.ones((31,31), bool),
+            "center_in_cutout": (15., 15.),
+            "peak_nMgy": 1.,
+        }],
+    }
+    panel._show_real_radial_profile()
+    assert panel.profile_view.height() == 278
+    assert panel.profile_caption.isVisible()
+    assert panel.profile_view.pixmap() is not None
+    assert "in-sample" in panel.profile_caption.text()
+
+    panel._clear_science_visuals("No fitted model after source change.")
+    assert panel.kernel_view.height() == 56
+    assert panel.profile_view.height() == 56
+    assert not panel.model_caption.isVisible()
+    assert not panel.profile_caption.isVisible()
+    assert panel.kernel_view.pixmap() is None or panel.kernel_view.pixmap().isNull()
+    assert panel.profile_view.pixmap() is None or panel.profile_view.pixmap().isNull()
