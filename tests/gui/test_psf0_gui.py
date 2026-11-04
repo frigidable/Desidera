@@ -648,3 +648,31 @@ def test_psf0_empty_cards_are_compact_and_expand_only_for_real_data(qtbot):
     assert not panel.profile_caption.isVisible()
     assert panel.kernel_view.pixmap() is None or panel.kernel_view.pixmap().isNull()
     assert panel.profile_view.pixmap() is None or panel.profile_view.pixmap().isNull()
+
+
+def test_griz_selector_remains_visible_when_science_workspace_scrolls(qtbot):
+    """The selected-band navigation must not be clipped with page content."""
+    from PySide6.QtWidgets import QScrollArea
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+
+    workspace = PhotometryWorkspace()
+    qtbot.addWidget(workspace)
+    workspace.resize(1200, 640)
+    workspace.show()
+    QApplication.processEvents()
+    scroll = next(
+        area for area in workspace.findChildren(QScrollArea)
+        if area.widget().objectName() == "photometry_narrow_science_column")
+    assert workspace.band_selector.isVisible()
+    assert not workspace.band_tabs.tabBar().isVisible()
+    scroll.verticalScrollBar().setValue(
+        scroll.verticalScrollBar().maximum())
+    QApplication.processEvents()
+    assert workspace.band_selector.isVisible()
+    assert workspace.band_selector.mapTo(
+        workspace, workspace.band_selector.rect().topLeft()).y() < (
+            scroll.mapTo(workspace, scroll.rect().topLeft()).y())
+    workspace.band_selector.setCurrentIndex(2)
+    assert workspace.band_tabs.currentIndex() == 2
+    workspace.band_tabs.setCurrentIndex(3)
+    assert workspace.band_selector.currentIndex() == 3
