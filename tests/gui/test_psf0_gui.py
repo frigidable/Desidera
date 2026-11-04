@@ -258,6 +258,9 @@ def test_gui_stellar_sample_underflow_shows_counts_without_signed_psf(
     assert "Detected candidates: 35" in panel.qa.toPlainText()
     assert "NEIGHBOR_WITHIN_ISOLATION_RADIUS" in panel.qa.toPlainText()
     assert "No ePSF was fitted" in panel.qa.toPlainText()
+    assert "no ePSF was fitted" in panel.model_caption.text()
+    assert panel.kernel_view.pixmap() is None or panel.kernel_view.pixmap().isNull()
+    assert panel.profile_view.pixmap() is None or panel.profile_view.pixmap().isNull()
     assert panel.stars.rowCount() == 1
     assert panel.stars.item(0, 1).text() == "candidate"
     assert not panel.save_btn.isEnabled()
@@ -324,6 +327,10 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert not workspace.workflow_details.isVisible()
     assert not workspace.psf0_panels["g"].inspection_details.isVisible()
     assert not workspace.psf0_panels["g"].advanced_details.isVisible()
+    assert workspace.psf0_panels["g"].kernel_view.isVisible()
+    assert workspace.psf0_panels["g"].profile_view.isVisible()
+    assert not workspace.psf0_panels["g"].kernel_view.pixmap()
+    assert not workspace.psf0_panels["g"].profile_view.pixmap()
     assert workspace.source_details_toggle.isCheckable()
     assert workspace.method_details_toggle.isCheckable()
 
@@ -335,6 +342,8 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert g.inspection_details.isVisible()
     assert g.qa.isVisible()
     assert g.stars.isVisible()
+    workspace.view_mode.setCurrentIndex(
+        workspace.view_mode.findData("research"))
     g.advanced_toggle.click()
     assert g.advanced_details.isVisible()
 
@@ -459,7 +468,9 @@ def test_photometry_fills_normal_desktop_and_hides_empty_psf_footprint(
     for band, panel in w.psf0_panels.items():
         assert panel.kernel_view.size().width() == 240
         assert panel.kernel_view.size().height() == 240
-        assert not panel.kernel_view.isVisible()
+        assert not panel.kernel_view.isHidden()
+        assert not panel.profile_view.isHidden()
+        assert panel._science_row is not None
         assert panel._result_column.objectName() == "psf0_result_column"
         assert panel._controls_column.objectName() == "psf0_controls_column"
         assert panel.catalog_policy.maximumWidth() == 570
@@ -478,11 +489,58 @@ def test_photometry_fills_normal_desktop_and_hides_empty_psf_footprint(
     assert column.width() <= 1050
     assert scroll.horizontalScrollBar().maximum() == 0
     from PySide6.QtWidgets import QBoxLayout
-    assert w.psf0_panels["g"]._work_columns.direction() in (
+    assert w.psf0_panels["g"]._science_row.direction() in (
         QBoxLayout.LeftToRight, QBoxLayout.TopToBottom)
     w.resize(760, 750)
     qtbot.wait(50)
     assert column.width() <= 760
     assert scroll.horizontalScrollBar().maximum() == 0
-    assert w.psf0_panels["g"]._work_columns.direction() == (
+    assert w.psf0_panels["g"]._science_row.direction() == (
         QBoxLayout.TopToBottom)
+
+
+def test_real_star_median_profile_is_visible_and_not_fabricated(qtbot):
+    """Plot native image/model arrays, exclude non-training review sources."""
+    from lsbpipe.gui.psf_star_review import ensemble_training_radial_plot
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+
+    panel = PSF0Panel(fixed_band="r")
+    qtbot.addWidget(panel)
+    panel.resize(1400, 680)
+    panel.show()
+    # Pure synthetic test arrays model the shape of a real worker snapshot;
+    # production GUI only receives its source/mask/model from the worker.
+    y, x = np.mgrid[:31, :31]
+    model = np.exp(-((x-15.2)**2+(y-14.8)**2)/25.)
+    obs = model*(1.+.05*np.sin(x*.45))
+    sample = {
+        "star_id": "train-1",
+        "role": "train",
+        "cutout": obs,
+        "model": model,
+        "valid": np.ones((31,31), bool),
+        "center_in_cutout": (15.2,14.8),
+        "peak_nMgy": 1.,
+    }
+    snapshot = {
+        "schema": "desidera.psf0-star-review-in-memory/1",
+        "stars": [sample, {**sample, "star_id": "excluded",
+                             "role": "excluded"}],
+    }
+    panel._star_review_data = snapshot
+    panel._show_real_radial_profile()
+    pixmap = panel.profile_view.pixmap()
+    assert pixmap is not None and not pixmap.isNull()
+    assert pixmap.width() > 300
+    assert "N=1" in panel.profile_caption.text()
+    assert "NOT independent holdout" in panel.profile_caption.text()
+    assert ensemble_training_radial_plot({
+        "schema": "desidera.psf0-star-review-in-memory/1",
+        "stars": [{**sample, "role": "excluded"}],
+    }) is None
+    panel._clear_science_visuals("Underflow: no fitted model.")
+    assert panel.kernel_view.isVisible()
+    assert panel.profile_view.isVisible()
+    assert panel.kernel_view.pixmap() is None or panel.kernel_view.pixmap().isNull()
+    assert panel.profile_view.pixmap() is None or panel.profile_view.pixmap().isNull()
+    assert "Underflow" in panel.model_caption.text()
