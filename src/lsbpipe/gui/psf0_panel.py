@@ -27,6 +27,44 @@ from lsbpipe.gui.psf_star_review import (
 )
 
 
+class _AspectFitProfileLabel(QLabel):
+    """Fit the complete scientific chart without cropping its axes/legend.
+
+    A plain QLabel clips a 482x266 source pixmap when a narrower Qt layout
+    assigns it a 245-px-high viewport. Keep an unscaled immutable source
+    and fit on every resize, preserving the aspect ratio and chart labels.
+    """
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self._chart_source = None
+
+    def set_chart(self, source: QPixmap):
+        self._chart_source = (QPixmap(source)
+                              if source is not None and not source.isNull()
+                              else None)
+        if self._chart_source is not None:
+            self._fit_chart()
+
+    def set_placeholder(self, text: str):
+        self._chart_source = None
+        self.setPixmap(QPixmap())
+        self.setText(text)
+
+    def _fit_chart(self):
+        if self._chart_source is None:
+            return
+        size = self.contentsRect().size()
+        if size.width() > 0 and size.height() > 0:
+            fitted = self._chart_source.scaled(
+                size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.setPixmap(fitted)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_chart()
+
+
 class PSF0Panel(QGroupBox):
     """Project-bound, band-specific **diagnostic** ePSF workbench."""
 
@@ -327,15 +365,18 @@ class PSF0Panel(QGroupBox):
         self.model_caption.setObjectName("psf0_model_caption")
         self.model_caption.setWordWrap(True)
         model_layout.addWidget(self.model_caption)
-        self.profile_view = QLabel(
+        self.profile_view = _AspectFitProfileLabel(
             "No observed/model radial comparison.\n"
             "Build a PSF to inspect real stellar cutouts.")
         self.profile_view.setObjectName("psf0_radial_profile_preview")
         self.profile_view.setAlignment(Qt.AlignCenter)
         self.profile_view.setWordWrap(True)
-        self.profile_view.setMinimumSize(295, 245)
+        # The chart remains visible at any width; none of its title,
+        # radius axis, ticks or residual panel may be cut off.
+        self.profile_view.setMinimumWidth(0)
+        self.profile_view.setFixedHeight(278)
         self.profile_view.setSizePolicy(
-            QSizePolicy.Ignored, QSizePolicy.Fixed)
+            QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.profile_view.setToolTip(
             "Real medians over in-sample training-star native cutouts and "
             "core-amplitude-aligned signed model. Not independent holdout QA.")
@@ -400,8 +441,7 @@ class PSF0Panel(QGroupBox):
         self.kernel_view.show()
         self.model_caption.setText(
             reason or "No model fitted for this band.")
-        self.profile_view.setPixmap(QPixmap())
-        self.profile_view.setText(
+        self.profile_view.set_placeholder(
             "No observed/model radial comparison available.")
         self.profile_caption.setText(
             "A real star cutout and aligned fitted model are required. "
@@ -411,14 +451,13 @@ class PSF0Panel(QGroupBox):
         """Use only real worker cutouts; never render synthetic model data."""
         plot = ensemble_training_radial_plot(self._star_review_data)
         if plot is None:
-            self.profile_view.setPixmap(QPixmap())
-            self.profile_view.setText(
+            self.profile_view.set_placeholder(
                 "No training-star radial comparison is available.")
             self.profile_caption.setText(
                 "The reconstruction supplied no compatible observed/model "
                 "training cutouts. Independent holdout not evaluated here.")
             return
-        self.profile_view.setPixmap(plot)
+        self.profile_view.set_chart(plot)
         n_train = sum(
             item.get("role") == "train"
             for item in self._star_review_data["stars"])
