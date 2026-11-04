@@ -34,7 +34,7 @@ def test_missing_native_gaia_requires_user_action_and_never_silent_fallback(
     requests=[]
     panel.tractorRequested.connect(requests.append)
     panel.get_tractor_btn.click()
-    assert requests==[{"project_root":"C:/test/Leo_P"}]
+    assert requests==[{"project_root":"C:/test/Leo_P","band":"g"}]
     panel.catalog_policy.setCurrentIndex(
         panel.catalog_policy.findData("gaia_strict"))
     assert panel.catalog_policy.currentData()=="gaia_strict"
