@@ -202,9 +202,8 @@ class PhotometryWorkspace(QWidget):
         batch.setObjectName("psf0_four_band_toolbar")
         batch_layout = QVBoxLayout(batch)
         batch_note = QLabel(
-            "Choose a band below to work on it, or run all four. "
-            "Each band keeps its own settings and result. "
-            "Experimental previews are never science-adopted.")
+            "Batch processing · original griz FITS remain unchanged. "
+            "Each band keeps independent non-adopted results.")
         batch_note.setWordWrap(True)
         batch_layout.addWidget(batch_note)
         batch_buttons = QHBoxLayout()
@@ -239,7 +238,6 @@ class PhotometryWorkspace(QWidget):
         self.batch_status.setObjectName("psf0_griz_batch_status")
         self.batch_status.setWordWrap(True)
         batch_layout.addWidget(self.batch_status)
-        body.addWidget(batch)
         self.psf0_panels = {}
         self.band_tabs = QTabWidget(central)
         self.band_tabs.setObjectName("psf0_single_band_tabs")
@@ -260,6 +258,7 @@ class PhotometryWorkspace(QWidget):
                 index, "Independent " + native_band + "-band settings, "
                 "scientific QA and non-adopted preview")
         body.addWidget(self.band_tabs)
+        body.addWidget(batch)
         self.view_mode.currentIndexChanged.connect(
             self._set_view_mode)
         self._set_view_mode()
@@ -322,6 +321,16 @@ class PhotometryWorkspace(QWidget):
         research = self.view_mode.currentData() == "research"
         for panel in self.psf0_panels.values():
             panel.set_research_mode(research)
+        # Make the selected band's science panels the default workflow;
+        # help and methodological details stay available in Research.
+        self.workflow_toggle.setVisible(research)
+        self.workflow_details.setVisible(
+            research and self.workflow_toggle.isChecked())
+        self.source_details_toggle.setVisible(research)
+        self.source_details_toggle.setChecked(
+            self.source_details_toggle.isChecked())
+        self.method_details_toggle.setVisible(research)
+        method_box = self.method_details_toggle
         self.copy_full_qa_btn.setVisible(research)
         # Complete JSON export remains accessible in Guided mode.
         self._update_band_tab_statuses()
