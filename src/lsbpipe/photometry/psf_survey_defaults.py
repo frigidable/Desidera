@@ -149,7 +149,7 @@ def _suggest_from_native_tractor_psfsize(frame, *, target_icrs_deg):
         table = tables[0].data
         names = {name.upper(): name for name in tables[0].columns.names}
         required = {"RA", "DEC", "BRICKNAME", "BRICK_PRIMARY", band_col}
-        if required - names:
+        if required - set(names):
             return None
         ras, decs, sizes = [], [], []
         for row in table:
@@ -241,10 +241,12 @@ def suggest_detection_fwhm_from_psfsize(frame, *, target_icrs_deg):
     a trustworthy seeing prior, keep the explicit manual FWHM guess.
     """
     missing_map = None
+    map_error = None
     try:
         result = _suggest_detection_fwhm_from_native_map(
             frame, target_icrs_deg=target_icrs_deg)
     except (ValueError, OSError) as exc:
+        map_error = exc
         missing_map = f"Native PSFSIZE map rejected: {exc}"
     else:
         if result["available"]:
@@ -256,9 +258,11 @@ def suggest_detection_fwhm_from_psfsize(frame, *, target_icrs_deg):
     if tractor is not None:
         tractor["native_map_status"] = missing_map
         return tractor
+    if map_error is not None:
+        raise ValueError(missing_map) from map_error
     return {
         "available": False,
-        "source": "NO_VALID_LOCAL_DR11_PSF_SIZE_PRIOR",
+        "source": "OPTIONAL_NATIVE_PSF_SIZE_MAP_ABSENT_NO_TRACTOR_FALLBACK",
         "message": (
             f"{missing_map}. No usable nearby same-band native Tractor "
             "PSFSIZE entries. Initial FWHM stays manual; verify the exact "
