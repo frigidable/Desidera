@@ -5,16 +5,23 @@ No photometric algorithms are exposed before their validation gates exist.
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
+import json
+import platform
+import sys
+
+import numpy as np
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QApplication, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
 from lsbpipe.photometry.readiness import inspect_photometry_inputs
 from lsbpipe.gui.psf0_panel import PSF0Panel
+from lsbpipe.gui.psf0_full_qa import detailed_band_report
 
 _STAGES = (
     ("01", "Data preparation", "Original FITS, WCS, native masks and calibration"),
@@ -37,6 +44,7 @@ class PhotometryWorkspace(QWidget):
     psf0SaveRequested = Signal(object)
     psf0AutoFwhmRequested = Signal(object)
     psf0TractorRequested = Signal(object)
+    psf0BatchRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,7 +69,7 @@ class PhotometryWorkspace(QWidget):
         self.refresh_btn.setToolTip(
             "Read project metadata and local file existence, without "
             "opening FITS, connecting to the archive or running analysis.")
-        self.refresh_btn.clicked.connect(self.refresh)
+        self.refresh_btn.clicked.connect(lambda _checked=False: self.refresh(force=True))
         header.addWidget(self.refresh_btn)
         root.addLayout(header)
 
@@ -140,17 +148,57 @@ class PhotometryWorkspace(QWidget):
         self.table.setMinimumHeight(175)
         source_layout.addWidget(self.table)
 
-        # Keep the first genuinely runnable scientific stage above the
-        # long original-FITS inventory: PSF controls remain discoverable
-        # without an initial scroll on laptop-sized Windows viewports.
-        self.psf0_panel = PSF0Panel(central)
-        self.psf0_panel.runRequested.connect(self.psf0RunRequested.emit)
-        self.psf0_panel.saveRequested.connect(self.psf0SaveRequested.emit)
-        self.psf0_panel.autoFwhmRequested.connect(
-            self.psf0AutoFwhmRequested.emit)
-        self.psf0_panel.tractorRequested.connect(
-            self.psf0TractorRequested.emit)
-        body.addWidget(self.psf0_panel)
+        # Four independent, vertically stacked scientific panels. A band
+        # never shares its preview, star exclusions or QA with another band.
+        # The saved project and its original science files are unchanged.
+        batch = QGroupBox("PSF-0 · four-filter workbench")
+        batch.setObjectName("psf0_four_band_toolbar")
+        batch_layout = QVBoxLayout(batch)
+        batch_note = QLabel(
+            "Each g/r/i/z panel retains its own recipe and experimental "
+            "result. Build all runs available bands sequentially, with each "
+            "band's own original PSFSIZE FWHM unless manually overridden. "
+            "No PSF is science-adopted.")
+        batch_note.setWordWrap(True)
+        batch_layout.addWidget(batch_note)
+        batch_buttons = QHBoxLayout()
+        self.build_all_psfs_btn = QPushButton("Build PSF previews · all available griz")
+        self.build_all_psfs_btn.setObjectName("psf0_build_all_bands")
+        self.build_all_psfs_btn.setToolTip(
+            "Runs one real native FITS/Tractor PSF-0 diagnostic for each "
+            "available band, sequentially, in the existing background "
+            "worker. Errors are isolated by band. No automatic downloads, "
+            "science adoption or FITS export.")
+        self.build_all_psfs_btn.clicked.connect(self._request_all_psfs)
+        batch_buttons.addWidget(self.build_all_psfs_btn)
+        self.copy_full_qa_btn = QPushButton("Copy full griz debug report")
+        self.copy_full_qa_btn.setObjectName("psf0_copy_full_griz_debug")
+        self.copy_full_qa_btn.clicked.connect(self.copy_full_qa)
+        self.copy_full_qa_btn.setToolTip(
+            "Copy full settings, all band outcomes, source evidence, "
+            "star IDs, Gaia identity, sky metrics and signed per-star core/"
+            "wing residual diagnostics as JSON. No native image pixels.")
+        batch_buttons.addWidget(self.copy_full_qa_btn)
+        batch_buttons.addStretch(1)
+        batch_layout.addLayout(batch_buttons)
+        self.batch_status = QLabel("No batch run started. Original FITS unchanged.")
+        self.batch_status.setObjectName("psf0_griz_batch_status")
+        self.batch_status.setWordWrap(True)
+        batch_layout.addWidget(self.batch_status)
+        body.addWidget(batch)
+        self.psf0_panels = {}
+        for native_band in ("g", "r", "i", "z"):
+            panel = PSF0Panel(central, fixed_band=native_band)
+            panel.setObjectName("psf0_panel_" + native_band)
+            panel.runRequested.connect(self.psf0RunRequested.emit)
+            panel.saveRequested.connect(self.psf0SaveRequested.emit)
+            panel.autoFwhmRequested.connect(self.psf0AutoFwhmRequested.emit)
+            panel.tractorRequested.connect(self.psf0TractorRequested.emit)
+            self.psf0_panels[native_band] = panel
+            body.addWidget(panel)
+        # Compatibility alias for older callers; resolves to the first
+        # available band on bind, not a second shared scientific panel.
+        self.psf0_panel = self.psf0_panels["g"]
         body.addWidget(source_box)
 
         method_box = QGroupBox("Measurement design")
@@ -194,19 +242,119 @@ class PhotometryWorkspace(QWidget):
         splitter.setSizes([275, 840])
         root.addWidget(splitter, 1)
 
+    def set_psf_busy(self, state):
+        for panel in self.psf0_panels.values():
+            panel.set_busy(state)
+        self.build_all_psfs_btn.setEnabled(
+            not state and any(panel.run_btn.isEnabled()
+                              for panel in self.psf0_panels.values()))
+        self.copy_full_qa_btn.setEnabled(not state)
+
+    def _request_all_psfs(self):
+        if self._project_root is None:
+            self.batch_status.setText("Open Leo P in Galaxy Projects first.")
+            return
+        requests, skipped = [], []
+        for band, panel in self.psf0_panels.items():
+            request = panel.make_run_request()
+            if request is None:
+                skipped.append({"band":band, "reason":"NATIVE_QUARTET_UNAVAILABLE"})
+            elif not panel.run_btn.isEnabled():
+                skipped.append({"band":band, "reason":"CATALOGUE_OR_WORKER_NOT_READY"})
+            else:
+                requests.append(request)
+        if not requests:
+            self.batch_status.setText(
+                "No complete native FITS bands with required Gaia/Tractor "
+                "catalogue. Manage sources; no science run started.")
+            return
+        self.batch_status.setText(
+            f"Queued {len(requests)} available optical bands; "
+            f"unavailable: {', '.join(x['band'] for x in skipped) or 'none'}. "
+            "Diagnostic models only; no FITS exports.")
+        for request in requests:
+            self.psf0_panels[request["band"]].prepare_run_display()
+        self.psf0BatchRequested.emit({
+            "project_root":str(self._project_root),
+            "requests":requests,
+            "skipped_bands":skipped,
+        })
+
+    def full_qa_report(self):
+        from lsbpipe.photometry.psf_gui_backend import (
+            PSF0_DIAGNOSTIC_EXPERIMENTS,
+        )
+        return {
+            "schema":"desidera.psf0-griz-comprehensive-debug/1",
+            "created_utc":datetime.now(timezone.utc).isoformat(),
+            "project_root":str(self._project_root) if self._project_root else None,
+            "science_adopted":False,
+            "python":sys.version,
+            "platform":platform.platform(),
+            "numpy_version":np.__version__,
+            "supported_experiments":list(PSF0_DIAGNOSTIC_EXPERIMENTS),
+            "batch_status":self.batch_status.text(),
+            "saved_dataset":self.source_identity.text(),
+            "original_fits_root":self.source_path.text(),
+            "selected_source_status":self.source_state.text(),
+            "bands":{band:detailed_band_report(panel)
+                     for band, panel in self.psf0_panels.items()},
+            "no_raw_fits_or_stamp_pixels_in_clipboard":True,
+        }
+
+    def copy_full_qa(self):
+        """Always available for both successful and rejected PSF runs."""
+        def native_json(value):
+            if isinstance(value, np.integer):
+                return int(value)
+            if isinstance(value, np.floating):
+                return float(value)
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            if isinstance(value, Path):
+                return str(value)
+            raise TypeError(f"Unsupported QA value: {type(value).__name__}")
+        try:
+            content = json.dumps(
+                self.full_qa_report(), ensure_ascii=False, sort_keys=True,
+                indent=2, allow_nan=False, default=native_json)
+        except (TypeError, ValueError, OverflowError) as exc:
+            self.batch_status.setText(
+                f"Full QA report serialization failed: {exc}. Nothing copied.")
+            return
+        QApplication.clipboard().setText(content)
+        self.batch_status.setText(
+            f"Copied complete non-adopted PSF-0 griz debug JSON: "
+            f"{len(content):,} characters. Paste it into ChatGPT. "
+            "No FITS or source pixels copied or modified.")
+
     def bind_project(self, project):
         """Read the immutable UUID from the existing project manifest."""
         from lsbpipe.surveys.object_projects import read_object_project
         saved = read_object_project(project.root)
         if saved.project_id != project.project_id:
             raise ValueError("Photometry workspace project identity mismatch")
+        same_project = (self._project_root is not None and
+                        Path(saved.root) == self._project_root)
         self._project_root = Path(saved.root)
-        self.refresh()
+        # Reopening the same Galaxy Workspace must retain all four
+        # existing previews; explicit Refresh invalidates them.
+        self.refresh(force=not same_project)
 
-    def refresh(self):
-        # Always clear/rebind the scientific preview first: even a corrupt
-        # project manifest must never leave a previous galaxy's PSF active.
-        self.psf0_panel.bind_project(self._project_root)
+    def refresh(self, *, force=False):
+        # Only a new project or explicit Refresh can discard a preview.
+        # Re-entering the same project/photometry view is non-destructive.
+        for panel in self.psf0_panels.values():
+            if force and panel._project_root is not None:
+                panel._project_root = self._project_root
+                panel.refresh_sources()
+            else:
+                panel.bind_project(self._project_root)
+        self.psf0_panel = next(
+            (panel for panel in self.psf0_panels.values()
+             if panel.run_btn.isEnabled()), self.psf0_panels["g"])
+        self.build_all_psfs_btn.setEnabled(any(
+            panel.run_btn.isEnabled() for panel in self.psf0_panels.values()))
         if self._project_root is None:
             self.title.setText("Photometry")
             self.source_state.setText("Open a galaxy project first.")
