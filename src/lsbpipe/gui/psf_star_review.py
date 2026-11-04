@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 
-IMAGE_SIDE = 126
+IMAGE_SIDE = 112
 
 
 def _square_image(values, *, relative_peak, valid=None):
@@ -129,7 +129,8 @@ class PSFStarReviewDialog(QDialog):
         heading = QLabel(
             "Training-star review · cyan positive, red negative, ochre masked. "
             "Each card: original sky-subtracted cutout / aligned candidate PSF / "
-            "observed and model radial profiles (all square).")
+            "signed 2D residual / observed and model radial profiles "
+            "(all square). Negative and positive residuals are equally visible.")
         heading.setWordWrap(True)
         root.addWidget(heading)
         notice = QLabel(
@@ -206,6 +207,9 @@ class PSFStarReviewDialog(QDialog):
                     observed, relative_peak=peak, valid=star["valid"])),
                 ("PSF model", _square_image(
                     model, relative_peak=peak, valid=star["valid"])),
+                ("2D residual", _square_image(
+                    observed-model, relative_peak=peak,
+                    valid=star["valid"])),
                 ("Radial PSF", _radial_plot(
                     observed, model, star["center_in_cutout"], peak=peak)),
             )
@@ -224,6 +228,30 @@ class PSFStarReviewDialog(QDialog):
                 panel.addWidget(graphic)
                 plots.addLayout(panel)
             box.addLayout(plots)
+            yy, xx = np.indices(observed.shape)
+            xy = star["center_in_cutout"]
+            rr = np.hypot(xx-float(xy[0]), yy-float(xy[1]))
+            valid = np.asarray(star["valid"],dtype=bool)
+            r_fwhm = float(snapshot.get("guessed_fwhm_pix", 4.8))
+            core = valid & (rr <= r_fwhm)
+            outer = valid & (rr > 2*r_fwhm)
+            signed_resid = observed-model
+            peak_norm = max(float(peak),1e-10)
+            core_med = (float(np.median(np.abs(signed_resid[core])) /
+                              peak_norm) if core.any() else None)
+            outer_med = (float(np.median(np.abs(signed_resid[outer])) /
+                               peak_norm) if outer.any() else None)
+            residual_text = QLabel(
+                "2D residual (same signed display scale) · "
+                + (f"core median |Δ|/peak {core_med:.4f}" if
+                   core_med is not None else "core unavailable")
+                + " · "
+                + (f"outer median |Δ|/peak {outer_med:.4f}" if
+                   outer_med is not None else "outer unavailable")
+                + " · diagnostic only, not covariance-calibrated χ²")
+            residual_text.setObjectName("psf0_residual_stats_" + sid)
+            residual_text.setWordWrap(True)
+            box.addWidget(residual_text)
             if role == "auto_rejected":
                 auto_check = QCheckBox("Automatically excluded (read-only)")
                 auto_check.setChecked(True)
