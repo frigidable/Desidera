@@ -587,11 +587,21 @@ def build_empirical_coadd_psf(
     accepted_before_width_screen = len(accepted)
     width_qa = None
     if catalog_matcher is not None:
-        # Compare each core with the field's own Gaia-confirmed seeing
-        # distribution, avoiding the guessed detection FWHM as truth.
+        # Define the field width reference ONLY from Gaia-confirmed cores,
+        # including in the Tractor-training experiment. Otherwise a
+        # mixture of unverified non-Gaia objects would silently redefine
+        # the star-size gate used to validate its own membership.
+        reference_entries = [
+            entry for entry in accepted
+            if (entry[-1].get("star_identity") or {}).get(
+                "gaia_source_id") is not None]
         width_qa = assess_sample_widths([
-            (entry[0], entry[-1]["shape_qa"]) for entry in accepted])
+            (entry[0], entry[-1]["shape_qa"])
+            for entry in reference_entries])
         if width_qa is not None:
+            width_qa["reference_population"] = "GAIA_DR3_CORES_ONLY"
+            width_qa["n_reference_gaia_candidates"] = len(reference_entries)
+
             compact = []
             for entry in accepted:
                 sigma = entry[-1]["shape_qa"]["sigma_eff_pix"]
@@ -670,6 +680,13 @@ def build_empirical_coadd_psf(
             f"Insufficient isolated, unsaturated, sky-screened stars: "
             f"{len(accepted)} (minimum {minimum_stars})",
             "stellar_sample_underflow")
+    if (cfg.star_catalog_policy == "tractor_psf_validated"
+            and width_qa is None):
+        selection_rejection(
+            "Cannot calibrate the Tractor-only core-width screen: "
+            "fewer than 5 individually accepted Gaia DR3 reference cores. "
+            "Do not use non-Gaia candidates to define their own width prior.",
+            "gaia_width_reference_underflow")
     # Gaia-only validation is reserved BEFORE fitting and BEFORE any
     # train-only iterative outlier removal. This heldout set cannot include
     # a Tractor-only training source, preventing identity leakage.
