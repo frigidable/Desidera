@@ -111,6 +111,9 @@ class TractorGaiaMatcher:
             "tractor_fitbits": None,
             "tractor_maskbits": None,
             "match_offset_pix": None,
+            "nearest_tractor_centroid_distance_pix": None,
+            "tractor_band_flux": None,
+            "tractor_band_flux_ivar": None,
             "tractor_band_snr_diagonal_only": None,
             "nearest_catalog_neighbor_pix": None,
             "nearest_significant_neighbor_pix": None,
@@ -131,6 +134,8 @@ class TractorGaiaMatcher:
         near = self._tree.query_ball_point(
             [float(x), float(y)], r=self.match_radius_pix)
         trace["n_catalog_matches"] = len(near)
+        nearest_distance, _ = self._tree.query([float(x), float(y)], k=1)
+        trace["nearest_tractor_centroid_distance_pix"] = float(nearest_distance)
         if len(near) == 0:
             return finish(failure="NO_TRACTOR_SOURCE_AT_DAO_CENTROID")
         if len(near) != 1:
@@ -144,6 +149,8 @@ class TractorGaiaMatcher:
             "tractor_type": row["type"],
             "tractor_fitbits": row["fitbits"],
             "tractor_maskbits": row["maskbits"],
+            "tractor_band_flux": row["flux"],
+            "tractor_band_flux_ivar": row["flux_ivar"],
             "match_offset_pix": float(np.hypot(
                 self.pixel_positions[index, 0]-x,
                 self.pixel_positions[index, 1]-y)),
