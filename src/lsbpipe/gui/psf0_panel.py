@@ -32,6 +32,7 @@ class PSF0Panel(QGroupBox):
     saveRequested = Signal(object)
     autoFwhmRequested = Signal(object)
     tractorRequested = Signal(object)
+    overviewChanged = Signal()
 
     def __init__(self, parent=None, *, fixed_band=None):
         if fixed_band is not None and fixed_band not in ("g", "r", "i", "z"):
@@ -48,6 +49,7 @@ class PSF0Panel(QGroupBox):
         self._preview = None
         self._qa_payload = None
         self._busy = False
+        self._research_mode = False
         self._experiment_history = []
         self._history_band = None
         self._history_policy = None
@@ -65,6 +67,7 @@ class PSF0Panel(QGroupBox):
         # ordinary workspace; the full text stays available as a tooltip.
         self.setToolTip(explanation.text())
         form = QFormLayout()
+        self._control_form = form
         self.band = QComboBox()
         self.band.setObjectName("psf0_band")
         self.band.setAccessibleName("Native optical band for provisional PSF")
@@ -154,6 +157,12 @@ class PSF0Panel(QGroupBox):
             "against diffuse galaxy light before science-quality PSF.")
         form.addRow("Protect target radius", self.protection)
         layout.addLayout(form)
+        # A visible summary in guided mode prevents hidden protection or
+        # non-default settings being mistaken for absent settings.
+        self.mode_context = QLabel("")
+        self.mode_context.setObjectName("psf0_guided_setup_context")
+        self.mode_context.setWordWrap(True)
+        layout.addWidget(self.mode_context)
         self.prior_source = QLabel(
             "FWHM: 4.80 px is a USER-OVERRIDABLE DEFAULT, not measured seeing. "
             "Target protection: project radius with 90″ conservative floor; "
@@ -296,7 +305,54 @@ class PSF0Panel(QGroupBox):
         layout.addWidget(self.inspection_details)
         # Before a galaxy is bound, no action may appear runnable.
         self._show_recipe_geometry()
+        self.set_research_mode(False)
         self._update_buttons()
+
+    def set_research_mode(self, enabled: bool):
+        """Presentation only: never rewrite a recipe or discard a preview."""
+        self._research_mode = bool(enabled)
+        self._control_form.setRowVisible(self.protection, self._research_mode)
+        self._control_form.setRowVisible(
+            self.band, self.fixed_band is None and self._research_mode)
+        for action in (self.review_btn, self.save_btn, self.copy_qa_btn,
+                       self.advanced_toggle):
+            action.setVisible(self._research_mode)
+        self._update_mode_context()
+
+    def _update_mode_context(self):
+        if self._research_mode:
+            self.mode_context.setText(
+                "Research controls visible. Science status: NOT ADOPTED.")
+        else:
+            policy = self.catalog_policy.currentText()
+            experiment = self.experiment.currentText()
+            self.mode_context.setText(
+                f"Guided view · {experiment} · {policy} · "
+                f"target protected within {self.protection.value():.1f} arcsec. "
+                "Full recipe remains active; no PSF is adopted.")
+
+    def overview_state(self):
+        """Short, honest status for the g/r/i/z tab strip."""
+        if self._busy:
+            return "Running"
+        if self._preview is not None:
+            return "Preview"
+        if self._qa_payload is not None:
+            return "Rejected"
+        if self.status.text().startswith("PSF-0 failed scientific"):
+            return "Failed"
+        available = bool(self._snapshot) and any(
+            row["band"] == self.band.currentData()
+            and row["paths_present_unverified"]
+            for row in self._snapshot["bands"])
+        if not available:
+            return "No FITS"
+        if (self.catalog_policy.currentData() in (
+                "gaia_strict", "tractor_psf_validated")
+                and not self._snapshot.get(
+                    "gaia_tractor_present_unverified")):
+            return "Need catalog"
+        return "Ready"
 
     @property
     def active_preview(self):
@@ -395,6 +451,7 @@ class PSF0Panel(QGroupBox):
         self._history_band = self.band.currentData()
         self._history_policy = self.catalog_policy.currentData()
         self._show_recipe_geometry()
+        self._update_mode_context()
         self._update_buttons()
 
     def _show_recipe_geometry(self, *_):
@@ -448,6 +505,7 @@ class PSF0Panel(QGroupBox):
         self._history_policy = self.catalog_policy.currentData()
         self._render_comparison()
         self._active_exclusions = ()
+        self._update_mode_context()
         if self._preview is not None or self._qa_payload is not None:
             self._band_changed()
 
@@ -474,6 +532,7 @@ class PSF0Panel(QGroupBox):
         self.kernel_view.setText("No empirical PSF image")
         self.summary.setText("No PSF preview for this band.")
         self.qa.clear()
+        self._update_mode_context()
         self._update_buttons()
 
     def _update_buttons(self):
@@ -500,6 +559,7 @@ class PSF0Panel(QGroupBox):
         self.auto_fwhm_btn.setEnabled(eligible and not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
         self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)
+        self.overviewChanged.emit()
 
     def set_busy(self, state: bool, message: str = ""):
         self._busy = bool(state)
