@@ -107,7 +107,8 @@ class PSF0Config:
             raise ValueError("PSF-0 currently supports only a native-grid EPSF; oversampling requires separate calibration")
         if self.max_star_gradient_sigma <= 0:
             raise ValueError("Gradient rejection threshold must be positive")
-        if self.star_catalog_policy not in ("dao_diagnostic", "gaia_strict"):
+        if self.star_catalog_policy not in (
+                "dao_diagnostic", "gaia_strict", "tractor_psf_validated"):
             raise ValueError("Unknown PSF star-catalogue selection policy")
         if type(self.training_outlier_passes) is not int or not (
                 0 <= self.training_outlier_passes <= 2):
@@ -431,11 +432,11 @@ def build_empirical_coadd_psf(
     cfg = config if config is not None else PSF0Config()
     if not isinstance(cfg, PSF0Config):
         raise TypeError("Expected PSF0Config")
-    if cfg.star_catalog_policy == "gaia_strict":
+    if cfg.star_catalog_policy in ("gaia_strict", "tractor_psf_validated"):
         from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
         if not isinstance(catalog_matcher, TractorGaiaMatcher):
             raise ValueError(
-                "GAIA_STRICT_REQUIRES_NATIVE_DR11_TRACTOR: "
+                "CATALOG_VETTED_PSF_REQUIRES_NATIVE_DR11_TRACTOR: "
                 "download/verify the same-brick Tractor catalogue in GUI")
         if catalog_matcher.dataset_id != frame.dataset_id:
             raise ValueError("Gaia catalogue does not match exact native FITS band")
@@ -490,53 +491,87 @@ def build_empirical_coadd_psf(
     positions = np.array([item[:2] for item in candidates])
     neighbors = cKDTree(positions)
     rejected = {}
-    def reject(reason):
+    screening_audit = []
+    screening_by_id = {}
+    def reject(reason, evidence=None):
         rejected[reason] = rejected.get(reason, 0)+1
+        if evidence is not None:
+            evidence["outcome"] = "REJECTED"
+            evidence["first_failure"] = reason
     accepted = []
     cutouts = {}
     used_gaia_ids = set()
     screened_count = 0
     max_candidates = (
-        len(candidates) if cfg.star_catalog_policy == "gaia_strict"
+        len(candidates)
+        if cfg.star_catalog_policy in ("gaia_strict", "tractor_psf_validated")
         else max(cfg.max_training_stars*5, 100))
     # Sort by brightness for capping, then spatially sort/split below.
     for ix, (x, y, peak) in enumerate(candidates[:max_candidates]):
         screened_count += 1
+        star_id = f"star-{ix+1:04d}"
+        near_dist = neighbors.query([x,y], k=2)[0]
+        evidence = {
+            "star_id": star_id,
+            "native_xy_pix": [float(x), float(y)],
+            "dao_peak_nMgy_per_pix": float(peak),
+            "nearest_dao_detection_neighbor_pix": float(near_dist[1]),
+            "dao_isolation_radius_pix": float(cfg.min_neighbor_separation_pix),
+            "checks_passed": ["dao_detection"],
+            "first_failure": None, "outcome": "IN_PROGRESS",
+        }
+        screening_audit.append(evidence)
+        screening_by_id[star_id] = evidence
         identity = None
         if catalog_matcher is not None:
-            identity, failure = catalog_matcher.match(
+            identity, failure, catalog_evidence = catalog_matcher.match(
                 x, y, band=frame.band,
                 neighbor_search_radius_pix=min(
                     50., max(3*cfg.guessed_fwhm_pix,
-                             .65*cfg.cutout_size_pix)))
+                             .65*cfg.cutout_size_pix)),
+                require_gaia=(cfg.star_catalog_policy == "gaia_strict"),
+                return_audit=True)
+            evidence["tractor_screen"] = catalog_evidence
             if failure is not None:
-                reject(failure)
+                reject(failure, evidence)
                 continue
-        if len(neighbors.query_ball_point([x,y], r=cfg.min_neighbor_separation_pix)) != 1:
-            reject("NEIGHBOR_WITHIN_ISOLATION_RADIUS")
+            evidence["checks_passed"].append("tractor_catalog")
+        if len(neighbors.query_ball_point(
+                [x,y], r=cfg.min_neighbor_separation_pix)) != 1:
+            reject("NEIGHBOR_WITHIN_ISOLATION_RADIUS", evidence)
             continue
+        evidence["checks_passed"].append("dao_isolation")
         data_cut, cause = _star_cutout(frame, x, y, cfg, protected)
         if cause:
-            reject(cause)
+            reject(cause, evidence)
             continue
+        evidence["checks_passed"].append("native_cutout_and_local_sky")
+        evidence["sky_qa"] = dict(data_cut.get("sky_qa", {}))
+        evidence["local_sky_nMgy_per_pix"] = float(data_cut["sky_nMgy"])
+        evidence["local_sky_rms_nMgy_per_pix"] = float(data_cut["rms_nMgy"])
         if identity is not None:
             shape = assess_psf_star_cutout(
                 data_cut, fwhm_guess_pix=cfg.guessed_fwhm_pix)
+            evidence["image_morphology"] = shape
             if not shape["accepted"]:
-                reject(shape["reason"])
+                reject(shape["reason"], evidence)
                 continue
+            evidence["checks_passed"].append("image_core_shape")
             gaia_id = identity["gaia_source_id"]
-            if gaia_id in used_gaia_ids:
-                reject("GAIA_CATALOG_SOURCE_REUSED")
+            if gaia_id is not None and gaia_id in used_gaia_ids:
+                reject("GAIA_CATALOG_SOURCE_REUSED", evidence)
                 continue
-            used_gaia_ids.add(gaia_id)
+            if gaia_id is not None:
+                used_gaia_ids.add(gaia_id)
             data_cut["star_identity"] = identity
             data_cut["shape_qa"] = shape
-        star_id = f"star-{ix+1:04d}"
         ra, dec = frame.wcs.all_pix2world(x, y, 0)
         if not np.isfinite(ra) or not np.isfinite(dec):
-            reject("INVALID_STAR_WCS")
+            reject("INVALID_STAR_WCS", evidence)
             continue
+        evidence["checks_passed"].append("valid_icrs_position")
+        evidence["icrs_deg"] = [float(ra)%360, float(dec)]
+        evidence["outcome"] = "ACCEPTED_BEFORE_WIDTH_SCREEN"
         accepted.append((star_id, x, y, float(ra)%360, float(dec),
                          peak, data_cut))
         cutouts[star_id] = data_cut
@@ -557,65 +592,105 @@ def build_empirical_coadd_psf(
                 ratio = sigma / width_qa["reference_core_sigma_pix"]
                 if not (width_qa["min_relative_core_sigma"] <= ratio <=
                         width_qa["max_relative_core_sigma"]):
-                    reject("GAIA_STELLAR_CORE_SIZE_OUTLIER")
+                    reject("GAIA_STELLAR_CORE_SIZE_OUTLIER",
+                           screening_by_id[entry[0]])
                     continue
                 compact.append(entry)
             accepted = compact
+    for entry in accepted:
+        evidence = screening_by_id[entry[0]]
+        evidence["outcome"] = "ACCEPTED_FOR_SPLIT"
+        evidence["checks_passed"].append("field_relative_core_width")
     # Prevent the brightest section of one brick monopolizing the holdout.
     accepted.sort(key=lambda t: (int(t[2]//(cfg.cutout_size_pix*2)),
                                  int(t[1]//(cfg.cutout_size_pix*2)), t[1], t[0]))
     minimum_stars = cfg.min_train_stars + cfg.min_holdout_stars
-    if len(accepted) < minimum_stars:
-        # Insufficient vetted stars is a scientific QA rejection, not an
-        # unexpected worker failure. Retain its provenance and screening
-        # counts in the GUI/full-griz JSON without constructing a model or
-        # weakening the independent training/holdout requirement.
+    n_gaia_eligible = sum(
+        (entry[-1].get("star_identity") or {}).get("gaia_source_id")
+        is not None for entry in accepted)
+
+    def selection_rejection(reason, stage):
+        # A scientifically insufficient training/validation inventory must
+        # never turn into an ordinary task error or an adopted model.
         accepted_candidates = []
         for star_id, x, y, ra, dec, peak, cut in accepted:
+            identity = cut.get("star_identity") or {}
             accepted_candidates.append({
                 "star_id": star_id, "x_pix": float(x), "y_pix": float(y),
                 "ra_deg": float(ra), "dec_deg": float(dec),
                 "peak_nMgy": float(peak),
                 "cutout_sky_nMgy": float(cut["sky_nMgy"]),
                 "gradient_sigma_span": float(cut["gradient_sigma_span"]),
-                "gaia_source_id": (
-                    (cut.get("star_identity") or {}).get("gaia_source_id")),
+                "gaia_source_id": identity.get("gaia_source_id"),
+                "tractor_objid": identity.get("tractor_objid"),
+                "tractor_ref_cat": identity.get("tractor_ref_cat"),
             })
-        raise PSF0QualityError(
+        raise PSF0QualityError(reason, {
+            "stage": stage,
+            "n_detected_candidates": len(candidates),
+            "n_screened_candidates": screened_count,
+            "n_unexamined_candidates": len(candidates)-screened_count,
+            "n_accepted_before_width_screen": accepted_before_width_screen,
+            "n_accepted_stars": len(accepted),
+            "n_gaia_holdout_eligible": n_gaia_eligible,
+            "minimum_accepted_stars": minimum_stars,
+            "min_train_stars": cfg.min_train_stars,
+            "min_holdout_stars": cfg.min_holdout_stars,
+            "rejected_reasons": dict(rejected),
+            "accepted_candidates": accepted_candidates,
+            "candidate_screening_audit": screening_audit,
+            "catalog_selection_qa": {
+                "policy": cfg.star_catalog_policy,
+                "catalog_sha256": (
+                    catalog_matcher.source_sha256
+                    if catalog_matcher is not None else None),
+                "width_screen": width_qa,
+                "holdout_requires_gaia_dr3": (
+                    cfg.star_catalog_policy == "tractor_psf_validated"),
+            },
+            "psf_recipe": asdict(cfg),
+            "notes": [
+                "Selection ended before ePSF fitting and before independent "
+                "heldout validation.",
+                "Tractor-only candidates are not Gaia-confirmed. No source "
+                "is promoted to Gaia identity by this policy.",
+                "Keep the same masked-pixel, isolation and source-shape "
+                "rules; validate proposed changes on heldout Gaia stars.",
+                "Native FITS and exact DR11 Tractor catalogue are read-only.",
+            ],
+        })
+    if len(accepted) < minimum_stars:
+        selection_rejection(
             f"Insufficient isolated, unsaturated, sky-screened stars: "
             f"{len(accepted)} (minimum {minimum_stars})",
-            {
-                "stage": "stellar_sample_underflow",
-                "n_detected_candidates": len(candidates),
-                "n_screened_candidates": screened_count,
-                "n_accepted_before_width_screen": accepted_before_width_screen,
-                "n_accepted_stars": len(accepted),
-                "minimum_accepted_stars": minimum_stars,
-                "min_train_stars": cfg.min_train_stars,
-                "min_holdout_stars": cfg.min_holdout_stars,
-                "rejected_reasons": dict(rejected),
-                "accepted_candidates": accepted_candidates,
-                "catalog_selection_qa": {
-                    "policy": cfg.star_catalog_policy,
-                    "catalog_sha256": (
-                        catalog_matcher.source_sha256
-                        if catalog_matcher is not None else None),
-                    "width_screen": width_qa,
-                },
-                "psf_recipe": asdict(cfg),
-                "notes": [
-                    "Selection ended before ePSF fitting and before the "
-                    "independent training/holdout split.",
-                    "Do not lower the minimum star count or relax Gaia, "
-                    "isolation, saturation or sky screening without "
-                    "independently validating rejected candidates.",
-                    "Native FITS and original Tractor catalogue were read-only.",
-                ],
-            })
-    # Deterministic holdout every fifth source after spatial ordering.
-    holdout_idx = {i for i in range(len(accepted)) if i % cfg.holdout_every == 0}
-    if len(holdout_idx) < cfg.min_holdout_stars:
-        holdout_idx.update(range(cfg.min_holdout_stars))
+            "stellar_sample_underflow")
+    # Gaia-only validation is reserved BEFORE fitting and BEFORE any
+    # train-only iterative outlier removal. This heldout set cannot include
+    # a Tractor-only training source, preventing identity leakage.
+    if cfg.star_catalog_policy == "tractor_psf_validated":
+        gaia_indices = [
+            i for i, entry in enumerate(accepted)
+            if (entry[-1].get("star_identity") or {}).get(
+                "gaia_source_id") is not None]
+        if len(gaia_indices) < cfg.min_holdout_stars:
+            selection_rejection(
+                f"Insufficient independent Gaia DR3 holdout stars: "
+                f"{len(gaia_indices)} (minimum {cfg.min_holdout_stars}); "
+                "Tractor-only sources cannot substitute for Gaia validation",
+                "gaia_holdout_underflow")
+        holdout_idx = set(gaia_indices[::cfg.holdout_every])
+        if len(holdout_idx) < cfg.min_holdout_stars:
+            holdout_idx.update(gaia_indices[:cfg.min_holdout_stars])
+    else:
+        holdout_idx = {
+            i for i in range(len(accepted)) if i % cfg.holdout_every == 0}
+        if len(holdout_idx) < cfg.min_holdout_stars:
+            holdout_idx.update(range(cfg.min_holdout_stars))
+    for i, entry in enumerate(accepted):
+        screening_by_id[entry[0]]["selection_role"] = (
+            "HOLDOUT_GAIA_DR3" if i in holdout_idx
+            and cfg.star_catalog_policy == "tractor_psf_validated"
+            else "HOLDOUT" if i in holdout_idx else "TRAIN_CANDIDATE")
     training_entries = [v for i,v in enumerate(accepted) if i not in holdout_idx]
     holdout_entries = [v for i,v in enumerate(accepted) if i in holdout_idx]
     if len(training_entries) < cfg.min_train_stars:
@@ -891,7 +966,13 @@ def build_empirical_coadd_psf(
     }
     selection_catalog_qa = {
         "policy": cfg.star_catalog_policy,
-        "gaia_strict": catalog_matcher is not None,
+        "gaia_strict": cfg.star_catalog_policy == "gaia_strict",
+        "tractor_psf_validated": cfg.star_catalog_policy == "tractor_psf_validated",
+        "holdout_requires_gaia_dr3": cfg.star_catalog_policy == "tractor_psf_validated",
+        "n_detected_candidates": len(candidates),
+        "n_screened_candidates": screened_count,
+        "n_unexamined_candidates": len(candidates)-screened_count,
+        "candidate_screening_audit": screening_audit,
         "catalog_source_sha256": (
             catalog_matcher.source_sha256 if catalog_matcher else None),
         "catalog_path": (
@@ -908,7 +989,9 @@ def build_empirical_coadd_psf(
         "brightness_score_coupling_blocked_auto_trim":
             score_amplitude_guard_triggered,
         "n_train_gaia_matched": sum(s.gaia_source_id is not None for s in train),
+        "n_train_tractor_only": sum(s.gaia_source_id is None for s in train),
         "n_holdout_gaia_matched": sum(s.gaia_source_id is not None for s in holdout),
+        "n_holdout_tractor_only": sum(s.gaia_source_id is None for s in holdout),
         "psf_star_cleanliness_certified": False,
     }
     # Even when the signed kernel fails the negative-mass gate, preserve
@@ -995,6 +1078,9 @@ def build_empirical_coadd_psf(
         "HOLDOUT_RESIDUAL_NOT_CALIBRATED_CHI_SQUARE",
         "TARGET_PROTECTION_LOCAL_WCS_APPROXIMATION",
     ]
+    if cfg.star_catalog_policy == "tractor_psf_validated":
+        flags.append("TRACTOR_ONLY_TRAINING_STARS_NOT_GAIA_CONFIRMED")
+        flags.append("GAIA_ONLY_HOLDOUT_VALIDATION_NOT_CALIBRATED")
     if score_amplitude_guard_triggered:
         flags.append("AUTO_TRAINING_TRIM_BLOCKED_BY_SCORE_FLUX_COUPLING")
     if negative_fraction > 1e-4:
