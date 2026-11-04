@@ -12,10 +12,11 @@ import sys
 
 import numpy as np
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-    QPushButton, QScrollArea, QSplitter, QTableWidget, QTableWidgetItem,
+    QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QPushButton, QScrollArea, QSplitter, QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -181,6 +182,14 @@ class PhotometryWorkspace(QWidget):
             "star IDs, Gaia identity, sky metrics and signed per-star core/"
             "wing residual diagnostics as JSON. No native image pixels.")
         batch_buttons.addWidget(self.copy_full_qa_btn)
+        self.save_full_qa_btn = QPushButton("Save full QA JSON…")
+        self.save_full_qa_btn.setObjectName("psf0_save_full_griz_debug")
+        self.save_full_qa_btn.clicked.connect(self.save_full_qa)
+        self.save_full_qa_btn.setToolTip(
+            "Export the same full four-filter diagnostic JSON as an "
+            "explicit user-selected new .json file, for ChatGPT attachment. "
+            "Original FITS files are never modified.")
+        batch_buttons.addWidget(self.save_full_qa_btn)
         batch_buttons.addStretch(1)
         batch_layout.addLayout(batch_buttons)
         self.batch_status = QLabel("No batch run started. Original FITS unchanged.")
@@ -251,6 +260,7 @@ class PhotometryWorkspace(QWidget):
             not state and any(panel.run_btn.isEnabled()
                               for panel in self.psf0_panels.values()))
         self.copy_full_qa_btn.setEnabled(not state)
+        self.save_full_qa_btn.setEnabled(not state)
 
     def _request_all_psfs(self):
         if self._project_root is None:
@@ -304,8 +314,8 @@ class PhotometryWorkspace(QWidget):
             "no_raw_fits_or_stamp_pixels_in_clipboard":True,
         }
 
-    def copy_full_qa(self):
-        """Always available for both successful and rejected PSF runs."""
+    def _serialize_full_qa(self):
+        """Deterministic serializable JSON; never embed raw FITS stamps."""
         def native_json(value):
             if isinstance(value, np.bool_):
                 return bool(value)
@@ -318,10 +328,13 @@ class PhotometryWorkspace(QWidget):
             if isinstance(value, Path):
                 return str(value)
             raise TypeError(f"Unsupported QA value: {type(value).__name__}")
+        return json.dumps(
+            self.full_qa_report(), ensure_ascii=False, sort_keys=True,
+            indent=2, allow_nan=False, default=native_json)
+
+    def copy_full_qa(self):
         try:
-            content = json.dumps(
-                self.full_qa_report(), ensure_ascii=False, sort_keys=True,
-                indent=2, allow_nan=False, default=native_json)
+            content = self._serialize_full_qa()
         except (TypeError, ValueError, OverflowError) as exc:
             self.batch_status.setText(
                 f"Full QA report serialization failed: {exc}. Nothing copied.")
@@ -331,6 +344,47 @@ class PhotometryWorkspace(QWidget):
             f"Copied complete non-adopted PSF-0 griz debug JSON: "
             f"{len(content):,} characters. Paste it into ChatGPT. "
             "No FITS or source pixels copied or modified.")
+
+    def save_full_qa(self):
+        """Explicit atomic JSON export, not a scientific PSF product."""
+        if self._project_root is None:
+            self.batch_status.setText("Open Leo P first; no QA file written.")
+            return
+        try:
+            content = self._serialize_full_qa()
+        except (TypeError, ValueError, OverflowError) as exc:
+            self.batch_status.setText(
+                f"Cannot serialize complete QA: {exc}. No file written.")
+            return
+        suffix = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        proposed = self._project_root / (
+            f"Desidera_LeoP_PSF0_griz_debug_{suffix}.json")
+        selected, _ = QFileDialog.getSaveFileName(
+            self, "Save non-adopted PSF-0 griz QA", str(proposed),
+            "JSON diagnostic report (*.json)")
+        if not selected:
+            return
+        path = Path(selected)
+        if path.suffix.lower() != ".json" or path.is_symlink() or path.exists():
+            self.batch_status.setText(
+                "Choose a NEW .json filename. Existing files, symlinks "
+                "and original FITS will not be overwritten.")
+            return
+        writer = QSaveFile(str(path))
+        if not writer.open(QIODevice.WriteOnly):
+            self.batch_status.setText(
+                "Cannot open diagnostic JSON for writing: "
+                + writer.errorString())
+            return
+        data = content.encode("utf-8")
+        if writer.write(data) != len(data) or not writer.commit():
+            writer.cancelWriting()
+            self.batch_status.setText(
+                "QA JSON export failed. Original FITS unchanged.")
+            return
+        self.batch_status.setText(
+            f"Full non-adopted griz debug JSON saved: {path}. "
+            "Attach this .json to ChatGPT; no original FITS modified.")
 
     def bind_project(self, project):
         """Read the immutable UUID from the existing project manifest."""
