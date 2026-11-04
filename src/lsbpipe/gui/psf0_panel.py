@@ -39,6 +39,7 @@ class PSF0Panel(QGroupBox):
         super().__init__("04 · Empirical PSF · " + (fixed_band or "Leo P"), parent)
         self.fixed_band = fixed_band
         self._fwhm_manually_edited = False
+        self._latest_seeing_payload = None
         self._last_reported_payload = None
         self.setObjectName("photometry_psf0_panel")
         self._project_root = None
@@ -270,6 +271,13 @@ class PSF0Panel(QGroupBox):
         self.refresh_sources()
 
     def refresh_sources(self):
+        # A new source selection invalidates FWHM provenance and star IDs.
+        # Never carry seeing or reviewed PSF geometry to a new dataset.
+        self.fwhm.blockSignals(True)
+        self.fwhm.setValue(4.8)
+        self.fwhm.blockSignals(False)
+        self._fwhm_manually_edited = False
+        self._latest_seeing_payload = None
         self._star_review_data = None
         self._active_exclusions = ()
         self._last_reported_payload = None
@@ -345,6 +353,7 @@ class PSF0Panel(QGroupBox):
         self.band.blockSignals(False)
         self._history_band = self.band.currentData()
         self._history_policy = self.catalog_policy.currentData()
+        self._show_recipe_geometry()
         self._update_buttons()
 
     def _show_recipe_geometry(self, *_):
@@ -384,6 +393,11 @@ class PSF0Panel(QGroupBox):
     def _parameters_changed(self, *_):
         if self.sender() is self.fwhm:
             self._fwhm_manually_edited = True
+            self._latest_seeing_payload = None
+            self.prior_source.setText(
+                f"Manual FWHM guess: {self.fwhm.value():.2f} native px. "
+                "Any earlier PSFSIZE suggestion is NOT used. "
+                "This remains a detection-width guess, not a measured ePSF.")
         # The FWHM/target radius changes the detected candidates,
         # spatial split and the PSF's scientific recipe. Historical
         # same-band trials from the prior parameter set are NOT
@@ -553,6 +567,7 @@ class PSF0Panel(QGroupBox):
             if via_tractor else "original local coadd PSFSIZE pixel map")
         self.fwhm.setValue(round(pix, 2))
         self._fwhm_manually_edited = False
+        self._latest_seeing_payload = payload
         self._show_recipe_geometry()
         resolved = self.fwhm.value()
         caveat = (
