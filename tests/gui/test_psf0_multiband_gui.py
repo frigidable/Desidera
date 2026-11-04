@@ -311,6 +311,7 @@ def test_saved_brick_change_invalidates_all_psf_bands_and_seeing(
                for p in workspace.psf0_panels.values())
     assert g.fwhm.value() == pytest.approx(4.8)
     assert not g._fwhm_manually_edited
-    assert "No empirical PSF" in g.kernel_view.text()
+    assert "No fitted PSF model" in g.kernel_view.text()
+    assert "No observed/model" in g.profile_view.text()
     window._returning_to_hub = True
     window.close()
