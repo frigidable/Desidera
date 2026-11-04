@@ -273,3 +273,66 @@ def test_gui_insufficient_stars_preserves_screening_evidence_and_originals(
     assert not (project.root / "analyses" / "psf-pilots").exists()
     assert all(path.read_bytes() == originals[kind]
                for kind, path in paths.items())
+
+
+def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fits(
+        tmp_path, monkeypatch):
+    """Non-Gaia Tractor PSF stars enter TRAIN only, never Gaia validation."""
+    from lsbpipe.photometry.native_fits import load_native_legacy_quartet
+    from lsbpipe.photometry.psf_empirical import (
+        PSF0QualityError, build_empirical_coadd_psf)
+    from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = _project(tmp_path)
+    paths = _synthetic_legacy_files(project)
+    originals = {kind: path.read_bytes() for kind, path in paths.items()}
+    frame = load_native_legacy_quartet(
+        project.data_root, release="dr11", region="south",
+        brick="1554p180", band="r", hash_inputs=True,
+        require_explicit_bunit=True)
+
+    positions, rows = [], []
+    for j, (cy, cx) in enumerate(
+            (cy, cx) for cy in (35, 78, 122, 166, 209, 248)
+            for cx in (35, 78, 122, 166, 209, 248)):
+        gaia = j % 6 == 0
+        positions.append((cx + .12, cy - .29))
+        rows.append({
+            "ref_cat": "G3" if gaia else "",
+            "ref_id": j + 101 if gaia else -1,
+            "objid": j + 1,
+            "type": "PSF", "fitbits": 0, "maskbits": 0,
+            "flux": 100., "flux_ivar": 1.,
+            "gaia_duplicated_source": False,
+            "gaia_g_mag": 18. if gaia else None,
+        })
+    matcher = TractorGaiaMatcher(
+        source_path=str(project.data_root / "synthetic-tractor-not-written.fits"),
+        source_sha256="a"*64, dataset_id=frame.dataset_id,
+        rows=tuple(rows), pixel_positions=np.asarray(positions, float))
+    config = PSF0Config(
+        min_train_stars=6, min_holdout_stars=2, max_training_stars=30,
+        star_catalog_policy="tractor_psf_validated")
+    result = build_empirical_coadd_psf(
+        frame, target_icrs_deg=LEO_P_WORKING_ICRS,
+        target_protection_arcsec=12., config=config,
+        catalog_matcher=matcher)
+    qa = result.metrics["catalog_selection_qa"]
+    assert qa["policy"] == "tractor_psf_validated"
+    assert qa["n_detected_candidates"] == qa["n_screened_candidates"]
+    assert qa["n_train_tractor_only"] > 0
+    assert qa["n_holdout_tractor_only"] == 0
+    assert qa["n_holdout_gaia_matched"] >= 2
+    assert all(star.gaia_source_id is not None for star in result.holdout)
+    assert all(star.star_id not in {t.star_id for t in result.training}
+               for star in result.holdout)
+    assert "TRACTOR_ONLY_TRAINING_STARS_NOT_GAIA_CONFIRMED" in result.flags
+    audit = qa["candidate_screening_audit"]
+    assert len(audit) == qa["n_screened_candidates"]
+    assert all("nearest_dao_detection_neighbor_pix" in row for row in audit)
+    assert any(row.get("tractor_screen", {}).get("gaia_confirmed") is False
+               and row.get("selection_role") == "TRAIN_CANDIDATE"
+               for row in audit)
+    assert all(path.read_bytes() == originals[kind]
+               for kind, path in paths.items())
