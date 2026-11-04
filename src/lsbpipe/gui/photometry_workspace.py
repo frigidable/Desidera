@@ -50,6 +50,8 @@ class PhotometryWorkspace(QWidget):
         super().__init__(parent)
         self.setObjectName("photometry_workspace")
         self._project_root = None
+        self._bound_project_id = None
+        self._bound_source_identity = None
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
         root.setSpacing(12)
@@ -336,11 +338,19 @@ class PhotometryWorkspace(QWidget):
         saved = read_object_project(project.root)
         if saved.project_id != project.project_id:
             raise ValueError("Photometry workspace project identity mismatch")
-        same_project = (self._project_root is not None and
-                        Path(saved.root) == self._project_root)
+        identity = (
+            str(saved.data_root) if saved.data_root is not None else None,
+            tuple(saved.selected_dataset) if saved.selected_dataset else None)
+        same_project = (
+            self._project_root is not None
+            and Path(saved.root) == self._project_root
+            and saved.project_id == self._bound_project_id
+            and identity == self._bound_source_identity)
         self._project_root = Path(saved.root)
-        # Reopening the same Galaxy Workspace must retain all four
-        # existing previews; explicit Refresh invalidates them.
+        self._bound_project_id = saved.project_id
+        self._bound_source_identity = identity
+        # A new UUID, selected observation or data root invalidates PSFs.
+        # Reopening the SAME immutable galaxy source keeps all four views.
         self.refresh(force=not same_project)
 
     def refresh(self, *, force=False):
