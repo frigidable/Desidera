@@ -188,3 +188,38 @@ def audit_signed_holdout_coverage(expected_source_ids, reports, failures) -> dic
         "not_covariance_calibrated": True,
         "holdout_scores_do_not_select_training_stars": True,
     }
+
+def heldout_final_kernel_residual(
+    *,
+    source_id: str,
+    image: np.ndarray,
+    sqrt_ivar: np.ndarray,
+    final_kernel: np.ndarray,
+    local_center_xy: tuple[float, float],
+    guessed_fwhm_pix: float,
+    measured_peak: float,
+) -> dict:
+    """Score the ACTUAL nonnegative, normalized delivered kernel on fixed holdouts.
+
+    The three radial masks, core-only weighted amplitude fit, shift interpolation
+    and peak-normalized residual metric are identical to the signed-model audit.
+    This is an independent-star *diagnostic*, not wing validation or calibrated
+    goodness-of-fit. Never convert an invalid signed model to a pass here.
+    """
+    kernel = np.asarray(final_kernel, dtype=float)
+    if (kernel.ndim != 2 or not np.all(np.isfinite(kernel))
+            or np.any(kernel < 0.) or
+            not np.isclose(float(np.sum(kernel)), 1., rtol=0., atol=1e-8)):
+        raise ValueError("Final holdout kernel must be finite, nonnegative and normalized")
+    # Reuse precisely the same fitting/radial scoring mathematics as the
+    # signed precursor so discrepancies can be attributed to the kernel
+    # transformation rather than to a different comparison procedure.
+    qa = heldout_signed_residual(
+        source_id=source_id, image=image, sqrt_ivar=sqrt_ivar,
+        signed_kernel=kernel, local_center_xy=local_center_xy,
+        guessed_fwhm_pix=guessed_fwhm_pix, measured_peak=measured_peak)
+    qa.pop("signed_kernel_unchanged")
+    qa["kernel_representation"] = "FINAL_NONNEGATIVE_NORMALIZED"
+    qa["final_kernel_nonnegative_and_unit_sum"] = True
+    qa["evaluated_on_identical_native_holdout_pixels"] = True
+    return qa
