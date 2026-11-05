@@ -83,6 +83,11 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert {s.star_id for s in result.training}.isdisjoint(
         {s.star_id for s in result.holdout})
     assert result.metrics["holdout_median_abs_core_residual_over_peak"] < .12
+    assert result.metrics["signed_holdout_coverage_qa"]["status"] == "COMPLETE"
+    assert result.metrics["signed_holdout_coverage_qa"][
+        "n_expected_holdout_stars"] == len(result.holdout)
+    assert all(row["subpixel_center_consistent_with_model_shift"]
+               for row in result.metrics["holdout_diagnostics"])
     assert result.lineage_id is None
     assert "SYNTHETIC_TEST_INPUT" in result.flags
     assert "CORE_PSF_ONLY_EXTENDED_WINGS_UNVALIDATED" in result.flags
@@ -508,3 +513,96 @@ def test_identity_population_diagnostic_never_rejects_or_infers_morphology():
          entry("faint-t", gaia=False, peak=.05, width=3.1)])
     assert no_overlap["n_strata_with_at_least_3_per_population"] == 0
     assert no_overlap["populations"]["gaia_dr3"]["n"] == 1
+
+
+def test_signed_holdout_coverage_never_reduces_fixed_gaia_denominator():
+    from lsbpipe.photometry.psf_holdout_qa import (
+        audit_signed_holdout_coverage)
+
+    zones = ("core_r_le_1x_guessed_fwhm",
+             "intermediate_1x_to_2x_guessed_fwhm",
+             "outer_r_gt_2x_guessed_fwhm")
+    def report(star, n=9):
+        return {"source_id": star,
+                "radial_residuals": {
+                    z: {"n_valid_pixels": n,
+                        "median_signed_residual_over_peak": .01,
+                        "median_absolute_residual_over_peak": .02}
+                    for z in zones}}
+    full = audit_signed_holdout_coverage(
+        ("gaia-a", "gaia-b"), [report("gaia-a"), report("gaia-b")], [])
+    assert full["status"] == "COMPLETE"
+    assert full["all_fixed_holdouts_and_annuli_scored"] is True
+    partial = audit_signed_holdout_coverage(
+        ("gaia-a", "gaia-b"), [report("gaia-a")],
+        [{"star_id":"gaia-b", "reason":"invalid model amplitude"}])
+    assert partial["status"] == "INCOMPLETE_REJECTED"
+    assert partial["failed_source_ids"] == ["gaia-b"]
+    assert partial["n_expected_holdout_stars"] == 2
+    truncated = report("gaia-b")
+    truncated["radial_residuals"][zones[2]]["n_valid_pixels"] = 0
+    bad = audit_signed_holdout_coverage(
+        ("gaia-a", "gaia-b"), [report("gaia-a"), truncated], [])
+    assert bad["status"] == "INCOMPLETE_REJECTED"
+    assert bad["incomplete_annuli_by_source_id"]["gaia-b"] == [zones[2]]
+    with pytest.raises(ValueError, match="Duplicate|foreign"):
+        audit_signed_holdout_coverage(
+            ("gaia-a", "gaia-b"),
+            [report("gaia-a"), report("gaia-a")], [])
+
+
+def test_legacy_native_holdout_core_uses_actual_subpixel_star_center():
+    from types import SimpleNamespace
+    from scipy.ndimage import shift
+    from lsbpipe.photometry.psf_empirical import _holdout_diagnostic
+
+    yy, xx = np.indices((31,31))
+    kernel = np.exp(-((xx-15.)**2+(yy-15.)**2)/9.)
+    kernel /= kernel.sum()
+    cx, cy = 19.25, 10.5
+    shifted = shift(kernel, (cy-15., cx-15.), order=3,
+                    mode="constant", cval=0., prefilter=True)
+    image = 17.*np.maximum(shifted, 0.)
+    data = {
+        "center_in_cutout": (cx, cy),
+        "image": image,
+        "weights": np.ones_like(image),
+        "peak_nMgy": float(image.max()),
+        "rms_nMgy": .001,
+    }
+    result = _holdout_diagnostic(SimpleNamespace(star_id="gaia-h"),
+                                 data, kernel)
+    expected = np.count_nonzero(np.hypot(xx-cx, yy-cy) <= 9.)
+    unshifted_count = np.count_nonzero(np.hypot(xx-15., yy-15.) <= 9.)
+    assert expected != unshifted_count
+    assert result["n_core_aperture_pixels"] == expected
+    assert result["core_aperture_center_native_xy"] == [cx, cy]
+    assert result["subpixel_center_consistent_with_model_shift"] is True
+    assert result["relative_core_abs_residual"] < 1e-9
+
+
+def test_incomplete_signed_holdout_is_scientific_rejection_not_psf_result(
+        monkeypatch):
+    import lsbpipe.photometry.psf_empirical as psf
+    from lsbpipe.photometry.psf_empirical import PSF0QualityError
+
+    def unavailable(**kwargs):
+        raise ValueError("Simulated invalid heldout signed amplitude")
+    monkeypatch.setattr(psf, "heldout_signed_residual", unavailable)
+    with pytest.raises(PSF0QualityError) as err:
+        build_empirical_coadd_psf(
+            fake_frame(), target_icrs_deg=LEO_P,
+            target_protection_arcsec=13.,
+            config=PSF0Config(min_neighbor_separation_pix=32.,
+                              min_train_stars=6, min_holdout_stars=2,
+                              max_training_stars=30))
+    qa = err.value.diagnostics
+    assert qa["stage"] == "holdout_diagnostic_incomplete"
+    assert qa["reason_code"] == "INCOMPLETE_FIXED_HOLDOUT_RESIDUAL_QA"
+    cov = qa["signed_holdout_coverage_qa"]
+    assert cov["status"] == "INCOMPLETE_REJECTED"
+    assert cov["n_expected_holdout_stars"] == qa["n_holdout"]
+    assert cov["n_successfully_scored_stars"] == 0
+    assert len(qa["signed_holdout_failures"]) == qa["n_holdout"]
+    assert qa["status"] == "PSF0_QUALITY_REJECTED_NOT_ADOPTED"
+    assert err.value.review_snapshot is not None
