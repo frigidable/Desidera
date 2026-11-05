@@ -859,7 +859,12 @@ def build_empirical_coadd_psf(
     for entry in training_entries:
         screening_by_id[entry[0]]["final_selection_role"] = "TRAIN_SELECTED"
     for entry in holdout_entries:
-        screening_by_id[entry[0]]["final_selection_role"] = "GAIA_HOLDOUT"
+        # An independent holdout from DAO detections has no verified
+        # stellar identity: it must NEVER be called a Gaia holdout.
+        screening_by_id[entry[0]]["final_selection_role"] = (
+            "DAO_UNVERIFIED_HOLDOUT"
+            if cfg.star_catalog_policy == "dao_diagnostic"
+            else "GAIA_HOLDOUT")
     # Split before reviewer exclusions. The holdout IDs/coordinates remain
     # identical in the next run, even if several train stars are excluded.
     original_training_entries = list(training_entries)
@@ -1179,9 +1184,22 @@ def build_empirical_coadd_psf(
         "brightness_score_coupling_blocked_auto_trim":
             score_amplitude_guard_triggered,
         "n_train_gaia_matched": sum(s.gaia_source_id is not None for s in train),
-        "n_train_tractor_only": sum(s.gaia_source_id is None for s in train),
+        "n_train_tractor_only": (
+            sum(s.gaia_source_id is None for s in train)
+            if cfg.star_catalog_policy == "tractor_psf_validated" else 0),
+        "n_train_unverified_dao": (
+            len(train) if cfg.star_catalog_policy == "dao_diagnostic" else 0),
         "n_holdout_gaia_matched": sum(s.gaia_source_id is not None for s in holdout),
-        "n_holdout_tractor_only": sum(s.gaia_source_id is None for s in holdout),
+        "n_holdout_tractor_only": (
+            sum(s.gaia_source_id is None for s in holdout)
+            if cfg.star_catalog_policy == "tractor_psf_validated" else 0),
+        "n_holdout_unverified_dao": (
+            len(holdout) if cfg.star_catalog_policy == "dao_diagnostic" else 0),
+        "holdout_identity_validation": (
+            "NONE_DAO_CANDIDATES_ONLY"
+            if cfg.star_catalog_policy == "dao_diagnostic"
+            else "GAIA_DR3_IDENTIFIED_IN_NATIVE_TRACTOR"),
+        "holdout_independent_of_epsf_fit": True,
         "psf_star_cleanliness_certified": False,
     }
     # Even when the signed kernel fails the negative-mass gate, preserve
