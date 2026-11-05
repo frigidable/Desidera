@@ -124,13 +124,15 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
 def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
     from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
     for seeing in (2.5, 3.2, 4.8, 5.5, 6.57, 7.2):
-        for mode in ("outer_sky", "outer_sky_robust"):
+        for mode in ("outer_sky", "outer_sky_robust",
+                     "outer_sky_convergence"):
             recipe = psf0_experiment_recipe(seeing, mode)
             assert recipe.sky_annulus_inner_pix >= 4.5*seeing
             assert recipe.sky_annulus_outer_pix >= 5.75*seeing
             assert recipe.sky_annulus_outer_pix <= recipe.cutout_size_pix//2
             assert recipe.min_neighbor_separation_pix >= recipe.cutout_size_pix
-    assert set(("baseline","outer_sky","outer_sky_robust")) == set(
+    assert set(("baseline","outer_sky","outer_sky_robust",
+                "outer_sky_convergence")) == set(
         __import__(
             "lsbpipe.photometry.psf_gui_backend",
             fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
