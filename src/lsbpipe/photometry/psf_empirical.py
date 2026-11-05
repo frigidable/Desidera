@@ -1285,6 +1285,41 @@ def build_empirical_coadd_psf(
             "signed holdouts available; some stars or radial zones "
             "lack valid evidence. No PSF was adopted.", diagnostic,
             review_snapshot=review_snapshot)
+    if getattr(fitted, "converged", None) is False:
+        # EPSFBuilder documents that a nonconverged ePSF can retain
+        # percent-level shape and centroid biases. Keep the actual signed
+        # diagnostic and disjoint Gaia holdouts available for inspection,
+        # but do not return a normalized successful experimental model.
+        diagnostic = {
+            "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "stage": "epsf_builder_not_converged",
+            "reason_code": "EPSF_BUILDER_NOT_CONVERGED",
+            "catalog_selection_qa": selection_catalog_qa,
+            "psf_recipe": asdict(cfg),
+            "signed_kernel_qa": signed_diagnostics,
+            "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_coverage_qa": signed_holdout_coverage,
+            "signed_holdout_details": signed_holdouts,
+            "signed_holdout_failures": holdout_failures,
+            "signed_kernel_values_for_qa_only": raw_kernel.tolist(),
+            "solver_diagnostics": solver_diagnostics,
+            "n_train": len(train), "n_holdout": len(holdout),
+            "training": [asdict(star) for star in train],
+            "holdout": [asdict(star) for star in holdout],
+            "notes": [
+                "Photutils explicitly reported nonconvergence. Its final "
+                "converged-star fraction cannot substitute for the overall "
+                "EPSFBuilder converged Boolean.",
+                "The displayed signed kernel is DIAGNOSTIC ONLY. Increasing "
+                "the iteration budget must be a controlled A/B experiment, "
+                "not an automatic repair or science adoption.",
+            ],
+        }
+        raise PSF0QualityError(
+            "Photutils ePSFBuilder did not converge within "
+            f"{cfg.max_iterations} iterations; no scientifically "
+            "acceptable provisional PSF was produced.",
+            diagnostic, review_snapshot=review_snapshot)
     kernel = np.maximum(raw_kernel, 0.)
     if kernel.sum() <= 0:
         raise ValueError("Nonpositive empirical PSF normalization")
