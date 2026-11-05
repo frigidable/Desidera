@@ -351,3 +351,97 @@ unmodified input files, and export full non-null reports for both.
 Compare exact training and holdout star IDs and fixed selection
 fingerprints, not only the headline residual percentages. Keep this
 branch DRAFT and the scientific adoption gate closed.
+
+
+## New real Leo P i-band diagnostic: 2026-11-05 16:52–16:53 UTC
+
+Two full-griz metadata exports were inspected directly:
+
+- `16:52:40.531Z`: `i` records `outer_sky_robust`
+  (`max_iterations=8`, `tractor_psf_validated`, 2 guarded training
+  outlier passes), but `science_report_or_rejection=null`. The current
+  UI policy was `dao_diagnostic`, contradicting the old
+  `exact_result_recipe.star_catalog_policy`. This is a stale
+  *provenance* bug in a reset/unfinished report, not an 8-iteration
+  scientific result. Original `i`-band image/invvar/maskbits/nexp SHA256
+  match the next export.
+- `16:53:45.141Z`: the completed `i` result uses
+  `outer_sky_convergence` (`max_iterations=16`),
+  `tractor_psf_validated`, no train residual auto-trim,
+  `PSFSIZE=5.12` guessed FWHM and a `65×65` pixel stamp. All 1427
+  DAO detections were screened, 1402 rejected before the sample split:
+  **22 training** (10 Gaia-matched + 12 Tractor-PSF without Gaia) plus
+  **3 Gaia-matched independent holdouts**. The signed holdout integrity
+  report was `COMPLETE` (3/3 stars with core, intermediate and outer
+  annuli); none of their IDs was replaced based on fit residuals.
+  The selected instrumental source quartet is unchanged from 16:52.
+
+The second run is a useful numerical convergence milestone. Photutils
+3.1.1 reached `converged=True` in **12/16** iterations,
+`final_converged_fraction=1.0`, `max_center_shift=0.000301 px`;
+the last `max_epsf_change` was **0.002732** of the ePSF peak.
+These conditions establish the library's *centroid-based*
+convergence, not wing fidelity or PSF applicability.
+
+The PSF is still **`STRONG_NEGATIVE_EPSF_RINGING`**:
+negative absolute mass **0.053711** versus blocking pilot 0.025.
+Of the *total signed-kernel absolute mass*, 0% is negative in the
+core, **0.1739%** is negative at 1–2 guessed FWHM and **5.1972%**
+is negative outside 2 guessed FWHM; within that last outer region
+**40.95% of the absolute ring mass itself is negative**.
+The 3 Gaia holdouts have median per-pixel absolute signed-model
+residual / stellar peak **0.009757 / 0.003151 / 0.002241** across
+the three annuli. These medians do not constrain integrated outer
+ringing: pixels with opposite residual signs can offset, the ring
+contains thousands of near-sky pixels, coadd noise is correlated, and
+the sample contains only 3 independently selected stars.
+
+**Strong population/brightness confound:** all 12 Tractor-only
+training sources are significantly fainter than the Gaia training
+sources. The two groups have no overlapping measured-peak range:
+Tractor-only peaks 0.0798–0.1804 nMgy/pixel versus Gaia 1.371–17.323.
+The groups' median peak/RMS is **17.83 versus 484.95** and their
+median positive native core moments are **3.182 versus 2.339 px**
+(≈36% larger for the faint population). These are *not PSF FWHM*;
+at this brightness disparity they cannot establish that the faint
+population is nonstellar. Bright Gaia holdouts cannot directly
+validate potential population-dependent biases introduced by the
+faint Tractor-only training sample. Spatial sampling may also be
+different. Do not automatically remove the faint sources based on
+an unmatched width or on training-set residuals.
+
+**Required controlled tests before deciding whether the sample or the
+method is at fault:**
+
+1. Run `outer_sky` (8) and `outer_sky_convergence` (16), both with
+   `tractor_psf_validated`, the same original `i` native FITS,
+   `5.12 px` FWHM guess, and no automatic training outlier passes.
+   Both runs must have non-null full result QA; compare exact train/
+   holdout Gaia IDs and exact effective recipe fields.
+2. Repeat the same 8/16 pair with `gaia_strict`, retaining 10+3
+   minima. This is a population ablation, **not** a direct fixed-star
+   comparison between selection policies. Record selection underflow
+   if it occurs; never lower the minimum.
+3. Only if necessary, evaluate `wing_smoothing=False` as a **separate
+   controlled ablation** at oversampling=1 with a fixed training
+   population, because Photutils 3.1 documentation cautions wing
+   smoothing may reduce wing fidelity in undersampled ePSFs.
+   This is not evidence that smoothing caused the current rejection:
+   the existing outer annulus (>2 FWHM) combines the inside/outside
+   of the library's wing-smoothing radius.
+4. Independently inspect rejected signed ePSF, per-star cutouts,
+   2D residuals, annular flux integrals, sky and field-position
+   variation. Keep PSF0 non-adopted; do not weaken the 2.5% screening
+   heuristic to manufacture a pass.
+
+**Export provenance repair:** an old `_last_reported_payload` could
+survive a filter/catalog policy/experiment reset, creating a non-null
+`exact_result_recipe` beside `science_report_or_rejection=null`.
+The new exporter records `result_provenance_state`, clears stale
+recipe state upon reset, and refuses to attach old source hashes or
+effective recipe when no scientific result exists. This repairs
+report integrity, without modifying the PSF-fitting algorithm, saved
+FITS or historical QA files.
+
+Reference: official Photutils 3.1 ePSF builder documentation:
+https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html
