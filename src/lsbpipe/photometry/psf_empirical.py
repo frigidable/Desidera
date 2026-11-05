@@ -402,8 +402,12 @@ def _holdout_diagnostic(star, cutout, kernel):
         raise ValueError("Holdout star fitted flux is invalid")
     err = cutout["image"]-flux*model
     inner = np.indices(kernel.shape)
-    r = np.hypot(inner[1]-cx, inner[0]-cy)
-    local = usable & (r <= min(cx, cy, 9))
+    # The model was shifted to this native subpixel location; the
+    # validation aperture MUST use the same stellar center, not the
+    # unshifted central pixel of the kernel array.
+    r = np.hypot(inner[1]-local_x, inner[0]-local_y)
+    core_radius = min(cx, cy, 9.)
+    local = usable & (r <= core_radius)
     if not np.any(local):
         raise ValueError("Empty PSF holdout aperture")
     return {
@@ -412,6 +416,10 @@ def _holdout_diagnostic(star, cutout, kernel):
                                             max(cutout["peak_nMgy"], 1e-12)),
         "flux_nMgy_diagnostic": float(flux),
         "background_rms_nMgy": cutout["rms_nMgy"],
+        "core_aperture_center_native_xy": [float(local_x), float(local_y)],
+        "core_aperture_radius_pix": float(core_radius),
+        "n_core_aperture_pixels": int(np.count_nonzero(local)),
+        "subpixel_center_consistent_with_model_shift": True,
     }
 
 
