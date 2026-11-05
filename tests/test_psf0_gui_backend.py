@@ -53,10 +53,12 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
     from lsbpipe.photometry.psf_gui_backend import (
         PSF0_DIAGNOSTIC_EXPERIMENTS, psf0_experiment_recipe)
     assert tuple(PSF0_DIAGNOSTIC_EXPERIMENTS) == (
-        "baseline", "outer_sky", "outer_sky_robust")
+        "baseline", "outer_sky", "outer_sky_robust",
+        "outer_sky_convergence")
     base = psf0_experiment_recipe(4.8, "baseline")
     extent = psf0_experiment_recipe(4.8, "outer_sky")
     robust = psf0_experiment_recipe(4.8, "outer_sky_robust")
+    long = psf0_experiment_recipe(4.8, "outer_sky_convergence")
     assert base.cutout_size_pix == 31
     assert base.sky_annulus_inner_pix == 10.
     assert base.sky_annulus_outer_pix == 15.
@@ -72,11 +74,18 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
     assert robust.min_neighbor_separation_pix == extent.min_neighbor_separation_pix
     assert robust.training_outlier_passes == 2
     assert extent.training_outlier_passes == 0
-    assert len({r.digest for r in (base,extent,robust)}) == 3
+    # Controlled solver experiment: only the iteration budget changes.
+    assert long.max_iterations == 16
+    assert extent.max_iterations == 8
+    assert long.training_outlier_passes == 0
+    from dataclasses import replace
+    assert long == replace(extent, max_iterations=16)
+    assert len({r.digest for r in (base, extent, robust, long)}) == 4
     with pytest.raises(ValueError, match="Unknown"):
         psf0_experiment_recipe(4.8, "automatically_good_psf")
     assert all(key in PSF0_DIAGNOSTIC_EXPERIMENTS
-               for key in ("baseline","outer_sky","outer_sky_robust"))
+               for key in ("baseline","outer_sky","outer_sky_robust",
+                           "outer_sky_convergence"))
 
 
 def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
@@ -86,6 +95,7 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
     baseline = psf0_experiment_recipe(prior, "baseline")
     wide = psf0_experiment_recipe(prior, "outer_sky")
     guarded = psf0_experiment_recipe(prior, "outer_sky_robust")
+    long = psf0_experiment_recipe(prior, "outer_sky_convergence")
     assert (baseline.cutout_size_pix,
             baseline.sky_annulus_inner_pix,
             baseline.sky_annulus_outer_pix) == (31, 10., 15.)
@@ -98,6 +108,8 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
     assert guarded.cutout_size_pix == wide.cutout_size_pix
     assert guarded.training_outlier_passes == 2
     assert wide.training_outlier_passes == 0
+    from dataclasses import replace
+    assert long == replace(wide, max_iterations=16)
     assert wide.digest != psf0_experiment_recipe(4.80, "outer_sky").digest
     # The sky geometry cannot silently fall back to a closer annulus
     # for bad seeing. The scientist must choose a different experiment.
@@ -105,6 +117,8 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
         psf0_experiment_recipe(8.5, "outer_sky")
     with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
         psf0_experiment_recipe(8.5, "outer_sky_robust")
+    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
+        psf0_experiment_recipe(8.5, "outer_sky_convergence")
 
 
 def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
