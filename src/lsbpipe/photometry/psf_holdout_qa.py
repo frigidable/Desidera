@@ -134,3 +134,57 @@ def summarize_signed_holdouts(reports: list[dict]) -> dict:
                 float(np.median(absolute)) if absolute else None),
         }
     return result
+
+
+def audit_signed_holdout_coverage(expected_source_ids, reports, failures) -> dict:
+    """Check EVERY fixed held-out star and all three annuli, without resampling.
+
+    This is a fail-closed integrity gate, not a statistical goodness-of-fit
+    criterion. A failed/blank stellar residual must not silently reduce
+    the denominator of the independent validation sample.
+    """
+    expected = tuple(str(s) for s in expected_source_ids)
+    if not expected or len(set(expected)) != len(expected) or any(
+            not s.strip() for s in expected):
+        raise ValueError("Holdout inventory must have unique nonblank IDs")
+    returned = [item["source_id"] for item in reports]
+    failed = [item["star_id"] for item in failures]
+    if (len(set(returned)) != len(returned)
+            or len(set(failed)) != len(failed)
+            or (set(returned) | set(failed)) - set(expected)
+            or set(returned) & set(failed)):
+        raise ValueError("Duplicate, foreign or overlapping held-out star IDs")
+    annuli = (
+        "core_r_le_1x_guessed_fwhm",
+        "intermediate_1x_to_2x_guessed_fwhm",
+        "outer_r_gt_2x_guessed_fwhm",
+    )
+    incomplete = {}
+    for report in reports:
+        for name in annuli:
+            zone = report.get("radial_residuals", {}).get(name, {})
+            n = zone.get("n_valid_pixels", 0)
+            signed = zone.get("median_signed_residual_over_peak")
+            absolute = zone.get("median_absolute_residual_over_peak")
+            if (not isinstance(n, (int, np.integer)) or n < 4 or
+                    signed is None or absolute is None or
+                    not math.isfinite(float(signed)) or
+                    not math.isfinite(float(absolute))):
+                incomplete.setdefault(report["source_id"], []).append(name)
+    missing = sorted(set(expected) - set(returned) - set(failed))
+    complete = (not missing and not failed and not incomplete
+                and len(reports) == len(expected))
+    return {
+        "schema": "desidera.psf0-holdout-coverage/1",
+        "status": "COMPLETE" if complete else "INCOMPLETE_REJECTED",
+        "expected_source_ids": list(expected),
+        "n_expected_holdout_stars": len(expected),
+        "n_successfully_scored_stars": len(reports),
+        "failed_source_ids": sorted(failed),
+        "missing_source_ids": missing,
+        "incomplete_annuli_by_source_id": incomplete,
+        "min_valid_native_pixels_per_annulus": 4,
+        "all_fixed_holdouts_and_annuli_scored": bool(complete),
+        "not_covariance_calibrated": True,
+        "holdout_scores_do_not_select_training_stars": True,
+    }
