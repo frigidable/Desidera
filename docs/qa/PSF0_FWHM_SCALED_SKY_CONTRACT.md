@@ -552,3 +552,78 @@ Gaia 8 `ea9b67fba9cf19d9d941f05e7971ac88fe62e61565c33b3ed44588559903e7af`,
 Gaia 16 `bc30bd0fb81c08b71065d7e52b3f2cbe833850efa71cf0ce5fc81aa8a113cf3d`,
 Tractor 8 `df9715445248123566d2a5e0a8330461e1fe3df4e67df4b118993a89123d0998`,
 mislabeled Tractor 16 `3d3838181e37a239819351b2ea174d59179baa688862701806dedc0b091cdc0b`.
+
+
+## Completion of controlled Leo P i-band 2×2 matrix — 2026-11-05 18:29:57 UTC
+
+User supplied `LeoP_i_Tractor_16iter_actual.json` generated at
+`2026-11-05T18:29:57.259948+00:00` (uploaded file SHA256
+`293044497ea9b3de...`). The file **validly closes the missing test**:
+`experiment=outer_sky_convergence`,
+`star_catalog_policy=tractor_psf_validated`,
+`max_iterations=16`, `training_outlier_passes=0`,
+`psf_oversampling=1`, `wing_smoothing=true`,
+`cutout_size_pix=65`, identical native DR11 `i` FITS and
+catalog SHA-256, the **same 22 training** and **same 3 independent
+Gaia-identified heldout** star IDs as the Tractor 8 run. Its complete
+recipe digest is
+`922626248dc6f208b7f45a9c1331e9d3d83be393bc089b091340d8777498e480`.
+It reproduces the earlier independently exported real 16:53:45 UTC
+Tractor 16 result exactly in its recipe, solver diagnostics,
+signed-kernel aggregate and signed-holdout metrics. The previous
+invalid filename-labeled `Tractor_16iter` export remains historical
+only and is NOT part of this 2×2 comparison.
+
+| Effective policy and max solver iterations | Actual iterations | `EPSFBuilder.converged` | Preclip negative absolute mass | Median signed holdout abs residual / peak, core ; outer | Quality |
+| --- | ---: | --- | ---: | --- | --- |
+| Gaia strict, 8 | 8 | False | 2.1334% | 0.0073868 ; 0.0021268 | Rejected for nonconvergence |
+| Gaia strict, 16 | **9** | True | **2.1891%** | 0.0075754 ; 0.0021296 | Experimental preview, NEVER science-adopted |
+| Tractor-vetted, 8 | 8 | False | 4.8248% | 0.0095216 ; 0.0022206 | Rejected, negative mass |
+| Tractor-vetted, 16 | **12** | True | **5.3711%** | 0.0097568 ; 0.0022410 | Rejected, negative mass |
+
+The extra iteration budget enables numerical convergence in **both**
+fixed-sample pairs, but makes neither sample's negative-mass score
+better. In the converged 16-max comparison, adding 12 faint Tractor-only
+training sources increases the signed negative absolute mass
+**2.4537×** (5.3711/2.1891) and the signed negative absolute mass
+*outside 2 guessed FWHMs* from **0.022861 to 0.058227**
+(in units of the unit-signed-sum model). This is a controlled
+sample-composition effect, **not proof of source contamination**. The
+same 3 Gaia holdouts' median absolute signed-core residual increases
+from 0.0075754 to 0.0097568 per stellar peak; core residuals increase
+for **two of the three** holdouts, and outer residuals increase
+for **all three**. The sample is too small to justify a calibrated
+statistical confidence level.
+
+**Subtle but critical wing diagnostic:** the signed-integrated outer
+mass (r > 2 guessed FWHMs) is nearly unchanged,
+**0.024631 Gaia vs 0.025733 Tractor**. However, the Tractor 16
+outer annulus contains +0.083960 positive mass and -0.058227
+negative mass, versus Gaia 16's +0.047492 and -0.022861. This is
+**positive/negative wing compensation**, not evidence that wings are
+physically accurate. A hypothetical *clipped and renormalized*
+Tractor model would allocate ~**7.92%** of its flux to the
+r > 2 guessed-FWHM annulus, compared with ~**4.64%** for the
+delivered Gaia kernel (both computed from stored preclip aggregate
+masses). The Tractor hypothetical model is **NOT constructed for
+science, adopted or written out**. This discrepancy directly motivates
+a delivered-model three-zone holdout audit.
+
+**Methodological implementation:** the branch now also calculates
+`final_holdout_summary_after_clipping`,
+`final_holdout_coverage_after_clipping`,
+`final_holdout_details_after_clipping` on the **same fixed
+independent stars, native cutout, weighted amplitude fit and three
+radial zones** as the signed precursor, but using the final
+nonnegative unit-normalized kernel. An incomplete final holdout audit
+rejects the result without replacing holdout stars. Added tests.
+This changes *diagnostic completeness*, **not** the physical
+adoption threshold or the sign-based screening; existing historical
+JSONs predate the new fields.
+
+Outstanding for closure: validate the new final-kernel QA with fresh
+Gaia-strict 16 export, isolate the effect of Photutils 3.1
+`wing_smoothing` beyond ~3.5 guessed FWHMs under fixed sample and
+non-adopted status, then test `g/r/z` on their own measured PSFSIZE
+maps. Validate PSF wings, spatial variation, noise covariance and
+independent external PSF reference before scientific adoption.
