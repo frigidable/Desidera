@@ -35,7 +35,7 @@ from lsbpipe.photometry.psf_training_residuals import (
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
-RECIPE = "desidera.psf0-coadd-epsf/1"
+RECIPE = "desidera.psf0-coadd-epsf/2"
 
 
 class PSF0QualityError(ValueError):
@@ -212,6 +212,8 @@ class PSF0Result:
             "lineage_id": self.lineage_id,
             "recipe": asdict(self.recipe),
             "recipe_digest": self.recipe.digest,
+            "implementation_method_sha256": self.metrics.get(
+                "implementation_method_sha256"),
             "target_icrs_deg": list(self.center_target_icrs),
             "target_protection_arcsec": self.target_protection_arcsec,
             "n_detected": self.detection_count,
@@ -229,6 +231,30 @@ class PSF0Result:
             "noise_covariance_validated": False,
             "stellar_contamination_model_validated": False,
         }
+
+
+def _implementation_method_fingerprint(cfg, kwargs, versions,
+                                        solver_diagnostics, recenter_name):
+    """Bind source-independent PSF lineage to effective software and defaults."""
+    payload = {
+        "schema": "desidera.psf0-implementation-method/1",
+        "contract": RECIPE, "config_digest": cfg.digest,
+        "builder_kwargs": dict(kwargs), "package_versions": dict(versions),
+        "fit_shape": solver_diagnostics.get("fit_shape_final_if_reported"),
+        "smoothing": solver_diagnostics.get(
+            "smoothing_kernel_final_if_reported"),
+        "recentering": recenter_name,
+        "convergence_fraction": solver_diagnostics.get(
+            "convergence_fraction_target_if_reported"),
+        "holdout_aperture": "NATIVE_SUBPIXEL_STAR_CENTER_V2",
+        "holdout_integrity": "ALL_FIXED_STARS_ALL_ANNULI",
+    }
+    return {
+        "sha256": sha256(json.dumps(
+            payload, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf8")).hexdigest(),
+        "payload": payload,
+    }
 
 
 def _verified_source_hashes(frame):
