@@ -93,6 +93,11 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert "CORE_PSF_ONLY_EXTENDED_WINGS_UNVALIDATED" in result.flags
     assert "SPATIAL_REPRESENTATIVITY_NOT_VALIDATED" in result.flags
     assert result.instrument == "DECAM"
+    assert result.metrics["implementation_method_sha256"] == (
+        result.algorithm_versions["implementation_method_sha256"])
+    assert result.report()["implementation_method_sha256"] == (
+        result.metrics["implementation_method_sha256"])
+    assert result.algorithm_versions["recipe"].endswith("/2")
 
 
 def test_approximate_core_profile_and_no_galaxy_centroids(built):
@@ -606,3 +611,37 @@ def test_incomplete_signed_holdout_is_scientific_rejection_not_psf_result(
     assert len(qa["signed_holdout_failures"]) == qa["n_holdout"]
     assert qa["status"] == "PSF0_QUALITY_REJECTED_NOT_ADOPTED"
     assert err.value.review_snapshot is not None
+
+
+def test_implementation_fingerprint_includes_runtime_defaults_and_versions():
+    from lsbpipe.photometry.psf_empirical import (
+        _implementation_method_fingerprint, PSF0Config)
+    cfg = PSF0Config()
+    kwargs = {"oversampling": 1, "maxiters": 8,
+              "shape": (31,31), "wing_smoothing": True}
+    ver = {"photutils": "3.1.1", "astropy": "7.0",
+           "numpy": "2.2", "scipy": "1.15"}
+    defaults = {"fit_shape_final_if_reported": "(11, 11)",
+                "smoothing_kernel_final_if_reported": "auto",
+                "convergence_fraction_target_if_reported": 0.95}
+    baseline = _implementation_method_fingerprint(
+        cfg, kwargs, ver, defaults, "photutils.centroid_symmetry")
+    repeated = _implementation_method_fingerprint(
+        cfg, dict(reversed(list(kwargs.items()))),
+        dict(reversed(list(ver.items()))), defaults,
+        "photutils.centroid_symmetry")
+    assert baseline == repeated
+    assert len(baseline["sha256"]) == 64
+    assert _implementation_method_fingerprint(
+        cfg, kwargs, {**ver, "photutils":"3.0.1"}, defaults,
+        "photutils.centroid_symmetry")["sha256"] != baseline["sha256"]
+    assert _implementation_method_fingerprint(
+        cfg, {**kwargs,"maxiters":16}, ver, defaults,
+        "photutils.centroid_symmetry")["sha256"] != baseline["sha256"]
+    assert _implementation_method_fingerprint(
+        cfg, kwargs, ver, defaults,
+        "photutils.centroid_com")["sha256"] != baseline["sha256"]
+    assert _implementation_method_fingerprint(
+        cfg, kwargs, ver, {**defaults,"fit_shape_final_if_reported":"(9, 9)"},
+        "photutils.centroid_symmetry")["sha256"] != baseline["sha256"]
+    json.dumps(baseline, allow_nan=False)
