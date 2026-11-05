@@ -86,6 +86,28 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert result.metrics["signed_holdout_coverage_qa"]["status"] == "COMPLETE"
     assert result.metrics["signed_holdout_coverage_qa"][
         "n_expected_holdout_stars"] == len(result.holdout)
+    # The signed precursor and the delivered (clipped/renormalized)
+    # nonnegative model must BOTH be scored on the fixed holdout
+    # inventory. No scientific acceptance is inferred from these scores.
+    assert result.metrics["final_holdout_coverage_after_clipping"][
+        "status"] == "COMPLETE"
+    assert result.metrics["final_holdout_coverage_after_clipping"][
+        "evaluated_kernel"] == "FINAL_NONNEGATIVE_NORMALIZED"
+    assert result.metrics["final_holdout_coverage_after_clipping"][
+        "expected_source_ids"] == result.metrics[
+        "signed_holdout_coverage_qa"]["expected_source_ids"]
+    assert result.metrics["final_holdout_summary_after_clipping"][
+        "kernel_representation"] == "FINAL_NONNEGATIVE_NORMALIZED"
+    assert len(result.metrics["final_holdout_details_after_clipping"]) == len(
+        result.holdout)
+    assert result.metrics["final_holdout_failures_after_clipping"] == []
+    for signed, final in zip(result.metrics["signed_holdout_details"],
+                             result.metrics["final_holdout_details_after_clipping"]):
+        assert signed["source_id"] == final["source_id"]
+        assert set(signed["radial_residuals"]) == set(final["radial_residuals"])
+        for zone in signed["radial_residuals"]:
+            assert (signed["radial_residuals"][zone]["n_valid_pixels"]
+                    == final["radial_residuals"][zone]["n_valid_pixels"])
     assert all(row["subpixel_center_consistent_with_model_shift"]
                for row in result.metrics["holdout_diagnostics"])
     assert result.lineage_id is None
