@@ -660,7 +660,9 @@ def test_nonconverged_solver_cannot_be_returned_as_successful_preview(
         def __call__(self, stars):
             result = super().__call__(stars)
             return SimpleNamespace(
-                epsf=result.epsf,
+                # Photutils 2.x returns (epsf, fitted_stars), while
+                # Photutils 3.1 returns EPSFBuildResults.
+                epsf=(result.epsf if hasattr(result, "epsf") else result[0]),
                 iterations=getattr(result, "iterations", 8),
                 converged=False,
                 final_converged_fraction=1.0,
