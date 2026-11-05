@@ -93,6 +93,25 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert "CORE_PSF_ONLY_EXTENDED_WINGS_UNVALIDATED" in result.flags
     assert "SPATIAL_REPRESENTATIVITY_NOT_VALIDATED" in result.flags
     assert result.instrument == "DECAM"
+    # DAO detections have NO native Tractor or Gaia identity. The fixed
+    # holdout is computationally disjoint, but must not be misreported as
+    # an independently Gaia-vetted stellar population.
+    population = result.metrics["catalog_selection_qa"]
+    assert population["policy"] == "dao_diagnostic"
+    assert population["n_train_gaia_matched"] == 0
+    assert population["n_holdout_gaia_matched"] == 0
+    assert population["n_train_tractor_only"] == 0
+    assert population["n_holdout_tractor_only"] == 0
+    assert population["n_train_unverified_dao"] == len(result.training)
+    assert population["n_holdout_unverified_dao"] == len(result.holdout)
+    assert population["holdout_identity_validation"] == "NONE_DAO_CANDIDATES_ONLY"
+    assert population["holdout_independent_of_epsf_fit"] is True
+    candidates = population["candidate_screening_audit"]
+    assert len([row for row in candidates
+                if row.get("final_selection_role") == "DAO_UNVERIFIED_HOLDOUT"
+               ]) == len(result.holdout)
+    assert not any(row.get("final_selection_role") == "GAIA_HOLDOUT"
+                   for row in candidates)
     assert result.metrics["implementation_method_sha256"] == (
         result.algorithm_versions["implementation_method_sha256"])
     assert result.report()["implementation_method_sha256"] == (
