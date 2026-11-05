@@ -47,7 +47,7 @@ def _same_observation_source(current, recorded) -> bool:
     return tuple(current[:3]) == tuple(recorded[:3])
 
 
-# Three reproducible diagnostic modes. The extended modes jointly change
+# Four reproducible diagnostic modes. The extended modes jointly change
 # cutout, sky-annulus and isolation footprints. Their
 # stellar sample can therefore differ: do not claim a controlled
 # single-variable causal inference or select a "best PSF" from these QA
@@ -64,6 +64,10 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
     "outer_sky_robust": {
         "label": "Extended sky + guarded iterative star QA (2 passes)",
         "kwargs": {"training_outlier_passes": 2},
+    },
+    "outer_sky_convergence": {
+        "label": "Extended sky · 16 solver iterations (convergence control)",
+        "kwargs": {"training_outlier_passes": 0, "max_iterations": 16},
     },
 }
 
