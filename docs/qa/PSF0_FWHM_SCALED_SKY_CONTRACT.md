@@ -235,7 +235,7 @@ and must not be interpreted as convergence-verified. Real Leo P runs
 should use a pinned Photutils version exposing this result field.
 
 **Holdout completeness is now a blocking integrity requirement:** all
-originally reserved Gaia-only holdout stars must have a valid *signed*
+originally reserved holdout candidates must have a valid *signed*
 core-amplitude fit and valid median signed/absolute residuals in **each**
 of the three radial ranges (at least four usable native pixels per zone).
 Failures and missing annuli cannot be silently omitted from the
@@ -245,6 +245,15 @@ intact and the signed diagnostic model available only for review.
 This integrity gate does not make the residual metrics covariance
 calibrated, independently validate Gaia preselection, or prove PSF
 spatial representativity.
+
+In `gaia_strict` and `tractor_psf_validated` the fixed holdouts have
+Gaia DR3 identifications (not absolute proof that their cutouts are clean).
+In `dao_diagnostic`, the holdouts are **unverified DAO detections**;
+their independence is limited to the ePSF training pixels. They must not
+be counted as Gaia-vetted or Tractor-only sources. The QA now distinguishes
+`n_train_unverified_dao`, `n_holdout_unverified_dao`, and
+`holdout_identity_validation`, and uses
+`DAO_UNVERIFIED_HOLDOUT` for their final selection roles.
 
 A separate existing diagnostic of the nonnegative clipped-kernel core
 now uses the actual **subpixel star centroid** as the centre of its
@@ -289,3 +298,56 @@ unchanged.
    comparison, extended-wing/sky modelling, injection recovery and
    correlated-coadd-noise validation. Those are distinct subsequent
    PSF-science milestones, not validations supplied by PSF-0.
+
+
+## Additional real Leo P evidence, 2026-11-05 16:35 UTC
+
+Two uploaded griz JSON snapshots have matching `i`-band hashes for the
+original DR11 `image`, `invvar`, `maskbits`, and `nexp` inputs.
+They do **not** constitute an eight-versus-sixteen iteration experiment:
+
+- At `16:35:00Z`, the selected `i` recipe was
+  `outer_sky_robust` (8 iterations, `tractor_psf_validated`,
+  `training_outlier_passes=2`), but `science_report_or_rejection`
+  was null. Its QUALITY REJECTED status alone provides no usable model
+  or convergence metrics.
+- At `16:35:18Z`, the completed `i` run used
+  `outer_sky_convergence` (16 iterations, **`dao_diagnostic`**,
+  `training_outlier_passes=0`). It reported **56 train + 15
+  computational holdout DAO candidates**, with **zero Gaia matches and
+  no Tractor catalogue used in source screening**. Of 1427 detected
+  DAO candidates, only 375 were screened (298 rejected for proximity,
+  5 stamp edges, 1 masked stellar core; 71 accepted). The other
+  1052 detections were not screened under the diagnostic cap.
+- The 16-iteration signed kernel has negative absolute mass
+  **3.7075%** (2.50% diagnostic threshold), **entirely beyond
+  2 guessed FWHMs**. Builder `converged=False`; final stable-center
+  fraction **14.29%** versus required 95%. The iterative fractions
+  fluctuated, reaching 92.86% in iteration 10 but declining to 14.29%
+  by iteration 16; the last model change was 0.87% of peak. This is
+  **not** evidence that adding iterations improves convergence.
+- The fixed 15/15 DAO holdout candidates had successfully reported
+  residuals in all radial zones, but their stellar identities were
+  not independently validated and coadd noise correlations are
+  unmodeled. Median absolute signed residuals divided by measured
+  peak were **0.0388 / 0.0175 / 0.0120** in core/intermediate/outer
+  zones, respectively. These are not calibrated confidence intervals
+  or scientific model-acceptance metrics.
+- The **g, r and z bands were not computed in these two exports**:
+  their original FITS paths were present, but their per-band
+  source-specific scientific reports were null. The fact that the
+  top-level selector is `dr11/south/1554p180/g` does not make an
+  `i`-band result into a `g`-band measurement.
+
+The source-level audit had previously labelled unverified DAO holdouts
+`GAIA_HOLDOUT` and counted them as `Tractor-only`, which falsely
+suggested independent catalogue-based selection. This metadata bug is
+corrected here without relaxing any cuts or changing the fitted PSF.
+
+**Outstanding closure requirement:** run `outer_sky` (8 iterations)
+and `outer_sky_convergence` (16 iterations) with exactly the same
+explicit `gaia_strict` or `tractor_psf_validated` policy and
+unmodified input files, and export full non-null reports for both.
+Compare exact training and holdout star IDs and fixed selection
+fingerprints, not only the headline residual percentages. Keep this
+branch DRAFT and the scientific adoption gate closed.
