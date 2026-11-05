@@ -8,13 +8,14 @@ For Leo P DR11 `g`, the original native coadd `psfsize-g` map gives `1.721 arcse
 
 Official photutils guidance: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html . DR11 seeing/FWHM: https://www.legacysurvey.org/dr11/files/ .
 
-## Active, exactly three, deliberately non-adopted recipes
+## Active, exactly four, deliberately non-adopted recipes
 
 | Mode | Cutout / annulus / isolation | Interpretation |
 |---|---|---|
 | `baseline` | fixed 31 pix / 10–15 px / 32 px | Retained *as an explicitly wing-sensitive reference only*, NOT correct sky |
 | `outer_sky` | adaptive `r_inner=ceil(4.5 FWHM)`, `r_outer=ceil(5.75 FWHM)`, `size=max(51,2*(r_outer+2)+1)` odd, `isolation=size+4` | Conservative expanded local sky sampling, **not proof of sky free from wings** |
 | `outer_sky_robust` | same geometry, plus ≤2 passes of *guarded* train-only residual screening | Screen is still disabled automatically when it tracks star amplitude, and holdouts are not used to choose rejections |
+| `outer_sky_convergence` | **exactly the same** adaptive sky annulus, stamp, isolation and untrimmed star sample as `outer_sky`, but `max_iterations=16` instead of 8 | Controlled Photutils convergence A/B (especially for Leo P `i`), never automatic PSF promotion |
 
 At `FWHM=6.57 pix`, both extended modes have `81 × 81` cutouts, `30–38 pix` sky annulus, `85 px` minimum neighbour isolation; ratios **4.57–5.78 × FWHM**. At `FWHM=4.8 pix`, extended geometry is `61 × 61` and `22–28 pix`. Both examples are based on a *guessed seeing prior*, not verified physical ePSF.
 
@@ -208,3 +209,79 @@ its actual plotting scale and the native-pixel radius ticks, and clips
 curves to their respective upper/log and lower/signed plot rectangles.
 A Qt regression test covers multiple widths and stale-plot invalidation.
 No photometric, training/holdout or science-adoption logic changes.
+
+
+## PSF-0 methodological hardening: signed holdouts, solver convergence and lineage
+
+The controlled solver experiment \`outer_sky_convergence\` changes **only**
+the Photutils EPSFBuilder iteration limit from 8 to 16. This avoids
+confounding iteration budget with seeing/FWHM, candidate selection,
+local-sky annulus, star masks, and optional star-level trimming. Both
+models remain diagnostics, including if the 16-iteration fit converges.
+Photutils documentation cautions that a non-converged ePSF can have
+percent-level shape/centroid error:
+https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html
+
+**Nonconvergence is now a scientifically blocking PSF-0 outcome:** when
+Photutils returns \`converged=False\`, Desidera preserves the signed kernel,
+the real star-review cutouts, the full iteration history and fixed holdout
+residuals in a structured \`PSF0QualityError\`. It never labels the model a
+successful provisional PSF merely because the
+\`final_converged_fraction\` was 100%. More iterations do **not**
+guarantee convergence or improved scientific quality.
+
+**Holdout completeness is now a blocking integrity requirement:** all
+originally reserved Gaia-only holdout stars must have a valid *signed*
+core-amplitude fit and valid median signed/absolute residuals in **each**
+of the three radial ranges (at least four usable native pixels per zone).
+Failures and missing annuli cannot be silently omitted from the
+denominator. An incomplete test results in
+\`INCOMPLETE_FIXED_HOLDOUT_RESIDUAL_QA\`, with the original holdout IDs
+intact and the signed diagnostic model available only for review.
+This integrity gate does not make the residual metrics covariance
+calibrated, independently validate Gaia preselection, or prove PSF
+spatial representativity.
+
+A separate existing diagnostic of the nonnegative clipped-kernel core
+now uses the actual **subpixel star centroid** as the centre of its
+residual-evaluation aperture, consistent with shifting the model to
+that same location. It reports the aperture center, radius and number
+of native pixels. Previous code mistakenly centered that aperture on
+the unshifted model grid.
+
+**Reproducibility:** the method contract is versioned
+\`desidera.psf0-coadd-epsf/2\`. The observation-bound PSF lineage key
+now includes a digest of the configuration, effective Photutils solver
+defaults, recentering function, relevant package versions and the new
+holdout measurement policies. A version change cannot silently reuse
+the same lineage key, although a fully reproducible scientific release
+still requires a pinned software environment and archived original
+FITS. The original \`recipe_digest\` remains separately available.
+This change intentionally makes new lineage keys incompatible with
+the old diagnostic keys; original FITS and prior experiment JSON remain
+unchanged.
+
+## Criteria to close the PSF-0 pilot branch, not to adopt a science PSF
+
+1. Linux and Windows Python test matrices, Qt snapshots, holdout
+   integrity and lineage regressions pass on the same HEAD.
+2. Re-run real **Leo P g/r/i/z** with Gaia-strict and experimental
+   Tractor-vetted selection as appropriate; separately test
+   \`outer_sky\` (8 iterations) versus \`outer_sky_convergence\`
+   (16 iterations) on the same native FITS, sample IDs, sky and masks.
+   Do not assert a result from synthetic fixtures as real-data success.
+3. Export and inspect complete original-FITS source SHA-256,
+   candidate-selection QA, immutable heldout IDs, convergence history,
+   signed negative mass **by radius**, holdout completeness,
+   brightness-dependent star morphologies and radial residuals.
+4. Do not bypass an underflowing g sample (11 vetted, minimum 13)
+   through invented stars; do not accept i solely for convergence; do
+   not lower the arbitrary 2.5% signed-negative-mass diagnostic
+   screen to force r/z to pass.
+5. Merge/close the draft only after the above reproducibility and
+   review evidence is accepted. **Even a fully passing PSF-0 milestone
+   is a non-adopted, global, core-only diagnostic.** The eventual
+   science PSF requires spatial representativity, external PSFEx
+   comparison, extended-wing/sky modelling, injection recovery and
+   correlated-coadd-noise validation. Those are distinct subsequent
+   PSF-science milestones, not validations supplied by PSF-0.
