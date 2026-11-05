@@ -645,3 +645,46 @@ def test_implementation_fingerprint_includes_runtime_defaults_and_versions():
         cfg, kwargs, ver, {**defaults,"fit_shape_final_if_reported":"(9, 9)"},
         "photutils.centroid_symmetry")["sha256"] != baseline["sha256"]
     json.dumps(baseline, allow_nan=False)
+
+
+def test_nonconverged_solver_cannot_be_returned_as_successful_preview(
+        monkeypatch):
+    """Final fraction=1.0 never overrides Photutils converged=False."""
+    from types import SimpleNamespace
+    import photutils.psf as photutils_psf
+    from lsbpipe.photometry.psf_empirical import PSF0QualityError
+
+    original = photutils_psf.EPSFBuilder
+
+    class DeliberatelyNotConverged(original):
+        def __call__(self, stars):
+            result = super().__call__(stars)
+            return SimpleNamespace(
+                epsf=result.epsf,
+                iterations=getattr(result, "iterations", 8),
+                converged=False,
+                final_converged_fraction=1.0,
+                iteration_info=getattr(result, "iteration_info", None),
+                smoothing_kernel=getattr(result, "smoothing_kernel", None),
+                fit_shape=getattr(result, "fit_shape", None),
+            )
+
+    monkeypatch.setattr(photutils_psf, "EPSFBuilder",
+                        DeliberatelyNotConverged)
+    with pytest.raises(PSF0QualityError) as failure:
+        build_empirical_coadd_psf(
+            fake_frame(), target_icrs_deg=LEO_P,
+            target_protection_arcsec=13.,
+            config=PSF0Config(min_neighbor_separation_pix=32.,
+                              min_train_stars=6, min_holdout_stars=2,
+                              max_training_stars=30))
+    qa = failure.value.diagnostics
+    assert qa["stage"] == "epsf_builder_not_converged"
+    assert qa["reason_code"] == "EPSF_BUILDER_NOT_CONVERGED"
+    assert qa["solver_diagnostics"]["converged_if_reported"] is False
+    assert qa["solver_diagnostics"][
+        "final_converged_fraction_if_reported"] == 1.0
+    assert qa["signed_holdout_coverage_qa"]["status"] == "COMPLETE"
+    assert qa["n_holdout"] >= 2
+    assert failure.value.review_snapshot is not None
+    assert qa["status"] == "PSF0_QUALITY_REJECTED_NOT_ADOPTED"
