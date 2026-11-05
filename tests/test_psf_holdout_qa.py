@@ -3,7 +3,8 @@ import numpy as np
 import pytest
 
 from lsbpipe.photometry.psf_holdout_qa import (
-    heldout_signed_residual, summarize_signed_holdouts,
+    heldout_signed_residual, heldout_final_kernel_residual,
+    summarize_signed_holdouts, audit_signed_holdout_coverage,
 )
 
 
@@ -87,3 +88,51 @@ def test_repeated_source_id_cannot_create_fake_independent_holdout_evidence():
         summarize_signed_holdouts([{**qa, "source_id": "  "}])
     with pytest.raises(TypeError, match="mapping"):
         summarize_signed_holdouts([None])
+
+def test_final_kernel_holdout_uses_identical_radii_after_clipping():
+    signed = _source()
+    yy, xx = np.indices(signed.shape)
+    # A scientifically unphysical signed wing influences the preclip
+    # residual. Its delivered model must be checked separately.
+    image = 85.*signed
+    final = np.maximum(signed, 0.)
+    final /= final.sum()
+    orig = final.tobytes()
+    kwargs = dict(source_id="holdout-fixed", image=image,
+                  sqrt_ivar=np.ones(signed.shape),
+                  local_center_xy=(15., 15.), guessed_fwhm_pix=4.8,
+                  measured_peak=85.)
+    signed_qa = heldout_signed_residual(signed_kernel=signed, **kwargs)
+    final_qa = heldout_final_kernel_residual(final_kernel=final, **kwargs)
+    assert final_qa["kernel_representation"] == "FINAL_NONNEGATIVE_NORMALIZED"
+    assert final_qa["final_kernel_nonnegative_and_unit_sum"] is True
+    assert "signed_kernel_unchanged" not in final_qa
+    assert final.tobytes() == orig
+    assert set(signed_qa["radial_residuals"]) == set(final_qa["radial_residuals"])
+    for zone in final_qa["radial_residuals"]:
+        assert (final_qa["radial_residuals"][zone]["n_valid_pixels"]
+                == signed_qa["radial_residuals"][zone]["n_valid_pixels"])
+    # Pre-clipping signed residual is zero by construction; the negative
+    # wing is absent from the delivered positive PSF.
+    assert signed_qa["radial_residuals"]["outer_r_gt_2x_guessed_fwhm"][
+        "median_absolute_residual_over_peak"] == pytest.approx(0., abs=1e-12)
+    assert final_qa["radial_residuals"]["outer_r_gt_2x_guessed_fwhm"][
+        "median_absolute_residual_over_peak"] >= 0.
+    coverage = audit_signed_holdout_coverage(["holdout-fixed"],
+                                              [final_qa], [])
+    assert coverage["status"] == "COMPLETE"
+
+
+@pytest.mark.parametrize("bad", ["signed", "unnormalized", "nan"])
+def test_final_holdout_rejects_nonphysical_kernel(bad):
+    kernel = _source()
+    if bad == "unnormalized":
+        kernel = np.maximum(kernel, 0.)
+    elif bad == "nan":
+        kernel[0,0] = np.nan
+    with pytest.raises(ValueError, match="nonnegative and normalized"):
+        heldout_final_kernel_residual(
+            source_id="holdout-1", image=np.ones((31,31)),
+            sqrt_ivar=np.ones((31,31)), final_kernel=kernel,
+            local_center_xy=(15.,15.), guessed_fwhm_pix=4.8,
+            measured_peak=1.)
