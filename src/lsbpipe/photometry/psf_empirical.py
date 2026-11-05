@@ -1353,8 +1353,11 @@ def build_empirical_coadd_psf(
         flags.append("AUTO_TRAINING_TRIM_BLOCKED_BY_SCORE_FLUX_COUPLING")
     if negative_fraction > 1e-4:
         flags.append("EPSF_NEGATIVE_RINGING_CLIPPED")
-    if hasattr(fitted, "converged") and not fitted.converged:
-        flags.append("EPSF_NOT_CONVERGED")
+    if not hasattr(fitted, "converged"):
+        # Older Photutils returns only an (epsf, fitted_stars) tuple.
+        # This does NOT demonstrate convergence: preserve an explicit
+        # uncertainty flag, never silently treat the missing Boolean as True.
+        flags.append("EPSF_CONVERGENCE_NOT_REPORTED_BY_LIBRARY")
     source_hashes = _verified_source_hashes(frame)
     lineage = None
     if source_hashes is None:
