@@ -46,6 +46,24 @@ def detailed_band_report(panel):
     """No raw image arrays, no network, no scientific adoption."""
     review = panel._star_review_data or {}
     fwhm = float(review.get("guessed_fwhm_pix", panel.fwhm.value()))
+    # A recipe is result provenance only when paired with a genuine
+    # scientific result/rejection. Current controls are recorded
+    # separately and never masquerade as the recipe for a finished run.
+    payload = (panel._last_reported_payload
+               if panel._qa_payload is not None else None)
+    effective_recipe = (payload.get("effective_recipe")
+                        if payload else None)
+    recipe_policy_matches_controls = (
+        isinstance(effective_recipe, dict)
+        and effective_recipe.get("star_catalog_policy")
+            == panel.catalog_policy.currentData())
+    result_provenance_state = (
+        "NO_SCIENCE_RESULT"
+        if panel._qa_payload is None
+        else ("RESULT_RECIPE_POLICY_MISMATCH"
+              if effective_recipe is not None and
+                 not recipe_policy_matches_controls
+              else "RESULT_QA_PRESENT"))
     return {
         "schema": "desidera.psf0-band-debug-report/1",
         "science_status": "DIAGNOSTIC_NOT_SCIENCE_ADOPTED",
@@ -57,21 +75,16 @@ def detailed_band_report(panel):
         "fwhm_strategy": ("manual" if panel._fwhm_manually_edited
                           else "local_psfsize"),
         "last_verified_band_seeing": panel._latest_seeing_payload,
-        "exact_result_recipe": (
-            panel._last_reported_payload.get("effective_recipe")
-            if panel._last_reported_payload else None),
+        "result_provenance_state": result_provenance_state,
+        "exact_result_recipe": effective_recipe,
         "exact_result_recipe_sha256": (
-            panel._last_reported_payload.get("recipe_sha256")
-            if panel._last_reported_payload else None),
+            payload.get("recipe_sha256") if payload else None),
         "original_source_sha256": (
-            panel._last_reported_payload.get("source_hashes")
-            if panel._last_reported_payload else None),
+            payload.get("source_hashes") if payload else None),
         "source_project_uuid": (
-            panel._last_reported_payload.get("project_id")
-            if panel._last_reported_payload else None),
+            payload.get("project_id") if payload else None),
         "source_dataset": (
-            panel._last_reported_payload.get("dataset")
-            if panel._last_reported_payload else None),
+            payload.get("dataset") if payload else None),
         "target_protection_arcsec": panel.protection.value(),
         "seeing_provenance": panel.prior_source.text(),
         "gaia_catalogue_provenance": panel.gaia_source.text(),
