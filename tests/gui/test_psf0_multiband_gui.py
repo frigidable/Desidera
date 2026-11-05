@@ -315,3 +315,54 @@ def test_saved_brick_change_invalidates_all_psf_bands_and_seeing(
     assert "No observed/model" in g.profile_view.text()
     window._returning_to_hub = True
     window.close()
+
+
+def test_psf_full_export_never_pairs_stale_recipe_with_new_policy(
+        qtbot, tmp_path, monkeypatch):
+    """Real Leo P JSON exposed null science QA with a stale Tractor recipe."""
+    from lsbpipe.gui.psf0_full_qa import detailed_band_report
+
+    window, project = _setup(qtbot, tmp_path, monkeypatch)
+    panel = window.photometry_workspace.psf0_panels["i"]
+    panel.catalog_policy.setCurrentIndex(
+        panel.catalog_policy.findData("gaia_strict"))
+    completed = {
+        **_rejected(project.root, "i"),
+        "effective_recipe": {
+            "star_catalog_policy": "gaia_strict",
+            "max_iterations": 8,
+        },
+        "recipe_sha256": "known-8-iteration-science-recipe",
+        "source_hashes": {"image": "original-hash"},
+        "project_id": None,
+    }
+    panel.show_quality_rejection(completed)
+    before = detailed_band_report(panel)
+    assert before["science_report_or_rejection"] is not None
+    assert before["exact_result_recipe"] == completed["effective_recipe"]
+    assert before["result_provenance_state"] == "RESULT_QA_PRESENT"
+
+    # Switching policies may preserve current UI controls, but it must
+    # invalidate both actual result QA and the old run's provenance.
+    panel.catalog_policy.setCurrentIndex(
+        panel.catalog_policy.findData("dao_diagnostic"))
+    after = detailed_band_report(panel)
+    assert after["star_catalog_policy"] == "dao_diagnostic"
+    assert after["science_report_or_rejection"] is None
+    assert after["exact_result_recipe"] is None
+    assert after["exact_result_recipe_sha256"] is None
+    assert after["original_source_sha256"] is None
+    assert after["result_provenance_state"] == "NO_SCIENCE_RESULT"
+    assert panel._last_reported_payload is None
+
+    # Defensive export gate even when an unrelated caller accidentally
+    # left a stale internal payload behind.
+    panel._last_reported_payload = completed
+    defensive = detailed_band_report(panel)
+    assert defensive["science_report_or_rejection"] is None
+    assert defensive["exact_result_recipe"] is None
+    assert defensive["original_source_sha256"] is None
+    panel.prepare_run_display()
+    assert panel._last_reported_payload is None
+    window._returning_to_hub = True
+    window.close()
