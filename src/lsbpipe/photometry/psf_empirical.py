@@ -24,6 +24,7 @@ from lsbpipe.photometry.workflow_dependencies import PSFLineageKey
 from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
 from lsbpipe.photometry.psf_holdout_qa import (
     heldout_signed_residual, summarize_signed_holdouts,
+    audit_signed_holdout_coverage,
 )
 from lsbpipe.photometry.psf_star_quality import (
     assess_psf_star_cutout, assess_sample_widths,
@@ -1152,6 +1153,9 @@ def build_empirical_coadd_psf(
             holdout_failures.append({
                 "star_id": entry[0], "reason": str(exc)})
     signed_holdout_summary = summarize_signed_holdouts(signed_holdouts)
+    signed_holdout_coverage = audit_signed_holdout_coverage(
+        [entry[0] for entry in holdout_entries],
+        signed_holdouts, holdout_failures)
     if negative_fraction > .025:
         # Preserve evidence needed to troubleshoot Leo P without allowing
         # this rejected kernel into a FITS export or science result.
@@ -1167,6 +1171,7 @@ def build_empirical_coadd_psf(
             "reviewed_excluded_training_ids": list(cfg.excluded_training_star_ids),
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_coverage_qa": signed_holdout_coverage,
             "signed_holdout_details": signed_holdouts,
             "signed_holdout_failures": holdout_failures,
             "solver_diagnostics": solver_diagnostics,
@@ -1194,6 +1199,43 @@ def build_empirical_coadd_psf(
             f"{negative_fraction:.2%} exceeds the experimental 2.50% "
             f"screening limit (training {len(train)}, holdout {len(holdout)}).",
             diagnostic, review_snapshot=review_snapshot)
+    if not signed_holdout_coverage["all_fixed_holdouts_and_annuli_scored"]:
+        # Incomplete independent checking is a scientific rejection, NOT
+        # an opportunity to replace weak/failed Gaia-heldout stars.
+        diagnostic = {
+            "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "stage": "holdout_diagnostic_incomplete",
+            "reason_code": "INCOMPLETE_FIXED_HOLDOUT_RESIDUAL_QA",
+            "catalog_selection_qa": selection_catalog_qa,
+            "psf_recipe": asdict(cfg),
+            "signed_kernel_qa": signed_diagnostics,
+            "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_coverage_qa": signed_holdout_coverage,
+            "signed_holdout_details": signed_holdouts,
+            "signed_holdout_failures": holdout_failures,
+            "signed_kernel_values_for_qa_only": raw_kernel.tolist(),
+            "solver_diagnostics": solver_diagnostics,
+            "n_train": len(train),
+            "n_holdout": len(holdout),
+            "training": [asdict(star) for star in train],
+            "holdout": [asdict(star) for star in holdout],
+            "notes": [
+                "At least one fixed independent holdout or one radial "
+                "zone was not scored. No successful experimental kernel "
+                "may be returned by silently shrinking the validation set.",
+                "The heldout inventory is unchanged; no replacement stars "
+                "were chosen using residual scores.",
+                "This is a completeness/integrity gate, not a covariance-"
+                "calibrated model-accuracy criterion.",
+            ],
+        }
+        raise PSF0QualityError(
+            "Incomplete independent heldout-star residual QA: "
+            f"{signed_holdout_coverage['n_successfully_scored_stars']} / "
+            f"{signed_holdout_coverage['n_expected_holdout_stars']} "
+            "signed holdouts available; some stars or radial zones "
+            "lack valid evidence. No PSF was adopted.", diagnostic,
+            review_snapshot=review_snapshot)
     kernel = np.maximum(raw_kernel, 0.)
     if kernel.sum() <= 0:
         raise ValueError("Nonpositive empirical PSF normalization")
@@ -1271,6 +1313,7 @@ def build_empirical_coadd_psf(
         "epsf_negative_mass_fraction_before_clipping": negative_fraction,
         "signed_epsf_diagnostics_before_clipping": signed_diagnostics,
         "signed_holdout_summary": signed_holdout_summary,
+        "signed_holdout_coverage_qa": signed_holdout_coverage,
         "signed_holdout_details": signed_holdouts,
         "signed_holdout_failures": holdout_failures,
         "solver_diagnostics": solver_diagnostics,
