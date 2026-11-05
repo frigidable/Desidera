@@ -718,6 +718,11 @@ class PSF0Panel(QGroupBox):
 
     def _band_changed(self, *_):
         self._star_review_data = None
+        # Switching the catalog policy/experiment/band invalidates all
+        # previous science provenance, not only the on-screen QA. Otherwise
+        # a full griz export can silently combine a stale effective_recipe
+        # with a new current UI policy and a null science report.
+        self._last_reported_payload = None
         self._active_exclusions = ()
         # Changing filter/policy changes the source sample. Clear old
         # comparisons when identities are not scientifically comparable.
@@ -797,6 +802,8 @@ class PSF0Panel(QGroupBox):
         }
 
     def prepare_run_display(self):
+        # The old effective recipe is not the currently running job's
+        # provenance and must not be exported as if it were.
         self._last_reported_payload = None
         self._star_review_data = None
         self._preview = None
