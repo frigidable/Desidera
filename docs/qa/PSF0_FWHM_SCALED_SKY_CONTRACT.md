@@ -445,3 +445,110 @@ FITS or historical QA files.
 
 Reference: official Photutils 3.1 ePSF builder documentation:
 https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html
+
+
+## Real Leo P controlled i-band audit — four files, 2026-11-05 18:15–18:17 UTC
+
+Four full griz metadata exports were supplied, but **only three distinct
+scientific configurations** were run. All `i` results use exactly the
+same source quartet SHA256, guessed FWHM 5.12 native pixels, original
+catalogue hash, 65×65 native stamp, 24–30 pixel sky annulus, 69 pixel
+isolation, and the same fixed three Gaia-identified holdouts
+(`star-0089`, `star-0059`, `star-0047`). The `g/r/z` source FITS
+paths are listed, but no new scientific results for these bands were
+computed in these exports.
+
+| Uploaded name | Effective policy and recipe | Photutils build | Negative absolute mass | Scientific status |
+| --- | --- | --- | ---: | --- |
+| `LeoP_i_Tractor_8iter.json` | `tractor_psf_validated`, `outer_sky`, 8 max, no auto trimming | 8 iterations; `converged=False` | 4.824812% | REJECTED |
+| `LeoP_i_Tractor_16iter.json` | **Actually** `tractor_psf_validated`, `outer_sky_robust`, **8 max**, 2 train-screening passes requested | **8 iterations**; `converged=False` | 4.824812% | REJECTED |
+| `LeoP_i_Gaia_8iter.json` | `gaia_strict`, `outer_sky`, 8 max | 8 iterations; `converged=False` | 2.133435% | REJECTED FOR NONCONVERGENCE |
+| `LeoP_i_Gaia_16iter.json` | `gaia_strict`, `outer_sky_convergence`, 16 max | **9 iterations; `converged=True`** | **2.189109%** | `EXPERIMENTAL_PSF_NOT_ADOPTED` |
+
+The mislabeled Tractor "16" export is **not** a 16-iteration
+result. Its signed-kernel metrics and fixed Gaia-holdout residuals are
+numerically identical to Tractor 8, because the guarded screening
+explicitly blocked train-star auto exclusion due to strong
+brightness-residual-score correlation. The only actual recipe
+difference was `training_outlier_passes=0` versus 2.
+
+**Valid A/B 1: 8 vs up-to-16 on exactly the same Gaia sample.**
+All ten training Gaia IDs and all three holdout Gaia IDs are identical;
+`max_iterations` is the sole effective recipe difference. At the
+eighth iteration `final_converged_fraction=1.0`, but the common-center
+shift was 0.001399 native pixels and the library still reported
+`converged=False`. At the ninth iteration the common-center shift was
+0.000536 px and the library reported `converged=True`. The extra
+iteration therefore resolves this **numerical** convergence deficit;
+the previous premature stop must not be counted as a successful fit.
+
+However, negative mass **slightly increased** from 2.133435% to
+2.189109%, and heldout median absolute residuals / measured peak
+(core/intermediate/outer) changed only from
+**0.0073868/0.0028998/0.0021268** to
+**0.0075754/0.0028863/0.0021296**. Numerical convergence is **not**
+evidence of improved wings or lower holdout residuals. The 16-limit
+model produces a real finite normalized 65×65 nonnegative kernel
+(SHA256 `ce8f3e9699451d74546d9287bfc4bcfc7c8fdd18b18291530b9f88c6a55241aa`);
+it remains experimental and not adopted for science. It sits only
+0.3109 percentage points below the **heuristic, uncalibrated**
+2.5% negative-mass gate.
+
+**Valid A/B 2: Gaia-only vs Tractor-vetted at eight iterations.**
+Only `star_catalog_policy` differs in the recipes: 10 Gaia training
+stars + 3 Gaia holdouts are preserved, with 12 additional faint
+Tractor-only training candidates in the latter. At exactly eight
+iterations the negative mass changes from 2.133435% to 4.824812%
+(a 2.26-fold increase). Its contribution outside two **guessed**
+FWHMs changes from 2.130724% to 4.700213% of total model
+absolute mass. The same three holdouts show core median absolute
+residuals increasing from 0.0073868 to 0.0095216 per peak.
+This is strong evidence of **sample-composition sensitivity** under
+fixed settings, not a proof that the faint Tractor-only candidates are
+galaxies: their intensity/SNR ranges are distinct from the Gaia sample,
+and low-S/N wing/sky and spatial/centering effects remain confounded.
+
+**Important remaining method gap:** the three-annulus detailed
+independent heldout residuals evaluate the *signed pre-clipping*
+candidate. For a provisionally successful model, the delivered kernel
+is obtained by clipping negatives and renormalizing. Gaia 16's signed
+positive mass is 1.022893 and negative absolute mass 0.022893, so
+renormalization scales all positive pixels by `1/1.022893 ≈ 0.977619`
+before any photometric use. There is a separate single-core-aperture
+holdout statistic on the clipped model, but **no equivalent three-zone
+per-star validation** of the final nonnegative kernel. The signed
+and clipped-core summaries use different apertures and must not be
+compared as if identically measured. This unresolved evaluation
+mismatch, plus only three independent holdouts, prevents wing-level
+science acceptance even for the successful Gaia 16 run.
+
+**Next required evidence and development:**
+
+1. Re-run **one missing controlled configuration**:
+   `tractor_psf_validated` +
+   `outer_sky_convergence` (16 max,
+   `training_outlier_passes=0`), with the same inputs and FWHM.
+   Confirm *inside* the exported JSON that the actual
+   `exact_result_recipe.max_iterations=16`,
+   `experiment=outer_sky_convergence`, policy Tractor; filename alone
+   is insufficient.
+2. Add per-star **post-clipping, nonnegative, normalized PSF**
+   holdout QA on identical native cutouts and identical three radial
+   zones, explicitly separated from pre-clipping signed diagnostics
+   and without changing current science adoption thresholds.
+3. Revisit the wings after checking the raw signed and final kernels,
+   with finer annuli around **3.5 guessed FWHM** if studying
+   `wing_smoothing`, which Photutils 3.1 applies beyond approximately
+   3.5 FWHM. Optional `wing_smoothing=False` must be a separately
+   registered fixed-star ablation, not retrospectively treated as
+   an explanation for these data.
+4. Run all four griz bands and evaluate spatial, sky/PSF degeneracy,
+   bright-star wings, independent PSFEx reference and coadd
+   covariance before claiming a usable scientific PSF.
+
+Files supplied for this review were not uploaded to the repository.
+Their SHA256 digests are preserved here for independent verification:
+Gaia 8 `ea9b67fba9cf19d9d941f05e7971ac88fe62e61565c33b3ed44588559903e7af`,
+Gaia 16 `bc30bd0fb81c08b71065d7e52b3f2cbe833850efa71cf0ce5fc81aa8a113cf3d`,
+Tractor 8 `df9715445248123566d2a5e0a8330461e1fe3df4e67df4b118993a89123d0998`,
+mislabeled Tractor 16 `3d3838181e37a239819351b2ea174d59179baa688862701806dedc0b091cdc0b`.
