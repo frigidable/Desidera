@@ -1045,6 +1045,21 @@ def build_empirical_coadd_psf(
                 item["converged"] = bool(row["converged"])
             iteration_records.append(item)
     solver_diagnostics["iteration_history_if_reported"] = iteration_records
+    versions = {
+        "numpy": str(np.__version__),
+        "scipy": str(__import__("scipy").__version__),
+        "photutils": str(photutils.__version__),
+        "astropy": str(astropy.__version__),
+    }
+    recenter = getattr(builder, "recentering_func", None)
+    recenter_name = (
+        f"{getattr(recenter, '__module__', 'unknown')}."
+        f"{getattr(recenter, '__qualname__', 'library_default')}"
+        if recenter is not None else "NOT_EXPOSED_LIBRARY_DEFAULT")
+    method_fingerprint = _implementation_method_fingerprint(
+        cfg, kwargs, versions, solver_diagnostics, recenter_name)
+    solver_diagnostics["implementation_method_sha256"] = (
+        method_fingerprint["sha256"])
     psf_model = fitted.epsf if hasattr(fitted, "epsf") else fitted[0]
     raw_kernel = np.asarray(psf_model.data, dtype=float)
     if raw_kernel.shape != (cfg.cutout_size_pix, cfg.cutout_size_pix):
@@ -1333,7 +1348,8 @@ def build_empirical_coadd_psf(
             band=frame.band, source_sha256=digest,
             star_selection_sha256=selection_id,
             cutout_sky_sha256=star_sky_id,
-            recipe_sha256=cfg.digest, model_scope="global").digest
+            recipe_sha256=method_fingerprint["sha256"],
+            model_scope="global").digest
     instrument = ("BASS_90PRIME" if frame.region == "north" and frame.band in ("g","r")
                   else "MZLS_MOSAIC3" if frame.region == "north" and frame.band == "z"
                   else "DECAM")
@@ -1341,6 +1357,8 @@ def build_empirical_coadd_psf(
     metrics = {
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
+        "implementation_method_sha256": method_fingerprint["sha256"],
+        "implementation_method": method_fingerprint["payload"],
         "training_residual_screening_history": outlier_history,
         "holdout_median_abs_core_residual_over_peak": med_core_resid,
         "holdout_diagnostics": checks,
@@ -1367,8 +1385,6 @@ def build_empirical_coadd_psf(
         target_protection_arcsec=float(target_protection_arcsec),
         review_snapshot=review_snapshot,
         algorithm_versions={
-            "recipe": RECIPE, "numpy":np.__version__,
-            "scipy":__import__("scipy").__version__,
-            "photutils":photutils.__version__,
-            "astropy":astropy.__version__,
+            "recipe": RECIPE, **versions,
+            "implementation_method_sha256": method_fingerprint["sha256"],
         })
