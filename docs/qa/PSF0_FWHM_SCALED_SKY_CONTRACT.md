@@ -228,7 +228,11 @@ the real star-review cutouts, the full iteration history and fixed holdout
 residuals in a structured \`PSF0QualityError\`. It never labels the model a
 successful provisional PSF merely because the
 \`final_converged_fraction\` was 100%. More iterations do **not**
-guarantee convergence or improved scientific quality.
+guarantee convergence or improved scientific quality. With older
+Photutils versions returning only a two-tuple (no convergence Boolean),
+the preview remains explicitly `EPSF_CONVERGENCE_NOT_REPORTED_BY_LIBRARY`
+and must not be interpreted as convergence-verified. Real Leo P runs
+should use a pinned Photutils version exposing this result field.
 
 **Holdout completeness is now a blocking integrity requirement:** all
 originally reserved Gaia-only holdout stars must have a valid *signed*
