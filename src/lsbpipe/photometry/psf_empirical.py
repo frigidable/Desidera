@@ -23,8 +23,8 @@ from lsbpipe.photometry.contracts import NativeBandFrame
 from lsbpipe.photometry.workflow_dependencies import PSFLineageKey
 from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
 from lsbpipe.photometry.psf_holdout_qa import (
-    heldout_signed_residual, summarize_signed_holdouts,
-    audit_signed_holdout_coverage,
+    heldout_signed_residual, heldout_final_kernel_residual,
+    summarize_signed_holdouts, audit_signed_holdout_coverage,
 )
 from lsbpipe.photometry.psf_star_quality import (
     assess_psf_star_cutout, assess_sample_widths,
@@ -1342,6 +1342,63 @@ def build_empirical_coadd_psf(
     if kernel.sum() <= 0:
         raise ValueError("Nonpositive empirical PSF normalization")
     kernel /= kernel.sum()
+
+    # Audit the delivered nonnegative, unit-flux kernel ON THE SAME fixed
+    # holdout stars/cutouts/radii as the pre-clipping signed candidate.
+    # These are separate diagnostics. A signed-kernel holdout score is
+    # not evidence about the renormalized kernel used by downstream fits.
+    final_holdouts = []
+    final_holdout_failures = []
+    for entry in holdout_entries:
+        star_data = entry[-1]
+        try:
+            final_holdouts.append(heldout_final_kernel_residual(
+                source_id=entry[0], image=star_data["image"],
+                sqrt_ivar=star_data["weights"], final_kernel=kernel,
+                local_center_xy=star_data["center_in_cutout"],
+                guessed_fwhm_pix=cfg.guessed_fwhm_pix,
+                measured_peak=star_data["peak_nMgy"]))
+        except ValueError as exc:
+            final_holdout_failures.append({
+                "star_id": entry[0], "reason": str(exc)})
+    final_holdout_summary = summarize_signed_holdouts(final_holdouts)
+    final_holdout_coverage = audit_signed_holdout_coverage(
+        [entry[0] for entry in holdout_entries],
+        final_holdouts, final_holdout_failures)
+    final_holdout_summary["kernel_representation"] = (
+        "FINAL_NONNEGATIVE_NORMALIZED")
+    final_holdout_summary["not_covariance_calibrated"] = True
+    final_holdout_coverage["evaluated_kernel"] = (
+        "FINAL_NONNEGATIVE_NORMALIZED")
+    if not final_holdout_coverage["all_fixed_holdouts_and_annuli_scored"]:
+        diagnostic = {
+            "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "reason_code": "INCOMPLETE_FINAL_KERNEL_HOLDOUT_QA",
+            "psf_recipe": asdict(cfg),
+            "catalog_selection_qa": selection_catalog_qa,
+            "signed_kernel_qa": signed_diagnostics,
+            "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_coverage_qa": signed_holdout_coverage,
+            "final_holdout_summary_after_clipping": final_holdout_summary,
+            "final_holdout_coverage_after_clipping": final_holdout_coverage,
+            "final_holdout_details_after_clipping": final_holdouts,
+            "final_holdout_failures_after_clipping": final_holdout_failures,
+            "solver_diagnostics": solver_diagnostics,
+            "n_train": len(train), "n_holdout": len(holdout),
+            "training": [asdict(star) for star in train],
+            "holdout": [asdict(star) for star in holdout],
+            "notes": [
+                "The final nonnegative kernel failed complete three-zone "
+                "holdout QA; no usable experimental PSF was returned.",
+                "No holdout star was replaced or reclassified.",
+                "Signed pre-clipping QA remains separate and unchanged.",
+            ],
+        }
+        raise PSF0QualityError(
+            "Final nonnegative normalized PSF lacks complete independent "
+            "holdout residuals in all three radial zones; model rejected.",
+            diagnostic, review_snapshot=review_snapshot)
+
     checks = []
     for entry in holdout_entries:
         checks.append(_holdout_diagnostic(metadata(entry, "holdout"), entry[-1], kernel))
@@ -1424,6 +1481,10 @@ def build_empirical_coadd_psf(
         "signed_holdout_coverage_qa": signed_holdout_coverage,
         "signed_holdout_details": signed_holdouts,
         "signed_holdout_failures": holdout_failures,
+        "final_holdout_summary_after_clipping": final_holdout_summary,
+        "final_holdout_coverage_after_clipping": final_holdout_coverage,
+        "final_holdout_details_after_clipping": final_holdouts,
+        "final_holdout_failures_after_clipping": final_holdout_failures,
         "solver_diagnostics": solver_diagnostics,
         "initial_detection_background_nMgy_per_pixel": float(sky0),
         "initial_detection_rms_nMgy_per_pixel": float(std0),
