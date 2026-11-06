@@ -1,9 +1,18 @@
-# Desidera documentation map
+# DESIDERA documentation and evidence index
 
-This is a navigation guide, not a new scientific specification. The
-`main` branch contains accepted *code integration*, not necessarily
-accepted astronomical measurements. Unmerged draft PRs have their own
-engineering and scientific limitations.
+**Source-first reading rule (2026-11-07):** Phase-specific documents in this
+repository contain proposals, implementation notes and dated QA evidence.
+Some were written for older branches or describe work subsequently changed.
+They must not be treated as a maintained inventory of current capabilities.
+
+For current functionality, start with `src/`, `pyproject.toml`, corresponding
+`tests/` and the GitHub Actions result for the exact commit. `AGENTS.md`
+defines editing and scientific-safety constraints. Older reports remain useful
+as historical evidence of the inputs and tests they actually describe, not
+as evidence of acceptance for a later code version.
+
+The `main` branch represents integrated *code*, not necessarily accepted
+astronomical measurements; stacked draft PRs are not part of that baseline.
 
 ## Start here
 

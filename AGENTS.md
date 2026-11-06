@@ -1,4 +1,4 @@
-# LSBpipe contribution contract (ChatGPT + GitHub)
+# DESIDERA contribution and scientific-safety contract
 
 These instructions apply to any contributor or ChatGPT session working in this repository.
 Read `docs/ux/PRODUCT_BRIEF.md`, `docs/ux/DESIGN_SYSTEM.md`,
@@ -6,11 +6,20 @@ Read `docs/ux/PRODUCT_BRIEF.md`, `docs/ux/DESIGN_SYSTEM.md`,
 `docs/ux/AUTONOMY_PLAYBOOK.md` before a GUI change.
 
 ## Product intent
-LSBpipe is an experimental scientific workflow for low-surface-brightness
-photometry using calibrated Legacy Survey FITS. Optimize the GUI for an
-astronomer's decisions, not for exposing every Python function as a button.
-The current PySide6 Survey Explorer is a real working vertical slice;
-do not advertise planned photometry/sky/mask modules as implemented.
+DESIDERA is an experimental, object-centric scientific workbench for
+Legacy Survey data, low-surface-brightness photometry and traceable QA.
+The default branch includes a Project Hub, survey/data-management services,
+FITS inspection, prototype photometry and diagnostic scene/sky modules.
+The working implementation remains in `src/lsbpipe/`; `src/desidera/`
+provides the newer public name and launchers. These paths must not be
+mass-renamed as housekeeping: old Python imports and project provenance
+remain supported.
+
+Optimize the GUI for an astronomer's decisions, not for exposing every
+Python function as a button. An implemented module, runnable demo or green
+CI result does not imply a scientifically adopted method or measurement.
+Treat phase-specific documents as historical design/evidence until
+reconciled with current source, tests and exact-commit CI.
 
 ## Scientific safety (non-negotiable)
 - Preserve the numerical core, scientific conventions, public CLI,
@@ -66,7 +75,7 @@ continue working on its own after the conversation ends. Do not imply
 background screenshot review, ongoing autonomous coding, or certification
 without a real executor and observed outputs.
 
-## Imported experimental scene and sky modules (PR #2)
+## Experimental scene and sky invariants (historically PR #2)
 
 - Scene masks are operation-specific and immutable; `TARGET_PROTECT` never overrides no coverage, saturation or invalid input.
 - Native Legacy MASKBITS carry semantic and passband-dependent flags, not an unconditional reject-every-nonzero rule.

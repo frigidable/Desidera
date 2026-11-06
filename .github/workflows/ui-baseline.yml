@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "AGENTS.md"
+      - "pyproject.toml"
+      - "src/desidera/**"
+      - "tests/test_desidera_entrypoints.py"
       - "docs/ux/**"
       - "scripts/capture_gui_baseline.py"
       - "tests/gui/**"
