@@ -4,7 +4,8 @@ import pytest
 
 from lsbpipe.photometry.psf_holdout_qa import (
     heldout_signed_residual, heldout_final_kernel_residual,
-    summarize_signed_holdouts, audit_signed_holdout_coverage,
+    summarize_signed_holdouts, summarize_core_normalized_growth,
+    audit_signed_holdout_coverage,
 )
 
 
@@ -136,3 +137,93 @@ def test_final_holdout_rejects_nonphysical_kernel(bad):
             sqrt_ivar=np.ones((31,31)), final_kernel=kernel,
             local_center_xy=(15.,15.), guessed_fwhm_pix=4.8,
             measured_peak=1.)
+
+
+def test_core_normalized_growth_recovers_identical_model_and_cutout():
+    kernel = np.maximum(_source(), 0.)
+    kernel /= kernel.sum()
+    original = kernel.tobytes()
+    qa = heldout_final_kernel_residual(
+        source_id="gaia-1", image=80.*kernel, sqrt_ivar=np.ones(kernel.shape),
+        final_kernel=kernel, local_center_xy=(15., 15.),
+        guessed_fwhm_pix=4.8, measured_peak=80.)
+    growth = qa["core_normalized_aperture_growth"]
+    assert growth["status"] == "DESCRIPTIVE_NOT_SCIENCE_ADOPTED"
+    assert growth["core_reference_valid"] is True
+    by_radius = {v["radius_in_guessed_fwhm"]: v for v in growth["radii"]}
+    for radius in (1., 1.5, 2., 3.):
+        row = by_radius[radius]
+        assert row["status"] == "FULL_NATIVE_APERTURE"
+        assert row["observed_minus_model_growth_over_core"] == pytest.approx(
+            0., abs=1e-9)
+        assert row["observed_cumulative_flux_over_observed_core"] == pytest.approx(
+            row["model_cumulative_flux_over_model_core"], abs=1e-9)
+    assert by_radius[1.]["observed_cumulative_flux_over_observed_core"] == pytest.approx(1.)
+    # At 4 FWHM the 31x31 stamp cannot contain a full radius-19.2 disk.
+    assert by_radius[4.]["status"] == "NOT_FULLY_CONTAINED"
+    assert by_radius[4.]["observed_minus_model_growth_over_core"] is None
+    assert kernel.tobytes() == original
+
+
+def test_core_normalized_growth_exposes_wing_excess_hidden_by_pixel_medians():
+    kernel = np.maximum(_source(), 0.)
+    kernel /= kernel.sum()
+    yy, xx = np.indices(kernel.shape)
+    r = np.hypot(xx-15., yy-15.)
+    # Add only annular signal, outside the fitted core but within 2 FWHM.
+    star = 80.*kernel + np.where((r > 5.) & (r < 9.), 0.05, 0.)
+    qa = heldout_final_kernel_residual(
+        source_id="gaia-2", image=star, sqrt_ivar=np.ones(kernel.shape),
+        final_kernel=kernel, local_center_xy=(15., 15.),
+        guessed_fwhm_pix=4.8, measured_peak=80.)
+    profile = {v["radius_in_guessed_fwhm"]: v for v in
+               qa["core_normalized_aperture_growth"]["radii"]}
+    assert profile[1.]["observed_minus_model_growth_over_core"] == pytest.approx(0., abs=1e-9)
+    assert profile[2.]["observed_minus_model_growth_over_core"] > 0.01
+    summary = summarize_core_normalized_growth([qa])
+    r2 = next(v for v in summary["radii"] if v["radius_in_guessed_fwhm"] == 2.)
+    assert r2["n_full_aperture_holdouts"] == 1
+    assert r2["median_observed_minus_model_growth_over_core"] > 0.01
+    assert summary["no_threshold_or_science_adoption_implication"] is True
+
+
+def test_growth_summary_excludes_masked_and_truncated_apertures():
+    kernel = np.maximum(_source(), 0.)
+    kernel /= kernel.sum()
+    weights = np.ones(kernel.shape)
+    weights[15, 22] = 0.
+    qa = heldout_final_kernel_residual(
+        source_id="gaia-masked", image=80.*kernel,
+        sqrt_ivar=weights, final_kernel=kernel,
+        local_center_xy=(15.,15.), guessed_fwhm_pix=4.8,
+        measured_peak=80.)
+    growth = {v["radius_in_guessed_fwhm"]: v for v in
+              qa["core_normalized_aperture_growth"]["radii"]}
+    assert growth[1.]["status"] == "FULL_NATIVE_APERTURE"
+    assert growth[2.]["status"] == "MASKED_APERTURE_DIAGNOSTIC_ONLY"
+    assert growth[2.]["n_valid_native_pixels"] < growth[2.]["n_disk_native_pixels"]
+    summary = summarize_core_normalized_growth([qa])
+    by_radius = {v["radius_in_guessed_fwhm"]: v for v in summary["radii"]}
+    assert by_radius[1.]["n_full_aperture_holdouts"] == 1
+    assert by_radius[2.]["n_full_aperture_holdouts"] == 0
+    assert by_radius[2.]["median_observed_minus_model_growth_over_core"] is None
+    assert by_radius[4.]["n_full_aperture_holdouts"] == 0
+
+
+def test_growth_signed_and_delivered_use_same_native_aperture_geometry():
+    signed = _source()
+    final = np.maximum(signed, 0.)
+    final /= final.sum()
+    kwargs = dict(source_id="gaia-fixed", image=85.*signed,
+                  sqrt_ivar=np.ones(signed.shape),
+                  local_center_xy=(15., 15.),
+                  guessed_fwhm_pix=4.8, measured_peak=85.)
+    before = heldout_signed_residual(signed_kernel=signed, **kwargs)
+    after = heldout_final_kernel_residual(final_kernel=final, **kwargs)
+    for a,b in zip(before["core_normalized_aperture_growth"]["radii"],
+                   after["core_normalized_aperture_growth"]["radii"]):
+        assert a["radius_in_guessed_fwhm"] == b["radius_in_guessed_fwhm"]
+        assert a["status"] == b["status"]
+        assert a["n_valid_native_pixels"] == b["n_valid_native_pixels"]
+    with pytest.raises(ValueError, match="Duplicate holdout"):
+        summarize_core_normalized_growth([before, before])
