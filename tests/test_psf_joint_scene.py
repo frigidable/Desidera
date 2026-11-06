@@ -186,3 +186,35 @@ def test_joint_scene_does_not_pretend_fixed_kernel_has_extended_wings():
     assert result["status"]=="FIXED_PSF_JOINT_SCENE_DIAGNOSTIC"
     assert result["kernel_support_beyond_observed_ePSF_unmodeled"]
     assert result["science_adopted"] is False
+
+
+def test_joint_scene_gui_summary_has_no_false_science_adoption():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    metrics={
+        "fixed_psf_joint_native_scene_qa": {
+            "status": "FIXED_PSF_ORIGINAL_NATIVE_SCENE_AUDIT_NO_SCIENCE_ADOPTION",
+            "n_completed_joint_scene_fits": 1,
+            "n_preselected_stars": 2,
+            "n_completed_fixed_holdouts": 1,
+            "n_holdouts_expected": 1,
+            "per_star": [
+                {"source_id":"star-0032", "role":"holdout",
+                 "status":"FIXED_PSF_JOINT_SCENE_DIAGNOSTIC",
+                 "n_catalog_point_neighbors":1,
+                 "neighbor_to_central_4fwhm_model_flux_ratio": .025,
+                 "joint_minus_annulus_sky_nMgy_per_native_pixel":.0004,
+                 "n_unmodeled_extended_or_nonpositive_catalog_sources":2},
+                {"source_id":"star-0011", "role":"train",
+                 "status":"FULL_EXPANDED_NATIVE_STAMP_OUTSIDE_IMAGE"},
+            ]
+        }
+    }
+    summary=PSF0Panel._calibration_diagnostic_summary(metrics)
+    assert "1/2 stars" in summary
+    assert "1/1 reserved Gaia holdouts" in summary
+    assert "star-0032" in summary
+    assert "2.5%" in summary
+    assert "0.0004 nMgy/pix" in summary
+    assert "2 unmodeled catalog sources" in summary
+    assert "No science adoption" in summary
