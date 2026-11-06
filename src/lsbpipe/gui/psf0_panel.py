@@ -1155,6 +1155,36 @@ class PSF0Panel(QGroupBox):
                         f"{sky_delta:.4g} nMgy/pix; "
                         f"{row.get('n_unmodeled_extended_or_nonpositive_catalog_sources', 0)} "
                         "unmodeled catalog sources.")
+                    local = row.get(
+                        "central_aperture_residual_comparison", {}).get(
+                            "four_guessed_fwhm", {})
+                    local_delta = local.get("signed_improvement_fraction")
+                    global_delta = row.get(
+                        "weighted_residual_improvement_fraction")
+                    if local_delta is not None and global_delta is not None:
+                        notes.append(
+                            "  Same-pixel weighted RSS change: "
+                            f"full scene {100*global_delta:+.3g}%, "
+                            f"central <=4 guessed FWHM "
+                            f"{100*local_delta:+.3g}% "
+                            "(can worsen; neither is statistical significance).")
+                    unmodeled = row.get("nearest_unmodeled_catalog_source")
+                    if isinstance(unmodeled, dict):
+                        notes.append(
+                            "  Nearest UNMODELED Tractor source: "
+                            f"objid={unmodeled.get('tractor_objid')}, "
+                            f"TYPE={unmodeled.get('tractor_type')}, "
+                            f"offset={unmodeled.get('separation_from_star_pix'):.2f} "
+                            "native pixels. No point-source contamination "
+                            "conclusion follows.")
+                    dropped = row.get(
+                        "n_catalog_neighbors_with_exact_zero_finite_psf_support",
+                        0)
+                    if dropped:
+                        notes.append(
+                            f"  {dropped} catalog point sources had EXACT "
+                            "zero support on usable pixels of the frozen "
+                            "finite ePSF; no wide-wing claim follows.")
                 notes.append(
                     "Frozen ePSF shape and finite kernel support; "
                     "extended sources, broad wings and correlated "
