@@ -110,3 +110,34 @@ def test_catalog_preflight_does_not_confuse_galaxy_with_valid_seed():
         band="g",cutout_size_pix=81,guessed_fwhm_pix=6.57)
     assert result["preflight_rejected_reasons"]["GALAXY_PROTECTED_AT_CATALOG_SEED"]==1
     assert result["n_near_dao_centroid_not_proven_associated"]==0
+
+
+def test_gui_calibration_summary_is_compact_and_keeps_full_qa_in_report():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    catalog = {
+        "candidate_screening_audit": [{"star_id":"star-0001"}],
+        "parameter_provenance_qa": {"parameters": {"giant": [1]*100}},
+        "gaia_catalog_seed_vs_dao_qa": {
+            "n_catalog_only_preflight_pass": 23,
+            "n_catalog_preflight_without_near_dao": 7,
+            "catalog_preflight_without_dao_details": [{"gaia_source_id":i} for i in range(10)]},
+    }
+    metrics = {
+        "parameter_provenance_qa": {"status": "NOT_CALIBRATED"},
+        "catalog_selection_qa": catalog,
+        "sky_sample_qa": {"per_star": [
+            {"inner_ring_sensitivity_diagnostic": {
+                "max_absolute_inner_ring_sky_change_in_local_rms": 1.2}},
+            {"inner_ring_sensitivity_diagnostic": {
+                "max_absolute_inner_ring_sky_change_in_local_rms": 0.8}},
+        ]},
+    }
+    compact = PSF0Panel._catalog_screening_summary(catalog)
+    assert "catalog_preflight_without_dao_details" not in compact
+    assert "giant" not in compact
+    text = PSF0Panel._calibration_diagnostic_summary(metrics)
+    assert "23 candidates" in text
+    assert "7 without a DAO centroid" in text
+    assert "median maximum |delta sky| / local RMS = 1" in text
+    assert "NOT scientific adoption" in text
