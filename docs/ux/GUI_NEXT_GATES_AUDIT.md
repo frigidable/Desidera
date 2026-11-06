@@ -1,4 +1,11 @@
-# LSBpipe GUI — evidence-based engineering audit and next gates
+# Historical GUI engineering audit (2026-10-31)
+
+**ARCHIVAL RECORD:** This examines an older `feature/science-qa-gui`
+snapshot. Its "to do" items are not automatically open defects on the
+current `main`; some were subsequently fixed. Use current source, tests,
+[roadmap #44](https://github.com/frigidable/Desidera/issues/44) and recent
+PR evidence to decide which issues remain. Keep the observations below
+as dated, qualified evidence.
 
 Scope: `feature/science-qa-gui` / draft PR #6, based on original-FITS
 pilot PR #5; inspected 2026-10-31 at `68b99128`.

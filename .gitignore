@@ -23,8 +23,10 @@ htmlcov/
 *.npy
 *.npz
 
-# Generated products
+# Generated products and diagnostic outputs
 demo_output/
+demo_output_v02/
+validation_output/
 outputs/
 runs/
 cache/
@@ -43,8 +45,6 @@ inputs/
 # Editor
 .vscode/
 .idea/
-demo_output_v02/
-validation_output/
 
 # Project-local caches and reproducible test/CI products
 .desidera/

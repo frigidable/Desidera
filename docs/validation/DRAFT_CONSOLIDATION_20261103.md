@@ -1,4 +1,10 @@
-# Draft PR consolidation audit — 2026-11-03
+# Historical PR consolidation audit — 2026-11-03
+
+**ARCHIVAL RECORD:** This describes an earlier pre-merge checkpoint and
+its original release gates, not a pending instruction to merge those
+historical PRs today. Re-check the actual `main` ancestry and open PR
+bases before taking any integration action. The scientific caveats below
+remain relevant.
 
 **Status: integration candidate; do not claim a science-validated release merely because CI passes.**
 

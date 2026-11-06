@@ -1,4 +1,9 @@
-# Survey Explorer UI redesign — evidence-driven implementation
+# Historical Survey Explorer UI redesign log
+
+**ARCHIVAL RECORD:** The entries below document an earlier series of
+feature-branch layout experiments. They are not a current readiness report
+for the DESIDERA Project Hub. Check exact-commit GUI tests and screenshots
+before using a historical visual or defect claim.
 
 Status: **experimental / Draft PR #4**. Parent branch:
 `feature/survey-explorer-v04`. This redesign is GUI-only and does not
