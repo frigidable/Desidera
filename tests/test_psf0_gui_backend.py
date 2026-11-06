@@ -54,11 +54,12 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
         PSF0_DIAGNOSTIC_EXPERIMENTS, psf0_experiment_recipe)
     assert tuple(PSF0_DIAGNOSTIC_EXPERIMENTS) == (
         "baseline", "outer_sky", "outer_sky_robust",
-        "outer_sky_convergence")
+        "outer_sky_convergence", "outer_sky_no_wing_smoothing")
     base = psf0_experiment_recipe(4.8, "baseline")
     extent = psf0_experiment_recipe(4.8, "outer_sky")
     robust = psf0_experiment_recipe(4.8, "outer_sky_robust")
     long = psf0_experiment_recipe(4.8, "outer_sky_convergence")
+    no_wing = psf0_experiment_recipe(4.8, "outer_sky_no_wing_smoothing")
     assert base.cutout_size_pix == 31
     assert base.sky_annulus_inner_pix == 10.
     assert base.sky_annulus_outer_pix == 15.
@@ -80,12 +81,17 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
     assert long.training_outlier_passes == 0
     from dataclasses import replace
     assert long == replace(extent, max_iterations=16)
-    assert len({r.digest for r in (base, extent, robust, long)}) == 4
+    assert no_wing == replace(long, wing_smoothing=False)
+    assert no_wing.max_iterations == 16
+    assert no_wing.psf_oversampling == 1
+    assert no_wing.training_outlier_passes == 0
+    assert len({r.digest for r in (base, extent, robust, long, no_wing)}) == 5
     with pytest.raises(ValueError, match="Unknown"):
         psf0_experiment_recipe(4.8, "automatically_good_psf")
     assert all(key in PSF0_DIAGNOSTIC_EXPERIMENTS
                for key in ("baseline","outer_sky","outer_sky_robust",
-                           "outer_sky_convergence"))
+                           "outer_sky_convergence",
+                           "outer_sky_no_wing_smoothing"))
 
 
 def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
@@ -96,6 +102,7 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
     wide = psf0_experiment_recipe(prior, "outer_sky")
     guarded = psf0_experiment_recipe(prior, "outer_sky_robust")
     long = psf0_experiment_recipe(prior, "outer_sky_convergence")
+    no_wing = psf0_experiment_recipe(prior, "outer_sky_no_wing_smoothing")
     assert (baseline.cutout_size_pix,
             baseline.sky_annulus_inner_pix,
             baseline.sky_annulus_outer_pix) == (31, 10., 15.)
@@ -110,6 +117,7 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
     assert wide.training_outlier_passes == 0
     from dataclasses import replace
     assert long == replace(wide, max_iterations=16)
+    assert no_wing == replace(long, wing_smoothing=False)
     assert wide.digest != psf0_experiment_recipe(4.80, "outer_sky").digest
     # The sky geometry cannot silently fall back to a closer annulus
     # for bad seeing. The scientist must choose a different experiment.
@@ -119,20 +127,24 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
         psf0_experiment_recipe(8.5, "outer_sky_robust")
     with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
         psf0_experiment_recipe(8.5, "outer_sky_convergence")
+    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
+        psf0_experiment_recipe(8.5, "outer_sky_no_wing_smoothing")
 
 
 def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
     from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
     for seeing in (2.5, 3.2, 4.8, 5.5, 6.57, 7.2):
         for mode in ("outer_sky", "outer_sky_robust",
-                     "outer_sky_convergence"):
+                     "outer_sky_convergence",
+                     "outer_sky_no_wing_smoothing"):
             recipe = psf0_experiment_recipe(seeing, mode)
             assert recipe.sky_annulus_inner_pix >= 4.5*seeing
             assert recipe.sky_annulus_outer_pix >= 5.75*seeing
             assert recipe.sky_annulus_outer_pix <= recipe.cutout_size_pix//2
             assert recipe.min_neighbor_separation_pix >= recipe.cutout_size_pix
     assert set(("baseline","outer_sky","outer_sky_robust",
-                "outer_sky_convergence")) == set(
+                "outer_sky_convergence",
+                "outer_sky_no_wing_smoothing")) == set(
         __import__(
             "lsbpipe.photometry.psf_gui_backend",
             fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
