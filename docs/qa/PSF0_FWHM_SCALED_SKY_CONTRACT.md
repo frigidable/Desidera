@@ -8,7 +8,7 @@ For Leo P DR11 `g`, the original native coadd `psfsize-g` map gives `1.721 arcse
 
 Official photutils guidance: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html . DR11 seeing/FWHM: https://www.legacysurvey.org/dr11/files/ .
 
-## Active, exactly four, deliberately non-adopted recipes
+## Active, exactly five, deliberately non-adopted recipes
 
 | Mode | Cutout / annulus / isolation | Interpretation |
 |---|---|---|
@@ -16,6 +16,7 @@ Official photutils guidance: https://docs.astropy.org/projects/photutils/en/stab
 | `outer_sky` | adaptive `r_inner=ceil(4.5 FWHM)`, `r_outer=ceil(5.75 FWHM)`, `size=max(51,2*(r_outer+2)+1)` odd, `isolation=size+4` | Conservative expanded local sky sampling, **not proof of sky free from wings** |
 | `outer_sky_robust` | same geometry, plus ≤2 passes of *guarded* train-only residual screening | Screen is still disabled automatically when it tracks star amplitude, and holdouts are not used to choose rejections |
 | `outer_sky_convergence` | **exactly the same** adaptive sky annulus, stamp, isolation and untrimmed star sample as `outer_sky`, but `max_iterations=16` instead of 8 | Controlled Photutils convergence A/B (especially for Leo P `i`), never automatic PSF promotion |
+| `outer_sky_no_wing_smoothing` | Same sky, Gaia/Tractor policy, 16-iteration cap, star split and no training-star trimming as `outer_sky_convergence`; changes only `wing_smoothing=False` | Controlled final-wing-smoothing A/B, not a science PSF |
 
 At `FWHM=6.57 pix`, both extended modes have `81 × 81` cutouts, `30–38 pix` sky annulus, `85 px` minimum neighbour isolation; ratios **4.57–5.78 × FWHM**. At `FWHM=4.8 pix`, extended geometry is `61 × 61` and `22–28 pix`. Both examples are based on a *guessed seeing prior*, not verified physical ePSF.
 
@@ -627,3 +628,21 @@ Gaia-strict 16 export, isolate the effect of Photutils 3.1
 non-adopted status, then test `g/r/z` on their own measured PSFSIZE
 maps. Validate PSF wings, spatial variation, noise covariance and
 independent external PSF reference before scientific adoption.
+
+## Real Leo P Gaia 16 final-kernel QA — 2026-11-06 15:51:24 UTC
+
+New uploaded export `LeoP_i_Gaia_16iter_finalQA.json` (file SHA256 `74c05445e3a3e868fb969b147e48273aaf62e25cfa2e0ca9af865ef3ef00644e`) contains a **non-null** i-band scientific report, with the same original four source SHA256 values, final kernel SHA256 `ce8f3e9699451d74546d9287bfc4bcfc7c8fdd18b18291530b9f88c6a55241aa`, 10 Gaia train plus 3 fixed Gaia holdout stars. The recipe is `gaia_strict`, `outer_sky_convergence`, max 16, actual 9 iterations, guessed FWHM 5.12 native px, `psf_oversampling=1`, `wing_smoothing=True`; Photutils 3.1.1 `converged=True`. Signed negative absolute mass fraction 0.02189109 remains under heuristic 0.025, but science adoption is **false**.
+
+Both **signed precursor** and **final nonnegative normalized** holdout coverage checks are COMPLETE (all 3 original held-out Gaia IDs, all 3 radial zones, identical number of native valid pixels, no failures). Median per-star absolute residual / observed peak by radial zone is:
+
+| Radial zone | Signed precursor | Final normalized kernel |
+| --- | ---: | ---: |
+| r ≤ 1 guessed FWHM | 0.0075754093 | 0.0075754082 |
+| 1–2 guessed FWHM | 0.0028862779 | 0.0028815222 |
+| r > 2 guessed FWHM | 0.0021295936 | 0.0021266960 |
+
+The median **signed** outer-zone residual changes from -0.000048303 to -0.000201420 of measured stellar peak, even though median absolute residuals barely change. That is not a calibrated flux-bias estimate. Also, the positive signed-kernel sum is 1.0228934176. Dividing by that to normalize the delivered nonnegative kernel is **almost perfectly cancelled** by re-fitting each holdout's amplitude upward by 1.02289342 (verified on `star-0089`, `star-0059`, `star-0047`). Therefore invariant core residuals are expected; these results confirm comparison integrity but do **not** prove integrated photometric flux conservation, valid extended wings or an unbiased galaxy SB profile.
+
+**New controlled GUI mode:** `outer_sky_no_wing_smoothing` (fifth experimental recipe), based strictly on `outer_sky_convergence` but with only `wing_smoothing=False`: same max 16 iterations, same native pixel oversampling, cutout, annulus, Gaia selection, fixed holdouts and disabled automatic train trimming. The existing scientific backend refuses disabled smoothing if Photutils does not support the parameter. Photutils 3.1 applies wing smoothing *once after iterations*, primarily beyond ~3.5 FWHM (measured by the library), and cautions that with oversampling 1, smoothing can affect wing fidelity. The option is an A/B investigation, not a PSF-promoting heuristic. Official reference: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html.
+
+**Next Leo P run:** after updating the existing branch, select i-band, `gaia_strict`, `outer_sky_no_wing_smoothing`, guessed FWHM 5.12 px, no manual exclusions. Export full QA. Compare source SHA256, exact 10+3 IDs, solver convergence, negative annular mass, signed and final clipped heldout QA to the existing smoothing-ON export. Preserve historical JSONs and the NON-ADOPTED science state. The g/r/z native-band pilots and PSF spatial/wing/covariance validation remain open.
