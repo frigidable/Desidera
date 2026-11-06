@@ -257,7 +257,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "parameter_provenance": "PILOT_NUMERIC_ASSUMPTION_REGISTRY_V1_DESCRIPTIVE",
         "stellar_sky_ring_sensitivity": "ORIGINAL_PIXELS_INTERIOR_RING_AND_NATIVE_SCAN_V2_DESCRIPTIVE",
         "gaia_seed_dao_coverage": "CATALOG_PREFLIGHT_V1_NO_SAMPLE_PROMOTION",
-        "holdout_sky_equivalence": "CORE_NORMALIZED_UNIFORM_OFFSET_V1_DIAGNOSTIC",
+        "holdout_sky_equivalence": "CORE_NORMALIZED_UNIFORM_OFFSET_WITH_RADIAL_CONSISTENCY_V2",
     }
     return {
         "sha256": sha256(json.dumps(
