@@ -21,7 +21,7 @@ from scipy.optimize import nnls
 from scipy.spatial import cKDTree
 
 
-SCHEMA = "desidera.psf0-fixed-psf-joint-native-scene/1"
+SCHEMA = "desidera.psf0-fixed-psf-joint-native-scene/2"
 MAX_NUISANCE_SOURCES = 18  # engineering compute budget, NOT science calibration
 
 
@@ -149,18 +149,35 @@ def fit_fixed_psf_scene(
     ))
     center_template = _shifted_native_kernel(k, gx, gy, cx, cy)
     templates = [center_template]
+    active_neighbors = []
+    zero_support_neighbors = []
+    # A catalog position can be inside the *approximate* patch+kernel
+    # bounding rectangle but its interpolated finite-support template can
+    # have EXACTLY zero usable native pixels (especially near corners and
+    # masks). This is an identically zero design-matrix column, NOT a
+    # mathematical degeneracy of the central star. Exclude it explicitly
+    # with evidence; never silently discard a source with any model support.
     for row in neighbors:
         x, y = float(row["x_pix"]), float(row["y_pix"])
         if not math.isfinite(x) or not math.isfinite(y):
             raise ValueError("Nonfinite neighbor catalogue coordinate")
-        templates.append(_shifted_native_kernel(k, gx, gy, x, y))
+        template = _shifted_native_kernel(k, gx, gy, x, y)
+        if not np.any(template[m] > 0.):
+            zero_support_neighbors.append({
+                "tractor_objid": int(row["tractor_objid"]),
+                "separation_from_star_pix": float(math.hypot(x-cx, y-cy)),
+                "status": "EXACT_ZERO_FROZEN_KERNEL_ON_ALL_VALID_SCENE_PIXELS",
+            })
+            continue
+        active_neighbors.append(row)
+        templates.append(template)
     columns = []
     template_peak_scales = []
     for temp in templates:
         t = temp[m]
         maximum = float(np.max(t)) if len(t) else 0.
         if maximum <= 0 or not math.isfinite(maximum):
-            return {"status": "SOURCE_TEMPLATE_OUTSIDE_USABLE_SCENE",
+            return {"status": "CENTRAL_OR_ACTIVE_TEMPLATE_HAS_NO_VALID_SUPPORT",
                     "science_adopted": False}
         columns.append(t/maximum)
         template_peak_scales.append(maximum)
@@ -190,6 +207,37 @@ def fit_fixed_psf_scene(
     r2 = np.hypot(gx-cx, gy-cy)
     within_core = m & (r2 <= guessed_fwhm_pix)
     within_outer = m & (r2 <= 4*guessed_fwhm_pix)
+    # Global residuals can be dominated by other bright stars near the
+    # edge of this 161px scene. Separately compare the IDENTICAL central
+    # apertures, still using amplitudes fitted globally in both models.
+    # Local residual improvements may be NEGATIVE: never clamp them.
+    full_residual = (z[m] - B@sky - P@amplitudes) * weight
+    null_residual = (z[m] - B@null_sky - P[:, :1]@null_amplitudes)*weight
+    native_radius = r2[m]
+    def radial_residual_comparison(radius_pix):
+        aperture = native_radius <= radius_pix
+        if not np.any(aperture):
+            return {
+                "status": "NO_VALID_PIXELS_IN_APERTURE",
+                "n_native_pixels": 0,
+                "radius_pix": float(radius_pix),
+                "weighted_squared_residual_full": None,
+                "weighted_squared_residual_star_plane_only": None,
+                "signed_improvement_fraction": None,
+            }
+        sum_full = float(np.sum(full_residual[aperture]**2))
+        sum_null = float(np.sum(null_residual[aperture]**2))
+        return {
+            "status": "SAME_NATIVE_PIXELS_WITH_GLOBAL_PARAMETERS",
+            "n_native_pixels": int(np.count_nonzero(aperture)),
+            "radius_pix": float(radius_pix),
+            "weighted_squared_residual_full": sum_full,
+            "weighted_squared_residual_star_plane_only": sum_null,
+            "signed_improvement_fraction": (
+                float((sum_null-sum_full)/sum_null) if sum_null > 0 else None),
+            "not_a_covariance_calibrated_or_independent_validation": True,
+            "retains_negative_improvement_when_central_fit_worsens": True,
+        }
     def neighbor_fraction(aperture):
         if not np.any(aperture):
             return None
@@ -212,7 +260,13 @@ def fit_fixed_psf_scene(
         "n_valid_native_pixels": n_valid,
         "valid_native_pixel_fraction": float(n_valid/(width*width)),
         "no_arbitrary_valid_pixel_fraction_cut_imposed": True,
-        "n_catalog_point_neighbors": len(neighbors),
+        "n_catalog_point_neighbors": len(active_neighbors),
+        "n_catalog_point_neighbors_in_expanded_search": len(neighbors),
+        "n_catalog_neighbors_with_exact_zero_finite_psf_support":
+            len(zero_support_neighbors),
+        "catalog_neighbors_with_exact_zero_finite_psf_support":
+            zero_support_neighbors,
+        "zero_support_exclusion_is_only_relative_to_frozen_kernel": True,
         "neighbors": [{
             "tractor_objid": int(row["tractor_objid"]),
             "tractor_type": row["tractor_type"],
@@ -223,7 +277,7 @@ def fit_fixed_psf_scene(
             "fitted_flux_within_model_support_nMgy": float(
                 amplitudes[i+1]/template_peak_scales[i+1] *
                 np.sum(templates[i+1])),
-        } for i, row in enumerate(neighbors)],
+        } for i, row in enumerate(active_neighbors)],
         "target_fitted_peak_nMgy_per_pixel": float(amplitudes[0]),
         "target_fitted_model_support_flux_nMgy": float(
             amplitudes[0]/template_peak_scales[0] * np.sum(templates[0])),
@@ -242,6 +296,14 @@ def fit_fixed_psf_scene(
             neighbor_fraction(within_outer),
         "weighted_squared_residual_star_plane_only": float(null_rss),
         "weighted_squared_residual_star_neighbors_plane": float(full_rss),
+        "central_aperture_residual_comparison": {
+            "one_guessed_fwhm": radial_residual_comparison(
+                float(guessed_fwhm_pix)),
+            "four_guessed_fwhm": radial_residual_comparison(
+                float(4*guessed_fwhm_pix)),
+            "same_global_fit_coefficients_no_local_refit": True,
+            "not_an_independent_psf_accuracy_test": True,
+        },
         "weighted_residual_improvement_fraction": (
             float(max(0., null_rss-full_rss)/null_rss)
             if null_rss > 0 else None),
