@@ -926,3 +926,92 @@ provenance) and calibrate actual r/i/z wing fidelity,
 spatial variation, background degeneracy, full flux-encircled
 profiles, injection recovery and noise covariance. Treat
 a substitute g PSF as a new method with its own QA.
+
+
+## PSF-1 validation groundwork: native core-normalized holdout flux growth
+
+The post-pilot method now adds **radial cumulative-aperture flux-growth
+diagnostics on the same frozen independent stars and native DR11
+coadd pixels** used in PSF-0. This is an intermediate validation
+instrument, **not** a new science-ready PSF or a correction of the
+known g-band sample underflow.
+
+For each heldout star, fit the model amplitude by the existing
+weighted core-only procedure, but additionally compare aperture
+growth at `R/FWHM_guess = [1, 1.5, 2, 3, 4]`.
+Let `I` be the *already locally sky-subtracted* original
+native-image cutout, `P` the subpixel-shifted signed or delivered
+nonnegative model on the **identical** pixel grid, and `G` the
+original nonzero-weight validity mask. Define
+
+```text
+O(R) = sum_{r <= R, G} I / sum_{r <= FWHM_guess, G} I
+M(R) = sum_{r <= R, G} (A P) / sum_{r <= FWHM_guess, G} (A P)
+E(R) = O(R) - M(R)
+```
+
+Here `A` is the pre-existing core-fit amplitude. It cancels
+algebraically in the model's own core normalization. **E(R) is a
+dimensionless cumulative growth excess relative to the stellar
+core, not an encircled-energy fraction of the true total stellar
+flux.** Such a total cannot be inferred from the finite local-sky
+subtracted cutout. Each aperture inherits local-sky errors and
+unknown correlated-noise covariance. Cumulative `E(R)` at
+different radii are themselves strongly correlated and cannot
+be treated as independent measurements.
+
+Each fixed holdout report now carries
+`core_normalized_aperture_growth`, including native radius,
+observed/model cumulative-core flux ratios, signed excess,
+valid-pixel count, geometric containment and mask coverage.
+`FULL_NATIVE_APERTURE` means geometrically contained and no
+masked pixels; only those points enter
+`signed_holdout_core_normalized_flux_growth_summary` or
+`final_holdout_core_normalized_flux_growth_summary_after_clipping`.
+Mask-truncated or cutout-truncated disks are recorded explicitly
+with `MASKED_APERTURE_DIAGNOSTIC_ONLY` /
+`NOT_FULLY_CONTAINED` and excluded from their respective
+per-radius ensemble medians. If positive core flux is unavailable,
+the growth metric remains missing instead of manufacturing an
+inferred normalization. This QA never modifies science pixels,
+candidate selection, existing holdout validation or the
+quality-adoption gate.
+
+Additional cross-validation still required before physical PSF
+acceptance: fit realistic local sky simultaneously with outer
+stellar wings; inspect observed vs model 2D cutouts; stratify
+independent stars by flux/SNR, colour and position; derive
+covariance-aware error bands by injection/recovery on real coadd
+backgrounds; compare `r/i/z` against independently reconstructed
+external *coadd-equivalent* PSFs. Only then is a scientific wing
+accuracy threshold defensible.
+
+**Why a naïve PSFEx fallback would be incorrect:** the official
+Legacy Survey documentation distinguishes PSFEx models calibrated
+for **individual CCD exposures**, used by Tractor's single-epoch
+fits, from `legacysurvey-...-image-{band}.fits.fz` **coadds**
+created by Lanczos-3 resampling. The `psfsize-{band}` coadd map
+is a weighted-average PSF **FWHM** in arcseconds, not a
+2D spatially varying PSF kernel. Direct use of one CCD's PSFEx
+array, or a Gaussian with the `psfsize` FWHM, cannot certify a
+coadd-effective PSF. A defensible future `g` fallback must
+identify the contributing CCDs, their calibrated PSFs,
+astrometric transformations, per-pixel inverse-variance weights,
+resampling kernel and masking, assemble an **effective coadd PSF
+at the target position**, and perform its own external
+independent-star/injection validation. In the absence of these
+inputs it must return `REFERENCE_UNAVAILABLE`, **not**
+quietly replace the rejected empirical g PSF.
+
+Authoritative data definitions:
+- https://www.legacysurvey.org/dr11/files/
+- https://www.legacysurvey.org/dr10/description/
+
+**Deployment verification:** the new code is unit-tested for
+exact profile recovery on a noiseless input, excess wing light
+detected outside the core, excluded masked/truncated disks,
+immutable input arrays and identical signed/final aperture
+geometry. A real Leo P follow-up is needed to populate these
+new fields: historical griz JSON exports do not retroactively
+contain them. The pilot is considered exploratory-diagnostic
+complete, but science readiness remains **NOT ADOPTED**.
