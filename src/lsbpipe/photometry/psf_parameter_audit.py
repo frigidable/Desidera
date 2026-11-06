@@ -201,6 +201,30 @@ def audit_star_sky_ring_sensitivity(
         rows.append(row)
     deltas = [abs(row["sky_offset_vs_local_rms"]) for row in rows
               if "sky_offset_vs_local_rms" in row]
+
+    # Do not infer the best ring from two hand-picked fractions. Scan
+    # EVERY integer native-pixel inner boundary from the *guessed*
+    # one-FWHM radius through the configured chosen inner edge while
+    # keeping the originally observed outer boundary fixed. This is a
+    # nested sensitivity curve, not statistically independent trials,
+    # and not an automatic choice of a new ring. Each unsuccessful
+    # plane fit remains explicit evidence rather than a silent omission.
+    first_scan_radius = max(3, int(math.ceil(guessed_fwhm_pix)))
+    last_scan_radius = int(math.floor(inner_radius))
+    scan = []
+    for candidate_inner in range(first_scan_radius, last_scan_radius+1):
+        result = _robust_ring_plane(
+            img, ok, rr, dx, dy, float(candidate_inner), float(outer_radius))
+        item = {"inner_boundary_pix": candidate_inner,
+                "outer_boundary_pix": float(outer_radius), **result}
+        if result["status"] == "FIT_FOR_SENSITIVITY_ONLY":
+            delta = float(result["sky_at_star_center_nMgy_pix"] -
+                          reference_sky_nMgy_pix)
+            item["sky_offset_vs_selected_ring_nMgy_pix"] = delta
+            item["sky_offset_vs_local_rms"] = float(
+                delta/reference_rms_nMgy_pix)
+        scan.append(item)
+
     return {
         "schema": "desidera.psf0-stellar-annulus-sensitivity/1",
         "status": "ORIGINAL_PIXELS_DESCRIPTIVE_NOT_A_SKY_CALIBRATION",
@@ -209,6 +233,12 @@ def audit_star_sky_ring_sensitivity(
         "chosen_ring_sky_at_center_nMgy_pix": float(reference_sky_nMgy_pix),
         "chosen_ring_local_rms_nMgy_pix": float(reference_rms_nMgy_pix),
         "probes": rows,
+        "one_pixel_inner_boundary_sensitivity_scan": scan,
+        "scan_uses_guessed_not_measured_fwhm_for_start": True,
+        "scan_step_native_pix": 1,
+        "scan_sky_outer_boundary_fixed": True,
+        "scan_entries_nested_and_not_statistically_independent": True,
+        "scan_not_an_automatic_sky_ring_optimizer": True,
         "max_absolute_inner_ring_sky_change_in_local_rms":
             max(deltas) if deltas else None,
         "outer_ring_beyond_cutout_not_tested": True,
