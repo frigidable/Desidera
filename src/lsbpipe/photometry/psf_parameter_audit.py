@@ -63,6 +63,14 @@ _SECONDARY_THRESHOLDS = {
     "signed_negative_abs_mass_max": (0.025, "psf_empirical.py signed-kernel rejection"),
     "builder_dao_min_separation_default_fwhm": (
         2.5, "photutils 3.0+ DAOStarFinder implicit default"),
+    "fixed_scene_nuisance_source_budget": (
+        18, "psf_joint_scene.py MAX_NUISANCE_SOURCES; engineering cap"),
+    "fixed_scene_expanded_width_factor": (
+        2, "psf_joint_scene.py; scene_width=2*kernel_width-1, geometry-only"),
+    "fixed_scene_sky_polynomial_degree": (
+        1, "psf_joint_scene.py; planar local background approximation"),
+    "fixed_scene_subpixel_interpolation_order": (
+        3, "psf_joint_scene.py scipy.ndimage.map_coordinates cubic"),
 }
 
 
