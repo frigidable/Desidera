@@ -206,7 +206,7 @@ def test_masked_holdout_does_not_claim_unbiased_sky_equivalence():
     r=np.hypot(xx-40,yy-40)
     model=np.exp(-.5*(r/3.)**2)
     valid=np.ones((81,81),dtype=bool)
-    valid[40,54]=False   # inside outer aperture, outside reference core
+    valid[40,52]=False   # r=12: outside 1.5 FWHM, inside 2/3/4 FWHM
     report=_core_normalized_growth(
         model+.01,model,valid,r,center_xy=(40.,40.),
         guessed_fwhm_pix=6.57,amplitude=1.)
