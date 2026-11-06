@@ -148,6 +148,22 @@ def test_gui_calibration_summary_is_compact_and_keeps_full_qa_in_report():
     assert "7 without a DAO centroid" in text
     assert "median maximum |delta sky| / local RMS = 1" in text
     assert "NOT scientific adoption" in text
+    metrics["final_holdout_details_after_clipping"] = [
+        {"core_normalized_aperture_growth": {"radii": [{
+            "radius_in_guessed_fwhm": 4.,
+            "status": "FULL_NATIVE_APERTURE",
+            "equivalent_uniform_sky_offset_over_local_pixel_rms": -0.2
+        }]}},
+        {"core_normalized_aperture_growth": {"radii": [{
+            "radius_in_guessed_fwhm": 4.,
+            "status": "MASKED_APERTURE_DIAGNOSTIC_ONLY",
+            "equivalent_uniform_sky_offset_over_local_pixel_rms": 0.4
+        }]}},
+    ]
+    summary = PSF0Panel._calibration_diagnostic_summary(metrics)
+    assert "1 full-aperture stars" in summary
+    assert "median |offset|/local pixel RMS 0.2" in summary
+    assert "NOT an estimated actual sky bias" in summary
 
 
 def test_holdout_growth_reports_exact_uniform_sky_equivalent_without_correcting_pixels():
