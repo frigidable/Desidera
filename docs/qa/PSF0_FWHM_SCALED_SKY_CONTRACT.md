@@ -1283,3 +1283,62 @@ background and coadd noise covariance and reconstruct true wide-angle
 stellar wings before calibrating fit thresholds, including an
 unmodified blind sample and galaxy injection-recovery. Avoid assigning
 a new pass/fail threshold based on these same 3 holdouts.
+
+
+### P14C — repeat g preview, radial sky-offset consistency (2026-11-07)
+
+The follow-up *single-band* original-data export was provided as
+\`Вставленный текст(1).txt\` (JSON; kept outside source and not checked
+into Git). It has the **identical** original FITS quartet, recipe
+digest \`de8141c629b03d95b60e0b05670d775d78a832f2f0b05e6c43788c8647dcd719\`,
+signed and final model kernel SHA
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`
+and selected star IDs as the preceding 2026-11-06 g preview.
+Only the method QA/fingerprint changed; this is a reproducibility
+crosscheck, not a new PSF fit or a new independent validation sample.
+
+Although the previously introduced *algebraic uniform-sky equivalent*
+at 4×assumed FWHM is modest, its value varies substantially with
+radius (1.5, 2, 3, 4× the assumed detection FWHM). Values below are
+unitless fractions of each star's **local pixel RMS**, **not**
+sigma significance:
+
+| Gaia holdout | 1.5× | 2× | 3× | 4× | Max-min (RMS units) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| star-0110 | +0.637 | +0.441 | +0.216 | +0.133 | 0.505 |
+| star-0032 | -2.491 | -1.433 | -0.503 | -0.245 | 2.246 |
+| star-0148 | -0.047 | -0.126 | -0.043 | -0.053 | 0.083 |
+
+Under the restricted hypothesis of an exact fixed model profile,
+an exactly uniform unmodeled additive sky, noiseless observations and
+no star contamination, each aperture must imply the same sky offset.
+The observed variation highlights why a single 4×FWHM offset is
+inadequate evidence that background errors explain the profile
+discrepancy. It does **not** statistically falsify constant sky in
+the real observations: all apertures are cumulative/correlated, sky
+uncertainty and the coadd covariance are unmodeled, and the weak
+holdout star samples may carry other biases. Two holdout peak/local
+pixel RMS ratios are only about 40 and 44, while the third is ~539.
+The median peak brightness of the 10 train stars is 1.142 nMgy/pix,
+vs 0.145 nMgy/pix for the three holdouts (~7.86× contrast); the
+bright/faint PSF transfer is not calibrated.
+
+P14C adds the per-holdout
+\`radial_sky_equivalence_consistency\` QA object with the number and
+radii of complete unmasked apertures, absolute range of the
+algebraically implied sky offsets, and the same range divided by
+the **local pixel** RMS. No arbitrary radial-consistency threshold
+or chi-square is introduced. For 0–1 valid radii, the span is absent
+and the status is \`INSUFFICIENT_COMPLETE_APERTURES\`; masked
+apertures never supply a purported unbiased sky estimate.
+A compact **median** of holdout spreads is shown in the existing
+PSF quality GUI, with full per-star values in Copy QA. Original
+training/holdout samples, input pixels, fitted PSF, science status,
+and sky annulus remain exactly unchanged.
+
+The next scientific improvement is a joint stellar profile +
+spatial sky + known-neighbor fit on **larger original coadd regions**
+with an explicit coadd covariance model and independent sky pixels.
+This must be tested on heldout stars not used to tune hyperparameters,
+and then via galaxy injection/recovery. The present 3 Gaia holdouts
+are insufficient to establish science thresholds.
