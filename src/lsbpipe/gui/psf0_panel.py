@@ -1112,6 +1112,53 @@ class PSF0Panel(QGroupBox):
                 + f"{np.median(radial_spans):.3g}. "
                 "Offsets from cumulative apertures are correlated; "
                 "this is NOT a calibrated test of a constant sky.")
+        joint = metrics.get("fixed_psf_joint_native_scene_qa")
+        if isinstance(joint, dict):
+            status = joint.get("status")
+            if status == "NO_NATIVE_TRACTOR_CATALOG":
+                notes.append(
+                    "Joint star + sky + catalog neighbor scene not run: "
+                    "no verified same-brick Tractor catalogue.")
+            elif status == "FIXED_PSF_ORIGINAL_NATIVE_SCENE_AUDIT_NO_SCIENCE_ADOPTION":
+                n_done = int(joint.get("n_completed_joint_scene_fits", 0))
+                n_total = int(joint.get("n_preselected_stars", 0))
+                n_holdout = int(joint.get("n_completed_fixed_holdouts", 0))
+                n_expected = int(joint.get("n_holdouts_expected", 0))
+                notes.append(
+                    "Original-pixel fixed-PSF joint star + sky + "
+                    "catalog-point-neighbor fits: "
+                    + f"{n_done}/{n_total} stars, "
+                    + f"{n_holdout}/{n_expected} reserved Gaia holdouts "
+                    + "with complete numeric solutions.")
+                for row in joint.get("per_star", []):
+                    if row.get("role") != "holdout":
+                        continue
+                    if row.get("status") != "FIXED_PSF_JOINT_SCENE_DIAGNOSTIC":
+                        notes.append(
+                            f"{row.get('source_id', '?')}: scene not fitted "
+                            f"({row.get('status', 'UNKNOWN')}).")
+                        continue
+                    ratio = row.get(
+                        "neighbor_to_central_4fwhm_model_flux_ratio")
+                    ratio_text = (
+                        f"{100*ratio:.3g}%" if ratio is not None else
+                        "unavailable")
+                    sky_delta = row.get(
+                        "joint_minus_annulus_sky_nMgy_per_native_pixel")
+                    notes.append(
+                        f"{row.get('source_id', '?')}: "
+                        f"{row.get('n_catalog_point_neighbors', 0)} "
+                        "catalog PSF neighbors in expanded footprint; "
+                        f"model neighbor/core-star flux ratio inside "
+                        f"4 FWHM = {ratio_text}; "
+                        f"joint-minus-annulus sky = "
+                        f"{sky_delta:.4g} nMgy/pix; "
+                        f"{row.get('n_unmodeled_extended_or_nonpositive_catalog_sources', 0)} "
+                        "unmodeled catalog sources.")
+                notes.append(
+                    "Frozen ePSF shape and finite kernel support; "
+                    "extended sources, broad wings and correlated "
+                    "noise are NOT modeled. No science adoption.")
         return "\n".join(notes)
 
     def _result_matches_band_source(self, payload):
