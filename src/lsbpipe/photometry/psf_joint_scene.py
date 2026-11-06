@@ -129,9 +129,14 @@ def fit_fixed_psf_scene(
         return {"status": "INVALID_CENTRAL_NATIVE_PIXEL",
                 "science_adopted": False}
     n_valid = int(np.count_nonzero(m))
-    if n_valid < max(100, width*width//4):
-        return {"status": "INSUFFICIENT_NATIVE_SCENE_PIXEL_COVERAGE",
+    # Only impose the mathematical number-of-unknowns requirement;
+    # no uncalibrated 25%-valid-stamp acceptance threshold is invented.
+    # The QR/SVD tests below check the actual numerical rank.
+    if n_valid <= len(neighbors) + 3:
+        return {"status": "INSUFFICIENT_NATIVE_SCENE_PIXEL_DOF",
                 "n_valid": n_valid, "n_total": width*width,
+                "n_point_source_coefficients": len(neighbors)+1,
+                "n_planar_sky_coefficients": 3,
                 "science_adopted": False}
     gy, gx = np.indices(z.shape, dtype=float)
     gx += x0
@@ -173,6 +178,12 @@ def fit_fixed_psf_scene(
             "n_catalog_point_neighbors": len(neighbors),
             "science_adopted": False,
         }
+    if amplitudes[0] <= 0 or not math.isfinite(float(amplitudes[0])):
+        return {
+            "status": "NONPOSITIVE_FITTED_CENTRAL_STAR_AMPLITUDE",
+            "n_valid": n_valid, "n_catalog_point_neighbors": len(neighbors),
+            "science_adopted": False,
+        }
     # Full and null fits use the *identical original native pixels*.
     # A nested fit is guaranteed to be at least as good. A reduced RSS
     # is NOT a significance, p-value, evidence ratio or true-PSF metric.
@@ -199,6 +210,8 @@ def fit_fixed_psf_scene(
         "scene_size_is_not_a_measured_wing_boundary": True,
         "n_original_native_pixels": width*width,
         "n_valid_native_pixels": n_valid,
+        "valid_native_pixel_fraction": float(n_valid/(width*width)),
+        "no_arbitrary_valid_pixel_fraction_cut_imposed": True,
         "n_catalog_point_neighbors": len(neighbors),
         "neighbors": [{
             "tractor_objid": int(row["tractor_objid"]),
