@@ -153,6 +153,12 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert result.report()["implementation_method_sha256"] == (
         result.metrics["implementation_method_sha256"])
     assert result.algorithm_versions["recipe"].endswith("/2")
+    # A DAO-only synthetic result does NOT acquire invented catalog
+    # neighbors, sky covariance or new science validation.
+    joint=result.metrics["fixed_psf_joint_native_scene_qa"]
+    assert joint["status"]=="NO_NATIVE_TRACTOR_CATALOG"
+    assert joint["n_star_rows"]==len(result.training)+len(result.holdout)
+    assert joint["science_adopted"] is False
 
 
 def test_approximate_core_profile_and_no_galaxy_centroids(built):
