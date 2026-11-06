@@ -981,6 +981,8 @@ class PSF0Panel(QGroupBox):
             "training_residual_screening_history",
             "automatic_training_rejections",
             "candidate_screening_audit",
+            "gaia_catalog_seed_vs_dao_qa",
+            "parameter_provenance_qa",
         }
         return str({key:value for key,value in catalog.items()
                     if key not in omit})
@@ -1031,6 +1033,47 @@ class PSF0Panel(QGroupBox):
                     "no iterative star-removal improvement is claimed.")
         if not passes:
             notes.append("Disabled in this experiment.")
+        return "\n".join(notes)
+
+    @staticmethod
+    def _calibration_diagnostic_summary(metrics):
+        """Compact GUI evidence; full non-adopting arrays remain in Copy QA."""
+        notes = ["Parameter calibration diagnostics (NOT scientific adoption):"]
+        if metrics.get("parameter_provenance_qa"):
+            notes.append(
+                "PSF-0 numerical choices retain uncalibrated priors and "
+                "heuristic limits; see complete parameter registry in Copy QA.")
+        seed = (metrics.get("gaia_catalog_seed_vs_dao_qa")
+                or metrics.get("catalog_selection_qa", {}).get(
+                    "gaia_catalog_seed_vs_dao_qa"))
+        if isinstance(seed, dict):
+            notes.append(
+                "Gaia catalog-only preflight: "
+                + str(seed.get("n_catalog_only_preflight_pass", "?"))
+                + " candidates; "
+                + str(seed.get("n_catalog_preflight_without_near_dao", "?"))
+                + " without a DAO centroid at the current match tolerance. "
+                "No cutout/morphology QA or star promotion is implied.")
+        starrows = metrics.get("sky_sample_qa", {}).get("per_star", [])
+        changes = []
+        for star in starrows:
+            sensitivity = star.get("inner_ring_sensitivity_diagnostic", {})
+            delta = sensitivity.get(
+                "max_absolute_inner_ring_sky_change_in_local_rms")
+            if delta is not None:
+                changes.append(float(delta))
+        if changes:
+            notes.append(
+                "Original-pixel interior-ring sky sensitivity: "
+                + str(len(changes)) + "/" + str(len(starrows))
+                + " stars have usable diagnostic ring probes; "
+                + "median maximum |delta sky| / local RMS = "
+                + f"{np.median(changes):.3g}. "
+                "This does not isolate PSF wings from spatial sky variation.")
+        else:
+            notes.append(
+                "No usable original-pixel interior-ring sensitivity "
+                "measurement in this report.")
         return "\n".join(notes)
 
     def _result_matches_band_source(self, payload):
@@ -1149,6 +1192,7 @@ class PSF0Panel(QGroupBox):
                 + str(diagnostic.get("min_holdout_stars", "?"))
                 + "\n\nCatalog screening: "
                 + self._catalog_screening_summary(catalog_qa)
+                + "\n\n" + self._calibration_diagnostic_summary(diagnostic)
                 + "\n\nRejected candidates by reason: "
                 + str(diagnostic.get("rejected_reasons", {}))
                 + "\n\n" + "\n".join(diagnostic.get("notes", []))
@@ -1232,6 +1276,7 @@ class PSF0Panel(QGroupBox):
             + "\n\nStar catalogue screening: "
             + self._catalog_screening_summary(catalog_qa)
             + "\n\n" + self._training_sky_qa_summary(diagnostic)
+            + "\n\n" + self._calibration_diagnostic_summary(diagnostic)
             + "\n\nRejected candidates: "
             + str(diagnostic.get("rejected_reasons", {}))
             + "\n\n"
@@ -1398,6 +1443,7 @@ class PSF0Panel(QGroupBox):
             + self._catalog_screening_summary(
                 result.metrics.get("catalog_selection_qa", {}))
             + "\n\n" + self._training_sky_qa_summary(result.metrics)
+            + "\n\n" + self._calibration_diagnostic_summary(result.metrics)
             + "\n\nRejected star counts: " + str(result.rejected_reasons)
             + "\nSource SHA-256 lineage: "
             + (result.lineage_id or "not verified"))
