@@ -99,9 +99,9 @@ def fit_fixed_psf_scene(
             or not np.isfinite(k).all() or np.any(k < 0)
             or not math.isclose(float(np.sum(k)), 1., rel_tol=1e-8, abs_tol=1e-8)):
         raise ValueError("Invalid original native arrays or frozen PSF")
-    width = int(2*k.shape[0]-1 if scene_size_pix is None else scene_size_pix)
-    if (width < k.shape[0] or width > 2*k.shape[0]-1
-            or width % 2 == 0 or type(width) is not int):
+    width = 2*k.shape[0]-1 if scene_size_pix is None else scene_size_pix
+    if (type(width) is not int or width < k.shape[0]
+            or width > 2*k.shape[0]-1 or width % 2 == 0):
         raise ValueError("Invalid bounded native scene footprint")
     if (len(target_xy) != 2 or
             any(_finite_float(v) is None for v in target_xy) or
@@ -344,6 +344,9 @@ def audit_fixed_psf_joint_scenes(
                              extended[0]["y_pix"]-y))
             if extended else None)
         item["catalog_point_neighbor_count_full_support"] = len(neighboring)
+        item["catalog_scene_fully_modelled"] = len(extended) == 0
+        item["known_unmodeled_catalog_sources_prevent_science_certification"] = (
+            len(extended) > 0)
         item["nearest_catalog_point_neighbor_distance_pix"] = (
             float(math.hypot(neighboring[0]["x_pix"]-x,
                              neighboring[0]["y_pix"]-y))
@@ -368,6 +371,10 @@ def audit_fixed_psf_joint_scenes(
         "n_preselected_stars": len(stars),
         "n_completed_joint_scene_fits": len(ok),
         "n_failed_joint_scene_fits": len(stars)-len(ok),
+        "n_completed_scenes_with_unmodeled_catalog_sources": sum(
+            row.get("known_unmodeled_catalog_sources_prevent_science_certification",
+                    False)
+            for row in ok),
         "n_completed_fixed_holdouts": sum(
             row["role"] == "holdout" for row in ok),
         "n_holdouts_expected": sum(star.role == "holdout" for star in stars),
