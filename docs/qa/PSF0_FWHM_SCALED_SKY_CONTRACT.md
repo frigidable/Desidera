@@ -651,13 +651,13 @@ The median **signed** outer-zone residual changes from -0.000048303 to -0.000201
 ## Real Leo P controlled wing-smoothing A/B — 2026-11-06
 
 **Complete native DR11 i-band diagnostic.** Compared the real exports
-\`LeoP_i_Gaia_16iter_finalQA.json\` (ON; 2026-11-06 15:51 UTC)
-and \`LeoP_i_Gaia_16iter_noWingSmoothing.json\` (OFF; 2026-11-06
+`LeoP_i_Gaia_16iter_finalQA.json` (ON; 2026-11-06 15:51 UTC)
+and `LeoP_i_Gaia_16iter_noWingSmoothing.json` (OFF; 2026-11-06
 16:06 UTC). The original four FITS SHA-256 digests match byte-for-byte
 and the complete effective recipes differ **only** in
-\`wing_smoothing=True/False\`. Both use \`gaia_strict\`, 10 identical
+`wing_smoothing=True/False`. Both use `gaia_strict`, 10 identical
 Gaia training IDs and 3 identical fixed Gaia heldout IDs
-(\`star-0089\`, \`star-0059\`, \`star-0047\`), the same detection prior
+(`star-0089`, `star-0059`, `star-0047`), the same detection prior
 5.12 native pix, 65x65 cutout, sky annulus 24–30 px, 69 px
 isolation, native oversampling 1, no training auto-trim and no
 manual exclusions. The entire nine-step Photutils 3.1.1 solver
@@ -670,7 +670,7 @@ This cleanly isolates the last-step regularization.
 |---|---:|---:|
 | Numerical solver convergence / iterations | true / 9 | true / 9 |
 | Negative absolute mass / total absolute mass | **2.189109%** | **5.978836%** |
-| Diagnostic 2.5% negative-mass gate | passes | **fails** (\`STRONG_NEGATIVE_EPSF_RINGING\`) |
+| Diagnostic 2.5% negative-mass gate | passes | **fails** (`STRONG_NEGATIVE_EPSF_RINGING`) |
 | Outer r > 2 guessed FWHM positive signed-model mass | 0.047491862 | 0.092505526 |
 | Outer r > 2 guessed FWHM negative absolute mass | 0.022860952 | 0.067876184 |
 | Outer r > 2 guessed FWHM signed integral | **0.024630910** | **0.024629342** |
@@ -692,7 +692,7 @@ smoothing OFF (median +5.82% in relative terms), but the three
 stellar images and coadd residual noise are insufficient to
 calibrate physical wing fidelity.
 
-These results show that Photutils' final \`wing_smoothing=True\`
+These results show that Photutils' final `wing_smoothing=True`
 regularizes the noisy oscillatory outer ePSF for this particular
 ten-star field. They do **not** establish that the smoothed model is
 an accurate physical representation of bright-star wings:
@@ -707,16 +707,16 @@ experiment cannot isolate the radial transition further.
 
 **Scientific outcome:** OFF is rejected, and **no positive kernel
 was delivered for that failed run**: the absence of
-\`final_holdout_*_after_clipping\` is expected, not missing QA
+`final_holdout_*_after_clipping` is expected, not missing QA
 for a successful model. ON has complete signed and post-clipping
 three-zone holdouts, but remains
-\`EXPERIMENTAL_PSF_NOT_ADOPTED\`.
+`EXPERIMENTAL_PSF_NOT_ADOPTED`.
 Do not lower the 2.5% diagnostic screen to rescue OFF and do not
 claim a calibrated acceptance from that screen.
 
 **Decision / next gates:** retain ON solely as the provisional
-experimental \`i\` reference, stop unmotivated iterations/wing-tuning
-for Leo P, and survey \`g/r/z\` at their **own** PSFSIZE priors.
+experimental `i` reference, stop unmotivated iterations/wing-tuning
+for Leo P, and survey `g/r/z` at their **own** PSFSIZE priors.
 Independently evaluate actual stellar cutouts, 2D signed residuals,
 matched radial enclosed-energy profiles, sky-annulus sensitivity,
 spatial PSF representativity, calibrated injection recovery and
