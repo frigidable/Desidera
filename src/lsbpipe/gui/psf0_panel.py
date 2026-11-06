@@ -1079,8 +1079,13 @@ class PSF0Panel(QGroupBox):
         # alternatives to an observed radial-shape mismatch; they are
         # neither actual sky estimates nor per-pixel significance tests.
         equivalents = []
+        radial_spans = []
         for star in metrics.get("final_holdout_details_after_clipping", []):
             growth = star.get("core_normalized_aperture_growth", {})
+            radial = growth.get("radial_sky_equivalence_consistency", {})
+            span = radial.get("span_over_local_pixel_rms")
+            if span is not None:
+                radial_spans.append(float(span))
             rows = growth.get("radii", [])
             sample = next((
                 row for row in rows
@@ -1099,6 +1104,14 @@ class PSF0Panel(QGroupBox):
                 + f"{np.median(np.abs(equivalents)):.3g}; "
                 "this is NOT an estimated actual sky bias or a "
                 "statistical significance.")
+        if radial_spans:
+            notes.append(
+                "Cross-radius sky-equivalence spread (1.5–4×guessed FWHM): "
+                + f"{len(radial_spans)} full-aperture holdouts, "
+                + "median span / local pixel RMS "
+                + f"{np.median(radial_spans):.3g}. "
+                "Offsets from cumulative apertures are correlated; "
+                "this is NOT a calibrated test of a constant sky.")
         return "\n".join(notes)
 
     def _result_matches_band_source(self, payload):
