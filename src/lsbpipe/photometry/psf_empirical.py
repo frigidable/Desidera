@@ -33,6 +33,10 @@ from lsbpipe.photometry.psf_star_quality import (
 from lsbpipe.photometry.psf_training_residuals import (
     training_star_residual, choose_training_outliers, brightness_bias_audit,
 )
+from lsbpipe.photometry.psf_parameter_audit import (
+    audit_psf0_parameters, audit_star_sky_ring_sensitivity,
+    audit_gaia_catalog_seeds_vs_dao,
+)
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -250,6 +254,9 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "holdout_aperture": "NATIVE_SUBPIXEL_STAR_CENTER_V2",
         "holdout_integrity": "ALL_FIXED_STARS_ALL_ANNULI",
         "holdout_flux_growth": "CORE_NORM_NATIVE_APERTURE_RADII_V1_DESCRIPTIVE",
+        "parameter_provenance": "PILOT_NUMERIC_ASSUMPTION_REGISTRY_V1_DESCRIPTIVE",
+        "stellar_sky_ring_sensitivity": "ORIGINAL_PIXELS_INTERIOR_RING_V1_DESCRIPTIVE",
+        "gaia_seed_dao_coverage": "CATALOG_PREFLIGHT_V1_NO_SAMPLE_PROMOTION",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -390,6 +397,17 @@ def _star_cutout(frame, x, y, cfg, protected):
         "sky_uncertainty_covariance_calibrated":False,
         "sky_versus_psf_wings_separable_from_this_cutout":False,
     }
+    # Independent observational sensitivity: re-fit *original* native
+    # pixels in predeclared interior annuli. This never changes the chosen
+    # sky plane, training samples, holdouts or acceptance thresholds.
+    sky_qa["inner_ring_sensitivity_diagnostic"] = (
+        audit_star_sky_ring_sensitivity(
+            src, valid, center_xy=(x-(ix-h), y-(iy-h)),
+            inner_radius=cfg.sky_annulus_inner_pix,
+            outer_radius=cfg.sky_annulus_outer_pix,
+            reference_sky_nMgy_pix=float(coeff[0]),
+            reference_rms_nMgy_pix=float(scale),
+            guessed_fwhm_pix=cfg.guessed_fwhm_pix))
     if gradient_span > cfg.max_star_gradient_sigma:
         return None, "STRONG_LOCAL_SKY_GRADIENT"
     # A nonzero masked cutout cannot silently become a reconstructed
@@ -618,6 +636,17 @@ def build_empirical_coadd_psf(
         raise ValueError("Too few detected star candidates for an independent PSF holdout")
     positions = np.array([item[:2] for item in candidates])
     neighbors = cKDTree(positions)
+    # Diagnose catalogue-confirmed potential stars missed by DAO, whose
+    # >=3.0 default min_separation is 2.5*FWHM.  This is strictly read-only:
+    # no new candidate enters the PSF reconstruction from the audit.
+    gaia_seed_discovery_qa = (
+        audit_gaia_catalog_seeds_vs_dao(
+            catalog_matcher, positions, frame_shape=frame.shape,
+            protected=protected, band=frame.band,
+            cutout_size_pix=cfg.cutout_size_pix,
+            guessed_fwhm_pix=cfg.guessed_fwhm_pix)
+        if catalog_matcher is not None else None)
+    parameter_provenance_qa = audit_psf0_parameters(cfg)
     rejected = {}
     screening_audit = []
     screening_by_id = {}
@@ -788,6 +817,8 @@ def build_empirical_coadd_psf(
             "rejected_reasons": dict(rejected),
             "accepted_candidates": accepted_candidates,
             "candidate_screening_audit": screening_audit,
+            "parameter_provenance_qa": parameter_provenance_qa,
+            "gaia_catalog_seed_vs_dao_qa": gaia_seed_discovery_qa,
             "catalog_selection_qa": {
                 "policy": cfg.star_catalog_policy,
                 "catalog_sha256": (
@@ -1163,6 +1194,8 @@ def build_empirical_coadd_psf(
         "n_screened_candidates": screened_count,
         "n_unexamined_candidates": len(candidates)-screened_count,
         "candidate_screening_audit": screening_audit,
+        "parameter_provenance_qa": parameter_provenance_qa,
+        "gaia_catalog_seed_vs_dao_qa": gaia_seed_discovery_qa,
         "n_unused_training_candidates_after_cap": len(
             unused_training_entries),
         "accepted_identity_population_qa":
@@ -1479,6 +1512,7 @@ def build_empirical_coadd_psf(
     metrics = {
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
+        "parameter_provenance_qa": parameter_provenance_qa,
         "implementation_method_sha256": method_fingerprint["sha256"],
         "implementation_method": method_fingerprint["payload"],
         "training_residual_screening_history": outlier_history,
