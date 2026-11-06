@@ -1,4 +1,4 @@
-"""Non-adopted, held-out-star residual QA for *signed* ePSF candidates.
+"""Non-adopted, independent-star signed/final ePSF residual and growth QA.
 
 A model that passes a global pixel-sign test is not necessarily a
 better physical PSF. Here a signed, unmodified ePSF is amplitude-fitted
@@ -14,6 +14,131 @@ from __future__ import annotations
 import math
 import numpy as np
 from scipy.ndimage import shift as shift_image
+
+
+
+# Fixed radii are based on the FINDER FWHM prior, not measured PSF width.
+# The largest radius remains inside the extended-sky annulus (>=4.5 FWHM).
+_GROWTH_RADII_FWHM = (1.0, 1.5, 2.0, 3.0, 4.0)
+
+
+def _core_normalized_growth(science, model, valid, radius, *,
+                            center_xy, guessed_fwhm_pix, amplitude):
+    """Compare cumulative native *sky-subtracted* flux on identical pixels.
+
+    This is a finite-aperture flux-growth diagnostic, NOT enclosed energy
+    relative to the unknown star's total flux. Both observed and modeled
+    curves are divided by their OWN measured/modeled flux inside 1 guessed
+    FWHM, so the free core amplitude cannot conceal a wing *shape* excess.
+    No flux extrapolation, mask inpainting, covariance correction or PSF
+    science acceptance is performed.
+    """
+    cy_size, cx_size = science.shape
+    cx, cy = center_xy
+    rcore = float(guessed_fwhm_pix)
+    core = valid & (radius <= rcore)
+    core_observed = float(np.sum(science[core]))
+    core_model = float(np.sum(amplitude * model[core]))
+    valid_core_normalization = (
+        math.isfinite(core_observed) and core_observed > 0
+        and math.isfinite(core_model) and core_model > 0)
+    points = []
+    for factor in _GROWTH_RADII_FWHM:
+        r = float(factor*rcore)
+        contained = (
+            cx-r >= 0 and cy-r >= 0
+            and cx+r <= cx_size-1 and cy+r <= cy_size-1)
+        disk = radius <= r
+        selected = disk & valid
+        n_total = int(np.count_nonzero(disk))
+        n_valid = int(np.count_nonzero(selected))
+        fully_valid = n_total > 0 and n_valid == n_total
+        if not contained:
+            status = "NOT_FULLY_CONTAINED"
+        elif not fully_valid:
+            status = "MASKED_APERTURE_DIAGNOSTIC_ONLY"
+        elif not valid_core_normalization:
+            status = "INVALID_CORE_REFERENCE"
+        else:
+            status = "FULL_NATIVE_APERTURE"
+        # Never describe a truncated aperture or nonpositive core
+        # normalization as a physical flux growth measurement.
+        usable = contained and valid_core_normalization
+        obs = (float(np.sum(science[selected])) / core_observed
+               if usable else None)
+        pred = (float(np.sum(amplitude*model[selected])) / core_model
+                if usable else None)
+        points.append({
+            "radius_in_guessed_fwhm": float(factor),
+            "radius_native_pix": r,
+            "status": status,
+            "n_disk_native_pixels": n_total,
+            "n_valid_native_pixels": n_valid,
+            "valid_pixel_fraction": (
+                float(n_valid/n_total) if n_total else None),
+            "observed_cumulative_flux_over_observed_core": obs,
+            "model_cumulative_flux_over_model_core": pred,
+            "observed_minus_model_growth_over_core": (
+                float(obs-pred) if obs is not None and pred is not None
+                else None),
+        })
+    return {
+        "schema": "desidera.psf0-holdout-core-normalized-flux-growth/1",
+        "status": "DESCRIPTIVE_NOT_SCIENCE_ADOPTED",
+        "core_radius_guessed_fwhm": 1.0,
+        "core_reference_valid": bool(valid_core_normalization),
+        "core_observed_native_flux_nMgy": (
+            core_observed if valid_core_normalization else None),
+        "core_fitted_model_native_flux_nMgy": (
+            core_model if valid_core_normalization else None),
+        "radii": points,
+        "all_radii_cumulative_and_not_statistically_independent": True,
+        "observed_cutout_local_sky_already_subtracted": True,
+        "masked_apertures_not_usable_for_unbiased_growth": True,
+        "stellar_total_flux_unmeasured": True,
+        "coadd_covariance_and_sky_uncertainty_unmodeled": True,
+        "source_pixels_not_modified": True,
+    }
+
+
+def summarize_core_normalized_growth(reports: list[dict]) -> dict:
+    """Across fixed holdouts, summarize ONLY fully contained unmasked disks."""
+    # The primary signed/final holdout integrity gate checks duplicate IDs;
+    # enforce it independently here so no caller can inflate the sample.
+    ids = [r["source_id"] for r in reports]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Duplicate holdout source IDs in aperture-growth QA")
+    entries = []
+    for factor in _GROWTH_RADII_FWHM:
+        usable = []
+        for report in reports:
+            points = report.get("core_normalized_aperture_growth", {}).get(
+                "radii", [])
+            point = next((x for x in points
+                          if x.get("radius_in_guessed_fwhm") == factor), None)
+            if point is not None and point.get("status") == "FULL_NATIVE_APERTURE":
+                excess = point.get("observed_minus_model_growth_over_core")
+                if excess is not None and math.isfinite(float(excess)):
+                    usable.append((report["source_id"], float(excess)))
+        numbers = [v for _, v in usable]
+        entries.append({
+            "radius_in_guessed_fwhm": factor,
+            "n_full_aperture_holdouts": len(numbers),
+            "source_ids": [s for s, _ in usable],
+            "median_observed_minus_model_growth_over_core": (
+                float(np.median(numbers)) if numbers else None),
+            "median_absolute_growth_excess_over_core": (
+                float(np.median(np.abs(numbers))) if numbers else None),
+        })
+    return {
+        "schema": "desidera.psf0-holdout-flux-growth-summary/1",
+        "status": "DESCRIPTIVE_NOT_SCIENCE_ADOPTED",
+        "n_fixed_holdouts": len(reports),
+        "radii": entries,
+        "sky_and_coadd_covariance_not_calibrated": True,
+        "no_threshold_or_science_adoption_implication": True,
+    }
+
 
 
 def heldout_signed_residual(
@@ -86,6 +211,10 @@ def heldout_signed_residual(
         "source_id": str(source_id),
         "fitted_amplitude_model_units": amplitude,
         "radial_residuals": metrics,
+        "core_normalized_aperture_growth": _core_normalized_growth(
+            science, model, good, radius,
+            center_xy=(cx, cy), guessed_fwhm_pix=guessed_fwhm_pix,
+            amplitude=amplitude),
         "fwhm_guess_not_measured": float(guessed_fwhm_pix),
         "signed_kernel_unchanged": True,
         "correlated_coadd_noise_not_whitened": True,
