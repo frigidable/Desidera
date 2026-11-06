@@ -1217,3 +1217,69 @@ environment does not contain Leo P original quartet or original
 Tractor catalog. The new diagnostics must be generated on the user's
 existing Leo P project before any numerical interpretation of their
 effectiveness. Both r/i/z kernels remain NON-ADOPTED.
+
+
+### P14B — real Leo P g pilot: holdout sky-offset equivalence (2026-11-07)
+
+The user-supplied full-window original-data QA
+(\`Desidera_LeoP_PSF0_griz_debug_20261106_215758.json\`, stored
+outside this source tree) confirms that the g pilot reaches
+**10 Gaia-trained and 3 independent Gaia holdouts**, converges after
+**11** iterations, and reports signed negative absolute mass
+**1.6538%**, but is correctly marked **NOT SCIENCE ADOPTED**.
+The other bands were not rebuilt within that debug session.
+The three fixed holdout growth differences at 4×assumed FWHM are:
+- star-0110 +0.17506 core-normalized units;
+- star-0032 −0.03218;
+- star-0148 −0.09587.
+
+These three offsets are neither a 17.5%, 3.2%, 9.6% error in stellar
+*total* flux nor independently established PSF discrepancies: all
+apertures are measured on **already locally sky-subtracted** coadds,
+and the sky zero point can mimic an integral growth difference.
+The g input has no independent sky or covariance estimate beyond the
+original annulus heuristic.
+
+The code now records, per complete unmasked independent holdout and
+growth radius >1 guessed FWHM, the value of a hypothetical *uniform*
+residual sky offset needed to algebraically reconcile the observed and
+modeled **core-normalized** cumulative fluxes. For observed core
+\`C\`, aperture flux \`A\`, model growth \`q\`, and valid pixel
+numbers \`N_C\` / \`N_A\`:
+
+    delta = (A - q*C) / (N_A - q*N_C)
+
+The native signed and delivered final-kernel QA both report
+\`equivalent_uniform_sky_offset_nMgy_per_native_pixel\` and
+\`equivalent_uniform_sky_offset_over_local_pixel_rms\`.
+At the 4×FWHM radius these would correspond, for the *actual reported
+g pilot*, to approximately +0.133 / −0.245 / −0.053 per original
+local **pixel** RMS for star-0110 / star-0032 / star-0148.
+These **are not statistical significance values**: coadd pixels have
+correlated noise and background-plane estimation uncertainty; the
+effective sky offset could be spatially nonuniform. Distinct radii
+also imply correlated, possibly mutually inconsistent corrections.
+No source pixels, fitted PSF or original selection are changed.
+
+The per-star original-pixel interior ring audit also shows a
+brightness-dependent signal, especially for the brightest g train
+star (star-0002): inner 18–24 px annular plane sky is
+0.00943 nMgy/pix above that fit to the adopted 30–38 px ring,
+or 2.92 local pixel RMS. This is consistent with the expected
+possibility of stellar-wing light contributing to inner annuli,
+but it does not establish that the outer adopted ring is unbiased.
+The catalog-first preflight finds 38 candidate Gaia/Tractor PSF
+sources, 37 near DAO centroids and only **one catalog-only seed**
+without a nearby DAO centroid. DAO incompleteness is therefore not
+the principal demonstrated cause of the small final g sample here.
+The dominant catalog-only preflight rejections are **115 neighbors**,
+not the one missing DAO source. The original cutout QA retains the
+central-mask rejection of star-0004 while stars 0011, 0050, 0079
+are now train-eligible; none of these is evidence of PSF science
+adoption.
+
+The scientific next stage must independently constrain the local
+background and coadd noise covariance and reconstruct true wide-angle
+stellar wings before calibrating fit thresholds, including an
+unmodified blind sample and galaxy injection-recovery. Avoid assigning
+a new pass/fail threshold based on these same 3 holdouts.
