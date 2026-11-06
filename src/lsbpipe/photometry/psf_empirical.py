@@ -24,7 +24,8 @@ from lsbpipe.photometry.workflow_dependencies import PSFLineageKey
 from lsbpipe.photometry.psf_signed_qa import signed_psf_qa
 from lsbpipe.photometry.psf_holdout_qa import (
     heldout_signed_residual, heldout_final_kernel_residual,
-    summarize_signed_holdouts, audit_signed_holdout_coverage,
+    summarize_signed_holdouts, summarize_core_normalized_growth,
+    audit_signed_holdout_coverage,
 )
 from lsbpipe.photometry.psf_star_quality import (
     assess_psf_star_cutout, assess_sample_widths,
@@ -248,6 +249,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
             "convergence_fraction_target_if_reported"),
         "holdout_aperture": "NATIVE_SUBPIXEL_STAR_CENTER_V2",
         "holdout_integrity": "ALL_FIXED_STARS_ALL_ANNULI",
+        "holdout_flux_growth": "CORE_NORM_NATIVE_APERTURE_RADII_V1_DESCRIPTIVE",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1220,6 +1222,7 @@ def build_empirical_coadd_psf(
             holdout_failures.append({
                 "star_id": entry[0], "reason": str(exc)})
     signed_holdout_summary = summarize_signed_holdouts(signed_holdouts)
+    signed_growth_summary = summarize_core_normalized_growth(signed_holdouts)
     signed_holdout_coverage = audit_signed_holdout_coverage(
         [entry[0] for entry in holdout_entries],
         signed_holdouts, holdout_failures)
@@ -1238,6 +1241,7 @@ def build_empirical_coadd_psf(
             "reviewed_excluded_training_ids": list(cfg.excluded_training_star_ids),
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_core_normalized_flux_growth_summary": signed_growth_summary,
             "signed_holdout_coverage_qa": signed_holdout_coverage,
             "signed_holdout_details": signed_holdouts,
             "signed_holdout_failures": holdout_failures,
@@ -1277,6 +1281,7 @@ def build_empirical_coadd_psf(
             "psf_recipe": asdict(cfg),
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_core_normalized_flux_growth_summary": signed_growth_summary,
             "signed_holdout_coverage_qa": signed_holdout_coverage,
             "signed_holdout_details": signed_holdouts,
             "signed_holdout_failures": holdout_failures,
@@ -1316,6 +1321,7 @@ def build_empirical_coadd_psf(
             "psf_recipe": asdict(cfg),
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_core_normalized_flux_growth_summary": signed_growth_summary,
             "signed_holdout_coverage_qa": signed_holdout_coverage,
             "signed_holdout_details": signed_holdouts,
             "signed_holdout_failures": holdout_failures,
@@ -1362,6 +1368,7 @@ def build_empirical_coadd_psf(
             final_holdout_failures.append({
                 "star_id": entry[0], "reason": str(exc)})
     final_holdout_summary = summarize_signed_holdouts(final_holdouts)
+    final_growth_summary = summarize_core_normalized_growth(final_holdouts)
     final_holdout_coverage = audit_signed_holdout_coverage(
         [entry[0] for entry in holdout_entries],
         final_holdouts, final_holdout_failures)
@@ -1378,8 +1385,10 @@ def build_empirical_coadd_psf(
             "catalog_selection_qa": selection_catalog_qa,
             "signed_kernel_qa": signed_diagnostics,
             "signed_holdout_summary": signed_holdout_summary,
+            "signed_holdout_core_normalized_flux_growth_summary": signed_growth_summary,
             "signed_holdout_coverage_qa": signed_holdout_coverage,
             "final_holdout_summary_after_clipping": final_holdout_summary,
+            "final_holdout_core_normalized_flux_growth_summary_after_clipping": final_growth_summary,
             "final_holdout_coverage_after_clipping": final_holdout_coverage,
             "final_holdout_details_after_clipping": final_holdouts,
             "final_holdout_failures_after_clipping": final_holdout_failures,
@@ -1478,10 +1487,12 @@ def build_empirical_coadd_psf(
         "epsf_negative_mass_fraction_before_clipping": negative_fraction,
         "signed_epsf_diagnostics_before_clipping": signed_diagnostics,
         "signed_holdout_summary": signed_holdout_summary,
+        "signed_holdout_core_normalized_flux_growth_summary": signed_growth_summary,
         "signed_holdout_coverage_qa": signed_holdout_coverage,
         "signed_holdout_details": signed_holdouts,
         "signed_holdout_failures": holdout_failures,
         "final_holdout_summary_after_clipping": final_holdout_summary,
+        "final_holdout_core_normalized_flux_growth_summary_after_clipping": final_growth_summary,
         "final_holdout_coverage_after_clipping": final_holdout_coverage,
         "final_holdout_details_after_clipping": final_holdouts,
         "final_holdout_failures_after_clipping": final_holdout_failures,
