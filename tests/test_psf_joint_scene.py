@@ -60,6 +60,15 @@ def test_native_joint_scene_recovers_known_star_sky_neighbor_without_changing_in
     assert result["weighted_squared_residual_star_neighbors_plane"] < 1e-10
     assert result["weighted_squared_residual_star_plane_only"] > 0.
     assert result["weighted_residual_improvement_fraction"] > .99
+    local = result["central_aperture_residual_comparison"]
+    for region in ("one_guessed_fwhm","four_guessed_fwhm"):
+        value=local[region]
+        assert value["status"]=="SAME_NATIVE_PIXELS_WITH_GLOBAL_PARAMETERS"
+        assert value["n_native_pixels"] > 0
+        assert value["weighted_squared_residual_full"] < 1e-10
+        assert value["weighted_squared_residual_star_plane_only"] > 0.
+        assert value["not_a_covariance_calibrated_or_independent_validation"]
+    assert local["same_global_fit_coefficients_no_local_refit"]
     assert result["neighbor_to_central_core_model_flux_ratio"] is not None
     assert result["neighbor_to_central_4fwhm_model_flux_ratio"] > 0.
     assert result["correlated_noise_and_fit_parameter_covariance_unmodeled"]
@@ -145,6 +154,9 @@ def test_joint_scene_catalog_audit_keeps_original_holdout_and_non_psf_unmodeled(
     assert row["catalog_scene_fully_modelled"] is False
     assert row["known_unmodeled_catalog_sources_prevent_science_certification"] is True
     assert result["n_completed_scenes_with_unmodeled_catalog_sources"]==1
+    assert row["nearest_unmodeled_catalog_source"]["tractor_type"]=="DEV"
+    assert row["nearest_unmodeled_catalog_source"]["tractor_objid"]==34
+    assert row["nearest_unmodeled_catalog_source"]["reason"]=="TRACTOR_NON_PSF_MODEL"
     assert row["catalog_point_neighbor_count_full_support"]==1
     assert row["neighbors"][0]["tractor_objid"]==33
     assert result["nuisance_parameter_fit_to_holdouts_not_blind_validation"]
@@ -231,3 +243,58 @@ def test_joint_scene_rejects_fractional_footprint_without_silent_truncation():
             kernel=kernel,target_xy=(100.25,99.65),
             neighbors=[],guessed_fwhm_pix=6.57,
             original_sky_nMgy_pix=.004,scene_size_pix=160.5)
+
+
+def test_zero_support_catalog_psf_does_not_block_real_star_fit():
+    image,kernel=_synthetic_field(include_neighbor=False)
+    # 161x161 stamp centered on x=100.25 ends at x=180;
+    # this catalogued PSF at x=221 has exactly zero frozen-kernel
+    # support on *any* of its original native pixels.
+    invisible=_source_neighbor(x=221.,y=100.4)
+    invisible["tractor_objid"]=471
+    result=fit_fixed_psf_scene(
+        image,np.ones_like(image),np.ones_like(image,dtype=bool),
+        kernel=kernel,target_xy=(100.25,99.65),
+        neighbors=[invisible],guessed_fwhm_pix=6.57,
+        original_sky_nMgy_pix=.004)
+    assert result["status"]=="FIXED_PSF_JOINT_SCENE_DIAGNOSTIC"
+    assert result["n_catalog_point_neighbors_in_expanded_search"]==1
+    assert result["n_catalog_point_neighbors"]==0
+    assert result["n_catalog_neighbors_with_exact_zero_finite_psf_support"]==1
+    assert result["catalog_neighbors_with_exact_zero_finite_psf_support"][0][
+        "tractor_objid"]==471
+    assert result["zero_support_exclusion_is_only_relative_to_frozen_kernel"]
+    assert result["weighted_squared_residual_star_neighbors_plane"]==pytest.approx(
+        result["weighted_squared_residual_star_plane_only"],abs=1e-10)
+    assert result["science_adopted"] is False
+
+
+def test_central_aperture_residuals_are_not_global_scene_residuals():
+    image,kernel=_synthetic_field(include_neighbor=False)
+    yy,xx=np.indices(image.shape,dtype=float)
+    far=(164.,100.4)
+    image=image+85.*_shifted_native_kernel(
+        kernel,xx,yy,far[0],far[1])
+    rng=np.random.default_rng(17)
+    image=image+rng.normal(0.,0.03,image.shape)
+    far_source=_source_neighbor(x=far[0],y=far[1])
+    result=fit_fixed_psf_scene(
+        image,np.ones_like(image),np.ones_like(image,dtype=bool),
+        kernel=kernel,target_xy=(100.25,99.65),
+        neighbors=[far_source],guessed_fwhm_pix=6.57,
+        original_sky_nMgy_pix=.004)
+    assert result["status"]=="FIXED_PSF_JOINT_SCENE_DIAGNOSTIC"
+    local=result["central_aperture_residual_comparison"]
+    core=local["one_guessed_fwhm"]
+    outer=local["four_guessed_fwhm"]
+    assert core["n_native_pixels"] < outer["n_native_pixels"]
+    assert outer["n_native_pixels"] < result["n_valid_native_pixels"]
+    assert outer["weighted_squared_residual_full"] <= (
+        result["weighted_squared_residual_star_neighbors_plane"])
+    assert outer["weighted_squared_residual_star_plane_only"] <= (
+        result["weighted_squared_residual_star_plane_only"])
+    assert result["weighted_residual_improvement_fraction"] >= 0.
+    assert -1. < outer["signed_improvement_fraction"] < 1.
+    assert abs(outer["signed_improvement_fraction"]) < (
+        result["weighted_residual_improvement_fraction"])
+    assert result["comparison_fit_has_more_parameters_and_cannot_be_science_gate"]
