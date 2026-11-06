@@ -142,6 +142,9 @@ def test_joint_scene_catalog_audit_keeps_original_holdout_and_non_psf_unmodeled(
     assert row["source_id"]=="star-0032"
     assert row["role"]=="holdout"
     assert row["n_unmodeled_extended_or_nonpositive_catalog_sources"]==1
+    assert row["catalog_scene_fully_modelled"] is False
+    assert row["known_unmodeled_catalog_sources_prevent_science_certification"] is True
+    assert result["n_completed_scenes_with_unmodeled_catalog_sources"]==1
     assert row["catalog_point_neighbor_count_full_support"]==1
     assert row["neighbors"][0]["tractor_objid"]==33
     assert result["nuisance_parameter_fit_to_holdouts_not_blind_validation"]
@@ -218,3 +221,13 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "0.0004 nMgy/pix" in summary
     assert "2 unmodeled catalog sources" in summary
     assert "No science adoption" in summary
+
+
+def test_joint_scene_rejects_fractional_footprint_without_silent_truncation():
+    image,kernel=_synthetic_field()
+    with pytest.raises(ValueError,match="footprint"):
+        fit_fixed_psf_scene(
+            image,np.ones_like(image),np.ones_like(image,dtype=bool),
+            kernel=kernel,target_xy=(100.25,99.65),
+            neighbors=[],guessed_fwhm_pix=6.57,
+            original_sky_nMgy_pix=.004,scene_size_pix=160.5)
