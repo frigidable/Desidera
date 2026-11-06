@@ -37,6 +37,7 @@ from lsbpipe.photometry.psf_parameter_audit import (
     audit_psf0_parameters, audit_star_sky_ring_sensitivity,
     audit_gaia_catalog_seeds_vs_dao,
 )
+from lsbpipe.photometry.psf_joint_scene import audit_fixed_psf_joint_scenes
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -258,6 +259,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "stellar_sky_ring_sensitivity": "ORIGINAL_PIXELS_INTERIOR_RING_AND_NATIVE_SCAN_V2_DESCRIPTIVE",
         "gaia_seed_dao_coverage": "CATALOG_PREFLIGHT_V1_NO_SAMPLE_PROMOTION",
         "holdout_sky_equivalence": "CORE_NORMALIZED_UNIFORM_OFFSET_WITH_RADIAL_CONSISTENCY_V2",
+        "fixed_psf_joint_native_scene": "STAR_AND_POINT_NEIGHBORS_PLUS_PLANAR_SKY_V1_QA_ONLY",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1511,8 +1513,18 @@ def build_empirical_coadd_psf(
     instrument = ("BASS_90PRIME" if frame.region == "north" and frame.band in ("g","r")
                   else "MZLS_MOSAIC3" if frame.region == "north" and frame.band == "z"
                   else "DECAM")
+    # Fixed-kernel joint native scene diagnostics: fit each SAME selected
+    # star and its original Tractor PSF neighbors with an unconstrained
+    # planar sky on a larger ORIGINAL coadd patch. These nuisance fits
+    # NEVER alter the already constructed and heldout-tested ePSF.
+    # This is not extended-wing recovery and is not noise-covariance QA.
+    joint_native_scene_qa = audit_fixed_psf_joint_scenes(
+        frame, kernel, train+holdout, catalog_matcher,
+        protected_mask=protected,
+        guessed_fwhm_pix=cfg.guessed_fwhm_pix)
     # FWHM here is only the guessed finder width, NOT measured EPSF FWHM.
     metrics = {
+        "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
         "parameter_provenance_qa": parameter_provenance_qa,
