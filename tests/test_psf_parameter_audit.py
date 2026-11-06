@@ -148,3 +148,42 @@ def test_gui_calibration_summary_is_compact_and_keeps_full_qa_in_report():
     assert "7 without a DAO centroid" in text
     assert "median maximum |delta sky| / local RMS = 1" in text
     assert "NOT scientific adoption" in text
+
+
+def test_holdout_growth_reports_exact_uniform_sky_equivalent_without_correcting_pixels():
+    from lsbpipe.photometry.psf_holdout_qa import _core_normalized_growth
+    y,x=np.indices((81,81),dtype=float)
+    radius=np.hypot(x-40,y-40)
+    model=np.exp(-.5*(radius/3.)**2)
+    injected_background=0.007
+    science=model+injected_background
+    initial=science.copy()
+    report=_core_normalized_growth(
+        science,model,np.ones((81,81),dtype=bool),radius,
+        center_xy=(40.,40.),guessed_fwhm_pix=6.57,
+        amplitude=1.,local_sky_rms_nMgy_pix=0.035)
+    assert report["uniform_sky_equivalent_is_algebra_not_sky_calibration"] is True
+    assert report["radii"][0]["equivalent_uniform_sky_offset_nMgy_per_native_pixel"] is None
+    for row in report["radii"][1:]:
+        assert row["status"]=="FULL_NATIVE_APERTURE"
+        assert row["equivalent_uniform_sky_offset_nMgy_per_native_pixel"]==pytest.approx(
+            injected_background,abs=1e-12)
+        assert row["equivalent_uniform_sky_offset_over_local_pixel_rms"]==pytest.approx(
+            .2,abs=1e-12)
+    np.testing.assert_array_equal(science,initial)
+
+
+def test_masked_holdout_does_not_claim_unbiased_sky_equivalence():
+    from lsbpipe.photometry.psf_holdout_qa import _core_normalized_growth
+    yy,xx=np.indices((81,81),dtype=float)
+    r=np.hypot(xx-40,yy-40)
+    model=np.exp(-.5*(r/3.)**2)
+    valid=np.ones((81,81),dtype=bool)
+    valid[40,54]=False   # inside outer aperture, outside reference core
+    report=_core_normalized_growth(
+        model+.01,model,valid,r,center_xy=(40.,40.),
+        guessed_fwhm_pix=6.57,amplitude=1.)
+    row=next(v for v in report["radii"] if v["radius_in_guessed_fwhm"]==3.)
+    assert row["status"]=="MASKED_APERTURE_DIAGNOSTIC_ONLY"
+    assert row["equivalent_uniform_sky_offset_nMgy_per_native_pixel"] is None
+    assert row["equivalent_uniform_sky_offset_over_local_pixel_rms"] is None
