@@ -15,8 +15,15 @@ def _configure_webengine_for_launch() -> None:
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = flags
 
 
-def main() -> int:
-    """Launch the existing Project Hub without importing Qt prematurely."""
+def __getattr__(name: str):
+    """Expose the exact legacy entry point, but configure Qt before loading it.
+
+    Both `python -m desidera.gui` and the `desidera-gui` console script
+    resolve `main` through this hook. Ordinary imports of the GUI package
+    remain safe when optional PySide6 dependencies are not installed.
+    """
+    if name != "main":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     _configure_webengine_for_launch()
-    from lsbpipe.gui.project_hub import main as launch_project_hub
-    return launch_project_hub()
+    from lsbpipe.gui.project_hub import main
+    return main

@@ -22,21 +22,30 @@ def test_cli_is_the_existing_legacy_implementation():
     assert desidera_cli is legacy_cli
 
 
-def test_gui_module_launchers_are_identical_and_import_without_qt():
-    from desidera.gui import main as gui_main
-    from desidera.gui.__main__ import main as module_main
+def test_gui_package_can_be_imported_without_optional_qt():
+    import desidera.gui as gui
 
-    assert gui_main is module_main
+    assert callable(gui._configure_webengine_for_launch)
+    assert callable(gui.__getattr__)
 
 
-def test_gui_launcher_defers_project_hub_import(monkeypatch):
-    from desidera.gui import main as gui_main
+def test_gui_resolves_exact_legacy_main_without_importing_qt(monkeypatch):
+    import desidera.gui as gui
 
     stub = ModuleType("lsbpipe.gui.project_hub")
     stub.main = lambda: 37
     monkeypatch.setitem(sys.modules, "lsbpipe.gui.project_hub", stub)
     monkeypatch.delenv("DESIDERA_WEBENGINE_SOFTWARE", raising=False)
-    assert gui_main() == 37
+    assert gui.main is stub.main
+    assert gui.main() == 37
+
+
+def test_gui_unknown_attribute_is_not_a_launcher():
+    import pytest
+    import desidera.gui as gui
+
+    with pytest.raises(AttributeError):
+        gui.__getattr__("unknown")
 
 
 def test_windows_webengine_diagnostic_opt_in_is_idempotent(monkeypatch):
