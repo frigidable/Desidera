@@ -1,14 +1,23 @@
-# DESIDERA v0.2 — Legacy FITS / WCS experimental integration
+# DESIDERA v0.2.0 — experimental galaxy-analysis workbench
 
-**Scientific status: experimental, not publication-ready.** This builds directly
-on the mathematically benchmarked fixed-ellipse v0.1 prototype. It does not
-implement independent sky estimation, PSF correction, colour matching, star
-subtraction, or a complete uncertainty model.
+**Scientific status: experimental, not publication-ready.** The default branch
+contains an object-centric Project Hub, survey and dataset services, original
+FITS inspection, fixed-ellipse measurements, and experimental scene/mask/sky
+diagnostics. Implemented code is not evidence of calibrated sky subtraction,
+science-ready PSF/SBF inference, total-flux reconstruction or accepted galaxy
+measurements. The early FITS/WCS prototype remains the basis for the numerical
+measurement layer.
 
 > **Version scope:** This README describes the capabilities merged into
 > `main`. Draft branches may contain additional experimental features.
 > Passing engineering tests does not establish science-ready photometry,
 > PSF models, SBF distances, or accepted measurements.
+
+The executable implementation is primarily in `src/lsbpipe/`. The
+`src/desidera/` package provides the current name, public imports and launchers
+without rewriting legacy provenance. Dated phase documents describe historical
+decisions and experiments; confirm current behavior in source, tests and
+exact-commit CI before relying on an older status claim.
 
 ## Repository navigation and development status
 
@@ -31,7 +40,7 @@ The distribution and new launcher are called `desidera`; the
 remain. Do not rename on-disk manifests or move existing galaxy projects
 as a repository tidy-up.
 
-## What's new
+## Experimental FITS/WCS integration (v0.2 prototype history)
 
 - `ObservationSet`: load matched 2D image, inverse-variance, shared MASKBITS FITS
   for Legacy DR9/DR10/DR11, with explicit band and release. FITS loader uses
