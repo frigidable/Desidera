@@ -5,12 +5,17 @@ on:
     branches:
       - main
   pull_request:
+    # Any Python source or test change must exercise the scientific suite.
+    # In particular, core photometry/background changes must not bypass CI.
     paths:
-      - "src/lsbpipe/surveys/**"
-      - "src/lsbpipe/gui/**"
-      - "tests/test_survey_*.py"
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
       - "pyproject.toml"
       - ".github/workflows/survey-tests.yml"
+
+permissions:
+  contents: read
 
 concurrency:
   group: survey-tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

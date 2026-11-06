@@ -5,6 +5,32 @@ on the mathematically benchmarked fixed-ellipse v0.1 prototype. It does not
 implement independent sky estimation, PSF correction, colour matching, star
 subtraction, or a complete uncertainty model.
 
+> **Version scope:** This README describes the capabilities merged into
+> `main`. Draft branches may contain additional experimental features.
+> Passing engineering tests does not establish science-ready photometry,
+> PSF models, SBF distances, or accepted measurements.
+
+## Repository navigation and development status
+
+- [Documentation map](docs/README.md): where to find scientific contracts,
+  architecture notes, original-FITS pilots, UX evidence and historical reports.
+- [Contribution and scientific-safety contract](AGENTS.md): mandatory guidance
+  for editing science code, Qt interfaces, source FITS and provenance.
+- [GitHub roadmap and work packages](https://github.com/frigidable/Desidera/issues/44):
+  the current requirements/backlog index. Use its linked issues rather than
+  treating older phase documents as a live implementation checklist.
+- [Open pull requests](https://github.com/frigidable/Desidera/pulls):
+  review in-progress work and its target branch before starting changes.
+  In particular, stacked draft PRs must remain separate until reviewed.
+- [GitHub Actions](https://github.com/frigidable/Desidera/actions):
+  source for current test outcomes; counts in historical reports below
+  describe only the environment and commit tested at that time.
+
+The distribution and new launcher are called `desidera`; the
+`src/lsbpipe/` implementation and compatibility entry points intentionally
+remain. Do not rename on-disk manifests or move existing galaxy projects
+as a repository tidy-up.
+
 ## What's new
 
 - `ObservationSet`: load matched 2D image, inverse-variance, shared MASKBITS FITS
@@ -211,7 +237,7 @@ PSF, matched colours or automated science acceptance are included.
 `manifest.json` always states `EXPERIMENTAL_NOT_ADOPTED`. No numerical result
 produced here should be reported as an adopted NGC2146sat measurement.
 
-## Verification recorded for this environment
+## Historical v0.2 verification record (not current CI status)
 
 - **52 executed automated tests passed** with NumPy/SciPy/pytest.
 - **One module skipped** (`test_fits_io_astropy.py`, containing 4 integration
