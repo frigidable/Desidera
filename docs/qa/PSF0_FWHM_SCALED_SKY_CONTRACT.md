@@ -724,3 +724,110 @@ coadd-noise covariance before PSF science adoption. The three-band
 pilot can close the PSF-0 exploratory milestone even when an
 honestly rejected band stays rejected, provided the failure is
 reproducible and clearly recorded.
+
+
+## Full Leo P native griz pilot — 2026-11-06 16:20–16:22 UTC
+
+The three independently generated full QA exports from the user
+(`LeoP_g_Gaia_16iter_finalQA.json`,
+`LeoP_r_Gaia_16iter_finalQA.json` and
+`LeoP_z_Gaia_16iter_finalQA.json`) were parsed completely, including
+the full candidate rejection inventories and individual heldout-star
+metrics. Each has an explicit correct band-level dataset
+(`dr11/south/1554p180/{band}`), `gaia_strict`,
+`outer_sky_convergence`, `max_iterations=16`,
+`wing_smoothing=True`, `psf_oversampling=1`,
+`training_outlier_passes=0`, and no manual excluded stars.
+FWHM guesses come independently from the local native-band PSFSIZE
+map (NOT from measuring the fitted ePSF). The top-level
+`saved_dataset` remains `g` for all exports, whereas
+`bands.r.source_dataset`, `bands.z.source_dataset`, the science
+dataset IDs, and their respective native-FITS hashes correctly
+identify `r` and `z`. This is a distinction between the saved
+project's selected source and each band-specific PSF job;
+**never use the top-level saved_dataset as science-run provenance**.
+
+| Band | Guessed FWHM (native px) | Gaia accepted | Training / fixed independent Gaia holdout | EPSFBuilder actual iterations and convergence | Signed negative absolute fraction | Status |
+|---|---:|---:|---|---|---:|---|
+| g | 6.57 | 10 | No split — 10 vs required 13 | **not fitted** | — | `stellar_sample_underflow`, fail closed |
+| r | 4.88 | 20 | 16 / 4 | **6 / true** | **1.235216%** | `EXPERIMENTAL_PSF_NOT_ADOPTED` |
+| i | 5.12 | 13 | 10 / 3 | **9 / true** | **2.189109%** | `EXPERIMENTAL_PSF_NOT_ADOPTED` (prior controlled 2026-11-06 run) |
+| z | 3.99 | 49 | 39 / 10 | **4 / true** | **1.430110%** | `EXPERIMENTAL_PSF_NOT_ADOPTED` |
+
+In `g`, **all 972 DAO-detected sources were screened**, with
+10 Gaia-identified sources passing all cuts; the explicit minimum
+is 10 training + 3 **independent Gaia holdout** sources, so no fit,
+holdout, clipping, or PSF science measurement was produced. Exactly
+recorded first-failure counts:
+`NOT_GAIA_DR3=694`;
+`TRACTOR_NEIGHBOR_WITHIN_PSF_CUTOUT=109`;
+`NO_TRACTOR_SOURCE_AT_DAO_CENTROID=109`;
+`NEIGHBOR_WITHIN_ISOLATION_RADIUS=27`;
+`TRACTOR_NONSTELLAR_MODEL=18`;
+`AMBIGUOUS_TRACTOR_CROSSMATCH=4`;
+`GAIA_DUPLICATED_SOURCE=1`.
+The screening audit includes 193 `NOT_GAIA_DR3` first-failure
+sources with a Tractor `TYPE=PSF`, but these have **not**
+passed the remaining Tractor-vetted image/cutout and isolation
+screens: this number is not a promise of 193 usable stars.
+A targeted `g`-band `tractor_psf_validated` run can probe
+whether ≥10 training plus ≥3 Gaia-identified fixed holdouts can be
+obtained **without weakening cuts**. The i-band evidence shows faint
+Tractor-only stars can destabilize the wings, so a successful sample
+size alone does not prove a usable g PSF. Preserve full rejection
+and signed/holdout QA, and do not promote Tractor-only sources to
+Gaia identity.
+
+In `r` and `z` both initial signed and final clipped,
+unit-normalized **three-zone** residual QA return `COMPLETE`
+for all fixed Gaia holdouts: no discarded IDs, no incomplete
+annuli. The final kernel flux sums are 1 within numerical precision;
+their kernel SHA256 are `dabeda624b95467af85327cbfa962cd487d44e396af82759633fa93443b19269`
+for r and `9e17e229993298dd6c7ea38f078eb8bc358087c40e2323d3875882af4b73594c`
+for z. In every band the library flags **unvalidated wings, spatial
+representativity, coadd covariance and sky-wing degeneracy**.
+
+| Final nonnegative kernel holdout metric (median of each fixed star's median absolute residual / measured peak) | r (4 Gaia holdouts) | i (3 Gaia holdouts) | z (10 Gaia holdouts) |
+|---|---:|---:|---:|
+| Core ≤1 guessed FWHM | 0.565853% | 0.757541% | 2.127111% |
+| Intermediate 1–2 guessed FWHMs | 0.078916% | 0.288152% | 0.760707% |
+| Outer >2 guessed FWHMs | 0.054135% | 0.212670% | 0.253799% |
+
+These summaries are **not calibrated chi-square or integrated flux
+bias**, and the band-specific holdout stars, SNR, backgrounds and
+PSF FWHMs differ: do not treat this table as a controlled test of
+relative band PSF accuracy. `r` has one moderate outer-residual
+outlier, `star-0077` at 0.455% of its peak (other three:
+0.058%, 0.050%, 0.024%). In `z`, four low-peak/RMS
+holdout stars have >1% outer residual: `star-0151`
+(1.026%, peak/RMS≈64), `star-0246` (2.506%, ≈26),
+`star-0293` (2.624%, ≈26) and `star-0431`
+(4.061%, ≈17.5). The brighter six z holdouts (peak/RMS
+≥100) have an outer median ≈0.194% compared with ≈2.565%
+for the four faint stars. Their percentage residuals are normalized
+to *peak* and are therefore strongly SNR-confounded; these numbers
+alone do **not** show spatial PSF variation, stellar contamination
+or a defective z-band kernel. All four should be inspected on raw
+native coadd stamps with the local sky, weight/mask and residual
+images. The halo/sky annulus still lacks a joint covariance-aware
+fit.
+
+**Pilot decision:** the griz *diagnostic coverage* is now complete
+(including an honestly recorded g-band refusal). Do not merge
+into science adoption on the basis of 3/4 provisional kernels.
+Perform **one controlled g Tractor-vetted 16-max trial** with the
+existing per-band PSFSIZE 6.57 px, fixed Gaia holdouts and unchanged
+minimums (10+3); retain the original g Gaia-strict refusal as
+a stable reference. Then close exploratory PSF-0 as a diagnostic
+milestone, or leave the g-band refusal explicitly unresolved if
+Tractor also fails. Any move to *scientific* PSF use requires a
+separate forward-model / PSFEx / injection and covariance-calibrated
+wing-and-spatial-validation stage, including r/z outlier inspection.
+Do not modify original FITS, current quality gates or star identity
+policies to manufacture passes.
+
+File SHA256 for provenance (the huge JSONs themselves are not
+committed to the repo): g
+`aab6c83b05fbcb129edebdb7fe5105450de9a5fb1ef3f09ce291c195190e7056`,
+r `d2b2b0e1476deadad67aabea9cea6bbcf1e5e22a7a7afbfa7ccbe8a62ef64cbf`,
+z `2500094c5607722e14aa9a753a10b6b585e9243cf8361867c1018f6a92396985`.
