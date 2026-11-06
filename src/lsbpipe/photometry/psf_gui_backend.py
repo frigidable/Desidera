@@ -47,7 +47,7 @@ def _same_observation_source(current, recorded) -> bool:
     return tuple(current[:3]) == tuple(recorded[:3])
 
 
-# Five reproducible diagnostic modes. The extended modes jointly change
+# Six reproducible diagnostic modes. The extended modes jointly change
 # cutout, sky-annulus and isolation footprints. Their
 # stellar sample can therefore differ: do not claim a controlled
 # single-variable causal inference or select a "best PSF" from these QA
@@ -75,6 +75,13 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
             "training_outlier_passes": 0,
             "max_iterations": 16,
             "wing_smoothing": False,
+        },
+    },
+    "outer_sky_isolation_footprint": {
+        "label": "Extended sky · 16 iterations · nearest DAO separation ≥ stamp size (g pilot)",
+        "kwargs": {
+            "training_outlier_passes": 0,
+            "max_iterations": 16,
         },
     },
 }
@@ -120,6 +127,17 @@ def psf0_experiment_recipe(
             sky_annulus_outer_pix=outer,
             min_neighbor_separation_pix=float(size+4),
         )
+        if experiment == "outer_sky_isolation_footprint":
+            # Registered, deliberately separate one-factor A/B:
+            # centre-to-centre DAO isolation of one FULL stamp width
+            # rather than full width + 4 px. In the real Leo P g
+            # 81px stamp this recovers the possibility of evaluating
+            # Gaia stars at 81..85 px from a DAO detection. Both local
+            # sky annuli still have disjoint 38px radii, but faint
+            # wings / unmodelled neighbours MAY contaminate either.
+            # Never claim those candidate stamps are clean without
+            # independent per-star screening, sky QA and heldout tests.
+            kw["min_neighbor_separation_pix"] = float(size)
     return PSF0Config(guessed_fwhm_pix=fwhm, **kw)
 
 
