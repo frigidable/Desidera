@@ -1093,3 +1093,117 @@ independent stellar QA, wing/spatial/sky/covariance validation
 and adoption. This is a **planning/entry contract** for a
 not-yet-implemented scientific photometry executor, not an
 assertion that any current PSF-0 product already passes.
+
+
+---
+
+## P14A — numerical-parameter provenance and observational sensitivity (2026-11-06)
+
+**Scope:** diagnostic engineering implementation on this existing PR, not a
+new PSF recipe, a widened stellar sample or an adopted science product.
+The previously recorded Leo P g rejection remains a genuine rejection,
+and the old 81-vs-85-pixel experiment remains a *controlled exploratory
+test*, not a measurement-derived isolation rule.
+
+### What is and is not scientifically justified
+
+The PSF-0 configuration currently contains hard numerical choices whose
+values have not been established by controlled original-image injection or
+photometric bias criteria. The attached
+\`src/lsbpipe/photometry/psf_parameter_audit.py\` enumerates **every
+PSF0Config field** and carries a separate traceable snapshot of selected
+hardcoded conditions outside that config. Categories distinguish an
+observational prior (whose actual map-vs-manual provenance cannot be
+deduced from the config alone), a derived geometric value, a heuristic,
+an algorithmic policy and a computational budget. All are explicitly
+**NOT SCIENCE CALIBRATED**. This registry is an auditable snapshot, not
+yet an automatically enforced single source of truth for every constant.
+
+For g, the native 6.57-pixel FWHM from the PSFSIZE prior does *not* by
+itself justify the selected 4.5–5.75×FWHM annulus. The 30–38-pixel ring,
+81×81 stamp, extra two-pixel border and 81/85-pixel isolation derive
+from that uncalibrated choice. A centre-to-centre separation of 81 pixels
+does prevent two circles of radius 38 pixels from overlapping, but it
+does **not** prevent arbitrary orientations of the 81×81 square cutouts
+from overlapping, nor prove the absence of wider stellar wings.
+The new geometry audit exposes both conditions separately.
+
+### New observational audits, with no changed science cuts
+
+1. **Native ring sensitivity**: each accepted _star_cutout now repeats
+   robust planar fits on original, unsmoothed, non-sky-subtracted pixels
+   in two interior *diagnostic* annuli (60–80% and 80–95% of the recipe
+   sky inner radius), using the same original valid-pixel mask and
+   sigma-clipped plane fitting. The output records their sky-at-centre
+   differences in nMgy/pixel, in units of the original local RMS, and
+   the implied change of a uniform-offset subtraction in a one-guessed-
+   FWHM aperture. These alternative *probe* ring fractions are also
+   heuristic: they are **not** candidate replacement sky rings. The
+   refit cannot determine whether differences reflect PSF wings or
+   genuine spatial sky changes; the outer region beyond the original
+   star stamp remains untested. The coadd noise correlation is not
+   estimated. No sky model, star, clipping or acceptance gate is
+   changed by this audit.
+
+2. **Catalogue-first *discovery audit***: for an exact native
+   Tractor/Gaia catalog, examine original Tractor TYPE=PSF, REF_CAT=G3
+   candidate positions within the usable native FITS stamp and outside
+   the target protection mask, apply the existing catalogue-only
+   \`match()\` preflight, and compare each position against DAO
+   centroids. Report Gaia sources that pass *catalogue-only*
+   screening but lack a DAO centroid within the current 2.5-pixel
+   Tractor-match radius. This \`n_catalog_preflight_without_near_dao\`
+   does **not** indicate that the source passed native pixel, neighbor,
+   sky or morphology QA. Such sources are **never admitted** to either
+   train or holdout by this change. The audit retains catalog rejections
+   and Gaia IDs for independent inspection. The DAO stage and its
+   original stellar selection remain unchanged.
+
+   Why: Photutils 3.0+ \`DAOStarFinder\` defaults to
+   \`min_separation=2.5*FWHM\` if unset. Because current PSF-0 does not
+   explicitly set that option, a source can be missing from the
+   DAO inventory despite having an exact catalog position and band
+   flux. A crossmatch with a nearby DAO centroid alone does not prove
+   that they identify the same physical object. No catalog-selected
+   PSF reconstruction is justified until a separate forced-centroid
+   route and its native-stamp tests are implemented.
+
+3. **Parameter-provenance report**: every successful experimental PSF
+   report now includes \`parameter_provenance_qa\`, and full
+   \`stellar_sample_underflow\` diagnostics include it too.  The
+   existing per-star \`sky_sample_qa\` acquires
+   \`inner_ring_sensitivity_diagnostic\`. The matched Tractor-vs-DAO
+   diagnostic is included under \`gaia_catalog_seed_vs_dao_qa\`.
+   None of these fields is a new pass/fail score.
+
+### Reproducibility and scientific restraint
+
+- Changed diagnostic implementations are recorded in the effective
+  method fingerprint; source hashes, original input quartet and
+  training/heldout split are unchanged.
+- At the 81-pixel g stamp there is no longer-radius sky information
+  outside the square: interior sensitivity is useful, but cannot
+  validate extended PSF wings or an uncontaminated absolute sky.
+- A "narrower ring" giving a smaller residual is **not** an objective
+  to optimize on the same holdout stars; avoid selection leakage.
+- The next *scientific* step is to measure background-versus-wing
+  bias with larger native fields, multi-brightness original-star
+  modeling and spatially separated blind validation, then propagate
+  the uncertainty into simulated galaxy surface-photometry recovery.
+  Only then can radius, SNR, isolation and star-count requirements be
+  chosen from a predeclared error budget rather than fixed constants.
+
+References:
+- Photutils 3.1.1, DAOStarFinder, including its default
+  \`min_separation\` and threshold scaling:
+  https://docs.astropy.org/projects/photutils/en/stable/api/photutils.detection.DAOStarFinder.html
+- Photutils 3.1.1, effective PSF construction, background and wing
+  caveats: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html
+- Liu et al., wide-angle PSF and joint sky/star modelling:
+  https://ui.adsabs.harvard.edu/abs/2022ApJ...925..219L/abstract
+
+**Outstanding local original-FITS execution:** the remote GitHub
+environment does not contain Leo P original quartet or original
+Tractor catalog. The new diagnostics must be generated on the user's
+existing Leo P project before any numerical interpretation of their
+effectiveness. Both r/i/z kernels remain NON-ADOPTED.
