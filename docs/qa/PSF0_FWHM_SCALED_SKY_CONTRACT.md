@@ -1383,3 +1383,107 @@ All science-adoption flags remain false, including extended wings,
 spatial representativity, stellar contamination modeling, and
 coadd covariance. Do not repeat unchanged g-only PSF builds to tune
 a threshold against these same three stars.
+
+
+### P14D — original-coadd joint star + sky + point-neighbor pilot
+
+**Implementation:** \`src/lsbpipe/photometry/psf_joint_scene.py\`,
+connected to \`build_empirical_coadd_psf\` as
+\`diagnostic_metrics.fixed_psf_joint_native_scene_qa\` and to the existing
+Photometry PSF quality panel. This stage **does not refit the ePSF**.
+The normal empirical ePSF builder and train/holdout split finish first,
+and its *frozen nonnegative native kernel* is then fitted to each of
+the same previously selected training stars and reserved Gaia holdouts.
+No feedback enters the PSF builder, sky subtraction, source selection,
+kernel clipping, global PSF provenance or science-adoption gates.
+
+#### Forward model and measurement geometry
+
+On original, native, un-smoothed and un-subtracted DR11 image pixels,
+in a larger square with side \`2*kernel_width - 1\`, evaluate
+
+\`\`\`
+I(x,y) = A_star * P(x - x_star, y - y_star)
+       + sum_j A_j * P(x - x_j, y - y_j)
+       + b0 + bx*(x-x_star) + by*(y-y_star) + epsilon(x,y).
+\`\`\`
+
+Here \`P\` is the *already measured* experimental ePSF kernel, not
+the Tractor per-exposure optical PSF, and \`A_star,A_j>=0\` are
+conditional nonnegative nuisance/source flux amplitudes. The full
+three-coefficient planar background is unconstrained and is fitted
+**simultaneously**, not subtracted beforehand. Positions come from
+the original same-brick Tractor centroid projection for catalog
+PSF neighbors; the primary source is uniquely matched to its saved
+Gaia ID. Candidate point neighbors are searched over the whole
+expanded field plus the existing ePSF support, not just the old
+50-pixel/2%-of-primary significant-neighbor gate.
+
+For g with the existing 81×81 ePSF, the diagnostic region is 161×161
+native pixels. The factor two is a **declared exploratory measurement
+geometry**, *not* a physically derived radius where the sky is free
+of PSF wings. The one-coordinate native source model is cubic
+interpolated at subpixel positions with SciPy
+\`ndimage.map_coordinates\`, order 3, constant-zero exterior
+and nonnegative basis values (the original fitted kernel is not
+modified). Source amplitudes are fitted by nonnegative least
+squares **after projecting the three free sky parameters out via
+QR**. Native coadd invvar weights are used only for relative
+weighted residual comparison. These weights do **not** model the
+correlated coadd noise covariance or give calibrated parameter errors.
+
+The same pixels are also fitted with **central star + plane only**,
+yielding descriptive residual sums with and without Tractor point
+neighbors. Since the full model is nested and has more freedom,
+the reduction in squared residuals is **not** evidence significance,
+a p-value, a Bayes factor, or proof that its amplitudes are accurate.
+Reports contain individually fitted point-neighbor fluxes, model
+neighbor/central flux ratios in the 1× and 4× guessed-FWHM native
+apertures, the joint sky relative to the old 30–38-pixel sky estimate,
+the full vs null weighted squared residuals, and a matrix condition
+number. The original input quartet and kernel hashes are preserved.
+
+#### Important unresolved astrophysical effects
+
+- Because \`P\` has finite 81×81 support, the method **cannot**
+  reconstruct true stellar wings outside that radius. Wing light
+  beyond it can still be absorbed by \`b0,bx,by\`.
+- Tractor's PSF classification does not prove a stellar point source;
+  catalog extended sources are counted as **unmodelled**, rather than
+  silently forced into a PSF shape. The nearest unmodelled catalog
+  distance is retained. Their light can still contaminate the fit.
+- The nested full/null residual comparison has additional fitted
+  degrees of freedom. Neither relative coadd invvar nor source count
+  yields a statistically valid significance or independent PSF
+  validation without covariance and catalog incompleteness analysis.
+- The all-PSF-neighbor source cap of 18 is a **compute budget**.
+  If more PSF neighbors overlap a scene, the fitter rejects that
+  diagnostic instead of silently discarding weaker neighbors.
+  Matrix-rank and degrees-of-freedom checks reject numerically
+  nonidentifiable fits, and the original core pixel must be valid.
+  The scene fit is NOT allowed to create or inpaint pixels.
+- Some previously accepted stars will be too close to an image edge
+  for the expanded 161px region. They receive an explicit, local
+  non-success status and remain unchanged in the PSF training or
+  reserved holdout. Failed scene fits cannot be dropped from the
+  reported denominator or imply their acceptance by default.
+
+The overall PSF status and all four science-validation flags remain
+**NOT_ADOPTED / FALSE**. The actual next scientific work is to allow a
+data-driven extended PSF wing component, test sky/wing
+identifiability with independent blank-sky pixels, infer
+coadd correlation and uncertainty, and validate against new
+brightness/spatially separated heldout stars plus galaxy
+injection-recovery, **without tuning against the existing three g
+holdouts**. That scientifically calibrated stage is not implemented
+by this exploratory decomposition.
+
+Implementation references:
+- SciPy \`optimize.nnls\`: nonnegative least-squares solution:
+  https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.nnls.html
+- SciPy \`ndimage.map_coordinates\`: cubic subpixel interpolation:
+  https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.map_coordinates.html
+- Legacy Survey coadds are inverse-variance-weighted, Lanczos-resampled
+  images in nanomaggies/pixel, and coadd inverse variance is not an
+  independent-pixel covariance matrix:
+  https://www.legacysurvey.org/dr11/
