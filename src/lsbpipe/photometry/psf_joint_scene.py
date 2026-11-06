@@ -278,6 +278,16 @@ def audit_fixed_psf_joint_scenes(
     kh = kernel_arr.shape[0]//2
     max_extent = half+kh+1
     index = cKDTree(catalog_matcher.pixel_positions)
+    if protected_mask.shape != frame.shape:
+        raise ValueError("Protected target mask differs from native coadd")
+    # Compute the original native acceptance mask ONCE per analysis band;
+    # avoid copying a full 3600x3600 frame separately for every star.
+    valid = np.asarray(frame.valid, dtype=bool)
+    for key in (f"SATUR_{frame.band.upper()}",
+                f"ALLMASK_{frame.band.upper()}"):
+        if key in frame.mask_reasons:
+            valid = valid & ~frame.mask_reasons[key]
+    valid = valid & ~protected_mask
     outputs = []
     for star in stars:
         x, y = float(star.x_pix), float(star.y_pix)
@@ -338,14 +348,6 @@ def audit_fixed_psf_joint_scenes(
             float(math.hypot(neighboring[0]["x_pix"]-x,
                              neighboring[0]["y_pix"]-y))
             if neighboring else None)
-        valid = np.asarray(frame.valid, dtype=bool)
-        for key in (f"SATUR_{frame.band.upper()}",
-                    f"ALLMASK_{frame.band.upper()}"):
-            if key in frame.mask_reasons:
-                valid = valid & ~frame.mask_reasons[key]
-        if protected_mask.shape != frame.shape:
-            raise ValueError("Protected target mask differs from native coadd")
-        valid = valid & ~protected_mask
         fitted = fit_fixed_psf_scene(
             frame.image_nMgy, frame.invvar_nMgy2, valid,
             kernel=kernel_arr, target_xy=(x,y),
