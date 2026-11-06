@@ -831,3 +831,98 @@ committed to the repo): g
 `aab6c83b05fbcb129edebdb7fe5105450de9a5fb1ef3f09ce291c195190e7056`,
 r `d2b2b0e1476deadad67aabea9cea6bbcf1e5e22a7a7afbfa7ccbe8a62ef64cbf`,
 z `2500094c5607722e14aa9a753a10b6b585e9243cf8361867c1018f6a92396985`.
+
+
+## Final Leo P g-band Tractor-vetted control — 2026-11-06 16:46 UTC
+
+User-provided complete QA export: `LeoP_g_Tractor_16iter_finalQA.json`,
+created `2026-11-06T16:46:20.437544+00:00`; file SHA256
+`2505cf221256be211e5dbf1969eb422762d3a581fff4b9f8332d8a1f966d3ec5`.
+Comparative reference: the earlier Gaia-strict g export at 16:20 UTC,
+SHA256 `aab6c83b05fbcb129edebdb7fe5105450de9a5fb1ef3f09ce291c195190e7056`.
+The DR11 south `1554p180` g `image/invvar/maskbits/nexp`
+SHA256 hashes and original Tractor catalogue SHA256
+`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`
+match exactly. Both effective recipes differ **only** by
+`star_catalog_policy`, `gaia_strict` versus
+`tractor_psf_validated`; the following are fixed: 6.57 native-pixel
+PSFSIZE detection prior, 81×81 native cutouts, 30–38 pixel local-sky
+annulus, 85 pixel DAO isolation, `outer_sky_convergence`,
+16 max iterations, `wing_smoothing=True`, minimum
+**10 train + 3 independent Gaia holdouts**, 0 training outlier
+passes, zero manual exclusions and native oversampling 1.
+
+| g-band selection diagnostic | Gaia-strict | Tractor-vetted |
+| --- | ---: | ---: |
+| DAO candidates found / screened / unexamined | 972 / 972 / 0 | 972 / 972 / 0 |
+| Accepted before field-relative core-width screen | 10 | 12 |
+| Accepted after all image/catalogue screens | 10 | **11** |
+| Gaia-identified holdout-eligible stars | 10 | **10** |
+| Tractor-only accepted | 0 | **1** |
+| Required accepted total | 13 | 13 |
+| EPSFBuilder executed? | No | **No** |
+| Final status | `stellar_sample_underflow` | **`stellar_sample_underflow`** |
+
+The 10 Gaia-identified accepted stars are *identical* in the
+two runs. The Tractor policy adds only
+`star-0354`, Tractor OBJID 2022 with **no Gaia DR3 identity**,
+native peak `0.0366293 nMgy/pixel`, local RMS
+`0.00346491 nMgy/pixel` (**peak/RMS ≈10.57**),
+and positive-core moment sigma 4.1521 px versus the Gaia
+sample's reference median 3.1563 px (**ratio 1.316**).
+The accepted additional star has very low S/N compared with
+Gaia's median `peak/RMS≈407.82`. Its acceptance does **not**
+certify a Gaia identity, a correctly modeled PSF wing, or a
+brightness-matched comparison.
+
+A second Tractor-only candidate `star-0541`, Tractor OBJID
+2846, passes the upstream catalogue and image-shape checks,
+but is rejected by the *heuristic field-relative width* screen:
+its positive-core moment sigma is 5.1149 px, a ratio
+**1.621** to the Gaia median, exceeding the 1.45
+maximum. Its native peak/RMS ≈9.09. The diagnostic's current
+first-failure label `GAIA_STELLAR_CORE_SIZE_OUTLIER`
+indicates a width screen **calibrated on Gaia stars**, **not**
+that `star-0541` is Gaia-identified; the label should be clarified
+in a future schema version. This weak source would not resolve
+the g-band underflow even if admitted: 12 < 13. **Do not alter
+the width criterion to force a pass.**
+
+Tractor-vetted first-failure counts (exactly **961** total
+rejections after the 11 accepted candidates):
+`TRACTOR_NONSTELLAR_MODEL=519`,
+`TRACTOR_NEIGHBOR_WITHIN_PSF_CUTOUT=195`,
+`NO_TRACTOR_SOURCE_AT_DAO_CENTROID=109`,
+`TRACTOR_LOW_BAND_SIGNAL_TO_NOISE=100`,
+`NEIGHBOR_WITHIN_ISOLATION_RADIUS=32`,
+`AMBIGUOUS_TRACTOR_CROSSMATCH=4`,
+`GAIA_DUPLICATED_SOURCE=1`,
+`GAIA_STELLAR_CORE_SIZE_OUTLIER=1`.
+These are **first** failure labels, not independent astrophysical
+populations or evidence that all 519 sources are actual galaxies.
+With three Gaia holdouts reserved, the current 10 Gaia plus
+one Tractor-only candidate leave 8 training stars, 2 short
+of the required 10. No numerical ePSF iteration, PSF kernel,
+negative-ring statistic, signed or clipped holdout residual,
+science-model or photometric measurement exists for `g`.
+The refusal is therefore an **expected correct fail-closed result**,
+not a bad solver fit.
+
+**Pilot conclusion, 2026-11-06:** all four native griz
+bands now have diagnostic coverage, including a reproducible
+sample-size refusal under **two distinct g-band selection
+policies**, plus provisional non-adopted reconstructed ePSFs
+for r/i/z. There is no justification for retrying the same
+g case with more solver iterations or for weakening minimum
+train/holdout, neighboring-source, band S/N, width,
+and Gaia identity screens. This **closes the present
+exploratory Leo P PSF-0 test matrix**, with g explicitly unavailable.
+It **does not close science readiness** or authorize merging
+the PSF as an adopted photometric or SBF kernel. Subsequent
+scientific work should build a physically defensible g fallback
+(e.g. independently benchmarked survey/PSFEx source model or
+neighbor-aware cross-field/visit stacking with proper coadd
+provenance) and calibrate actual r/i/z wing fidelity,
+spatial variation, background degeneracy, full flux-encircled
+profiles, injection recovery and noise covariance. Treat
+a substitute g PSF as a new method with its own QA.
