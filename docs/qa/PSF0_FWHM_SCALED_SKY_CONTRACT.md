@@ -1288,11 +1288,11 @@ a new pass/fail threshold based on these same 3 holdouts.
 ### P14C — repeat g preview, radial sky-offset consistency (2026-11-07)
 
 The follow-up *single-band* original-data export was provided as
-\`Вставленный текст(1).txt\` (JSON; kept outside source and not checked
+`Вставленный текст(1).txt` (JSON; kept outside source and not checked
 into Git). It has the **identical** original FITS quartet, recipe
-digest \`de8141c629b03d95b60e0b05670d775d78a832f2f0b05e6c43788c8647dcd719\`,
+digest `de8141c629b03d95b60e0b05670d775d78a832f2f0b05e6c43788c8647dcd719`,
 signed and final model kernel SHA
-\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`
+`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a`
 and selected star IDs as the preceding 2026-11-06 g preview.
 Only the method QA/fingerprint changed; this is a reproducibility
 crosscheck, not a new PSF fit or a new independent validation sample.
@@ -1324,12 +1324,12 @@ vs 0.145 nMgy/pix for the three holdouts (~7.86× contrast); the
 bright/faint PSF transfer is not calibrated.
 
 P14C adds the per-holdout
-\`radial_sky_equivalence_consistency\` QA object with the number and
+`radial_sky_equivalence_consistency` QA object with the number and
 radii of complete unmasked apertures, absolute range of the
 algebraically implied sky offsets, and the same range divided by
 the **local pixel** RMS. No arbitrary radial-consistency threshold
 or chi-square is introduced. For 0–1 valid radii, the span is absent
-and the status is \`INSUFFICIENT_COMPLETE_APERTURES\`; masked
+and the status is `INSUFFICIENT_COMPLETE_APERTURES`; masked
 apertures never supply a purported unbiased sky estimate.
 A compact **median** of holdout spreads is shown in the existing
 PSF quality GUI, with full per-star values in Copy QA. Original
@@ -1342,3 +1342,44 @@ with an explicit coadd covariance model and independent sky pixels.
 This must be tested on heldout stars not used to tune hyperparameters,
 and then via galaxy injection/recovery. The present 3 Gaia holdouts
 are insufficient to establish science thresholds.
+
+
+### P14C original-image rerun verification (2026-11-07)
+
+A third user-exported g-only JSON (`Вставленный текст(2).txt`;
+**2,148,488 bytes**, not stored in Git) has been independently
+parsed. Its core facts are: exact dataset
+`dr11/south/1554p180/g`, identical recipe digest
+`de8141c629b03d95b60e0b05670d775d78a832f2f0b05e6c43788c8647dcd719`,
+identical native 81×81 kernel SHA256
+`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a`,
+10 Gaia train stars, 3 Gaia holdout stars, 11 performed iterations,
+1.6538% preclipping negative-mass fraction and
+`EXPERIMENTAL_PSF_NOT_ADOPTED`. The new implementation fingerprint
+is `0dc1003783281b794cab7bcaba912e72503edbf9f68f313fbd7a3f86c82da16c`,
+reflecting the added diagnostics rather than a different fitted PSF.
+
+The new `radial_sky_equivalence_consistency` fields are **present**
+and complete at all four noncore radii for every fixed Gaia holdout:
+`star-0110` = 0.5045804033,
+`star-0032` = 2.2461123578,
+`star-0148` = 0.0829508013,
+with median 0.5045804033, all in local **single-pixel RMS**
+units. This confirms P14C QA serialization and prior predictions on
+the original coadd. It is **not** new independent star evidence, a
+measured sky uncertainty, or calibrated rejection of the constant-sky
+hypothesis.
+
+The 3 heldout stars span large brightness differences:
+observed (locally sky-subtracted) peaks are 0.1454, 1.7048,
+0.0992 nMgy/pixel. The nearest Tractor catalog source to the
+brightest heldout star `star-0032` is about **18.60 native pixels**
+away, but the significant-neighbor preflight records **zero
+significant** neighbors. The 18.6-pixel candidate is neither
+demonstrated to contaminate the star nor demonstrated to be harmless
+under the current flux-threshold proxy. This makes a future
+star+neighbor+sky forward model particularly appropriate.
+All science-adoption flags remain false, including extended wings,
+spatial representativity, stellar contamination modeling, and
+coadd covariance. Do not repeat unchanged g-only PSF builds to tune
+a threshold against these same three stars.
