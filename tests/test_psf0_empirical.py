@@ -101,6 +101,20 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert len(result.metrics["final_holdout_details_after_clipping"]) == len(
         result.holdout)
     assert result.metrics["final_holdout_failures_after_clipping"] == []
+    # New aperture growth is diagnostic-only: compare the actual signed
+    # precursor and delivered model on the same holdouts without changing
+    # selection, acceptance or their source-identities.
+    sg = result.metrics["signed_holdout_core_normalized_flux_growth_summary"]
+    fg = result.metrics[
+        "final_holdout_core_normalized_flux_growth_summary_after_clipping"]
+    assert sg["n_fixed_holdouts"] == fg["n_fixed_holdouts"] == len(result.holdout)
+    assert sg["status"] == fg["status"] == "DESCRIPTIVE_NOT_SCIENCE_ADOPTED"
+    assert len(sg["radii"]) == len(fg["radii"]) == 5
+    assert sg["no_threshold_or_science_adoption_implication"] is True
+    assert fg["no_threshold_or_science_adoption_implication"] is True
+    for metric in (sg, fg):
+        assert all(item["n_full_aperture_holdouts"] <= len(result.holdout)
+                   for item in metric["radii"])
     for signed, final in zip(result.metrics["signed_holdout_details"],
                              result.metrics["final_holdout_details_after_clipping"]):
         assert signed["source_id"] == final["source_id"]
