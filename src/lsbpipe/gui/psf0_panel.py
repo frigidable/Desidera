@@ -1074,6 +1074,31 @@ class PSF0Panel(QGroupBox):
             notes.append(
                 "No usable original-pixel interior-ring sensitivity "
                 "measurement in this report.")
+        # Summarize only the delivered, nonnegative kernel and the
+        # fixed independent holdout stars. These offsets are algebraic
+        # alternatives to an observed radial-shape mismatch; they are
+        # neither actual sky estimates nor per-pixel significance tests.
+        equivalents = []
+        for star in metrics.get("final_holdout_details_after_clipping", []):
+            growth = star.get("core_normalized_aperture_growth", {})
+            rows = growth.get("radii", [])
+            sample = next((
+                row for row in rows
+                if row.get("radius_in_guessed_fwhm") == 4.
+                and row.get("status") == "FULL_NATIVE_APERTURE"), None)
+            if sample is not None:
+                value = sample.get(
+                    "equivalent_uniform_sky_offset_over_local_pixel_rms")
+                if value is not None:
+                    equivalents.append(float(value))
+        if equivalents:
+            notes.append(
+                "4×guessed-FWHM heldout flux-growth sky-offset equivalence: "
+                + f"{len(equivalents)} full-aperture stars, "
+                + f"median |offset|/local pixel RMS "
+                + f"{np.median(np.abs(equivalents)):.3g}; "
+                "this is NOT an estimated actual sky bias or a "
+                "statistical significance.")
         return "\n".join(notes)
 
     def _result_matches_band_source(self, payload):
