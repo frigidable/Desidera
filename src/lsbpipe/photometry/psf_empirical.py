@@ -257,6 +257,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "parameter_provenance": "PILOT_NUMERIC_ASSUMPTION_REGISTRY_V1_DESCRIPTIVE",
         "stellar_sky_ring_sensitivity": "ORIGINAL_PIXELS_INTERIOR_RING_AND_NATIVE_SCAN_V2_DESCRIPTIVE",
         "gaia_seed_dao_coverage": "CATALOG_PREFLIGHT_V1_NO_SAMPLE_PROMOTION",
+        "holdout_sky_equivalence": "CORE_NORMALIZED_UNIFORM_OFFSET_V1_DIAGNOSTIC",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1250,7 +1251,8 @@ def build_empirical_coadd_psf(
                 sqrt_ivar=c["weights"], signed_kernel=raw_kernel,
                 local_center_xy=c["center_in_cutout"],
                 guessed_fwhm_pix=cfg.guessed_fwhm_pix,
-                measured_peak=c["peak_nMgy"]))
+                measured_peak=c["peak_nMgy"],
+                local_sky_rms_nMgy_pix=c["rms_nMgy"]))
         except ValueError as exc:
             holdout_failures.append({
                 "star_id": entry[0], "reason": str(exc)})
@@ -1396,7 +1398,8 @@ def build_empirical_coadd_psf(
                 sqrt_ivar=star_data["weights"], final_kernel=kernel,
                 local_center_xy=star_data["center_in_cutout"],
                 guessed_fwhm_pix=cfg.guessed_fwhm_pix,
-                measured_peak=star_data["peak_nMgy"]))
+                measured_peak=star_data["peak_nMgy"],
+                local_sky_rms_nMgy_pix=star_data["rms_nMgy"]))
         except ValueError as exc:
             final_holdout_failures.append({
                 "star_id": entry[0], "reason": str(exc)})
