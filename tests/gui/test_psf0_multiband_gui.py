@@ -59,7 +59,7 @@ def test_four_band_batch_preserves_independent_results_and_reports(
     workspace = w.photometry_workspace
     assert list(workspace.psf0_panels) == list("griz")
     assert workspace.psf0_panel is workspace.psf0_panels["g"]
-    assert all(p.experiment.count() == 5
+    assert all(p.experiment.count() == 6
                for p in workspace.psf0_panels.values())
     for band, panel in workspace.psf0_panels.items():
         assert panel.band.currentData() == band
