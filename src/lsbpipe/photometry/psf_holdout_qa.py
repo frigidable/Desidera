@@ -23,7 +23,8 @@ _GROWTH_RADII_FWHM = (1.0, 1.5, 2.0, 3.0, 4.0)
 
 
 def _core_normalized_growth(science, model, valid, radius, *,
-                            center_xy, guessed_fwhm_pix, amplitude):
+                            center_xy, guessed_fwhm_pix, amplitude,
+                            local_sky_rms_nMgy_pix=None):
     """Compare cumulative native *sky-subtracted* flux on identical pixels.
 
     This is a finite-aperture flux-growth diagnostic, NOT enclosed energy
@@ -68,7 +69,32 @@ def _core_normalized_growth(science, model, valid, radius, *,
                if usable else None)
         pred = (float(np.sum(amplitude*model[selected])) / core_model
                 if usable else None)
+        # Algebraic sensitivity: a UNIFORM additive correction to the
+        # already-subtracted stellar image that would make its observed
+        # core-normalized growth equal the model at this specific radius.
+        # Solving (F_r - delta*N_r)/(F_core - delta*N_core) = M_r/M_core.
+        # This is NOT a fitted sky correction, error bar or significance,
+        # and different radii imply correlated, possibly incompatible
+        # corrections. Never apply it to stellar pixels or PSF reconstruction.
+        equivalent = None
+        equivalent_over_rms = None
+        if (status == "FULL_NATIVE_APERTURE" and factor > 1.
+                and obs is not None and pred is not None):
+            ncore = int(np.count_nonzero(core))
+            denom = float(n_valid - pred*ncore)
+            if abs(denom) > 1.e-12 and math.isfinite(denom):
+                candidate = float(core_observed*(obs-pred)/denom)
+                if math.isfinite(candidate):
+                    equivalent = candidate
+                    if (local_sky_rms_nMgy_pix is not None
+                            and math.isfinite(local_sky_rms_nMgy_pix)
+                            and local_sky_rms_nMgy_pix > 0):
+                        equivalent_over_rms = float(
+                            candidate/local_sky_rms_nMgy_pix)
         points.append({
+            "equivalent_uniform_sky_offset_nMgy_per_native_pixel": equivalent,
+            "equivalent_uniform_sky_offset_over_local_pixel_rms": equivalent_over_rms,
+            "equivalent_sky_offset_is_not_an_inferred_true_sky_bias": True,
             "radius_in_guessed_fwhm": float(factor),
             "radius_native_pix": r,
             "status": status,
@@ -97,6 +123,8 @@ def _core_normalized_growth(science, model, valid, radius, *,
         "masked_apertures_not_usable_for_unbiased_growth": True,
         "stellar_total_flux_unmeasured": True,
         "coadd_covariance_and_sky_uncertainty_unmodeled": True,
+        "uniform_sky_equivalent_uses_each_radius_separately": True,
+        "uniform_sky_equivalent_is_algebra_not_sky_calibration": True,
         "source_pixels_not_modified": True,
     }
 
@@ -150,6 +178,7 @@ def heldout_signed_residual(
     local_center_xy: tuple[float, float],
     guessed_fwhm_pix: float,
     measured_peak: float,
+    local_sky_rms_nMgy_pix: float | None = None,
 ) -> dict:
     """Fit core-only amplitude and inspect signed model residual by annulus."""
     science = np.asarray(image, dtype=float)
@@ -214,7 +243,8 @@ def heldout_signed_residual(
         "core_normalized_aperture_growth": _core_normalized_growth(
             science, model, good, radius,
             center_xy=(cx, cy), guessed_fwhm_pix=guessed_fwhm_pix,
-            amplitude=amplitude),
+            amplitude=amplitude,
+            local_sky_rms_nMgy_pix=local_sky_rms_nMgy_pix),
         "fwhm_guess_not_measured": float(guessed_fwhm_pix),
         "signed_kernel_unchanged": True,
         "correlated_coadd_noise_not_whitened": True,
@@ -327,6 +357,7 @@ def heldout_final_kernel_residual(
     local_center_xy: tuple[float, float],
     guessed_fwhm_pix: float,
     measured_peak: float,
+    local_sky_rms_nMgy_pix: float | None = None,
 ) -> dict:
     """Score the ACTUAL nonnegative, normalized delivered kernel on fixed holdouts.
 
@@ -346,7 +377,8 @@ def heldout_final_kernel_residual(
     qa = heldout_signed_residual(
         source_id=source_id, image=image, sqrt_ivar=sqrt_ivar,
         signed_kernel=kernel, local_center_xy=local_center_xy,
-        guessed_fwhm_pix=guessed_fwhm_pix, measured_peak=measured_peak)
+        guessed_fwhm_pix=guessed_fwhm_pix, measured_peak=measured_peak,
+        local_sky_rms_nMgy_pix=local_sky_rms_nMgy_pix)
     qa.pop("signed_kernel_unchanged")
     qa["kernel_representation"] = "FINAL_NONNEGATIVE_NORMALIZED"
     qa["final_kernel_nonnegative_and_unit_sum"] = True
