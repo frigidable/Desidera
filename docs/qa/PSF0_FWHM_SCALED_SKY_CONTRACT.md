@@ -1145,6 +1145,16 @@ The new geometry audit exposes both conditions separately.
    estimated. No sky model, star, clipping or acceptance gate is
    changed by this audit.
 
+   Additionally scan **every integer native-pixel inner boundary**
+   from ceil(guessed detection FWHM) through the configured sky inner
+   edge with the original sky outer edge held fixed.  Every fit status
+   is retained, and the resulting `one_pixel_inner_boundary_sensitivity_scan`
+   is a nested, correlated *sensitivity curve*, not an independently
+   sampled uncertainty distribution or a new optimized sky annulus.
+   The one-pixel step is the original measurement grid, not another
+   arbitrary FWHM fraction. It still cannot find a physically unbiased
+   background or probe outside the observed stamp.
+
 2. **Catalogue-first *discovery audit***: for an exact native
    Tractor/Gaia catalog, examine original Tractor TYPE=PSF, REF_CAT=G3
    candidate positions within the usable native FITS stamp and outside
