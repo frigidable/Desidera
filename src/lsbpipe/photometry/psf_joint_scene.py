@@ -405,6 +405,18 @@ def audit_fixed_psf_joint_scenes(
             float(math.hypot(extended[0]["x_pix"]-x,
                              extended[0]["y_pix"]-y))
             if extended else None)
+        item["nearest_unmodeled_catalog_source"] = ({
+            "tractor_objid": extended[0]["tractor_objid"],
+            "tractor_type": extended[0]["tractor_type"],
+            "catalog_band_flux_nMgy": extended[0]["flux_nMgy"],
+            "separation_from_star_pix":
+                item["nearest_unmodeled_source_distance_pix"],
+            "reason": (
+                "TRACTOR_NON_PSF_MODEL" if
+                extended[0]["tractor_type"] != "PSF"
+                else "PSF_NONPOSITIVE_OR_INVALID_CATALOG_FLUX"),
+            "source_not_forward_modeled": True,
+        } if extended else None)
         item["catalog_point_neighbor_count_full_support"] = len(neighboring)
         item["catalog_scene_fully_modelled"] = len(extended) == 0
         item["known_unmodeled_catalog_sources_prevent_science_certification"] = (
@@ -437,6 +449,12 @@ def audit_fixed_psf_joint_scenes(
             row.get("known_unmodeled_catalog_sources_prevent_science_certification",
                     False)
             for row in ok),
+        "n_completed_scenes_with_zero_support_catalog_psf_neighbors": sum(
+            row.get("n_catalog_neighbors_with_exact_zero_finite_psf_support",
+                    0) > 0 for row in ok),
+        "n_total_zero_support_catalog_psf_neighbors_in_completed_fits": sum(
+            row.get("n_catalog_neighbors_with_exact_zero_finite_psf_support",
+                    0) for row in ok),
         "n_completed_fixed_holdouts": sum(
             row["role"] == "holdout" for row in ok),
         "n_holdouts_expected": sum(star.role == "holdout" for star in stars),
