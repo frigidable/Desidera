@@ -149,11 +149,14 @@ def test_gui_calibration_summary_is_compact_and_keeps_full_qa_in_report():
     assert "median maximum |delta sky| / local RMS = 1" in text
     assert "NOT scientific adoption" in text
     metrics["final_holdout_details_after_clipping"] = [
-        {"core_normalized_aperture_growth": {"radii": [{
-            "radius_in_guessed_fwhm": 4.,
-            "status": "FULL_NATIVE_APERTURE",
-            "equivalent_uniform_sky_offset_over_local_pixel_rms": -0.2
-        }]}},
+        {"core_normalized_aperture_growth": {
+            "radial_sky_equivalence_consistency": {
+                "span_over_local_pixel_rms": 1.4},
+            "radii": [{
+                "radius_in_guessed_fwhm": 4.,
+                "status": "FULL_NATIVE_APERTURE",
+                "equivalent_uniform_sky_offset_over_local_pixel_rms": -0.2
+            }]}},
         {"core_normalized_aperture_growth": {"radii": [{
             "radius_in_guessed_fwhm": 4.,
             "status": "MASKED_APERTURE_DIAGNOSTIC_ONLY",
@@ -164,6 +167,8 @@ def test_gui_calibration_summary_is_compact_and_keeps_full_qa_in_report():
     assert "1 full-aperture stars" in summary
     assert "median |offset|/local pixel RMS 0.2" in summary
     assert "NOT an estimated actual sky bias" in summary
+    assert "median span / local pixel RMS 1.4" in summary
+    assert "NOT a calibrated test of a constant sky" in summary
 
 
 def test_holdout_growth_reports_exact_uniform_sky_equivalent_without_correcting_pixels():
@@ -186,6 +191,12 @@ def test_holdout_growth_reports_exact_uniform_sky_equivalent_without_correcting_
             injected_background,abs=1e-12)
         assert row["equivalent_uniform_sky_offset_over_local_pixel_rms"]==pytest.approx(
             .2,abs=1e-12)
+    radial=report["radial_sky_equivalence_consistency"]
+    assert radial["n_usable_radii_above_core"]==4
+    assert radial["span_of_equivalent_offsets_nMgy_per_native_pixel"]==pytest.approx(
+        0.,abs=1e-12)
+    assert radial["span_over_local_pixel_rms"]==pytest.approx(0.,abs=1e-11)
+    assert radial["not_a_chi_square_or_statistical_significance"] is True
     np.testing.assert_array_equal(science,initial)
 
 
@@ -203,3 +214,25 @@ def test_masked_holdout_does_not_claim_unbiased_sky_equivalence():
     assert row["status"]=="MASKED_APERTURE_DIAGNOSTIC_ONLY"
     assert row["equivalent_uniform_sky_offset_nMgy_per_native_pixel"] is None
     assert row["equivalent_uniform_sky_offset_over_local_pixel_rms"] is None
+    radial=report["radial_sky_equivalence_consistency"]
+    assert radial["n_usable_radii_above_core"]==1
+    assert radial["status"]=="INSUFFICIENT_COMPLETE_APERTURES"
+    assert radial["span_over_local_pixel_rms"] is None
+
+
+def test_nonuniform_wings_leave_cross_radius_sky_equivalent_spread():
+    from lsbpipe.photometry.psf_holdout_qa import _core_normalized_growth
+    yy,xx=np.indices((81,81),dtype=float)
+    radius=np.hypot(xx-40,yy-40)
+    model=np.exp(-.5*(radius/3.)**2)
+    extended_wings=.01*np.exp(-.5*(radius/8.)**2)
+    observed=model+extended_wings+.002
+    report=_core_normalized_growth(
+        observed,model,np.ones_like(observed,dtype=bool),radius,
+        center_xy=(40.,40.),guessed_fwhm_pix=6.57,
+        amplitude=1.,local_sky_rms_nMgy_pix=.03)
+    radial=report["radial_sky_equivalence_consistency"]
+    assert radial["status"]=="RADIAL_SENSITIVITY_ONLY"
+    assert radial["n_usable_radii_above_core"]==4
+    assert radial["span_over_local_pixel_rms"] > 0.
+    assert radial["constant_sky_cannot_be_tested_without_covariance"] is True
