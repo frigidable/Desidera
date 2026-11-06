@@ -108,8 +108,48 @@ def _core_normalized_growth(science, model, valid, radius, *,
                 float(obs-pred) if obs is not None and pred is not None
                 else None),
         })
+    # A true uniform sky offset would predict a single correction in
+    # EVERY complete aperture. The observed span only measures radial
+    # inconsistency of that restricted hypothesis; it is NOT a chi-square
+    # or rejection significance without covariance and sky-plane uncertainty.
+    sky_rows = [
+        p for p in points
+        if p["radius_in_guessed_fwhm"] > 1.
+        and p["status"] == "FULL_NATIVE_APERTURE"
+        and p["equivalent_uniform_sky_offset_nMgy_per_native_pixel"] is not None
+    ]
+    offsets = [
+        p["equivalent_uniform_sky_offset_nMgy_per_native_pixel"]
+        for p in sky_rows
+    ]
+    eq_span = (
+        float(max(offsets) - min(offsets)) if len(offsets) >= 2 else None
+    )
+    eq_span_over_rms = (
+        float(eq_span / local_sky_rms_nMgy_pix)
+        if eq_span is not None and local_sky_rms_nMgy_pix is not None
+        and math.isfinite(local_sky_rms_nMgy_pix)
+        and local_sky_rms_nMgy_pix > 0 else None
+    )
     return {
-        "schema": "desidera.psf0-holdout-core-normalized-flux-growth/1",
+        "radial_sky_equivalence_consistency": {
+            "schema": "desidera.psf0-radial-sky-equivalence/1",
+            "status": (
+                "RADIAL_SENSITIVITY_ONLY" if eq_span is not None
+                else "INSUFFICIENT_COMPLETE_APERTURES"
+            ),
+            "tested_radii_in_guessed_fwhm": [
+                p["radius_in_guessed_fwhm"] for p in sky_rows
+            ],
+            "n_usable_radii_above_core": len(sky_rows),
+            "span_of_equivalent_offsets_nMgy_per_native_pixel": eq_span,
+            "span_over_local_pixel_rms": eq_span_over_rms,
+            "constant_sky_cannot_be_tested_without_covariance": True,
+            "radii_cumulative_and_not_statistically_independent": True,
+            "not_a_chi_square_or_statistical_significance": True,
+            "no_sky_or_psf_correction_applied": True,
+        },
+        "schema": "desidera.psf0-holdout-core-normalized-flux-growth/2",
         "status": "DESCRIPTIVE_NOT_SCIENCE_ADOPTED",
         "core_radius_guessed_fwhm": 1.0,
         "core_reference_valid": bool(valid_core_normalization),
