@@ -40,6 +40,13 @@ def test_sky_ring_probe_detects_injected_wings_without_autotuning():
     assert output["max_absolute_inner_ring_sky_change_in_local_rms"] > 1.
     assert output["changes_psf_selection_or_sky_model"] is False
     assert output["outer_ring_beyond_cutout_not_tested"] is True
+    scan = output["one_pixel_inner_boundary_sensitivity_scan"]
+    assert len(scan) == 30-int(np.ceil(6.57))+1
+    assert [item["inner_boundary_pix"] for item in scan] == list(
+        range(int(np.ceil(6.57)), 31))
+    assert scan[-1]["inner_boundary_pix"] == 30
+    assert output["scan_not_an_automatic_sky_ring_optimizer"] is True
+    assert output["scan_entries_nested_and_not_statistically_independent"] is True
     np.testing.assert_array_equal(original, original_before)
 
 
