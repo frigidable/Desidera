@@ -219,7 +219,16 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                  "n_catalog_point_neighbors":1,
                  "neighbor_to_central_4fwhm_model_flux_ratio": .025,
                  "joint_minus_annulus_sky_nMgy_per_native_pixel":.0004,
-                 "n_unmodeled_extended_or_nonpositive_catalog_sources":2},
+                 "n_unmodeled_extended_or_nonpositive_catalog_sources":2,
+                 "weighted_residual_improvement_fraction":.926,
+                 "central_aperture_residual_comparison": {
+                     "four_guessed_fwhm": {
+                         "signed_improvement_fraction":-.013}},
+                 "nearest_unmodeled_catalog_source": {
+                     "tractor_objid":12,
+                     "tractor_type":"REX",
+                     "separation_from_star_pix":18.60},
+                 "n_catalog_neighbors_with_exact_zero_finite_psf_support":1},
                 {"source_id":"star-0011", "role":"train",
                  "status":"FULL_EXPANDED_NATIVE_STAMP_OUTSIDE_IMAGE"},
             ]
@@ -233,6 +242,11 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "0.0004 nMgy/pix" in summary
     assert "2 unmodeled catalog sources" in summary
     assert "No science adoption" in summary
+    assert "full scene +92.6%" in summary
+    assert "central <=4 guessed FWHM -1.3%" in summary
+    assert "TYPE=REX" in summary
+    assert "offset=18.60" in summary
+    assert "zero support" in summary
 
 
 def test_joint_scene_rejects_fractional_footprint_without_silent_truncation():
