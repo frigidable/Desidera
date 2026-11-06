@@ -8,7 +8,7 @@ For Leo P DR11 `g`, the original native coadd `psfsize-g` map gives `1.721 arcse
 
 Official photutils guidance: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html . DR11 seeing/FWHM: https://www.legacysurvey.org/dr11/files/ .
 
-## Active, exactly five, deliberately non-adopted recipes
+## Active, exactly six, deliberately non-adopted recipes
 
 | Mode | Cutout / annulus / isolation | Interpretation |
 |---|---|---|
@@ -17,6 +17,7 @@ Official photutils guidance: https://docs.astropy.org/projects/photutils/en/stab
 | `outer_sky_robust` | same geometry, plus ≤2 passes of *guarded* train-only residual screening | Screen is still disabled automatically when it tracks star amplitude, and holdouts are not used to choose rejections |
 | `outer_sky_convergence` | **exactly the same** adaptive sky annulus, stamp, isolation and untrimmed star sample as `outer_sky`, but `max_iterations=16` instead of 8 | Controlled Photutils convergence A/B (especially for Leo P `i`), never automatic PSF promotion |
 | `outer_sky_no_wing_smoothing` | Same sky, Gaia/Tractor policy, 16-iteration cap, star split and no training-star trimming as `outer_sky_convergence`; changes only `wing_smoothing=False` | Controlled final-wing-smoothing A/B, not a science PSF |
+| `outer_sky_isolation_footprint` | Same 16-iteration configuration and sky/PSF stamp as `outer_sky_convergence`, but DAO isolation is `cutout_size` rather than `cutout_size+4` native pixels | Targeted Leo P `g` experiment: tests whether four Gaia stars with neighbour separations 81–85 px can be recovered; **not** a proven clean-star selector or science PSF |
 
 At `FWHM=6.57 pix`, both extended modes have `81 × 81` cutouts, `30–38 pix` sky annulus, `85 px` minimum neighbour isolation; ratios **4.57–5.78 × FWHM**. At `FWHM=4.8 pix`, extended geometry is `61 × 61` and `22–28 pix`. Both examples are based on a *guessed seeing prior*, not verified physical ePSF.
 
@@ -1015,3 +1016,80 @@ geometry. A real Leo P follow-up is needed to populate these
 new fields: historical griz JSON exports do not retroactively
 contain them. The pilot is considered exploratory-diagnostic
 complete, but science readiness remains **NOT ADOPTED**.
+
+
+## Researcher-mandated all-band empirical PSF gate and targeted g rescue
+
+**Non-negotiable scientific requirement (2026-11-06):**
+every filter used in scientific surface photometry must have an
+**observed-star-derived, scientifically validated empirical PSF**.
+For Leo P `g/r/i/z` this explicitly includes `g`:
+**3/4 experimental models and a reproducible g refusal are not
+all-band scientific readiness**. The prior completed *diagnostic*
+experiment matrix is historical; the **PSF development task remains
+OPEN until a valid g empirical PSF exists and all four filter
+kernels pass physical QA**. PSFSIZE-Gaussian, CCD PSFEx alone,
+transfer from `r/i/z`, or an analytic radial shape must never be
+adopted as a substitute for observed `g` stellar evidence.
+
+### Real Gaia candidate audit — why the g sample can grow
+
+From the actual full
+`LeoP_g_Tractor_16iter_finalQA.json` catalogue audit,
+**27 Gaia-confirmed Tractor TYPE=PSF sources** are rejected at
+the *first* `NEIGHBOR_WITHIN_ISOLATION_RADIUS` gate while
+having zero significant Tractor neighbour matches. In particular,
+**four high-SNR Gaia stars** have nearest DAO centroid separations
+within the narrow 81–85 native pixel window:
+
+| Source ID | Nearest DAO detected source separation [pix] | Diagonal Tractor S/N proxy | Significant Tractor neighbours |
+|---|---:|---:|---:|
+| `star-0004` | 81.8953 | 1991.93 | 0 |
+| `star-0011` | 82.7593 | 1351.74 | 0 |
+| `star-0050` | 82.8233 | 438.40 | 0 |
+| `star-0079` | 84.5393 | 235.37 | 0 |
+
+They were rejected **before** the downstream native-image
+sky/core-width/cutout checks. They are therefore **potential
+additional training/holdout stars, not verified clean samples**.
+The nearest DAO detections may be faint noise, true stars or
+unmodelled sources; zero significant Tractor neighbours is not
+proof of absent contamination.
+
+With the existing g FWHM 6.57 native pixels, the *independent*
+extended-sky recipe has `cutout_size=81`, annulus 30–38 px,
+and the previous DAO isolation radius 85 px (`size+4`).
+A new **registered controlled diagnostic**,
+`outer_sky_isolation_footprint`, changes **only** the
+DAO centre-to-centre separation criterion to the **full stamp
+width (81 px)**. This remains greater than two 38-pixel sky
+annulus outer radii, so the nominal circular sky *footprints*
+around star and nearest DAO neighbour do not overlap.
+It does **not** guarantee there is no PSF-wing contamination
+or ensure clean 2D square stamps. All other source identity,
+Tractor, masks, unsaturated core, local-sky shape, width
+and numerical convergence checks remain unchanged.
+Independent Gaia holdout and minimum **10 train + 3 Gaia
+holdout** remain mandatory, and any negative-mass failure
+is still rejected.
+
+Under an ideal no-additional-rejection outcome, the four new
+candidates would raise the Gaia sample 10→14, potentially
+allowing 11 train + 3 independently heldout Gaia stars.
+**This is not a prediction of the actual number that will pass**.
+The real experiment is required. Its effective recipe, current
+catalogue/observational hashes and holdout identities must be
+reported. If it fails, the next route is vetted per-source
+neighbour modelling/segmentation with target native pixels,
+then a properly reconstructed observed-star empirical
+multi-exposure/coadd PSF. No automatic relaxation and no
+analytic fallback.
+
+The future all-band science entry gate
+`require_empirical_psf_coverage` requires, in **every** requested
+band, an internally verified science receipt with exact
+observation/band identity, genuinely star-derived origin,
+independent stellar QA, wing/spatial/sky/covariance validation
+and adoption. This is a **planning/entry contract** for a
+not-yet-implemented scientific photometry executor, not an
+assertion that any current PSF-0 product already passes.
