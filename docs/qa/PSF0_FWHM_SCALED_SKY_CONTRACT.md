@@ -1487,3 +1487,79 @@ Implementation references:
   images in nanomaggies/pixel, and coadd inverse variance is not an
   independent-pixel covariance matrix:
   https://www.legacysurvey.org/dr11/
+
+
+### P14E — first P14D original FITS run and P14D numerical repair
+
+User-provided full Leo P g joint-scene report
+(\`Вставленный текст(3).txt\`; **2,217,091 bytes**, not committed)
+confirms input identity \`dr11/south/1554p180/g\`, unchanged
+recipe and empirical nonnegative PSF native-kernel SHA256
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`,
+and the original 10+3 Gaia split. The PSF is still **NOT ADOPTED**.
+
+The first v1 joint-native scene fit has a real source-support issue:
+**12/13** fixed stars fitted numerically, **2/3** Gaia holdouts;
+\`star-0110\` stopped at
+\`SOURCE_TEMPLATE_OUTSIDE_USABLE_SCENE\`. A Tractor centroid can
+appear within the approximate square scene+kernel search rectangle
+yet have **identically zero support** of the finite shifted
+81×81 PSF on valid 161×161 native pixels. A zero column must not
+make the central star unfit. P14E now excludes **only exact-zero**
+basis columns, with ID, location, count and explicit
+\`EXACT_ZERO_FROZEN_KERNEL_ON_ALL_VALID_SCENE_PIXELS\` evidence.
+Any nonzero basis column stays in the simultaneous fit, subject to
+the existing honest rank/DOF tests; zero finite-kernel overlap is
+**not** evidence of absent unknown wide-angle wings. This should
+recover the numerical path for star-0110 if no other source or
+mask failure occurs; original FITS verification is still required.
+
+The original v1 **full-scene** weighted RSS improvements were:
+\`star-0032\` **92.6353%**, \`star-0036\` **82.9260%**,
+\`star-0050\` **3.0731%**, and **9/12** other completed
+scenes under **1%** (median 0.4524%). The dramatic improvements
+occur with **bright, distant** catalog PSF neighbors: for
+\`star-0032\`, Tractor objid **1887** at **93.9036 px**
+with catalog fitted g flux **948.46 nMgy**; for
+\`star-0036\`, objid **177** at **101.265 px**, catalog flux
+**16.78 nMgy**. Such neighbors can dominate the objective
+function of the **161×161 scene** without explaining
+central-star structure in 1–4 FWHM. In fact, the v1 model's
+catalogued PSF-neighbor/central-model cumulative-flux ratio
+inside 4×guessed FWHM is **0** for star-0032 and **0.00556**
+for star-0036. Those conditional ratios omit any unmodelled
+catalog extended/other components and unknown wide wings.
+
+Every one of the 12 numerically completed v1 scenes has **5–20
+unmodelled catalog objects**, hence none is scientifically
+deblended. \`star-0032\` has **8** and its nearest one is
+**18.599 px** away; its TYPE and flux were not serialized by
+the original v1 summary, and must not be guessed. The fitted
+joint-minus-original-annulus sky for that star is
+**−0.000193145 nMgy/native px**, or about −0.061
+original per-pixel local RMS (not sigma significance).
+\`star-0148\` sky difference is −0.000109681 nMgy/native px.
+The overlarge global residual change does **not** validate the
+original PSF, cure earlier holdout growth excess, or establish
+catalog neighbour completeness.
+
+P14E adds fixed-aperture, **same native pixel set**
+weighted-RSS comparisons at 1× and 4× guessed FWHM,
+re-using each full-scene/null model's **globally fitted**
+parameters with **no new local optimization**. Importantly,
+the signed local fractional change is **not clamped**:
+the fitted neighbor model may improve the total field while
+**worsening** the central-star residuals. It adds exact-zero
+template accounting, the previously unexposed nearest unmodelled
+Tractor source ID/TYPE/catalog band flux, and compact GUI
+local-vs-global summaries. Schema now
+\`desidera.psf0-fixed-psf-joint-native-scene/2\`,
+implementation fingerprint incremented. These are descriptive
+diagnostics on preselected stars, not hyperparameter tuning or
+noise-covariance-calibrated quality gates.
+
+A new original-FITS g run is **needed once** to verify that
+star-0110 no longer fails due solely to an all-zero nuisance
+template, reveal TYPE of the 18.6-pixel unmodelled neighbor at
+star-0032, and evaluate true **central-aperture** differences
+at 1×/4× FWHM. Do not infer an improvement before that run.
