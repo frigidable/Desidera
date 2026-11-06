@@ -45,3 +45,10 @@ inputs/
 .idea/
 demo_output_v02/
 validation_output/
+
+# Project-local caches and reproducible test/CI products
+.desidera/
+mock_fits/
+mock_output/
+gui-artifacts/
+real-ccd-evidence/
