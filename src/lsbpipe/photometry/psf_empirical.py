@@ -255,7 +255,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "holdout_integrity": "ALL_FIXED_STARS_ALL_ANNULI",
         "holdout_flux_growth": "CORE_NORM_NATIVE_APERTURE_RADII_V1_DESCRIPTIVE",
         "parameter_provenance": "PILOT_NUMERIC_ASSUMPTION_REGISTRY_V1_DESCRIPTIVE",
-        "stellar_sky_ring_sensitivity": "ORIGINAL_PIXELS_INTERIOR_RING_V1_DESCRIPTIVE",
+        "stellar_sky_ring_sensitivity": "ORIGINAL_PIXELS_INTERIOR_RING_AND_NATIVE_SCAN_V2_DESCRIPTIVE",
         "gaia_seed_dao_coverage": "CATALOG_PREFLIGHT_V1_NO_SAMPLE_PROMOTION",
     }
     return {
