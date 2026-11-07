@@ -240,7 +240,12 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                  "weighted_residual_improvement_fraction":.926,
                  "central_aperture_residual_comparison": {
                      "four_guessed_fwhm": {
-                         "signed_improvement_fraction":-.013}},
+                         "signed_improvement_fraction":-.013,
+                         "weighted_squared_residual_star_plane_only":100.,
+                         "weighted_rss_gain_partition_by_fitted_model_change": {
+                             "central_star_amplitude_reallocation": -0.5,
+                             "planar_sky_reallocation": -0.8,
+                             "direct_catalog_point_neighbors":0.}}},
                  "nearest_unmodeled_catalog_source": {
                      "tractor_objid":12,
                      "tractor_type":"REX",
@@ -261,6 +266,10 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "No science adoption" in summary
     assert "full scene +92.6%" in summary
     assert "central <=4 guessed FWHM -1.3%" in summary
+    assert "central-star amplitude -0.5%" in summary
+    assert "sky-plane change -0.8%" in summary
+    assert "direct catalog-point templates +0%" in summary
+    assert "symmetric cross-terms, noncausal" in summary
     assert "TYPE=REX" in summary
     assert "offset=18.60" in summary
     assert "zero support" in summary
