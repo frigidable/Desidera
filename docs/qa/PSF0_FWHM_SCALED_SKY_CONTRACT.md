@@ -1492,22 +1492,22 @@ Implementation references:
 ### P14E — first P14D original FITS run and P14D numerical repair
 
 User-provided full Leo P g joint-scene report
-(\`Вставленный текст(3).txt\`; **2,217,091 bytes**, not committed)
-confirms input identity \`dr11/south/1554p180/g\`, unchanged
+(`Вставленный текст(3).txt`; **2,217,091 bytes**, not committed)
+confirms input identity `dr11/south/1554p180/g`, unchanged
 recipe and empirical nonnegative PSF native-kernel SHA256
-\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`,
+`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a`,
 and the original 10+3 Gaia split. The PSF is still **NOT ADOPTED**.
 
 The first v1 joint-native scene fit has a real source-support issue:
 **12/13** fixed stars fitted numerically, **2/3** Gaia holdouts;
-\`star-0110\` stopped at
-\`SOURCE_TEMPLATE_OUTSIDE_USABLE_SCENE\`. A Tractor centroid can
+`star-0110` stopped at
+`SOURCE_TEMPLATE_OUTSIDE_USABLE_SCENE`. A Tractor centroid can
 appear within the approximate square scene+kernel search rectangle
 yet have **identically zero support** of the finite shifted
 81×81 PSF on valid 161×161 native pixels. A zero column must not
 make the central star unfit. P14E now excludes **only exact-zero**
 basis columns, with ID, location, count and explicit
-\`EXACT_ZERO_FROZEN_KERNEL_ON_ALL_VALID_SCENE_PIXELS\` evidence.
+`EXACT_ZERO_FROZEN_KERNEL_ON_ALL_VALID_SCENE_PIXELS` evidence.
 Any nonzero basis column stays in the simultaneous fit, subject to
 the existing honest rank/DOF tests; zero finite-kernel overlap is
 **not** evidence of absent unknown wide-angle wings. This should
@@ -1515,13 +1515,13 @@ recover the numerical path for star-0110 if no other source or
 mask failure occurs; original FITS verification is still required.
 
 The original v1 **full-scene** weighted RSS improvements were:
-\`star-0032\` **92.6353%**, \`star-0036\` **82.9260%**,
-\`star-0050\` **3.0731%**, and **9/12** other completed
+`star-0032` **92.6353%**, `star-0036` **82.9260%**,
+`star-0050` **3.0731%**, and **9/12** other completed
 scenes under **1%** (median 0.4524%). The dramatic improvements
 occur with **bright, distant** catalog PSF neighbors: for
-\`star-0032\`, Tractor objid **1887** at **93.9036 px**
+`star-0032`, Tractor objid **1887** at **93.9036 px**
 with catalog fitted g flux **948.46 nMgy**; for
-\`star-0036\`, objid **177** at **101.265 px**, catalog flux
+`star-0036`, objid **177** at **101.265 px**, catalog flux
 **16.78 nMgy**. Such neighbors can dominate the objective
 function of the **161×161 scene** without explaining
 central-star structure in 1–4 FWHM. In fact, the v1 model's
@@ -1532,13 +1532,13 @@ catalog extended/other components and unknown wide wings.
 
 Every one of the 12 numerically completed v1 scenes has **5–20
 unmodelled catalog objects**, hence none is scientifically
-deblended. \`star-0032\` has **8** and its nearest one is
+deblended. `star-0032` has **8** and its nearest one is
 **18.599 px** away; its TYPE and flux were not serialized by
 the original v1 summary, and must not be guessed. The fitted
 joint-minus-original-annulus sky for that star is
 **−0.000193145 nMgy/native px**, or about −0.061
 original per-pixel local RMS (not sigma significance).
-\`star-0148\` sky difference is −0.000109681 nMgy/native px.
+`star-0148` sky difference is −0.000109681 nMgy/native px.
 The overlarge global residual change does **not** validate the
 original PSF, cure earlier holdout growth excess, or establish
 catalog neighbour completeness.
@@ -1553,7 +1553,7 @@ the fitted neighbor model may improve the total field while
 template accounting, the previously unexposed nearest unmodelled
 Tractor source ID/TYPE/catalog band flux, and compact GUI
 local-vs-global summaries. Schema now
-\`desidera.psf0-fixed-psf-joint-native-scene/2\`,
+`desidera.psf0-fixed-psf-joint-native-scene/2`,
 implementation fingerprint incremented. These are descriptive
 diagnostics on preselected stars, not hyperparameter tuning or
 noise-covariance-calibrated quality gates.
@@ -1569,26 +1569,26 @@ at 1×/4× FWHM. Do not infer an improvement before that run.
 
 The *second original-FITS* g run was received (P14E v2, separate
 original user report, not committed). Dataset
-\`dr11/south/1554p180/g\`; unchanged 81×81 experimental kernel SHA256
-\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`;
+`dr11/south/1554p180/g`; unchanged 81×81 experimental kernel SHA256
+`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a`;
 unchanged 10 training/3 reserved Gaia holdouts. Joint fixed-PSF
 fits **13/13 numerical successes** and **3/3 holdouts**.
 Exactly **one** catalog neighbor has zero finite-kernel support
-(\`star-0110\`, \`OBJID=2260\`, separation 137.7734px), and is
+(`star-0110`, `OBJID=2260`, separation 137.7734px), and is
 explicitly excluded from the corresponding NNLS matrix with evidence.
 No zero-support issue remains in this field's joint scene diagnostic.
 
 **All 13 numerically fitted scenes have 5–20 unmodelled catalog
-sources.** In particular \`star-0032\`'s nearest is
-**Tractor \`TYPE=DEV\`, \`OBJID=1941\`, separation 18.5990px,
+sources.** In particular `star-0032`'s nearest is
+**Tractor `TYPE=DEV`, `OBJID=1941`, separation 18.5990px,
 catalog g flux 0.367224 nMgy**. TYPE is a model classification;
 it does not prove the astrophysical object class or flux accurately,
 and this source has NOT been forward-modelled in P14D/E/F.
-The pre-existing core ePSF remains \`NOT_ADOPTED\` with wide wings,
+The pre-existing core ePSF remains `NOT_ADOPTED` with wide wings,
 spatial representation, catalog source contamination, and correlated
 coadd covariance unvalidated.
 
-For \`star-0032\`, P14E v2 obtains weighted global RSS reduction
+For `star-0032`, P14E v2 obtains weighted global RSS reduction
 **92.6353%**, yet same-native-pixel central-aperture reduction
 **4.8568%** (1 guessed FWHM) and **8.1843%** (4 guessed FWHM).
 Crucially, **all fitted catalog point neighbors contribute an
@@ -1598,11 +1598,11 @@ farther away than the finite PSF support permits.
 The local difference MUST therefore result from the refitted
 central-star amplitude and/or simultaneous sky plane conditioned
 on the bright distant sources; it is not direct deblending of the
-18.6px \`TYPE=DEV\` object. For \`star-0036\`, a global
+18.6px `TYPE=DEV` object. For `star-0036`, a global
 **82.9260%** reduction accompanies local **−1.5843%**
 (1×FWHM) and **−0.3259%** (4×FWHM) *worsening*. The
-remaining holdouts: \`star-0110\` global +0.1813% versus
-4×FWHM **−0.1329%**, \`star-0148\` global +0.0582% versus
+remaining holdouts: `star-0110` global +0.1813% versus
+4×FWHM **−0.1329%**, `star-0148` global +0.0582% versus
 4×FWHM **+0.0102%**. These effects are *conditional,
 not calibrated significance measures*.
 
@@ -1611,21 +1611,21 @@ attribution, schema v3 reports on the SAME original native
 pixels and SAME frozen globally fitted parameters the exact
 algebraic model difference
 
-\`\`\`
+```
 delta_model = (A_full - A_null) * central_P
             + sky_plane(full - null)
             + sum_j(A_j * neighbor_P_j).
-\`\`\`
+```
 
 For each central region (1× or 4× guessed FWHM) and the entire
-scene, with inverse-variance weighted null residual vector \`e0\`
-and weighted component difference vectors \`d_i\`, define
+scene, with inverse-variance weighted null residual vector `e0`
+and weighted component difference vectors `d_i`, define
 
-\`\`\`
+```
 RSS_null - RSS_full = 2 <e0, sum_i d_i> - ||sum_i d_i||^2,
 gain_i = 2 <e0, d_i> - <d_i, sum_j d_j>,
 sum_i gain_i = RSS_null - RSS_full.
-\`\`\`
+```
 
 This partitions the pairwise cross terms symmetrically and therefore
 closes algebraically to rounding accuracy. The three explicitly
@@ -1643,9 +1643,101 @@ to the measured PSF or its NOT_ADOPTED state.
 The P14E report already supplies the qualitative conclusion of
 the experiment. One new original g run with schema v3 is useful
 ONLY to determine the relative mathematical shares of the
-sky plane and central-star amplitude in \`star-0032\`'s
+sky plane and central-star amplitude in `star-0032`'s
 local 8.18% improvement and check cross-term closure.
 It cannot measure the 18.6px DEV object's true profile,
 the PSF wings outside the 81px support, or noise covariance;
 those require new physically motivated forward models and
 independent validation.
+
+
+### P14F original-FITS closure — diagnostic stage complete
+
+The third Leo P g original-FITS export (2,287,254-byte report, supplied by
+the user and **not committed**) has scene schema
+`desidera.psf0-fixed-psf-joint-native-scene/3`, dataset
+`dr11/south/1554p180/g`, and the unchanged frozen PSF-kernel
+SHA256 `8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a`.
+The original 10 training + 3 fixed Gaia holdouts are still selected
+without resplitting. **13/13** numerical native-pixel joint fits and
+**3/3** fixed holdouts complete; **13/13** scenes still contain unmodelled
+catalog source profiles. No galaxy or PSF science product is adopted.
+
+For each fitted scene the three signed, symmetrically allocated
+component RSS gains close to the original same-pixel RSS change
+to floating-point precision. Across all 13 stars and all three
+apertures (entire scene, 1 and 4 guessed FWHM) the maximum absolute
+closure residual is **2.33e-10** in weighted-RSS units. This
+verifies the implementation's **algebra**, not its physical adequacy
+or measurement uncertainties.
+
+Observed holdout results, signed percentages relative to the
+same-aperture star+plane-only weighted RSS:
+
+| Star | Full-scene gain | 4-FWHM gain | 4-FWHM sky allocation | 4-FWHM central-star allocation | 4-FWHM catalog-PSF allocation |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| star-0110 | +0.1813% | -0.1329% | -0.1333% | ~0.0000% | +0.0004% |
+| star-0032 | +92.6353% | +8.1843% | +8.1790% | +0.0053% | 0.0000% |
+| star-0148 | +0.0582% | +0.0102% | +0.0103% | ~0.0000% | -0.0002% |
+
+For **star-0032** the weighted RSS gain partition in 4 guessed
+FWHM is `sky=587.146986`, `central=0.380418`,
+`point_neighbors=0`, a 99.935%/0.065% split of the **positive
+fitted RSS gain**, not a physical separation of photon sources.
+The full-minus-null fitted sky at the star is
+**-0.001244485 nMgy per native pixel** (full sky
+**-0.000216988** versus null sky **+0.001027497**);
+the nearest **unmodelled** Tractor source is
+`TYPE=DEV, OBJID=1941, g catalog flux=0.367224 nMgy,
+separation=18.5990 pixels`. The original stellar-annulus
+background was **-0.0000238432 nMgy per pixel**, yet neither
+fitted background is independently certified correct.
+Because the finite-support point-source templates contribute
+exactly zero within the central 4-FWHM region, the 8.1843%
+local RSS gain is entirely due to globally coupled changes in
+the sky plane and central-star amplitude under this
+**incomplete** source model, not direct subtraction of a
+nearby catalog PSF star. This does not measure the light from
+the DEV source, nor does the faint catalog-integrated flux
+establish that it is harmless.
+
+As a counterexample, **star-0036** has a full-scene
+gain of **+82.9260%**, but **-0.3259%** degradation inside
+4 FWHM; the algebraic 4-FWHM partitions are
+`sky=-0.9738%`, `point neighbors=+0.6473%`,
+`central star=+0.0006%`.
+The original-FITS evidence therefore **rejects global
+weighted RSS improvement as an empirical-PSF science gate**.
+
+**Do not continue the P14D/E/F fit-only diagnostic loop.**
+Its original observational question has been answered. New
+scientific information needs a different forward model and
+independent data tests:
+
+1. Confirm native Tractor catalog availability, coordinate
+   transforms, and completeness of each source's `type`,
+   `shape_r`, `shape_e1`, `shape_e2`, flux, and mask
+   information. Do not manufacture structural parameters
+   when absent. `REX`, `EXP`, and `DEV` must use
+   documented and type-correct, PSF-convolved *extended*
+   templates; diagnostic masks are an acceptable control.
+2. Separate the unresolved central empirical PSF core,
+   physically calibrated wide-angle wings and local sky
+   with an identifiability/sensitivity experiment on
+   larger un-subtracted native scenes. Explicitly check
+   boundary effects and bright distant sources, rather
+   than assuming the 81-pixel empirical support equals
+   the true wing boundary.
+3. Compare predictive, fixed-split holdout residuals
+   across models; calibrate coadd noise covariance
+   before treating pixel-weighted RSS as likelihood-based
+   evidence. Report injection-recovery bias and
+   uncertainty for galaxy surface brightness, not
+   residual gains alone.
+4. Retain separate per-band g/r/i/z PSF solutions,
+   original raw data, QA provenance, and
+   `NOT_ADOPTED` until justified against external,
+   predefined science tolerances.
+
+These are design requirements, NOT P15 implementation
+or a claim of completed scientific calibration.
