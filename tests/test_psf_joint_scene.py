@@ -267,7 +267,20 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                      "predeclared_2_to_4_fwhm_ring_prediction": {
                          "status": "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION",
                          "signed_predictive_ring_rss_improvement_fraction":-.12,
-                         "n_reserved_native_pixels":244}}},                {"source_id":"star-0011", "role":"train",
+                         "n_reserved_native_pixels":244},
+                     "p15d_morphology_controlled_stress": {
+                         "status": "PREDECLARED_MORPHOLOGY_STRESS_DIAGNOSTIC",
+                         "selected_tractor_objid":1941,
+                         "n_successful_stress_cases":6,
+                         "descriptive_min_max_stress_response_not_error_bars": {
+                             "delta_sky_at_star_nMgy_per_native_pixel": {
+                                 "min":-.0008, "max":.0003},
+                             "delta_star_fitted_peak_nMgy_per_pixel": {
+                                 "min":-.001, "max":.002},
+                             "delta_reserved_ring_weighted_rss": {
+                                 "min":-.1, "max":1.4},
+                         },
+                     }}},                {"source_id":"star-0011", "role":"train",
                  "status":"FULL_EXPANDED_NATIVE_STAMP_OUTSIDE_IMAGE"},
             ]
         }
@@ -299,6 +312,13 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "predictive weighted RSS change -12%" in summary
     assert "244 reserved native pixels" in summary
     assert "not independent PSF QA" in summary
+    assert "P15D controlled morphology stress" in summary
+    assert "OBJID=1941" in summary
+    assert "6/6 one-at-a-time cases" in summary
+    assert "Δsky [-0.0008, +0.0003]" in summary
+    assert "Δcentral peak [-0.001, +0.002]" in summary
+    assert "Δwithheld ring RSS [-0.1, +1.4]" in summary
+    assert "NOT catalog errors" in summary
     assert "NOT a recovered wide PSF" in summary
 
 
