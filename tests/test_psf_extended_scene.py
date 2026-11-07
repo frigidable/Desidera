@@ -8,7 +8,8 @@ from astropy.wcs import WCS
 from lsbpipe.photometry.psf_extended_scene import (
     audit_tractor_shape, local_tangent_jacobian,
     convolved_native_sersic, pilot_extended_scene,
-    morphology_stress_variants,
+    morphology_stress_variants, audit_approximate_sersic_sampling,
+    compare_analytic_stamp_to_external_tractor,
 )
 from lsbpipe.photometry.psf_joint_scene import _shifted_native_kernel
 
@@ -154,6 +155,19 @@ def test_extended_pilot_recovers_synthetic_model_and_does_not_mutate_pixels():
         "same_original_native_pixels_globally_fit_models"]
     assert out["no_coadd_covariance_or_parameter_uncertainty_model"]
     assert out["profile_amplitudes_not_catalog_total_fluxes"]
+    p15e=out["p15e_analytic_subpixel_convergence"]
+    assert p15e["status"]==(
+        "THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR")
+    assert p15e["selected_tractor_objid"]==1941
+    assert p15e["evaluated_intrinsic_subpixel_grids"]==[3,5,7]
+    assert p15e["n_original_valid_scene_pixels"]==161**2
+    assert p15e["three_to_five"]["shape_l1_unit_flux_difference"]>0.
+    assert p15e["five_to_seven"]["shape_l1_unit_flux_difference"]>0.
+    assert p15e["not_a_comparison_against_tractor_mixture_of_gaussians"]
+    assert p15e["no_automatic_threshold_or_best_grid_selection"]
+    assert not p15e["science_adopted"]
+    assert out["p15e_external_tractor_reference"]["status"]==(
+        "ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED")
     assert out["science_adopted"] is False
     np.testing.assert_array_equal(image,original)
 
@@ -373,3 +387,106 @@ def test_p15d_preselected_nearest_source_has_stable_id_not_residual_ranking():
     assert stress["only_one_extended_source_perturbed_at_a_time"]
     assert stress["all_other_rendered_catalog_components_frozen"]
     assert not stress["science_adopted"]
+
+
+
+def test_p15e_same_native_morphology_grid_convergence_is_not_tractor_reference():
+    kernel=_kernel()
+    w=_wcs()
+    morphology=audit_tractor_shape(_item("EXP",shape_r_arcsec=1.5))
+    m=np.ones((81,81),dtype=bool)
+    result=audit_approximate_sersic_sampling(
+        kernel=kernel,wcs=w,source_xy=(100.33,99.66),
+        origin_xy=(60.,60.),width=81,morphology=morphology,valid=m)
+    assert result["status"]==(
+        "THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR")
+    assert result["evaluated_intrinsic_subpixel_grids"]==[3,5,7]
+    assert result["same_catalog_morphology_and_native_wcs_all_grids"]
+    assert result["same_scene_geometry_and_original_valid_pixel_mask"]
+    for key in ("three_to_five","five_to_seven","three_to_seven"):
+        diff=result[key]
+        assert np.isfinite(diff["shape_l1_unit_flux_difference"])
+        assert diff["shape_l1_unit_flux_difference"] >= 0.
+        assert diff["relative_patch_normalization_not_source_total_flux"]
+    again=audit_approximate_sersic_sampling(
+        kernel=kernel,wcs=w,source_xy=(100.33,99.66),
+        origin_xy=(60.,60.),width=81,morphology=morphology,valid=m)
+    assert result==again
+    assert result["not_a_comparison_against_tractor_mixture_of_gaussians"]
+    assert not result["science_adopted"]
+
+
+def test_p15e_malformed_reference_or_missing_provenance_cannot_claim_validation():
+    kernel=_kernel()
+    truth=np.ones((81,81),dtype=float)
+    mask=np.ones_like(truth,dtype=bool)
+    good=dict(
+        renderer="dstndstn/tractor",
+        renderer_version_or_commit="external-commit-mock",
+        tractor_source_type="DEV",
+        source_identifier="test-obj-1941",
+        native_wcs_fingerprint="wcs-mock",
+        input_psf_fingerprint="psf-mock",
+        reference_generation_recipe="test fixture, not real tractor",
+    )
+    missing=compare_analytic_stamp_to_external_tractor(
+        truth,truth,mask,provenance={})
+    assert missing["status"]=="INCOMPLETE_EXTERNAL_REFERENCE_PROVENANCE"
+    assert "native_wcs_fingerprint" in missing["missing_fields"]
+    other=dict(good,renderer="unrelated-stamp-generator")
+    refused=compare_analytic_stamp_to_external_tractor(
+        truth,truth,mask,provenance=other)
+    assert refused["status"]=="NOT_AN_IDENTIFIED_TRACTOR_RENDERER"
+    mismatch=compare_analytic_stamp_to_external_tractor(
+        truth,truth[:60],mask,provenance=good)
+    assert mismatch["status"]=="INCOMPARABLE_EXTERNAL_REFERENCE_ARRAYS"
+    # Even a pixel-perfect manually-supplied mock cannot be reported
+    # as independent external Tractor validation by this API.
+    numerical=compare_analytic_stamp_to_external_tractor(
+        truth,truth,mask,provenance=good)
+    assert numerical["status"]==(
+        "EXTERNAL_REFERENCE_ARRAYS_COMPARED_NOT_SCIENCE_CERTIFIED")
+    assert numerical["common_native_pixel_shape_comparison"][
+        "shape_l1_unit_flux_difference"]==pytest.approx(0.)
+    assert numerical["external_reference_identity_self_reported_not_verified"]
+    assert numerical["still_requires_independent_psf_and_wcs_lineage_verification"]
+    assert numerical["comparison_does_not_certify_tractor_reproduction"]
+    assert numerical["science_adopted"] is False
+
+
+def test_p15e_grid_validation_fails_closed_and_does_not_invent_reference():
+    with pytest.raises(ValueError,match="UNSUPPORTED_DECLARED_SUBPIXEL_GRID"):
+        convolved_native_sersic(
+            kernel=_kernel(),wcs=_wcs(),
+            source_xy=(100.,100.),origin_xy=(60.,60.),width=81,
+            morphology=audit_tractor_shape(_item("DEV")),
+            subpixel_grid=4)
+    no_mask=audit_approximate_sersic_sampling(
+        kernel=_kernel(),wcs=_wcs(),source_xy=(100.,100.),
+        origin_xy=(60.,60.),width=81,
+        morphology=audit_tractor_shape(_item("DEV")),
+        valid=np.zeros((81,81),dtype=bool))
+    assert no_mask["status"]=="INVALID_OR_EMPTY_NATIVE_REFERENCE_MASK"
+    assert no_mask["science_adopted"] is False
+
+
+def test_p15e_masked_stamps_are_never_compared_on_different_pixel_sets():
+    scene=np.arange(81*81,dtype=float).reshape(81,81)+1.
+    valid=np.ones_like(scene,dtype=bool)
+    valid[:,40:]=False
+    provided=dict(
+        renderer="dstndstn/tractor",
+        renderer_version_or_commit="test-only-not-real",
+        tractor_source_type="EXP",source_identifier="mock",
+        native_wcs_fingerprint="native-identity-test",
+        input_psf_fingerprint="test-frozen-psf",
+        reference_generation_recipe="synthetic fixture",
+    )
+    candidate=scene.copy()
+    candidate[:,40:]*=1000.
+    report=compare_analytic_stamp_to_external_tractor(
+        candidate,scene,valid,provenance=provided)
+    assert report["status"]=="EXTERNAL_REFERENCE_ARRAYS_COMPARED_NOT_SCIENCE_CERTIFIED"
+    assert report["common_native_pixel_shape_comparison"][
+        "shape_l1_unit_flux_difference"]==pytest.approx(0.)
+    assert not report["science_adopted"]
