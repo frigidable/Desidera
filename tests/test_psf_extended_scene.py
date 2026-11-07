@@ -314,6 +314,10 @@ def test_p15d_ellipticity_boundary_excluded_not_clamped():
 
 def test_p15d_same_original_pixels_stress_response_on_exact_injected_dev():
     image,k,w,star,dev=_truth_scene()
+    # Catalog inverse variances are separate input evidence, not the
+    # physical tolerances chosen for our predeclared stress experiment.
+    dev=dict(dev,shape_r_ivar_arcsec_m2=25.,
+             shape_e1_ivar=100.,shape_e2_ivar=225.)
     original=image.copy()
     result=pilot_extended_scene(
         image,np.ones_like(image),np.ones_like(image,dtype=bool),
@@ -332,6 +336,13 @@ def test_p15d_same_original_pixels_stress_response_on_exact_injected_dev():
         stress["n_reserved_original_native_pixels"])==(
             result["n_valid_original_native_pixels"])
     assert stress["perturbations_are_not_catalog_sigma_or_uncertainty"]
+    ivars=stress["nominal_catalog_formal_shape_ivars_not_covariance_or_stress_scale"]
+    assert ivars["shape_r_ivar_arcsec_m2"]==25.
+    assert ivars["shape_e1_ivar"]==100.
+    assert ivars["shape_e2_ivar"]==225.
+    assert stress["radius_fractional_stress"]==pytest.approx(.1)
+    assert stress["ellipticity_norm_absolute_stress"]==pytest.approx(.05)
+    assert stress["position_angle_degree_stress"]==pytest.approx(10.)
     assert stress["stress_envelope_is_not_a_confidence_interval"]
     assert stress["reserved_2_to_4_guessed_fwhm_never_used_in_fits"]
     assert stress["science_adopted"] is False
