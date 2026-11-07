@@ -105,6 +105,9 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     catalog["SHAPE_E1"]=np.array([0.,0.,.2],dtype=np.float32)
     catalog["SHAPE_E2"]=np.array([0.,0.,-.1],dtype=np.float32)
     catalog["SERSIC"]=np.array([0.,0.,1.],dtype=np.float32)
+    catalog["SHAPE_R_IVAR"]=np.array([0.,0.,25.],dtype=np.float32)
+    catalog["SHAPE_E1_IVAR"]=np.array([0.,0.,100.],dtype=np.float32)
+    catalog["SHAPE_E2_IVAR"]=np.array([0.,0.,225.],dtype=np.float32)
     catalog.write(path,format="fits")
     frame=_frame(root)
     data=read_native_tractor_gaia(
@@ -116,6 +119,10 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     assert data.rows[2]["shape_e1"]==pytest.approx(.2,rel=1e-6)
     assert data.rows[2]["shape_e2"]==pytest.approx(-.1,rel=1e-6)
     assert data.rows[2]["sersic_n"]==pytest.approx(1.)
+    assert data.rows[2]["shape_r_ivar_arcsec_m2"]==pytest.approx(25.)
+    assert data.rows[2]["shape_e1_ivar"]==pytest.approx(100.)
+    assert data.rows[2]["shape_e2_ivar"]==pytest.approx(225.)
+    assert data.rows[2]["morphology_fields_in_native_catalog"]["SHAPE_R_IVAR"]
     assert data.rows[2]["morphology_fields_in_native_catalog"]["SHAPE_R"]
     assert data.source_sha256
     assert data.match(19.1,21.1,band="g")[0]["gaia_source_id"] == 1234567890123
@@ -124,7 +131,9 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     # explicitly UNKNOWN. They are valid for Gaia identity but cannot
     # silently acquire extended galaxy templates.
     legacy=catalog.copy()
-    legacy.remove_columns(["SHAPE_R","SHAPE_E1","SHAPE_E2","SERSIC"])
+    legacy.remove_columns([
+        "SHAPE_R","SHAPE_E1","SHAPE_E2","SERSIC",
+        "SHAPE_R_IVAR","SHAPE_E1_IVAR","SHAPE_E2_IVAR"])
     legacy.write(path,format="fits",overwrite=True)
     legacy_data=read_native_tractor_gaia(
         root,release="dr11",region="south",brick="1554p180",
@@ -133,6 +142,9 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     assert legacy_data.rows[2]["shape_e1"] is None
     assert legacy_data.rows[2]["shape_e2"] is None
     assert legacy_data.rows[2]["sersic_n"] is None
+    assert legacy_data.rows[2]["shape_r_ivar_arcsec_m2"] is None
+    assert legacy_data.rows[2]["shape_e1_ivar"] is None
+    assert legacy_data.rows[2]["shape_e2_ivar"] is None
     assert not legacy_data.rows[2][
         "morphology_fields_in_native_catalog"]["SHAPE_R"]
     # A modified header/row declaring the wrong brick must fail closed.
