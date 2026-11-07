@@ -1262,6 +1262,45 @@ class PSF0Panel(QGroupBox):
                                     "    P15 2–4 FWHM withheld-ring check: "
                                     f"{withheld.get('status', 'NOT_AVAILABLE')}; "
                                     "no predictive claim.")
+                            stress = scene.get(
+                                "p15d_morphology_controlled_stress", {})
+                            if stress.get("status") == (
+                                    "PREDECLARED_MORPHOLOGY_STRESS_DIAGNOSTIC"):
+                                responses = stress.get(
+                                    "descriptive_min_max_stress_response_not_error_bars",
+                                    {})
+                                sky_range = responses.get(
+                                    "delta_sky_at_star_nMgy_per_native_pixel", {})
+                                star_range = responses.get(
+                                    "delta_star_fitted_peak_nMgy_per_pixel", {})
+                                ring_range = responses.get(
+                                    "delta_reserved_ring_weighted_rss", {})
+                                if all(
+                                    isinstance(bounds, dict)
+                                    and bounds.get("min") is not None
+                                    and bounds.get("max") is not None
+                                    for bounds in (
+                                        sky_range, star_range, ring_range)):
+                                    notes.append(
+                                        "    P15D controlled morphology stress "
+                                        f"for nearest Tractor OBJID="
+                                        f"{stress.get('selected_tractor_objid')}: "
+                                        f"{stress.get('n_successful_stress_cases')}/6 "
+                                        "one-at-a-time cases, "
+                                        f"Δsky [{sky_range['min']:+.3g}, "
+                                        f"{sky_range['max']:+.3g}] nMgy/pix, "
+                                        f"Δcentral peak [{star_range['min']:+.3g}, "
+                                        f"{star_range['max']:+.3g}] nMgy/pix, "
+                                        f"Δwithheld ring RSS "
+                                        f"[{ring_range['min']:+.3g}, "
+                                        f"{ring_range['max']:+.3g}]. "
+                                        "Stress bounds are NOT catalog errors, "
+                                        "confidence intervals or science QA.")
+                            elif isinstance(stress, dict) and stress:
+                                notes.append(
+                                    "    P15D morphology stress: "
+                                    f"{stress.get('status', 'UNAVAILABLE')}; "
+                                    "no derived uncertainty.")
                         else:
                             notes.append(
                                 f"  {star.get('source_id', '?')}: P15 "
