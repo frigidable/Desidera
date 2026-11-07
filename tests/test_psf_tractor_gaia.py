@@ -100,12 +100,23 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     catalog["FLUX_IVAR_G"]=np.array([100.,200.,2.],dtype=np.float32)
     catalog["GAIA_DUPLICATED_SOURCE"]=[False,False,False]
     catalog["GAIA_PHOT_G_MEAN_MAG"]=np.array([18.,19.,0.],dtype=np.float32)
+    # Original DR11 angular shape metadata (arcsec), not a guessed PSF.
+    catalog["SHAPE_R"]=np.array([0.,0.,1.7],dtype=np.float32)
+    catalog["SHAPE_E1"]=np.array([0.,0.,.2],dtype=np.float32)
+    catalog["SHAPE_E2"]=np.array([0.,0.,-.1],dtype=np.float32)
+    catalog["SERSIC"]=np.array([0.,0.,1.],dtype=np.float32)
     catalog.write(path,format="fits")
     frame=_frame(root)
     data=read_native_tractor_gaia(
         root,release="dr11",region="south",brick="1554p180",
         frame=frame)
     assert len(data.rows)==3
+    assert data.rows[2]["type"]=="EXP"
+    assert data.rows[2]["shape_r_arcsec"]==pytest.approx(1.7,rel=1e-6)
+    assert data.rows[2]["shape_e1"]==pytest.approx(.2,rel=1e-6)
+    assert data.rows[2]["shape_e2"]==pytest.approx(-.1,rel=1e-6)
+    assert data.rows[2]["sersic_n"]==pytest.approx(1.)
+    assert data.rows[2]["morphology_fields_in_native_catalog"]["SHAPE_R"]
     assert data.source_sha256
     assert data.match(19.1,21.1,band="g")[0]["gaia_source_id"] == 1234567890123
     assert data.match(40.1,25.1,band="g")[1] == "NOT_GAIA_DR3"
