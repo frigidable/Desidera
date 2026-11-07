@@ -120,6 +120,21 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     assert data.source_sha256
     assert data.match(19.1,21.1,band="g")[0]["gaia_source_id"] == 1234567890123
     assert data.match(40.1,25.1,band="g")[1] == "NOT_GAIA_DR3"
+    # Original legacy tables lacking optional morphology must leave it
+    # explicitly UNKNOWN. They are valid for Gaia identity but cannot
+    # silently acquire extended galaxy templates.
+    legacy=catalog.copy()
+    legacy.remove_columns(["SHAPE_R","SHAPE_E1","SHAPE_E2","SERSIC"])
+    legacy.write(path,format="fits",overwrite=True)
+    legacy_data=read_native_tractor_gaia(
+        root,release="dr11",region="south",brick="1554p180",
+        frame=frame)
+    assert legacy_data.rows[2]["shape_r_arcsec"] is None
+    assert legacy_data.rows[2]["shape_e1"] is None
+    assert legacy_data.rows[2]["shape_e2"] is None
+    assert legacy_data.rows[2]["sersic_n"] is None
+    assert not legacy_data.rows[2][
+        "morphology_fields_in_native_catalog"]["SHAPE_R"]
     # A modified header/row declaring the wrong brick must fail closed.
     catalog["BRICKNAME"][1]="1999p190"
     catalog.write(path,format="fits",overwrite=True)
