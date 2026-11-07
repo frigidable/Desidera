@@ -148,6 +148,145 @@ def convolved_native_sersic(*, kernel, wcs, source_xy,
 
 
 
+
+def _shape_difference_on_same_native_pixels(reference, candidate, mask):
+    """Unit-flux patch shape differences, not a photometric error model."""
+    ref = np.asarray(reference, dtype=float)
+    cand = np.asarray(candidate, dtype=float)
+    valid = np.asarray(mask, dtype=bool)
+    if (ref.shape != cand.shape or ref.shape != valid.shape
+            or ref.ndim != 2 or not valid.any()
+            or not np.isfinite(ref[valid]).all()
+            or not np.isfinite(cand[valid]).all()
+            or np.any(ref[valid] < 0)
+            or np.any(cand[valid] < 0)):
+        raise ValueError("INCOMPARABLE_NATIVE_REFERENCE_STAMPS")
+    fr = float(np.sum(ref[valid]))
+    fc = float(np.sum(cand[valid]))
+    if fr <= 0 or fc <= 0:
+        raise ValueError("NONPOSITIVE_NATIVE_REFERENCE_STAMP_FLUX")
+    r = ref[valid]/fr
+    c = cand[valid]/fc
+    diff = c-r
+    return {
+        "relative_finite_patch_flux_difference": float((fc-fr)/fr),
+        "shape_l1_unit_flux_difference": float(np.sum(np.abs(diff))),
+        "shape_linf_unit_flux_difference": float(np.max(np.abs(diff))),
+        "l2_unit_flux_difference": float(np.sqrt(diff@diff)),
+        "relative_patch_normalization_not_source_total_flux": True,
+        "shape_errors_are_unweighted_geometry_only": True,
+    }
+
+
+def audit_approximate_sersic_sampling(*, kernel, wcs, source_xy,
+                                      origin_xy, width, morphology, valid,
+                                      baseline_template=None):
+    """3/5/7 native-intrinsic quadrature diagnostic, NOT Tractor validation.
+
+    For each grid, keep the SAME already-pixel-convolved frozen ePSF,
+    catalog geometry and finite padded domain. Tests numerical
+    quadrature convergence within this *one* analytic renderer only.
+    """
+    mask = np.asarray(valid, dtype=bool)
+    out = {
+        "schema": "desidera.psf0-p15e-native-sersic-subpixel-convergence/1",
+        "status": "UNINITIALIZED_SUBPIXEL_CONVERGENCE",
+        "evaluated_intrinsic_subpixel_grids": [3, 5, 7],
+        "single_frozen_native_empirical_psf_all_grids": True,
+        "same_catalog_morphology_and_native_wcs_all_grids": True,
+        "same_scene_geometry_and_original_valid_pixel_mask": True,
+        "not_a_comparison_against_tractor_mixture_of_gaussians": True,
+        "psf_already_pixel_integrated": True,
+        "finite_intrinsic_profile_and_psf_support_unvalidated": True,
+        "numerical_convergence_not_a_measurement_uncertainty": True,
+        "no_automatic_threshold_or_best_grid_selection": True,
+        "science_adopted": False,
+    }
+    if mask.shape != (width, width) or not mask.any():
+        return dict(out, status="INVALID_OR_EMPTY_NATIVE_REFERENCE_MASK")
+    try:
+        images = {}
+        for grid in (3,5,7):
+            if grid == 3 and baseline_template is not None:
+                img = np.asarray(baseline_template, dtype=float)
+                if img.shape != (width, width):
+                    raise ValueError("INVALID_BASELINE_RENDERED_STAMP_SHAPE")
+                images[grid] = img
+            else:
+                images[grid] = convolved_native_sersic(
+                    kernel=kernel, wcs=wcs, source_xy=source_xy,
+                    origin_xy=origin_xy, width=width,
+                    morphology=morphology, subpixel_grid=grid)
+        a35 = _shape_difference_on_same_native_pixels(
+            images[3], images[5], mask)
+        a57 = _shape_difference_on_same_native_pixels(
+            images[5], images[7], mask)
+        a37 = _shape_difference_on_same_native_pixels(
+            images[3], images[7], mask)
+    except (ValueError, ArithmeticError, FloatingPointError) as exc:
+        return dict(out, status="SERSIC_SUBPIXEL_CHECK_NOT_NUMERICALLY_VALID",
+                    reason=str(exc))
+    return dict(
+        out, status="THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR",
+        n_original_valid_scene_pixels=int(mask.sum()),
+        three_to_five=a35,
+        five_to_seven=a57,
+        three_to_seven=a37,
+        five_to_seven_not_proven_zero_or_physical_reference=True,
+    )
+
+
+def compare_analytic_stamp_to_external_tractor(
+    analytic_stamp, reference_stamp, valid, *, provenance,
+):
+    """Compare only a supplied external reference, never fabricate one.
+
+    The caller must provide a pre-rendered identical-coordinate,
+    identical-PSF Tractor source stamp. Its metadata is descriptive
+    self-reported evidence, not proof of engine identity or that the
+    survey exposure PSF equals the coadd ePSF. No Tractor GPL code
+    is incorporated or installed by Desidera.
+    """
+    required = (
+        "renderer", "renderer_version_or_commit", "tractor_source_type",
+        "source_identifier", "native_wcs_fingerprint",
+        "input_psf_fingerprint", "reference_generation_recipe",
+    )
+    out = {
+        "schema": "desidera.psf0-p15e-external-tractor-stamp-comparison/1",
+        "status": "UNINITIALIZED_EXTERNAL_REFERENCE_CHECK",
+        "require_original_same_source_same_wcs_same_psf": True,
+        "external_reference_identity_self_reported_not_verified": True,
+        "comparison_does_not_certify_tractor_reproduction": True,
+        "no_gpl_tractor_code_imported_or_reproduced": True,
+        "science_adopted": False,
+    }
+    if not isinstance(provenance, dict):
+        return dict(out, status="NO_EXTERNAL_REFERENCE_PROVENANCE")
+    missing = [
+        key for key in required
+        if not isinstance(provenance.get(key),str)
+        or not provenance[key].strip()
+    ]
+    if missing:
+        return dict(out, status="INCOMPLETE_EXTERNAL_REFERENCE_PROVENANCE",
+                    missing_fields=missing)
+    if provenance["renderer"] != "dstndstn/tractor":
+        return dict(out, status="NOT_AN_IDENTIFIED_TRACTOR_RENDERER")
+    try:
+        diff = _shape_difference_on_same_native_pixels(
+            reference_stamp, analytic_stamp, valid)
+    except (ValueError, ArithmeticError) as exc:
+        return dict(out, status="INCOMPARABLE_EXTERNAL_REFERENCE_ARRAYS",
+                    reason=str(exc))
+    return dict(
+        out,
+        status="EXTERNAL_REFERENCE_ARRAYS_COMPARED_NOT_SCIENCE_CERTIFIED",
+        supplied_external_reference_provenance=provenance,
+        common_native_pixel_shape_comparison=diff,
+        still_requires_independent_psf_and_wcs_lineage_verification=True,
+    )
+
 def _predeclared_ring_prediction(z, B, P, weights, radius_pix, *,
                                 guessed_fwhm_pix, n_base_columns):
     """Withhold 2–4 detection FWHM annulus from BOTH model fits.
