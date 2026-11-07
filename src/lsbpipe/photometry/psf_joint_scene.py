@@ -438,6 +438,12 @@ def audit_fixed_psf_joint_scenes(
                 "tractor_objid": int(row["objid"]),
                 "tractor_type": row["type"],
                 "flux_nMgy": flux,
+                # These MUST originate from the original DR11 Tractor
+                # table; missing morphology remains None, never guessed.
+                "shape_r_arcsec": row.get("shape_r_arcsec"),
+                "shape_e1": row.get("shape_e1"),
+                "shape_e2": row.get("shape_e2"),
+                "sersic_n": row.get("sersic_n"),
             }
             if row["type"] == "PSF" and flux is not None and flux > 0:
                 neighboring.append(record)
@@ -479,6 +485,25 @@ def audit_fixed_psf_joint_scenes(
             guessed_fwhm_pix=guessed_fwhm_pix,
             original_sky_nMgy_pix=star.cutout_sky_nMgy)
         item.update(fitted)
+        # P15: one separate, non-adopting observational comparison of
+        # actual DR11 REX/EXP/DEV morphology, never fed back into PSF.
+        # A local import avoids a cycle: the extended renderer reuses
+        # the already tested projected-NNLS primitives in this module.
+        if fitted["status"] == "FIXED_PSF_JOINT_SCENE_DIAGNOSTIC":
+            from lsbpipe.photometry.psf_extended_scene import (
+                pilot_extended_scene,
+            )
+            item["p15_extended_tractor_scene"] = pilot_extended_scene(
+                frame.image_nMgy, frame.invvar_nMgy2, valid,
+                wcs=frame.wcs, kernel=kernel_arr,
+                target_xy=(x,y), point_sources=neighboring,
+                extended_sources=extended,
+                guessed_fwhm_pix=guessed_fwhm_pix)
+        else:
+            item["p15_extended_tractor_scene"] = {
+                "status":"NOT_RUN_NO_IDENTIFIABLE_P14_POINT_SCENE",
+                "science_adopted":False,
+            }
         outputs.append(item)
     ok = [row for row in outputs
           if row["status"] == "FIXED_PSF_JOINT_SCENE_DIAGNOSTIC"]
@@ -506,6 +531,24 @@ def audit_fixed_psf_joint_scenes(
             row["role"] == "holdout" for row in ok),
         "n_holdouts_expected": sum(star.role == "holdout" for star in stars),
         "per_star": outputs,
+        "p15_extended_scene_pilot_summary": {
+            "schema": "desidera.psf0-native-tractor-extended-scene-summary/1",
+            "n_original_stars":len(stars),
+            "n_attempted_after_p14":sum(
+                row.get("p15_extended_tractor_scene", {}).get("status")
+                != "NOT_RUN_NO_IDENTIFIABLE_P14_POINT_SCENE"
+                for row in outputs),
+            "n_numerical_partial_extended_fits":sum(
+                row.get("p15_extended_tractor_scene", {}).get("status")
+                == "PARTIAL_APPROXIMATE_EXTENDED_SCENE_DIAGNOSTIC"
+                for row in outputs),
+            "n_fits_with_unmodelled_extended_sources":sum(
+                row.get("p15_extended_tractor_scene", {}).get(
+                    "n_extended_catalog_unmodeled",0)>0 for row in outputs),
+            "no_psf_adoption_or_star_split_changes":True,
+            "not_exact_tractor_profile_or_noise_covariance":True,
+            "science_adopted":False,
+        },
         "all_stars_audited_without_resplitting": True,
         "catalog_only_nuisance_sources_are_not_new_training_stars": True,
         "frozen_psf_still_has_no_wide_angle_wings": True,
