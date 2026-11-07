@@ -230,6 +230,10 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
             "n_preselected_stars": 2,
             "n_completed_fixed_holdouts": 1,
             "n_holdouts_expected": 1,
+            "p15_extended_scene_pilot_summary": {
+                "n_numerical_partial_extended_fits":1,
+                "n_attempted_after_p14":1,
+            },
             "per_star": [
                 {"source_id":"star-0032", "role":"holdout",
                  "status":"FIXED_PSF_JOINT_SCENE_DIAGNOSTIC",
@@ -250,7 +254,16 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                      "tractor_objid":12,
                      "tractor_type":"REX",
                      "separation_from_star_pix":18.60},
-                 "n_catalog_neighbors_with_exact_zero_finite_psf_support":1},
+                 "n_catalog_neighbors_with_exact_zero_finite_psf_support":1,
+                 "p15_extended_tractor_scene": {
+                     "status":"PARTIAL_APPROXIMATE_EXTENDED_SCENE_DIAGNOSTIC",
+                     "n_extended_profiles_rendered":1,
+                     "n_catalog_extended_candidates":2,
+                     "full_scene_fractional_rss_change":.41,
+                     "central_aperture_comparison": {
+                         "four_guessed_fwhm": {
+                             "signed_rss_improvement_fraction":-.05}},
+                     "sky_with_minus_without_extended_at_star_nMgy_pix":-.0006}},
                 {"source_id":"star-0011", "role":"train",
                  "status":"FULL_EXPANDED_NATIVE_STAMP_OUTSIDE_IMAGE"},
             ]
@@ -273,6 +286,13 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "TYPE=REX" in summary
     assert "offset=18.60" in summary
     assert "zero support" in summary
+    assert "P15 approximate Tractor REX/EXP/DEV" in summary
+    assert "1/1 native scenes" in summary
+    assert "1/2" in summary
+    assert "global RSS +41%" in summary
+    assert "central 4 FWHM -5%" in summary
+    assert "sky shift -0.0006 nMgy/pix" in summary
+    assert "NOT a recovered wide PSF" in summary
 
 
 def test_joint_scene_rejects_fractional_footprint_without_silent_truncation():
