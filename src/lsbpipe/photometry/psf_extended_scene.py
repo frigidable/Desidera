@@ -279,13 +279,13 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         full_scene_fractional_rss_change=(
             float((rss0-rss)/rss0) if rss0>0 else None),
         central_aperture_comparison=regions,
-        sky_with_minus_without_extended_at_star_nMgy_pix:
+        sky_with_minus_without_extended_at_star_nMgy_pix=
             float(sky[0]-sky0[0]),
-        main_star_fit_with_extended_peak_nMgy_pix:float(a[0]),
-        main_star_fit_without_extended_peak_nMgy_pix:float(a0[0]),
-        full_design_condition_number:float(cond),
-        baseline_design_condition_number:float(cond0),
-        nested_global_rss_gain_not_evidence_of_better_psf:True,
-        omitted_catalog_sources_prevent_complete_deblending:(
+        main_star_fit_with_extended_peak_nMgy_pix=float(a[0]),
+        main_star_fit_without_extended_peak_nMgy_pix=float(a0[0]),
+        full_design_condition_number=float(cond),
+        baseline_design_condition_number=float(cond0),
+        nested_global_rss_gain_not_evidence_of_better_psf=True,
+        omitted_catalog_sources_prevent_complete_deblending=(
             len(admitted)<len(extended_sources)),
     )
