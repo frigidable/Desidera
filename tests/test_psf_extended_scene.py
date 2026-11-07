@@ -137,6 +137,18 @@ def test_extended_pilot_recovers_synthetic_model_and_does_not_mutate_pixels():
     assert out["weighted_rss_with_extended"] < 1e-10
     assert out["weighted_rss_without_extended"] > 0.
     assert out["full_scene_fractional_rss_change"]>.99
+    ring=out["predeclared_2_to_4_fwhm_ring_prediction"]
+    assert ring["status"]=="PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION"
+    assert ring["n_reserved_native_pixels"] > 0
+    assert ring["n_fitting_native_pixels"] + ring["n_reserved_native_pixels"] == (
+        out["n_valid_original_native_pixels"])
+    assert ring["weighted_reserved_ring_rss_without_extended"] > 0
+    assert ring["weighted_reserved_ring_rss_with_extended"] < 1e-10
+    assert ring["signed_predictive_ring_rss_improvement_fraction"] > .99
+    assert ring["both_fits_exclude_all_reserved_ring_pixels"]
+    assert ring["pixel_resampling_covariance_across_ring_boundary_unmodeled"]
+    assert ring["psf_itself_not_independently_trained_for_every_star"]
+    assert ring["no_model_selection_or_science_adoption"]
     assert out["central_aperture_comparison"]["four_guessed_fwhm"][
         "same_original_native_pixels_globally_fit_models"]
     assert out["no_coadd_covariance_or_parameter_uncertainty_model"]
@@ -171,3 +183,36 @@ def test_scene_skips_unsupported_types_without_declaring_completeness():
     assert out["n_extended_catalog_unmodeled"]==1
     assert not out["all_catalog_extended_profiles_accounted_for"]
     assert out["omitted_catalog_sources_prevent_complete_deblending"]
+
+
+
+def test_reserved_ring_no_valid_pixels_reports_failure_without_claiming_cv():
+    image,k,w,star,dev=_truth_scene()
+    yy,xx=np.indices(image.shape,dtype=float)
+    dist=np.hypot(xx-star[0],yy-star[1])
+    valid=np.ones_like(image,dtype=bool)
+    valid[(dist>2*6.57)&(dist<=4*6.57)]=False
+    out=pilot_extended_scene(
+        image,np.ones_like(image),valid,wcs=w,kernel=k,
+        target_xy=star,point_sources=[],extended_sources=[dev],
+        guessed_fwhm_pix=6.57)
+    assert out["status"]=="PARTIAL_APPROXIMATE_EXTENDED_SCENE_DIAGNOSTIC"
+    ring=out["predeclared_2_to_4_fwhm_ring_prediction"]
+    assert ring["status"]=="INSUFFICIENT_RING_OR_TRAINING_PIXELS"
+    assert ring["n_reserved_native_pixels"]==0
+    assert ring["no_model_selection_or_science_adoption"]
+
+
+def test_reserved_ring_partition_is_deterministic_under_preserved_native_inputs():
+    image,k,w,star,gal=_truth_scene()
+    kwargs=dict(wcs=w,kernel=k,target_xy=star,
+                point_sources=[],extended_sources=[gal],
+                guessed_fwhm_pix=6.57)
+    a=pilot_extended_scene(
+        image,np.ones_like(image),np.ones_like(image,dtype=bool),
+        **kwargs)["predeclared_2_to_4_fwhm_ring_prediction"]
+    b=pilot_extended_scene(
+        image,np.ones_like(image),np.ones_like(image,dtype=bool),
+        **kwargs)["predeclared_2_to_4_fwhm_ring_prediction"]
+    assert a==b
+    assert a["status"]=="PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION"
