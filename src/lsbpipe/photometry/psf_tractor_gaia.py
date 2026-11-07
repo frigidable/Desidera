@@ -306,6 +306,27 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
                 "gaia_g_mag": (
                     _number(row[names["GAIA_PHOT_G_MEAN_MAG"]])
                     if "GAIA_PHOT_G_MEAN_MAG" in names else None),
+                # P15: retain DR11 physical/shape metadata only when
+                # actually present in the original SAME brick FITS.
+                # SHAPE_R is in arcsec; e1/e2 are Tractor's reduced
+                # ellipticity components, not sky pixel axis ratios.
+                # None MUST NOT be replaced with a guessed radius.
+                "shape_r_arcsec": (
+                    _number(row[names["SHAPE_R"]])
+                    if "SHAPE_R" in names else None),
+                "shape_e1": (
+                    _number(row[names["SHAPE_E1"]])
+                    if "SHAPE_E1" in names else None),
+                "shape_e2": (
+                    _number(row[names["SHAPE_E2"]])
+                    if "SHAPE_E2" in names else None),
+                "sersic_n": (
+                    _number(row[names["SERSIC"]])
+                    if "SERSIC" in names else None),
+                "morphology_fields_in_native_catalog": {
+                    key: key in names for key in (
+                        "SHAPE_R", "SHAPE_E1", "SHAPE_E2", "SERSIC")
+                },
             })
     digest = _hash_file(path)
     after = path.stat()
