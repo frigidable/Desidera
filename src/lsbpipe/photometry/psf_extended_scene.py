@@ -242,6 +242,27 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
             templates.append(t)
             points.append(int(source["tractor_objid"]))
     n_point=len(points)
+    # Avoid rendering dozens of expensive 3x3 subpixel-convolved
+    # profiles before discovering that the source solve exceeds the
+    # declared engineering compute budget. This is conservative:
+    # a valid candidate may subsequently have no usable pixel support,
+    # but the preflight must fail rather than silently discard sources.
+    n_potential_extended=sum(
+        audit_tractor_shape(source)["status"]
+        == "VALID_APPROXIMATE_EXTENDED_TEMPLATE"
+        and finite(source.get("flux_nMgy")) is not None
+        and finite(source.get("flux_nMgy")) > 0.
+        for source in extended_sources)
+    if n_point+n_potential_extended>MAX_NUISANCE_SOURCES:
+        return dict(
+            base,
+            status="POTENTIAL_EXTENDED_SOURCE_BUDGET_EXCEEDED_BEFORE_RENDER",
+            n_point_templates_rendered=n_point,
+            n_potential_shape_valid_extended_sources=n_potential_extended,
+            n_original_extended_candidates=len(extended_sources),
+            source_budget=MAX_NUISANCE_SOURCES,
+            no_partial_catalog_source_truncation=True,
+        )
     extended_audit=[]
     admitted=[]
     for item in extended_sources:
