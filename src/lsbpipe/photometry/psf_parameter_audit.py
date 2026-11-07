@@ -71,6 +71,14 @@ _SECONDARY_THRESHOLDS = {
         1, "psf_joint_scene.py; planar local background approximation"),
     "fixed_scene_subpixel_interpolation_order": (
         3, "psf_joint_scene.py scipy.ndimage.map_coordinates cubic"),
+    "p15_extended_scene_nuisance_budget": (
+        28, "psf_extended_scene.py MAX_NUISANCE_SOURCES; engineering cap"),
+    "p15_extended_intrinsic_pixel_integration_grid": (
+        3, "psf_extended_scene.py SUBPIXEL_GRID; analytic profile approximation"),
+    "p15_exponential_half_light_bn": (
+        1.6783469900166612, "psf_extended_scene.py SERSIC_B[n=1]"),
+    "p15_devaucouleurs_half_light_bn": (
+        7.669249442500804, "psf_extended_scene.py SERSIC_B[n=4]"),
 }
 
 
