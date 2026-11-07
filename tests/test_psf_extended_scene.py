@@ -8,6 +8,7 @@ from astropy.wcs import WCS
 from lsbpipe.photometry.psf_extended_scene import (
     audit_tractor_shape, local_tangent_jacobian,
     convolved_native_sersic, pilot_extended_scene,
+    morphology_stress_variants,
 )
 from lsbpipe.photometry.psf_joint_scene import _shifted_native_kernel
 
@@ -262,3 +263,102 @@ def test_large_shape_valid_catalog_fails_before_expensive_rendering():
     assert result["source_budget"]==28
     assert result["no_partial_catalog_source_truncation"]
     assert not result["science_adopted"]
+
+
+
+def test_p15d_morphology_cases_are_predeclared_and_keep_tractor_conventions():
+    original=_item("DEV",shape_e1=.25,shape_e2=0.)
+    copy=dict(original)
+    cases=morphology_stress_variants(original)
+    assert len(cases)==6
+    assert all(x["status"]=="VALID_CONTROLLED_VARIANT" for x in cases)
+    by_case={x["case"]:x for x in cases}
+    smaller=by_case["half_light_radius_minus_10_percent"]["catalog_row"]
+    larger=by_case["half_light_radius_plus_10_percent"]["catalog_row"]
+    assert smaller["shape_r_arcsec"]==pytest.approx(1.44)
+    assert larger["shape_r_arcsec"]==pytest.approx(1.76)
+    e_minus=by_case["ellipticity_norm_minus_0p05"]["catalog_row"]
+    e_plus=by_case["ellipticity_norm_plus_0p05"]["catalog_row"]
+    assert np.hypot(e_minus["shape_e1"],e_minus["shape_e2"])==pytest.approx(.2)
+    assert np.hypot(e_plus["shape_e1"],e_plus["shape_e2"])==pytest.approx(.3)
+    pa_minus=by_case["position_angle_minus_10_deg"]["catalog_row"]
+    pa_plus=by_case["position_angle_plus_10_deg"]["catalog_row"]
+    assert audit_tractor_shape(pa_minus)[
+        "position_angle_east_of_north_deg"]==pytest.approx(170.)
+    assert audit_tractor_shape(pa_plus)[
+        "position_angle_east_of_north_deg"]==pytest.approx(10.)
+    assert np.hypot(pa_minus["shape_e1"],pa_minus["shape_e2"])==pytest.approx(.25)
+    assert np.hypot(pa_plus["shape_e1"],pa_plus["shape_e2"])==pytest.approx(.25)
+    assert original==copy  # input Tractor metadata is strictly read-only
+
+
+def test_p15d_rex_has_radius_only_and_round_exp_has_undefined_pa():
+    rex=_item("REX",shape_e1=None,shape_e2=None)
+    cases=morphology_stress_variants(rex)
+    assert len(cases)==6
+    assert sum(x["status"]=="VALID_CONTROLLED_VARIANT" for x in cases)==2
+    assert sum(x["status"]=="NOT_A_REX_PROFILE_PARAMETER" for x in cases)==4
+    circle=morphology_stress_variants(_item("EXP",shape_e1=0.,shape_e2=0.))
+    assert sum(x["status"]=="VALID_CONTROLLED_VARIANT" for x in circle)==2
+    assert sum(x["status"]=="UNDEFINED_CIRCULAR_REFERENCE_PA" for x in circle)==4
+
+
+def test_p15d_ellipticity_boundary_excluded_not_clamped():
+    cases=morphology_stress_variants(_item(
+        "DEV",shape_e1=.98,shape_e2=0.))
+    ups=[x for x in cases if x["case"]=="ellipticity_norm_plus_0p05"]
+    assert ups[0]["status"]=="OUTSIDE_PHYSICAL_ELLIPTICITY_DOMAIN"
+    assert "catalog_row" not in ups[0]
+    assert not morphology_stress_variants(_item("DEV",shape_r_arcsec=None))
+
+
+def test_p15d_same_original_pixels_stress_response_on_exact_injected_dev():
+    image,k,w,star,dev=_truth_scene()
+    original=image.copy()
+    result=pilot_extended_scene(
+        image,np.ones_like(image),np.ones_like(image,dtype=bool),
+        wcs=w,kernel=k,target_xy=star,point_sources=[],
+        extended_sources=[dev],guessed_fwhm_pix=6.57)
+    stress=result["p15d_morphology_controlled_stress"]
+    assert stress["status"]=="PREDECLARED_MORPHOLOGY_STRESS_DIAGNOSTIC"
+    assert stress["schema"]=="desidera.psf0-p15d-tractor-morphology-stress/1"
+    assert stress["selected_tractor_objid"]==1941
+    assert stress["n_rendered_extended_sources_in_original_fit"]==1
+    assert stress["source_selection_policy"]==(
+        "NEAREST_RENDERABLE_EXTENDED_CENTROID_PRIOR_TO_FITTING")
+    assert stress["n_successful_stress_cases"]==6
+    assert stress["n_skipped_or_failed_cases"]==0
+    assert stress["n_fitting_original_native_pixels"]+(
+        stress["n_reserved_original_native_pixels"])==(
+            result["n_valid_original_native_pixels"])
+    assert stress["perturbations_are_not_catalog_sigma_or_uncertainty"]
+    assert stress["stress_envelope_is_not_a_confidence_interval"]
+    assert stress["reserved_2_to_4_guessed_fwhm_never_used_in_fits"]
+    assert stress["science_adopted"] is False
+    assert stress["nominal_ring_rss"]<1e-10
+    assert stress["nominal_sky_at_star_nMgy_per_native_pixel"]==pytest.approx(
+        .004,abs=1e-8)
+    for case in stress["cases"]:
+        assert case["status"]=="CONTROLLED_PERTURBATION_FIT_SUCCESS"
+        assert case["reserved_ring_weighted_rss"]>stress["nominal_ring_rss"]
+        assert case["delta_reserved_ring_weighted_rss"]>0.
+        assert case["ring_score_is_descriptive_not_noise_covariance_likelihood"]
+    envelope=stress["descriptive_min_max_stress_response_not_error_bars"]
+    assert envelope["delta_reserved_ring_weighted_rss"]["max"]>0.
+    np.testing.assert_array_equal(image,original)
+
+
+def test_p15d_preselected_nearest_source_has_stable_id_not_residual_ranking():
+    image,k,w,star,truth=_truth_scene()
+    far=_item(
+        "EXP",tractor_objid=2033,x_pix=140.,y_pix=120.,flux_nMgy=3.)
+    out=pilot_extended_scene(
+        image,np.ones_like(image),np.ones_like(image,dtype=bool),
+        wcs=w,kernel=k,target_xy=star,point_sources=[],
+        extended_sources=[far,truth],guessed_fwhm_pix=6.57)
+    stress=out["p15d_morphology_controlled_stress"]
+    assert stress["selected_tractor_objid"]==1941
+    assert stress["n_rendered_extended_sources_in_original_fit"]==2
+    assert stress["only_one_extended_source_perturbed_at_a_time"]
+    assert stress["all_other_rendered_catalog_components_frozen"]
+    assert not stress["science_adopted"]
