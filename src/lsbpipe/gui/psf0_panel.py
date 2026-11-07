@@ -1243,6 +1243,25 @@ class PSF0Panel(QGroupBox):
                                     f"central 4 FWHM {100*local_gain:+.3g}%, "
                                     f"sky shift {sky_change:+.4g} nMgy/pix. "
                                     "Uncalibrated, incomplete source geometry.")
+                            withheld = scene.get(
+                                "predeclared_2_to_4_fwhm_ring_prediction", {})
+                            if withheld.get("status") == (
+                                    "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION"):
+                                ring_gain = withheld.get(
+                                    "signed_predictive_ring_rss_improvement_fraction")
+                                if ring_gain is not None:
+                                    notes.append(
+                                        "    P15 ring 2–4 guessed FWHM HELD OUT "
+                                        "from both fits: predictive weighted RSS "
+                                        f"change {100*ring_gain:+.3g}%, "
+                                        f"{withheld.get('n_reserved_native_pixels', 0)} "
+                                        "reserved native pixels. Coadd pixels "
+                                        "are correlated; not independent PSF QA.")
+                            else:
+                                notes.append(
+                                    "    P15 2–4 FWHM withheld-ring check: "
+                                    f"{withheld.get('status', 'NOT_AVAILABLE')}; "
+                                    "no predictive claim.")
                         else:
                             notes.append(
                                 f"  {star.get('source_id', '?')}: P15 "
