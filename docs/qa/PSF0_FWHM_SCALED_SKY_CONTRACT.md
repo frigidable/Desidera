@@ -2015,3 +2015,86 @@ See the native official DR11 file column definitions:
 https://www.legacysurvey.org/dr11/files/ and the official
 Tractor catalog explanation:
 https://www.legacysurvey.org/dr11/catalogs/ .
+
+
+### P15E — separate analytic sampling convergence from external Tractor fidelity
+
+**Implemented remotely in PR #43; not yet compared against an actual
+external Tractor model image from DR11.** This is a necessary
+distinction: the original P15A–D code analytically renders a finite,
+pixel-sampled Sérsic n=1/n=4 profile and convolves it with the frozen
+experimental *coadd* PSF. Tractor's official DR11 pipeline instead
+uses a mixture-of-Gaussians (MoG) representation and a Fourier-space
+convolution against a **pixel-convolved exposure PSF**. DR11 Tractor
+fits sources on individual exposures, not against coadded pixels.
+Consequently the hypothetical "same source" coadd P15 scene has
+systematic *model and PSF lineage differences* even if its numerical
+convolution converges.
+
+Official external source specifications:
+- DR11 algorithm and exposure/coadd distinction:
+  https://www.legacysurvey.org/dr11/description/
+- Tractor source, API and GPLv2/astrometry.net build requirements:
+  https://github.com/dstndstn/tractor
+- Tractor documented ExpGalaxy, DevGalaxy, EllipseE:
+  https://thetractor.readthedocs.io/en/latest/intro2.html
+
+The Tractor source is GPLv2 and may have optional compiled/native
+dependencies. Desidera does not embed, reimplement from copied GPL
+code, or transparently install it as a core dependency. No raw
+Tractor reference stamp or exact same-PSF test has been supplied yet.
+A test that uses the *same analytic Sérsic renderer* for injection and
+recovery is not proof of agreement with Tractor, even when its
+pixel-space residual is zero.
+
+**P15E code-only numerical check.** For exactly the nearest
+already-rendered extended neighbor (selected by geometric catalog
+distance and OBJID *before* inspecting model residuals), use the same
+source centroid, original native WCS, finite scene footprint,
+valid-pixel mask, same-shape metadata, and frozen empirical PSF,
+but render the analytic intrinsic Sérsic profile using deterministic
+odd subpixel integration grids **3×3, 5×5 and 7×7**. The original
+P15 fitted scene still uses 3×3; the 5/7 grids are read-only QA
+figures and are never silently promoted to the photometric model.
+On the same original valid pixels, compare each pair of models
+(3→5, 5→7, 3→7) after *separately* renormalizing their finite-scene
+flux to unity. The comparisons serialize L1, L2, maximum per-pixel
+absolute deviations in common unit-scene-flux coordinates, and
+the **relative finite-patch flux** change prior to normalization.
+These are numerical integration/shape diagnostics, **not** total
+source flux errors, not intrinsic wing recovery, and not a claimed
+Tractor matching tolerance. A small 5→7 difference does not rule
+out a common model bias or truncation.
+
+**External-reference contract.** The separate
+\`compare_analytic_stamp_to_external_tractor\` API can compare our
+native stamp with a real, independently rendered reference image
+when and only when it is actually supplied with nonblank
+provenance: renderer \`dstndstn/tractor\`, version/commit, source
+TYPE and identity, native WCS fingerprint, input PSF fingerprint,
+and the exact rendering recipe. It rejects missing provenance,
+mismatched arrays, negative or zero reference pixels and
+unrecognised renderer names. It compares shapes on the **same
+supplied mask**, renormalized to each finite patch's total
+included flux. These labels are caller-provided metadata and are
+not themselves verified cryptographically: even a numerical
+pixel-perfect match is reported as
+\`EXTERNAL_REFERENCE_ARRAYS_COMPARED_NOT_SCIENCE_CERTIFIED\`,
+**not** Tractor equivalence. A true external comparison also
+requires auditing WCS, PSF, pixel sampling and source-parameter
+lineage and, ultimately, preserving the *exposure-vs-coadd*
+distinction. Until then every original P15 scene explicitly reports
+\`ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED\`, and the
+PSF science gate remains closed.
+
+This new evidence is serialized as
+\`p15e_analytic_subpixel_convergence\` and
+\`p15e_external_tractor_reference\` under the existing
+\`p15_extended_tractor_scene\` object. The main PSF kernel,
+star sample/split, original FITS, and downstream photometry
+are unmodified, with \`science_adopted=false\`. Synthetic tests
+are permitted to verify numerical consistency, masks, status
+refusal and reference comparison arithmetic; they do NOT turn
+a synthetic "Tractor-labelled" mock into a genuine external
+Tractor result. Actual DR11-reference reconciliation is still
+a research task for a future stage.
