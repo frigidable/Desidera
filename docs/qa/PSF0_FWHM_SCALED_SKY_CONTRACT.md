@@ -1992,3 +1992,26 @@ ellipticity/PA algebra, REX and circular-domain refusals,
 physical boundary refusals, native-pixel injection response
 and pre-fit candidate selection. A real Leo P g run can
 follow once original FITS are accessible.
+
+
+**Additional original Tractor inverse-variance provenance.**
+The DR11 catalog also publishes optional diagonal formal
+\`SHAPE_R_IVAR\` [arcsec\(^{-2}\)],
+\`SHAPE_E1_IVAR\`, and \`SHAPE_E2_IVAR\`. The native same-brick
+reader preserves these *unaltered*, if present, as
+\`shape_r_ivar_arcsec_m2\`, \`shape_e1_ivar\` and
+\`shape_e2_ivar\` and propagates them to the P15D selected-source
+provenance in
+\`nominal_catalog_formal_shape_ivars_not_covariance_or_stress_scale\`.
+Their absence stays \`None\`; zeros or formally positive values
+are recorded without forcing an error distribution. The source
+does not provide the complete structural-parameter covariance
+needed for fully joint uncertainty propagation, nor the
+reconstruction error of our approximate finite PSF-convolved
+Sersic profile; DO NOT conflate these raw inverse variances
+with the deliberately fixed P15D stress magnitudes.
+
+See the native official DR11 file column definitions:
+https://www.legacysurvey.org/dr11/files/ and the official
+Tractor catalog explanation:
+https://www.legacysurvey.org/dr11/catalogs/ .
