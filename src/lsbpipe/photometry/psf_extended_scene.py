@@ -142,6 +142,68 @@ def convolved_native_sersic(*, kernel, wcs, source_xy,
     return out
 
 
+
+def _predeclared_ring_prediction(z, B, P, weights, radius_pix, *,
+                                guessed_fwhm_pix, n_base_columns):
+    """Withhold 2–4 detection FWHM annulus from BOTH model fits.
+
+    Fixed, predeclared annular split on ORIGINAL same-pixel coadds.
+    Templates/morphology/PSF are frozen before the split. This is
+    predictive *pixel* QA only, NOT an independent star validation:
+    resampled coadd pixel covariances cross the train/test boundary.
+    """
+    ring = ((radius_pix > 2.*guessed_fwhm_pix)
+            & (radius_pix <= 4.*guessed_fwhm_pix))
+    train = ~ring
+    out = {
+        "schema": "desidera.psf0-p15-native-annular-predictive-check/1",
+        "heldout_radius_inner_guessed_fwhm": 2.,
+        "heldout_radius_outer_guessed_fwhm": 4.,
+        "n_fitting_native_pixels": int(np.count_nonzero(train)),
+        "n_reserved_native_pixels": int(np.count_nonzero(ring)),
+        "both_fits_exclude_all_reserved_ring_pixels": True,
+        "fixed_templates_morphology_and_psf_prior_to_pixel_split": True,
+        "predictive_test_uses_same_original_native_pixel_mask": True,
+        "pixel_resampling_covariance_across_ring_boundary_unmodeled": True,
+        "psf_itself_not_independently_trained_for_every_star": True,
+        "no_model_selection_or_science_adoption": True,
+    }
+    if (not np.any(ring) or
+            np.count_nonzero(train) <= P.shape[1]+3):
+        return dict(out, status="INSUFFICIENT_RING_OR_TRAINING_PIXELS")
+    try:
+        fitted, sky, _, condition = _projected_nnls(
+            z[train], B[train], P[train], weights[train])
+        baseline, sky_base, _, condition_base = _projected_nnls(
+            z[train], B[train], P[train, :n_base_columns],
+            weights[train])
+    except (ValueError, RuntimeError) as exc:
+        return dict(
+            out, status="RING_EXCLUDED_FITS_NOT_IDENTIFIABLE",
+            reason=str(exc))
+    prediction = (
+        z[ring] - B[ring]@sky - P[ring]@fitted)
+    baseline_prediction = (
+        z[ring] - B[ring]@sky_base
+        - P[ring,:n_base_columns]@baseline)
+    score = float(np.dot(
+        weights[ring]*prediction, weights[ring]*prediction))
+    score_base = float(np.dot(
+        weights[ring]*baseline_prediction,
+        weights[ring]*baseline_prediction))
+    return dict(
+        out, status="PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION",
+        weighted_reserved_ring_rss_with_extended=score,
+        weighted_reserved_ring_rss_without_extended=score_base,
+        signed_predictive_ring_rss_improvement_fraction=(
+            float((score_base-score)/score_base)
+            if score_base>0 else None),
+        training_extended_design_condition_number=float(condition),
+        training_point_only_design_condition_number=float(condition_base),
+        negative_ring_gain_retained_instead_of_clamped=True,
+        not_chi_squared_without_coadd_covariance=True,
+    )
+
 def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
                          point_sources, extended_sources,
                          guessed_fwhm_pix, scene_width=None):
@@ -256,6 +318,10 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
     residual=(z[mask]-B@sky-P@a)*w
     residual0=(z[mask]-B@sky0-P[:,:baseline_columns]@a0)*w
     distance=np.hypot(xx-cx,yy-cy)[mask]
+    predictive_ring = _predeclared_ring_prediction(
+        z[mask], B, P, w, distance,
+        guessed_fwhm_pix=guessed_fwhm_pix,
+        n_base_columns=baseline_columns)
     regions={}
     for name,radius in [("one_guessed_fwhm",guessed_fwhm_pix),
                         ("four_guessed_fwhm",4*guessed_fwhm_pix)]:
@@ -279,6 +345,7 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         full_scene_fractional_rss_change=(
             float((rss0-rss)/rss0) if rss0>0 else None),
         central_aperture_comparison=regions,
+        predeclared_2_to_4_fwhm_ring_prediction=predictive_ring,
         sky_with_minus_without_extended_at_star_nMgy_pix=
             float(sky[0]-sky0[0]),
         main_star_fit_with_extended_peak_nMgy_pix=float(a[0]),
