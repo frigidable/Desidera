@@ -259,7 +259,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "stellar_sky_ring_sensitivity": "ORIGINAL_PIXELS_INTERIOR_RING_AND_NATIVE_SCAN_V2_DESCRIPTIVE",
         "gaia_seed_dao_coverage": "CATALOG_PREFLIGHT_V1_NO_SAMPLE_PROMOTION",
         "holdout_sky_equivalence": "CORE_NORMALIZED_UNIFORM_OFFSET_WITH_RADIAL_CONSISTENCY_V2",
-        "fixed_psf_joint_native_scene": "STAR_POINT_NEIGHBORS_PLUS_PLANAR_SKY_V2_ZERO_SUPPORT_LOCAL_RSS_QA_ONLY",
+        "fixed_psf_joint_native_scene": "STAR_POINT_NEIGHBORS_PLUS_PLANAR_SKY_V3_NONCAUSAL_RSS_ALGEBRA_QA_ONLY",
     }
     return {
         "sha256": sha256(json.dumps(
