@@ -204,6 +204,254 @@ def _predeclared_ring_prediction(z, B, P, weights, radius_pix, *,
         not_chi_squared_without_coadd_covariance=True,
     )
 
+
+# Fixed exploratory perturbation magnitudes, not measured Tractor errors.
+# Changing them requires a new method fingerprint; none is calibrated.
+P15D_RADIUS_FRACTION = 0.10
+P15D_ELLIPTICITY_DELTA = 0.05
+P15D_POSITION_ANGLE_DEG = 10.
+
+
+def morphology_stress_variants(row):
+    """Six predeclared one-at-a-time morphology cases, including refusals.
+
+    Preserve the Tractor (e1,e2) doubled-angle convention. For REX,
+    ellipticity and PA are not degrees of freedom. For a round EXP/DEV,
+    PA is undefined: never invent a reference orientation. If a
+    perturbation leaves the physical e<1 domain, refuse instead of clip.
+    """
+    nominal = audit_tractor_shape(row)
+    if nominal["status"] != "VALID_APPROXIMATE_EXTENDED_TEMPLATE":
+        return []
+    variants = []
+    for direction in (-1, +1):
+        label = "minus" if direction < 0 else "plus"
+        changed = dict(row)
+        changed["shape_r_arcsec"] = (
+            float(row["shape_r_arcsec"]) *
+            (1. + direction * P15D_RADIUS_FRACTION))
+        variants.append({
+            "parameter": "half_light_radius",
+            "case": f"half_light_radius_{label}_10_percent",
+            "signed_controlled_change": (
+                direction * P15D_RADIUS_FRACTION),
+            "change_units": "fraction_of_catalog_radius",
+            "status": "VALID_CONTROLLED_VARIANT",
+            "catalog_row": changed,
+        })
+    kind = nominal["type"]
+    e1 = nominal["shape_e1"]
+    e2 = nominal["shape_e2"]
+    for direction in (-1,+1):
+        label = "minus" if direction < 0 else "plus"
+        record = {
+            "parameter": "ellipticity_norm",
+            "case": f"ellipticity_norm_{label}_0p05",
+            "signed_controlled_change":
+                direction * P15D_ELLIPTICITY_DELTA,
+            "change_units": "absolute_euclidean_ellipticity_norm",
+        }
+        if kind == "REX":
+            record["status"] = "NOT_A_REX_PROFILE_PARAMETER"
+        else:
+            e = math.hypot(e1,e2)
+            altered = e + direction * P15D_ELLIPTICITY_DELTA
+            if e == 0.:
+                record["status"] = "UNDEFINED_CIRCULAR_REFERENCE_PA"
+            elif not 0. <= altered < 1.:
+                record["status"] = "OUTSIDE_PHYSICAL_ELLIPTICITY_DOMAIN"
+            else:
+                changed = dict(row)
+                changed["shape_e1"] = e1 * altered/e
+                changed["shape_e2"] = e2 * altered/e
+                record.update(
+                    status="VALID_CONTROLLED_VARIANT",
+                    catalog_row=changed,
+                )
+        variants.append(record)
+    for direction in (-1,+1):
+        label = "minus" if direction < 0 else "plus"
+        record = {
+            "parameter": "position_angle",
+            "case": f"position_angle_{label}_10_deg",
+            "signed_controlled_change":
+                direction * P15D_POSITION_ANGLE_DEG,
+            "change_units": "degrees_east_of_north",
+        }
+        if kind == "REX":
+            record["status"] = "NOT_A_REX_PROFILE_PARAMETER"
+        elif math.hypot(e1,e2) == 0.:
+            record["status"] = "UNDEFINED_CIRCULAR_REFERENCE_PA"
+        else:
+            # PA = 180 - 0.5 atan2(e2,e1); rotating PA by +delta
+            # rotates the (e1,e2) complex vector by -2*delta.
+            theta = math.radians(
+                2. * direction * P15D_POSITION_ANGLE_DEG)
+            c, t = math.cos(theta), math.sin(theta)
+            changed = dict(row)
+            changed["shape_e1"] = e1*c + e2*t
+            changed["shape_e2"] = -e1*t + e2*c
+            record.update(
+                status="VALID_CONTROLLED_VARIANT",
+                catalog_row=changed,
+            )
+        variants.append(record)
+    return variants
+
+
+def _morphology_stress_p15d(
+    *, z, B, P, weights, native_radius, mask, kernel, wcs,
+    scene_origin_xy, scene_width_pix, guessed_fwhm_pix,
+    source_row, template_column, n_rendered_extended_sources,
+):
+    """Rerender ONE geometrically preselected catalog source per star.
+
+    No shape variant is selected by its residual. Freeze the native
+    pixels, PSF, other catalog templates, candidate identity, and 2–4
+    guessed-FWHM reserved ring. Fit *outside* the ring for each case.
+    Returned deltas are conditional model sensitivity, NOT source
+    uncertainties, posteriors, calibrated error bars, or model ranking.
+    """
+    heldout = ((native_radius > 2.*guessed_fwhm_pix)
+               & (native_radius <= 4.*guessed_fwhm_pix))
+    train = ~heldout
+    result = {
+        "schema": "desidera.psf0-p15d-tractor-morphology-stress/1",
+        "status": "UNINITIALIZED_MORPHOLOGY_STRESS",
+        "selected_tractor_objid": int(source_row["tractor_objid"]),
+        "selected_tractor_type": str(source_row["tractor_type"]),
+        "source_selection_policy":
+            "NEAREST_RENDERABLE_EXTENDED_CENTROID_PRIOR_TO_FITTING",
+        "n_rendered_extended_sources_in_original_fit":
+            int(n_rendered_extended_sources),
+        "only_one_extended_source_perturbed_at_a_time": True,
+        "all_other_rendered_catalog_components_frozen": True,
+        "radius_fractional_stress": P15D_RADIUS_FRACTION,
+        "ellipticity_norm_absolute_stress": P15D_ELLIPTICITY_DELTA,
+        "position_angle_degree_stress": P15D_POSITION_ANGLE_DEG,
+        "perturbations_are_not_catalog_sigma_or_uncertainty": True,
+        "n_fitting_original_native_pixels": int(np.count_nonzero(train)),
+        "n_reserved_original_native_pixels": int(np.count_nonzero(heldout)),
+        "reserved_2_to_4_guessed_fwhm_never_used_in_fits": True,
+        "coadd_covariance_and_psf_uncertainty_unmodeled": True,
+        "fitted_star_amplitude_and_sky_are_model_conditional": True,
+        "stress_envelope_is_not_a_confidence_interval": True,
+        "science_adopted": False,
+    }
+    if (not np.any(heldout)
+            or np.count_nonzero(train) <= P.shape[1]+3):
+        return dict(result, status="NO_IDENTIFIABLE_WITHHELD_RING_SPLIT")
+    try:
+        nominal_a, nominal_sky, _, _ = _projected_nnls(
+            z[train], B[train], P[train], weights[train])
+    except (ValueError, RuntimeError) as exc:
+        return dict(
+            result, status="NOMINAL_RING_EXCLUDED_FIT_UNIDENTIFIABLE",
+            reason=str(exc))
+    if nominal_a[0] <= 0:
+        return dict(result, status="NOMINAL_STAR_AMPLITUDE_NONPOSITIVE")
+    nominal_residual = (z[heldout]
+                        - B[heldout]@nominal_sky
+                        - P[heldout]@nominal_a) * weights[heldout]
+    nominal_rss = float(nominal_residual@nominal_residual)
+    result.update(
+        nominal_ring_rss=nominal_rss,
+        nominal_sky_at_star_nMgy_per_native_pixel=float(nominal_sky[0]),
+        nominal_star_fitted_peak_nMgy_per_pixel=float(nominal_a[0]),
+        nominal_ring_rss_may_be_near_zero_no_calibrated_floor=True,
+    )
+    cases = []
+    for variant in morphology_stress_variants(source_row):
+        entry = {
+            k: v for k, v in variant.items() if k != "catalog_row"
+        }
+        if entry["status"] != "VALID_CONTROLLED_VARIANT":
+            cases.append(entry)
+            continue
+        changed = variant["catalog_row"]
+        morphology = audit_tractor_shape(changed)
+        if morphology["status"] != "VALID_APPROXIMATE_EXTENDED_TEMPLATE":
+            entry["status"] = "PERTURBED_MORPHOLOGY_INVALID"
+            cases.append(entry)
+            continue
+        try:
+            rendered = convolved_native_sersic(
+                kernel=kernel, wcs=wcs,
+                source_xy=(float(changed["x_pix"]),
+                           float(changed["y_pix"])),
+                origin_xy=scene_origin_xy,
+                width=scene_width_pix, morphology=morphology)
+        except (ValueError, ArithmeticError) as exc:
+            entry["status"] = "PERTURBED_PROFILE_RENDER_FAILED"
+            entry["reason"] = str(exc)
+            cases.append(entry)
+            continue
+        pixels = rendered[mask]
+        peak = float(np.max(pixels)) if len(pixels) else 0.
+        if not math.isfinite(peak) or peak <= 0.:
+            entry["status"] = "PERTURBED_TEMPLATE_WITHOUT_VALID_SUPPORT"
+            cases.append(entry)
+            continue
+        design = P.copy()
+        design[:, template_column] = pixels / peak
+        try:
+            fitted_a, fitted_sky, _, condition = _projected_nnls(
+                z[train], B[train], design[train], weights[train])
+        except (ValueError, RuntimeError) as exc:
+            entry["status"] = "PERTURBED_RING_EXCLUDED_FIT_UNIDENTIFIABLE"
+            entry["reason"] = str(exc)
+            cases.append(entry)
+            continue
+        predicted = (z[heldout]
+                     - B[heldout]@fitted_sky
+                     - design[heldout]@fitted_a) * weights[heldout]
+        rss = float(predicted@predicted)
+        entry.update({
+            "status": "CONTROLLED_PERTURBATION_FIT_SUCCESS",
+            "resulting_shape_r_arcsec": float(changed["shape_r_arcsec"]),
+            "resulting_axis_ratio":
+                float(morphology["axis_ratio"]),
+            "resulting_pa_east_of_north_deg":
+                morphology["position_angle_east_of_north_deg"],
+            "delta_sky_at_star_nMgy_per_native_pixel":
+                float(fitted_sky[0]-nominal_sky[0]),
+            "delta_star_fitted_peak_nMgy_per_pixel":
+                float(fitted_a[0]-nominal_a[0]),
+            "relative_delta_star_fitted_peak":
+                float((fitted_a[0]-nominal_a[0])/nominal_a[0]),
+            "reserved_ring_weighted_rss": rss,
+            "delta_reserved_ring_weighted_rss":
+                float(rss-nominal_rss),
+            "signed_reserved_ring_gain_vs_catalog_shape": (
+                float((nominal_rss-rss)/nominal_rss)
+                if nominal_rss > 0 else None),
+            "condition_number": float(condition),
+            "ring_score_is_descriptive_not_noise_covariance_likelihood": True,
+        })
+        cases.append(entry)
+    successful = [
+        x for x in cases
+        if x["status"] == "CONTROLLED_PERTURBATION_FIT_SUCCESS"
+    ]
+    result["cases"] = cases
+    result["n_successful_stress_cases"] = len(successful)
+    result["n_skipped_or_failed_cases"] = len(cases)-len(successful)
+    if not successful:
+        return dict(result, status="NO_VALID_MORPHOLOGY_STRESS_FITS")
+    result["status"] = "PREDECLARED_MORPHOLOGY_STRESS_DIAGNOSTIC"
+    result["descriptive_min_max_stress_response_not_error_bars"] = {
+        name: {
+            "min": float(min(case[name] for case in successful)),
+            "max": float(max(case[name] for case in successful)),
+        }
+        for name in (
+            "delta_sky_at_star_nMgy_per_native_pixel",
+            "delta_star_fitted_peak_nMgy_per_pixel",
+            "delta_reserved_ring_weighted_rss",
+        )
+    }
+    return result
+
 def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
                          point_sources, extended_sources,
                          guessed_fwhm_pix, scene_width=None):
