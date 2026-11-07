@@ -1202,9 +1202,56 @@ class PSF0Panel(QGroupBox):
                             "zero support on usable pixels of the frozen "
                             "finite ePSF; no wide-wing claim follows.")
                 notes.append(
-                    "Frozen ePSF shape and finite kernel support; "
-                    "extended sources, broad wings and correlated "
-                    "noise are NOT modeled. No science adoption.")
+                    "P14 frozen ePSF shape and finite kernel support; "
+                    "P14 itself does not model extended sources or "
+                    "correlated noise. No science adoption.")
+                p15 = joint.get("p15_extended_scene_pilot_summary")
+                if isinstance(p15, dict):
+                    notes.append(
+                        "P15 approximate Tractor REX/EXP/DEV morphology "
+                        "pilot: "
+                        f"{p15.get('n_numerical_partial_extended_fits', 0)}/"
+                        f"{p15.get('n_attempted_after_p14', 0)} "
+                        "native scenes numerically fitted; "
+                        "NOT a recovered wide PSF or full Tractor renderer.")
+                    for star in joint.get("per_star", []):
+                        if star.get("role") != "holdout":
+                            continue
+                        scene = star.get("p15_extended_tractor_scene", {})
+                        if not isinstance(scene, dict):
+                            continue
+                        if scene.get("status") == (
+                                "PARTIAL_APPROXIMATE_EXTENDED_SCENE_DIAGNOSTIC"):
+                            central = scene.get(
+                                "central_aperture_comparison", {}).get(
+                                    "four_guessed_fwhm", {})
+                            local_gain = central.get(
+                                "signed_rss_improvement_fraction")
+                            global_gain = scene.get(
+                                "full_scene_fractional_rss_change")
+                            sky_change = scene.get(
+                                "sky_with_minus_without_extended_at_star_nMgy_pix")
+                            if (local_gain is not None
+                                    and global_gain is not None
+                                    and sky_change is not None):
+                                notes.append(
+                                    f"  {star.get('source_id', '?')}: P15 "
+                                    f"approximate extended templates "
+                                    f"{scene.get('n_extended_profiles_rendered', 0)}/"
+                                    f"{scene.get('n_catalog_extended_candidates', 0)}; "
+                                    f"global RSS {100*global_gain:+.3g}%, "
+                                    f"central 4 FWHM {100*local_gain:+.3g}%, "
+                                    f"sky shift {sky_change:+.4g} nMgy/pix. "
+                                    "Uncalibrated, incomplete source geometry.")
+                        else:
+                            notes.append(
+                                f"  {star.get('source_id', '?')}: P15 "
+                                f"{scene.get('status', 'NOT_AVAILABLE')}.")
+                    notes.append(
+                        "P15 galaxy profiles use catalog angular shape "
+                        "parameters and an approximate finite PSF "
+                        "convolution; neither correlated coadd noise nor "
+                        "true wide stellar wings is calibrated.")
         return "\n".join(notes)
 
     def _result_matches_band_source(self, payload):
