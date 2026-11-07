@@ -1168,6 +1168,22 @@ class PSF0Panel(QGroupBox):
                             f"central <=4 guessed FWHM "
                             f"{100*local_delta:+.3g}% "
                             "(can worsen; neither is statistical significance).")
+                        gains = local.get(
+                            "weighted_rss_gain_partition_by_fitted_model_change",
+                            {})
+                        denom = local.get(
+                            "weighted_squared_residual_star_plane_only")
+                        if isinstance(gains, dict) and denom is not None and denom > 0:
+                            notes.append(
+                                "  Central <=4 FWHM algebraic RSS allocation "
+                                "relative to null RSS: "
+                                f"central-star amplitude "
+                                f"{100*gains.get('central_star_amplitude_reallocation', 0)/denom:+.3g}%, "
+                                f"sky-plane change "
+                                f"{100*gains.get('planar_sky_reallocation', 0)/denom:+.3g}%, "
+                                f"direct catalog-point templates "
+                                f"{100*gains.get('direct_catalog_point_neighbors', 0)/denom:+.3g}%; "
+                                "symmetric cross-terms, noncausal, no statistical significance.")
                     unmodeled = row.get("nearest_unmodeled_catalog_source")
                     if isinstance(unmodeled, dict):
                         notes.append(
