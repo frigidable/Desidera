@@ -323,9 +323,22 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
                 "sersic_n": (
                     _number(row[names["SERSIC"]])
                     if "SERSIC" in names else None),
+                # Formal per-parameter inverse variances supplied by
+                # Tractor, NOT a joint covariance matrix. Never use
+                # them as calibrated perturbation amplitudes.
+                "shape_r_ivar_arcsec_m2": (
+                    _number(row[names["SHAPE_R_IVAR"]])
+                    if "SHAPE_R_IVAR" in names else None),
+                "shape_e1_ivar": (
+                    _number(row[names["SHAPE_E1_IVAR"]])
+                    if "SHAPE_E1_IVAR" in names else None),
+                "shape_e2_ivar": (
+                    _number(row[names["SHAPE_E2_IVAR"]])
+                    if "SHAPE_E2_IVAR" in names else None),
                 "morphology_fields_in_native_catalog": {
                     key: key in names for key in (
-                        "SHAPE_R", "SHAPE_E1", "SHAPE_E2", "SERSIC")
+                        "SHAPE_R", "SHAPE_E1", "SHAPE_E2", "SERSIC",
+                        "SHAPE_R_IVAR", "SHAPE_E1_IVAR", "SHAPE_E2_IVAR")
                 },
             })
     digest = _hash_file(path)
