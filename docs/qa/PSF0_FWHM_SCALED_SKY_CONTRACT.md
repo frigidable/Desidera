@@ -1831,3 +1831,57 @@ and brightness-matched holdouts and galaxy injection-recovery
 with fixed, externally justified surface-brightness bias
 tolerances. Until then g/r/i/z are independently
 \`NOT_ADOPTED\`.
+
+
+### P15C — predeclared 2–4 guessed-FWHM withheld-annulus prediction
+
+The first P15A/B comparison is nested and assesses **in-sample**
+weighted residual reduction. A model with more nuisance sources is
+guaranteed not to increase whole-field RSS. The P15C improvement
+introduces an independent **pixel-subset prediction diagnostic**,
+not an independent PSF/population validation.
+
+Before fitting either model, mark every *valid original* native
+pixel at angular radius \`2 < r/FWHM_guess <= 4\` from each
+preselected star as reserved. Fit the baseline (star + catalog PSF
+point neighbors + free planar sky) and extended-source model
+(star + PSF points + supported REX/EXP/DEV + the same free planar sky)
+to exactly the same **complementary** pixels, without letting the
+reserved ring influence any source amplitude or sky coefficient.
+Then compare both predictions against the SAME entirely reserved
+ring pixels using the original native inverse-variance weights.
+
+The ring boundary is a **predeclared exploratory geometry**, not
+the measured ePSF FWHM or a claimed physical wing cutoff. This
+check is executed on the existing catalogue-derived, immutable
+PSF templates and unchanged Gaia/Tractor train/holdout star split.
+Its \`signed_predictive_ring_rss_improvement_fraction\` can be
+negative (extended model predicts the held-out pixels worse).
+The number of training/held-out valid native pixels, any rank
+failure or absent usable ring, and both held-out RSS values are
+serialized in
+\`predeclared_2_to_4_fwhm_ring_prediction\`.
+An insufficient or nonidentifiable split is a concrete non-success
+status, never zero residual or a false PSF acceptance.
+
+Neither the pixels nor the noise are statistically independent:
+resampled DR11 coadds have correlated neighbouring pixel values,
+and the frozen empirical PSF itself was trained from the same
+star population. Morphologies and source lists are held fixed,
+but they originate from the survey's source fitting. Consequently,
+even a smaller **held-out pixel RSS** is not a calibrated
+p-value, an independent holdout star, a PSF wing measurement,
+or a scientific quality gate.
+
+The existing GUI now separates this **out-of-fit** ring score
+from the in-fit 1/4 FWHM and global RSS scores.
+Synthetics cover an exactly known injected DEV profile,
+a fully masked reserved ring (fail closed), and deterministic
+reproduction with identical inputs. The P15 method fingerprint
+records this explicit QA change without changing the fitted
+empirical PSF kernel or any science-adoption flag.
+
+No new run on original Leo P FITS is claimed at this stage.
+The next observational test can be performed once the user's
+local original data are available; existing Github CI tests
+operate on synthetic native images and GUI fixture data.
