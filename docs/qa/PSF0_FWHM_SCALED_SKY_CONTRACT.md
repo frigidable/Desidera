@@ -1900,3 +1900,95 @@ explicit \`POTENTIAL_EXTENDED_SOURCE_BUDGET_EXCEEDED_BEFORE_RENDER\`
 status, not a partially selected subset of conveniently fitted
 galaxies. These checks are engineering and falsification evidence;
 no statistical significance or science threshold is derived.
+
+
+### P15D — predeclared Tractor morphology stress; **no catalog error model**
+
+P15D is implemented inside the already conditional
+\`p15_extended_tractor_scene\` result as
+\`p15d_morphology_controlled_stress\`. No original Leo P FITS
+run is claimed during this code-only stage.
+
+**Why:** A nominal REX/EXP/DEV source shape in the native Tractor
+catalog is itself an estimated quantity. The P15C reserve-annulus
+fit tests model predictions conditional on that exact shape, but
+does not say how sensitive the star/sky decomposition is to modest
+structural misspecification. P15D provides a reproducible one-factor-
+at-a-time (OAT) stress experiment without asserting that DR11
+catalog errors have the selected magnitudes.
+
+One catalogued extended source per preselected star is chosen
+**deterministically by minimum native-pixel centroid distance**,
+then Tractor \`OBJID\` for ties, among the profiles already
+admitted in the same P15 scene. It is not chosen by the RSS
+improvement, catalog brightness, or proximity to a heldout
+star's residual feature. The other extended and point-source
+profiles and the original frozen empirical PSF remain fixed.
+
+The six **predeclared, two-sided engineering stresses** are:
+
+| Varied quantity | Controlled changes | Units |
+| --- | --- | --- |
+| \`SHAPE_R\` | multiply by \`0.9\` and \`1.1\` | dimensionless fraction of *actual* DR11 half-light radius (arcsec) |
+| \(\epsilon=\sqrt{e_1^2+e_2^2}\) | subtract/add \`0.05\` at fixed \(\mathrm{PA}\) | absolute dimensionless ellipticity, not \(b/a\) |
+| position angle | subtract/add \`10°\` at fixed \(\epsilon\) | astronomical degrees east of north |
+
+The original \`SHAPE_E1/SHAPE_E2\` doubled-angle components
+are reconstructed exactly for the angle and ellipticity stresses:
+\(\mathrm{PA}=(180^\circ-\frac12\operatorname{atan2}(e_2,e_1))\bmod180^\circ\).
+An unphysical \(\epsilon<0\) or \(\epsilon\geq1\) is *rejected*,
+never clipped to a valid profile. For the intrinsically circular
+Tractor \`REX\`, only the two radius tests are meaningful;
+\`REX\` ellipticity and PA variants are explicitly marked
+\`NOT_A_REX_PROFILE_PARAMETER\`. A circular elliptical catalog
+profile (\(\epsilon=0\)) has no defined PA; its PA/ellipticity
+tests are refused rather than assigning an arbitrary axis.
+
+All six trial records (including skipped/failed reasons) are
+reported, never just the numerically preferred variations.
+For each valid trial, the intrinsic Sérsic shape is re-rendered
+and re-convolved with the same finite experimental PSF. The
+existing native WCS, candidate identity, original pixel
+intensities, invvar, validity and the geometrically reserved
+\`2 < r/FWHM_guess \leq 4\` annulus are unchanged. One source
+template column changes at a time; other catalog model columns
+are unchanged. Source amplitudes and the free planar sky are
+refitted using **only** the pixels outside the reserved ring.
+Report the differences relative to the nominal catalog-shape
+solution in:
+
+- fitted central-star peak amplitude (nMgy/pixel);
+- fitted sky level at the star (nMgy/native pixel);
+- predictive weighted RSS on the **same** reserved annular
+  pixels; negative apparent "improvements" remain visible.
+
+The resulting minimum/maximum of those **six controlled responses**
+is a descriptive *stress envelope*, **NOT** the error bar
+of the galaxy flux, the uncertainty of \`SHAPE_R/e1/e2\`, a
+confidence interval for the sky, or a statistical discovery
+significance. The trial "radius fraction=10%; delta ellipticity
+norm=0.05; delta PA=10°" inputs are neither DR11 fit
+covariances nor universal calibration thresholds. Near-zero
+nominal annular RSS can make fractional changes arbitrarily
+large; absolute RSS differences are retained.
+
+This is **not true uncertainty propagation**: a physical
+catalog covariance model, source-to-source structural
+correlations, PSF uncertainty, sky-wing degeneracy, spatial
+noise covariance and survey model mismatch remain unresolved.
+In particular the actual DR11 coadd pixels are correlated
+across the reserved ring, and the empirical PSF was trained
+on the same source field. The nearest rendered object is
+not guaranteed to be the dominant contaminant; omitted
+sources remain explicitly unmodelled in P15.
+
+The regular QA panel prints the one-source stress counts and
+sky/star-peak/ring-RSS envelope when meaningful. All P15D
+quantities are QA-only: no changes to original FITS,
+source selection, star train/holdout labels, PSF kernel,
+its science-adoption state or downstream galaxy photometry.
+The immediate validation is synthetic testing of exact
+ellipticity/PA algebra, REX and circular-domain refusals,
+physical boundary refusals, native-pixel injection response
+and pre-fit candidate selection. A real Leo P g run can
+follow once original FITS are accessible.
