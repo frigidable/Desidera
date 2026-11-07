@@ -444,6 +444,10 @@ def audit_fixed_psf_joint_scenes(
                 "shape_e1": row.get("shape_e1"),
                 "shape_e2": row.get("shape_e2"),
                 "sersic_n": row.get("sersic_n"),
+                "shape_r_ivar_arcsec_m2":
+                    row.get("shape_r_ivar_arcsec_m2"),
+                "shape_e1_ivar": row.get("shape_e1_ivar"),
+                "shape_e2_ivar": row.get("shape_e2_ivar"),
             }
             if row["type"] == "PSF" and flux is not None and flux > 0:
                 neighboring.append(record)
