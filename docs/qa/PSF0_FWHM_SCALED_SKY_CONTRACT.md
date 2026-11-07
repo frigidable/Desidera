@@ -1563,3 +1563,89 @@ star-0110 no longer fails due solely to an all-zero nuisance
 template, reveal TYPE of the 18.6-pixel unmodelled neighbor at
 star-0032, and evaluate true **central-aperture** differences
 at 1×/4× FWHM. Do not infer an improvement before that run.
+
+
+### P14F — observed P14E Leo P g closure and noncausal RSS partition
+
+The *second original-FITS* g run was received (P14E v2, separate
+original user report, not committed). Dataset
+\`dr11/south/1554p180/g\`; unchanged 81×81 experimental kernel SHA256
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`;
+unchanged 10 training/3 reserved Gaia holdouts. Joint fixed-PSF
+fits **13/13 numerical successes** and **3/3 holdouts**.
+Exactly **one** catalog neighbor has zero finite-kernel support
+(\`star-0110\`, \`OBJID=2260\`, separation 137.7734px), and is
+explicitly excluded from the corresponding NNLS matrix with evidence.
+No zero-support issue remains in this field's joint scene diagnostic.
+
+**All 13 numerically fitted scenes have 5–20 unmodelled catalog
+sources.** In particular \`star-0032\`'s nearest is
+**Tractor \`TYPE=DEV\`, \`OBJID=1941\`, separation 18.5990px,
+catalog g flux 0.367224 nMgy**. TYPE is a model classification;
+it does not prove the astrophysical object class or flux accurately,
+and this source has NOT been forward-modelled in P14D/E/F.
+The pre-existing core ePSF remains \`NOT_ADOPTED\` with wide wings,
+spatial representation, catalog source contamination, and correlated
+coadd covariance unvalidated.
+
+For \`star-0032\`, P14E v2 obtains weighted global RSS reduction
+**92.6353%**, yet same-native-pixel central-aperture reduction
+**4.8568%** (1 guessed FWHM) and **8.1843%** (4 guessed FWHM).
+Crucially, **all fitted catalog point neighbors contribute an
+EXACT ZERO frozen-PSF flux inside the 4×FWHM aperture**, despite
+the local 8.18% residual improvement: those point sources are
+farther away than the finite PSF support permits.
+The local difference MUST therefore result from the refitted
+central-star amplitude and/or simultaneous sky plane conditioned
+on the bright distant sources; it is not direct deblending of the
+18.6px \`TYPE=DEV\` object. For \`star-0036\`, a global
+**82.9260%** reduction accompanies local **−1.5843%**
+(1×FWHM) and **−0.3259%** (4×FWHM) *worsening*. The
+remaining holdouts: \`star-0110\` global +0.1813% versus
+4×FWHM **−0.1329%**, \`star-0148\` global +0.0582% versus
+4×FWHM **+0.0102%**. These effects are *conditional,
+not calibrated significance measures*.
+
+To prevent misinterpreting conditioning as astrophysical causal
+attribution, schema v3 reports on the SAME original native
+pixels and SAME frozen globally fitted parameters the exact
+algebraic model difference
+
+\`\`\`
+delta_model = (A_full - A_null) * central_P
+            + sky_plane(full - null)
+            + sum_j(A_j * neighbor_P_j).
+\`\`\`
+
+For each central region (1× or 4× guessed FWHM) and the entire
+scene, with inverse-variance weighted null residual vector \`e0\`
+and weighted component difference vectors \`d_i\`, define
+
+\`\`\`
+RSS_null - RSS_full = 2 <e0, sum_i d_i> - ||sum_i d_i||^2,
+gain_i = 2 <e0, d_i> - <d_i, sum_j d_j>,
+sum_i gain_i = RSS_null - RSS_full.
+\`\`\`
+
+This partitions the pairwise cross terms symmetrically and therefore
+closes algebraically to rounding accuracy. The three explicitly
+reported components are **central amplitude reallocation**,
+**planar-sky reallocation**, and **direct catalog-point neighbors**.
+Also output direct-neighbor model weighted power (strict zero means
+zero predicted neighbor contribution on those pixels). A gain
+allocation does **NOT** distinguish independent physical causes:
+the components and their fitted amplitudes are globally coupled
+and can absorb unknown wide stellar wings or unmodelled catalog
+galaxies. Negative component gains are retained, there is no
+additional fit, no new thresholds, no star resplit, no modification
+to the measured PSF or its NOT_ADOPTED state.
+
+The P14E report already supplies the qualitative conclusion of
+the experiment. One new original g run with schema v3 is useful
+ONLY to determine the relative mathematical shares of the
+sky plane and central-star amplitude in \`star-0032\`'s
+local 8.18% improvement and check cross-term closure.
+It cannot measure the 18.6px DEV object's true profile,
+the PSF wings outside the 81px support, or noise covariance;
+those require new physically motivated forward models and
+independent validation.
