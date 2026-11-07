@@ -260,6 +260,8 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "gaia_seed_dao_coverage": "CATALOG_PREFLIGHT_V1_NO_SAMPLE_PROMOTION",
         "holdout_sky_equivalence": "CORE_NORMALIZED_UNIFORM_OFFSET_WITH_RADIAL_CONSISTENCY_V2",
         "fixed_psf_joint_native_scene": "STAR_POINT_NEIGHBORS_PLUS_PLANAR_SKY_V3_NONCAUSAL_RSS_ALGEBRA_QA_ONLY",
+        "original_tractor_shape_ingestion": "NATIVE_SHAPE_R_ARCSEC_E1_E2_SERSIC_OPTIONAL_FAIL_CLOSED_P15",
+        "approximate_extended_tractor_scene": "REX_EXP_DEV_SERSIC_N1_N4_SUBPIXEL3_FIXED_PSF_NATIVE_P15_DIAGNOSTIC",
     }
     return {
         "sha256": sha256(json.dumps(
