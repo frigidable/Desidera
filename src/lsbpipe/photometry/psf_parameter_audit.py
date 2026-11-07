@@ -87,6 +87,8 @@ _SECONDARY_THRESHOLDS = {
         10.0, "psf_extended_scene.py; heuristic OAT PA stress, NOT catalog sigma"),
     "p15d_stressed_extended_sources_per_scene": (
         1, "psf_extended_scene.py; nearest rendered source by pre-fit distance and OBJID"),
+    "p15e_analytic_subpixel_convergence_grids": (
+        (3, 5, 7), "psf_extended_scene.py; same-source numerical quadrature only, no external Tractor calibration"),
 }
 
 
