@@ -489,7 +489,17 @@ def audit_fixed_psf_joint_scenes(
         # actual DR11 REX/EXP/DEV morphology, never fed back into PSF.
         # A local import avoids a cycle: the extended renderer reuses
         # the already tested projected-NNLS primitives in this module.
-        if fitted["status"] == "FIXED_PSF_JOINT_SCENE_DIAGNOSTIC":
+        if fitted["status"] != "FIXED_PSF_JOINT_SCENE_DIAGNOSTIC":
+            item["p15_extended_tractor_scene"] = {
+                "status":"NOT_RUN_NO_IDENTIFIABLE_P14_POINT_SCENE",
+                "science_adopted":False,
+            }
+        elif getattr(frame,"wcs",None) is None:
+            item["p15_extended_tractor_scene"] = {
+                "status":"NOT_RUN_NO_VERIFIED_ORIGINAL_WCS",
+                "science_adopted":False,
+            }
+        else:
             from lsbpipe.photometry.psf_extended_scene import (
                 pilot_extended_scene,
             )
@@ -499,11 +509,6 @@ def audit_fixed_psf_joint_scenes(
                 target_xy=(x,y), point_sources=neighboring,
                 extended_sources=extended,
                 guessed_fwhm_pix=guessed_fwhm_pix)
-        else:
-            item["p15_extended_tractor_scene"] = {
-                "status":"NOT_RUN_NO_IDENTIFIABLE_P14_POINT_SCENE",
-                "science_adopted":False,
-            }
         outputs.append(item)
     ok = [row for row in outputs
           if row["status"] == "FIXED_PSF_JOINT_SCENE_DIAGNOSTIC"]
@@ -536,7 +541,8 @@ def audit_fixed_psf_joint_scenes(
             "n_original_stars":len(stars),
             "n_attempted_after_p14":sum(
                 row.get("p15_extended_tractor_scene", {}).get("status")
-                != "NOT_RUN_NO_IDENTIFIABLE_P14_POINT_SCENE"
+                not in ("NOT_RUN_NO_IDENTIFIABLE_P14_POINT_SCENE",
+                        "NOT_RUN_NO_VERIFIED_ORIGINAL_WCS")
                 for row in outputs),
             "n_numerical_partial_extended_fits":sum(
                 row.get("p15_extended_tractor_scene", {}).get("status")
