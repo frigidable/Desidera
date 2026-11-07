@@ -761,6 +761,21 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         source_row=admitted_rows[chosen_index],
         template_column=baseline_columns+chosen_index,
         n_rendered_extended_sources=len(admitted_rows))
+    source_for_convergence = admitted_rows[chosen_index]
+    p15e_sampling = audit_approximate_sersic_sampling(
+        kernel=k, wcs=wcs,
+        source_xy=(
+            float(source_for_convergence["x_pix"]),
+            float(source_for_convergence["y_pix"])),
+        origin_xy=(x0,y0), width=width,
+        morphology=audit_tractor_shape(source_for_convergence),
+        valid=mask,
+        baseline_template=templates[baseline_columns+chosen_index])
+    p15e_sampling["selected_tractor_objid"] = int(
+        source_for_convergence["tractor_objid"])
+    p15e_sampling["selected_tractor_type"] = str(
+        source_for_convergence["tractor_type"])
+    p15e_sampling["source_selected_by_prefit_catalog_geometry"] = True
     regions={}
     for name,radius in [("one_guessed_fwhm",guessed_fwhm_pix),
                         ("four_guessed_fwhm",4*guessed_fwhm_pix)]:
@@ -786,6 +801,14 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         central_aperture_comparison=regions,
         predeclared_2_to_4_fwhm_ring_prediction=predictive_ring,
         p15d_morphology_controlled_stress=shape_stress,
+        p15e_analytic_subpixel_convergence=p15e_sampling,
+        p15e_external_tractor_reference={
+            "schema": "desidera.psf0-p15e-external-tractor-stamp-comparison/1",
+            "status": "ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED",
+            "requires_same_wcs_same_source_same_coadd_psf": True,
+            "no_true_tractor_profile_equivalence_measured": True,
+            "science_adopted": False,
+        },
         sky_with_minus_without_extended_at_star_nMgy_pix=
             float(sky[0]-sky0[0]),
         main_star_fit_with_extended_peak_nMgy_pix=float(a[0]),
