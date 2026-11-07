@@ -94,7 +94,8 @@ def local_tangent_jacobian(wcs, xy):
 
 
 def convolved_native_sersic(*, kernel, wcs, source_xy,
-                             origin_xy, width, morphology):
+                             origin_xy, width, morphology,
+                             subpixel_grid=SUBPIXEL_GRID):
     """Finite-domain, subpixel integrated intrinsic Sersic convolved with PSF.
 
     Total-flux normalization is intentionally NOT claimed: intrinsic
@@ -102,6 +103,10 @@ def convolved_native_sersic(*, kernel, wcs, source_xy,
     """
     if morphology.get("status") != "VALID_APPROXIMATE_EXTENDED_TEMPLATE":
         raise ValueError("NO_VALID_NATIVE_TRACTOR_MORPHOLOGY")
+    # Only controlled odd grids are permitted. Existing P15 work
+    # continues to use the unchanged default 3x3 reference geometry.
+    if type(subpixel_grid) is not int or subpixel_grid not in (3,5,7):
+        raise ValueError("UNSUPPORTED_DECLARED_SUBPIXEL_GRID")
     k = np.asarray(kernel,float)
     if (k.ndim!=2 or k.shape[0]!=k.shape[1] or
             k.shape[0]%2!=1 or type(width) is not int or width<=0
@@ -121,10 +126,10 @@ def convolved_native_sersic(*, kernel, wcs, source_xy,
     xx += float(origin_xy[0])-pad
     yy += float(origin_xy[1])-pad
     intrinsic = np.zeros_like(xx)
-    for iy in range(SUBPIXEL_GRID):
-        for ix in range(SUBPIXEL_GRID):
-            dx = xx+(ix+.5)/SUBPIXEL_GRID-.5-float(source_xy[0])
-            dy = yy+(iy+.5)/SUBPIXEL_GRID-.5-float(source_xy[1])
+    for iy in range(subpixel_grid):
+        for ix in range(subpixel_grid):
+            dx = xx+(ix+.5)/subpixel_grid-.5-float(source_xy[0])
+            dy = yy+(iy+.5)/subpixel_grid-.5-float(source_xy[1])
             east=J[0,0]*dx+J[0,1]*dy
             north=J[1,0]*dx+J[1,1]*dy
             major=east*math.sin(theta)+north*math.cos(theta)
@@ -132,7 +137,7 @@ def convolved_native_sersic(*, kernel, wcs, source_xy,
             elliptical_R=np.hypot(major,minor/q)
             intrinsic += np.exp(-SERSIC_B[n]*
                                 (elliptical_R/r_eff)**(1./n))
-    intrinsic /= SUBPIXEL_GRID**2
+    intrinsic /= subpixel_grid**2
     if not np.isfinite(intrinsic).all() or intrinsic.max()<=0.:
         raise ValueError("NONFINITE_INTRINSIC_PROFILE")
     img=fftconvolve(intrinsic,k,mode="same")
