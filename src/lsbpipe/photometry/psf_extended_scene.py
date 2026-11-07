@@ -320,6 +320,12 @@ def _morphology_stress_p15d(
         "status": "UNINITIALIZED_MORPHOLOGY_STRESS",
         "selected_tractor_objid": int(source_row["tractor_objid"]),
         "selected_tractor_type": str(source_row["tractor_type"]),
+        "nominal_catalog_formal_shape_ivars_not_covariance_or_stress_scale": {
+            "shape_r_ivar_arcsec_m2":
+                finite(source_row.get("shape_r_ivar_arcsec_m2")),
+            "shape_e1_ivar": finite(source_row.get("shape_e1_ivar")),
+            "shape_e2_ivar": finite(source_row.get("shape_e2_ivar")),
+        },
         "source_selection_policy":
             "NEAREST_RENDERABLE_EXTENDED_CENTROID_PRIOR_TO_FITTING",
         "n_rendered_extended_sources_in_original_fit":
