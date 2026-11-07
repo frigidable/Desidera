@@ -1741,3 +1741,93 @@ independent data tests:
 
 These are design requirements, NOT P15 implementation
 or a claim of completed scientific calibration.
+
+
+### P15A/P15B — native DR11 Tractor extended-neighbor pilot (2026-11-07)
+
+Status: **implemented as conditional QA; original FITS P15 execution pending**.
+This is deliberately distinct from the scientifically incomplete
+P14D/E/F fixed-point-source joint scene and does not close the PSF
+science-adoption gate. Current P14 ePSF SHA and original training/holdout
+selection remain frozen. Source additions are confined to the existing
+\`photometry\` and \`tests\` directories; existing PR branch retained.
+
+**Catalogue provenance.** \`read_native_tractor_gaia\` now reads
+\`SHAPE_R\` (arcsec), \`SHAPE_E1\` and \`SHAPE_E2\` (dimensionless) and
+\`SERSIC\` (when present) from the *same local, hashed, original DR11
+Tractor FITS* and retains their per-row values aligned with the native
+WCS-projected centroids. Missing fields remain \`None\` — neither
+source radius nor ellipticity is invented. This reader extension
+does not change the conservative Gaia/Tractor PSF identity gate.
+
+**Type-correct exploratory source geometry.**
+\`src/lsbpipe/photometry/psf_extended_scene.py\` admits:
+
+- \`REX\`: intrinsically **round** Sersic \(n=1\) (no inferred PA);
+- \`EXP\`: Sersic \(n=1\) with catalogue ellipticity;
+- \`DEV\`: Sersic \(n=4\) with catalogue ellipticity.
+
+\`SER\`, \`DUP\`, unknown types, and any source lacking a valid
+positive \`SHAPE_R\` or allowed \`SHAPE_E1/E2\` are explicitly
+reported as **not modelled**. For the supported elliptical profiles,
+\`epsilon=sqrt(e1^2+e2^2)\`,
+\`b/a=(1-epsilon)/(1+epsilon)\`,
+\`PA_east_of_north=(180 - atan2(e2,e1)*90/pi) % 180\`.
+The local *original-image WCS* supplies east/north arcsec per
+pixel, so image rotation and RA axis handedness are respected
+rather than silently treating Tractor ellipses as pixel ellipses.
+
+We render finite native-coordinate analytic Sersic \(n=1/4\)
+profiles using deterministic 3×3 subpixel sampling and FFT
+convolution with the **frozen nonnegative empirical PSF**.
+This is a **morphologically plausible pilot**, **NOT a
+pixelwise faithful reimplementation of Tractor**: Tractor uses
+mixture-of-Gaussians profiles, its own WCS/pixel approximation,
+and different effective PSF treatment. Our finite rendered
+domain can truncate significant \`DEV\` wings and unmeasured
+empirical stellar-PSF wings; fitted amplitudes are conditional
+nuisance parameters, NOT calibrated catalogue total fluxes.
+DR11 documentation: https://www.legacysurvey.org/dr11/catalogs/
+and https://www.legacysurvey.org/dr9/description/ .
+
+**QA-only nested native-scene comparison.** For the SAME
+pre-selected star, original image/invvar/validity and original
+161×161-pixel footprint, solve two independent constrained
+models: (A) central frozen ePSF + catalog PSF point neighbors +
+unconstrained planar sky; (B) the same plus all supported,
+shape-complete, PSF-convolved \`REX/EXP/DEV\` sources. Fit
+nonnegative source amplitudes with the existing projected NNLS
+solver. Record original-source IDs and per-source parsing
+status, count all omitted/nonrenderable profiles, matrix rank
+failure, fitted sky difference, and **signed** central 1×
+and 4× guessed-FWHM weighted RSS changes with the original
+common pixel masks and globally fitted coefficients.
+Comparison B has more free parameters, so its global RSS
+improvement is **not** PSF accuracy or significance.
+Source budget max=28 is an explicit computational cap;
+budget overflow rejects the **whole** comparison rather than
+choosing conveniently brighter neighbors.
+
+P15 status is always \`PARTIAL_APPROXIMATE_EXTENDED_SCENE_DIAGNOSTIC\`
+for numerical successes, or an explicit non-success reason.
+The word *partial* is intentional even when all catalogued
+extended candidates have usable shapes, because faint unlisted
+sources, missing true profile wings, non-Gaussian noise and
+other systematics remain. Original PSF, sky model, catalog,
+star selections, train/holdout roles, original FITS, science
+flags and patient-to-next-stage provenance remain unchanged.
+A synthetic PSF-convolved mock with known extended-source
+parameters demonstrates algebraic recovery under the
+**identical rendering assumptions**; this is not empirical
+evidence that DR11 Tractor profiles are reproduced to
+scientific photometric tolerances.
+
+**Remaining scientific Gate P15:** establish expected
+one-pixel profile accuracy against native Tractor or equivalent
+trusted reference; quantify native coadd covariance and
+PSF-kernel uncertainty; measure true stellar wings on
+larger, independently sampled sky; run prospective spatial
+and brightness-matched holdouts and galaxy injection-recovery
+with fixed, externally justified surface-brightness bias
+tolerances. Until then g/r/i/z are independently
+\`NOT_ADOPTED\`.
