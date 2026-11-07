@@ -21,7 +21,7 @@ from scipy.optimize import nnls
 from scipy.spatial import cKDTree
 
 
-SCHEMA = "desidera.psf0-fixed-psf-joint-native-scene/2"
+SCHEMA = "desidera.psf0-fixed-psf-joint-native-scene/3"
 MAX_NUISANCE_SOURCES = 18  # engineering compute budget, NOT science calibration
 
 
@@ -214,8 +214,22 @@ def fit_fixed_psf_scene(
     full_residual = (z[m] - B@sky - P@amplitudes) * weight
     null_residual = (z[m] - B@null_sky - P[:, :1]@null_amplitudes)*weight
     native_radius = r2[m]
+    # The full-minus-null image model is an exact sum of THREE changes:
+    # change in the central star amplitude, change in the free sky plane,
+    # and added catalog point-neighbor templates. This is a descriptive
+    # decomposition of fitted model changes, NOT astrophysical causation.
+    model_changes = {
+        "central_star_amplitude_reallocation": (
+            weight * P[:, 0] * (amplitudes[0]-null_amplitudes[0])),
+        "planar_sky_reallocation": (
+            weight * (B @ (sky-null_sky))),
+        "direct_catalog_point_neighbors": (
+            weight * (P[:, 1:] @ amplitudes[1:])),
+    }
+    total_model_change = sum(model_changes.values())
     def radial_residual_comparison(radius_pix):
-        aperture = native_radius <= radius_pix
+        aperture = (np.ones(len(native_radius), dtype=bool)
+                    if radius_pix is None else native_radius <= radius_pix)
         if not np.any(aperture):
             return {
                 "status": "NO_VALID_PIXELS_IN_APERTURE",
@@ -227,16 +241,40 @@ def fit_fixed_psf_scene(
             }
         sum_full = float(np.sum(full_residual[aperture]**2))
         sum_null = float(np.sum(null_residual[aperture]**2))
+        # Since RSS(null)-RSS(full) = 2<e_null,d> - <d,d>,
+        # allocate each cross-term symmetrically to its two components:
+        # G_i = 2<e_null,d_i> - <d_i,d>. Their sum reproduces EXACTLY
+        # the signed RSS gain, including a local worsening. This is
+        # an algebraic partition, not a causal source-identification
+        # or a significance test. The fitted sky/stellar amplitudes are
+        # mutually coupled and depend on the entire expanded field.
+        change = total_model_change[aperture]
+        residual = null_residual[aperture]
+        gains = {
+            name: float(2*np.dot(residual, values[aperture])
+                        -np.dot(values[aperture], change))
+            for name, values in model_changes.items()
+        }
+        neighbors = model_changes["direct_catalog_point_neighbors"][aperture]
         return {
             "status": "SAME_NATIVE_PIXELS_WITH_GLOBAL_PARAMETERS",
             "n_native_pixels": int(np.count_nonzero(aperture)),
-            "radius_pix": float(radius_pix),
+            "radius_pix": (float(radius_pix)
+                           if radius_pix is not None else None),
             "weighted_squared_residual_full": sum_full,
             "weighted_squared_residual_star_plane_only": sum_null,
             "signed_improvement_fraction": (
                 float((sum_null-sum_full)/sum_null) if sum_null > 0 else None),
             "not_a_covariance_calibrated_or_independent_validation": True,
             "retains_negative_improvement_when_central_fit_worsens": True,
+            "weighted_rss_gain_partition_by_fitted_model_change": gains,
+            "weighted_rss_gain_partition_closure_error": float(
+                sum(gains.values())-(sum_null-sum_full)),
+            "direct_catalog_point_neighbors_model_power_weighted":
+                float(neighbors@neighbors),
+            "gain_partition_is_algebraic_noncausal_with_symmetric_cross_terms": True,
+            "background_and_central_amplitude_changes_are_globally_coupled": True,
+            "no_new_local_refit_or_science_adoption": True,
         }
     def neighbor_fraction(aperture):
         if not np.any(aperture):
@@ -279,6 +317,14 @@ def fit_fixed_psf_scene(
                 np.sum(templates[i+1])),
         } for i, row in enumerate(active_neighbors)],
         "target_fitted_peak_nMgy_per_pixel": float(amplitudes[0]),
+        "star_only_null_fitted_peak_nMgy_per_pixel":
+            float(null_amplitudes[0]),
+        "full_minus_null_fitted_peak_nMgy_per_pixel":
+            float(amplitudes[0]-null_amplitudes[0]),
+        "star_only_null_fitted_sky_at_star_nMgy_per_native_pixel":
+            float(null_sky[0]),
+        "full_minus_null_fitted_sky_at_star_nMgy_per_native_pixel":
+            float(sky[0]-null_sky[0]),
         "target_fitted_model_support_flux_nMgy": float(
             amplitudes[0]/template_peak_scales[0] * np.sum(templates[0])),
         "fitted_sky_at_star_nMgy_per_native_pixel": float(sky[0]),
@@ -297,6 +343,7 @@ def fit_fixed_psf_scene(
         "weighted_squared_residual_star_plane_only": float(null_rss),
         "weighted_squared_residual_star_neighbors_plane": float(full_rss),
         "central_aperture_residual_comparison": {
+            "entire_native_scene": radial_residual_comparison(None),
             "one_guessed_fwhm": radial_residual_comparison(
                 float(guessed_fwhm_pix)),
             "four_guessed_fwhm": radial_residual_comparison(
