@@ -268,6 +268,12 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                          "status": "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION",
                          "signed_predictive_ring_rss_improvement_fraction":-.12,
                          "n_reserved_native_pixels":244},
+                     "p15e_analytic_subpixel_convergence": {
+                         "status": "THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR",
+                         "three_to_five": {"shape_l1_unit_flux_difference":.0023},
+                         "five_to_seven": {"shape_l1_unit_flux_difference":.0007}},
+                     "p15e_external_tractor_reference": {
+                         "status": "ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED"},
                      "p15d_morphology_controlled_stress": {
                          "status": "PREDECLARED_MORPHOLOGY_STRESS_DIAGNOSTIC",
                          "selected_tractor_objid":1941,
@@ -313,6 +319,12 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "244 reserved native pixels" in summary
     assert "not independent PSF QA" in summary
     assert "P15D controlled morphology stress" in summary
+    assert "P15E analytic Sérsic subpixel" in summary
+    assert "3→5 L1=0.0023" in summary
+    assert "5→7 L1=0.0007" in summary
+    assert "NOT true Tractor rendering" in summary
+    assert "ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED" in summary
+    assert "no external profile comparison certified" in summary
     assert "OBJID=1941" in summary
     assert "6/6 one-at-a-time cases" in summary
     assert "Δsky [-0.0008, +0.0003]" in summary
