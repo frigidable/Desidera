@@ -69,6 +69,23 @@ def test_native_joint_scene_recovers_known_star_sky_neighbor_without_changing_in
         assert value["weighted_squared_residual_star_plane_only"] > 0.
         assert value["not_a_covariance_calibrated_or_independent_validation"]
     assert local["same_global_fit_coefficients_no_local_refit"]
+    for region in ("entire_native_scene", "one_guessed_fwhm",
+                   "four_guessed_fwhm"):
+        part = local[region]
+        gains = part["weighted_rss_gain_partition_by_fitted_model_change"]
+        assert set(gains) == {
+            "central_star_amplitude_reallocation",
+            "planar_sky_reallocation",
+            "direct_catalog_point_neighbors"}
+        expected = (part["weighted_squared_residual_star_plane_only"]
+                    - part["weighted_squared_residual_full"])
+        assert sum(gains.values()) == pytest.approx(expected, rel=1e-10,
+                                                    abs=1e-9)
+        assert part["weighted_rss_gain_partition_closure_error"] == (
+            pytest.approx(0., abs=1e-9))
+        assert part[
+            "gain_partition_is_algebraic_noncausal_with_symmetric_cross_terms"]
+    assert result["star_only_null_fitted_peak_nMgy_per_pixel"] > 0
     assert result["neighbor_to_central_core_model_flux_ratio"] is not None
     assert result["neighbor_to_central_4fwhm_model_flux_ratio"] > 0.
     assert result["correlated_noise_and_fit_parameter_covariance_unmodeled"]
@@ -312,3 +329,34 @@ def test_central_aperture_residuals_are_not_global_scene_residuals():
     assert abs(outer["signed_improvement_fraction"]) < (
         result["weighted_residual_improvement_fraction"])
     assert result["comparison_fit_has_more_parameters_and_cannot_be_science_gate"]
+
+
+def test_distant_catalog_psf_can_change_core_rss_only_through_global_sky_star_refit():
+    image, kernel = _synthetic_field(include_neighbor=False)
+    yy, xx = np.indices(image.shape, dtype=float)
+    # Frozen-kernel support of this far source is entirely beyond 4FWHM,
+    # but part of its footprint lies inside the global 161x161 patch.
+    distant = (194.25, 99.65)
+    image += 30.*_shifted_native_kernel(
+        kernel, xx, yy, distant[0], distant[1])
+    neighbor = _source_neighbor(x=distant[0], y=distant[1])
+    result = fit_fixed_psf_scene(
+        image, np.ones_like(image), np.ones_like(image, dtype=bool),
+        kernel=kernel, target_xy=(100.25,99.65),
+        neighbors=[neighbor], guessed_fwhm_pix=6.57,
+        original_sky_nMgy_pix=.004)
+    assert result["status"] == "FIXED_PSF_JOINT_SCENE_DIAGNOSTIC"
+    local = result["central_aperture_residual_comparison"]
+    full = local["entire_native_scene"]
+    inner = local["four_guessed_fwhm"]
+    assert full["weighted_squared_residual_star_plane_only"] > 0.
+    assert full["weighted_squared_residual_full"] < 1e-10
+    assert inner["direct_catalog_point_neighbors_model_power_weighted"] == 0.
+    assert inner["weighted_rss_gain_partition_by_fitted_model_change"][
+        "direct_catalog_point_neighbors"] == 0.
+    assert sum(inner["weighted_rss_gain_partition_by_fitted_model_change"].values()
+               ) == pytest.approx(
+        inner["weighted_squared_residual_star_plane_only"]
+        - inner["weighted_squared_residual_full"], abs=1e-9)
+    assert inner["gain_partition_is_algebraic_noncausal_with_symmetric_cross_terms"]
+    assert result["science_adopted"] is False
