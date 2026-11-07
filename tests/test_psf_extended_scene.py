@@ -216,3 +216,49 @@ def test_reserved_ring_partition_is_deterministic_under_preserved_native_inputs(
         **kwargs)["predeclared_2_to_4_fwhm_ring_prediction"]
     assert a==b
     assert a["status"]=="PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION"
+
+
+
+def test_injected_wrong_catalog_shape_worsens_reserved_ring_prediction():
+    """An intentionally wrong DEV shape cannot mimic known exact truth."""
+    image,k,w,star,truth=_truth_scene()
+    valid=np.ones_like(image,dtype=bool)
+    ivar=np.ones_like(image)
+    good=pilot_extended_scene(
+        image,ivar,valid,wcs=w,kernel=k,
+        target_xy=star,point_sources=[],extended_sources=[truth],
+        guessed_fwhm_pix=6.57)
+    wrong=dict(truth,shape_r_arcsec=4.5,shape_e1=-.35,shape_e2=.15)
+    bad=pilot_extended_scene(
+        image,ivar,valid,wcs=w,kernel=k,
+        target_xy=star,point_sources=[],extended_sources=[wrong],
+        guessed_fwhm_pix=6.57)
+    heldout_good=good["predeclared_2_to_4_fwhm_ring_prediction"]
+    heldout_bad=bad["predeclared_2_to_4_fwhm_ring_prediction"]
+    assert heldout_good["status"]==(
+        "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION")
+    assert heldout_bad["status"]==(
+        "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION")
+    assert heldout_good["weighted_reserved_ring_rss_with_extended"]<1e-10
+    assert heldout_bad["weighted_reserved_ring_rss_with_extended"]>1e-9
+    assert heldout_bad["n_reserved_native_pixels"]==(
+        heldout_good["n_reserved_native_pixels"])
+    assert bad["science_adopted"] is False
+
+
+def test_large_shape_valid_catalog_fails_before_expensive_rendering():
+    image,k,w,star,dev=_truth_scene(include_extended=False)
+    candidates=[
+        dict(dev,tractor_objid=3000+j,x_pix=110.+j*.1)
+        for j in range(29)
+    ]
+    result=pilot_extended_scene(
+        image,np.ones_like(image),np.ones_like(image,dtype=bool),
+        wcs=w,kernel=k,target_xy=star,point_sources=[],
+        extended_sources=candidates,guessed_fwhm_pix=6.57)
+    assert result["status"]==(
+        "POTENTIAL_EXTENDED_SOURCE_BUDGET_EXCEEDED_BEFORE_RENDER")
+    assert result["n_potential_shape_valid_extended_sources"]==29
+    assert result["source_budget"]==28
+    assert result["no_partial_catalog_source_truncation"]
+    assert not result["science_adopted"]
