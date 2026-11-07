@@ -1301,6 +1301,35 @@ class PSF0Panel(QGroupBox):
                                     "    P15D morphology stress: "
                                     f"{stress.get('status', 'UNAVAILABLE')}; "
                                     "no derived uncertainty.")
+                            sampling = scene.get(
+                                "p15e_analytic_subpixel_convergence", {})
+                            if sampling.get("status") == (
+                                    "THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR"):
+                                a35 = sampling.get(
+                                    "three_to_five", {}).get(
+                                        "shape_l1_unit_flux_difference")
+                                a57 = sampling.get(
+                                    "five_to_seven", {}).get(
+                                        "shape_l1_unit_flux_difference")
+                                if a35 is not None and a57 is not None:
+                                    notes.append(
+                                        "    P15E analytic Sérsic subpixel "
+                                        f"3→5 L1={a35:.4g}; "
+                                        f"5→7 L1={a57:.4g} "
+                                        "(unit-flux within same native mask; "
+                                        "NOT true Tractor rendering or "
+                                        "a calibrated PSF tolerance).")
+                            else:
+                                notes.append(
+                                    "    P15E subpixel convergence: "
+                                    f"{sampling.get('status', 'NOT_AVAILABLE')}; "
+                                    "no reference quality inference.")
+                            external = scene.get(
+                                "p15e_external_tractor_reference", {})
+                            notes.append(
+                                "    P15E external Tractor equivalence: "
+                                f"{external.get('status', 'NOT_AVAILABLE')}; "
+                                "no external profile comparison certified.")
                         else:
                             notes.append(
                                 f"  {star.get('source_id', '?')}: P15 "
