@@ -1,6 +1,9 @@
 # LSBpipe Scientific Workbench — design system v0.1
 
-Status: proposed tokens and patterns, **not yet rendered or approved**.
+Status: historical v0.1 design proposal, **not an audit of the current UI**.
+Apply its visual principles to new work only after inspecting current Qt
+widgets and screenshots; do not treat proposed components or color tokens
+as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 

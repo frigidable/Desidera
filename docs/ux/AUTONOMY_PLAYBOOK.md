@@ -1,4 +1,4 @@
-# ChatGPT + GitHub autonomous UI workflow
+# DESIDERA — GitHub development and review workflow
 
 ## Operating model
 The owner supplies scientific requirements and accepts the final
@@ -33,11 +33,18 @@ is explicitly configured. Report this distinction honestly.
    and explicit user acceptance boundary. Never merge automatically.
 
 ## Branch discipline
-For the current Survey Explorer UI work, branch from
-`feature/survey-explorer-v04`, not unmerged v0.3 nor `main`.
-The draft PR should initially target the Survey Explorer branch so
-unrelated science work is not swept into the diff. Do not merge it,
-or alter the science PRs, without explicit approval.
+Check the latest `main` SHA, open PRs and the specific task's code
+dependencies before choosing a base. Routine documentation, CI and
+compatibility maintenance should normally branch from `main`.
+If a change depends on an unmerged scientific work package, start from
+that work package's exact parent branch and target that parent in the PR,
+without silently including the rest of the experimental stack.
+
+Use **one short-lived branch per coherent change**; repair failures on the
+same branch and in the same PR instead of making successive housekeeping
+branches. Do not rebase, merge or retarget independent scientific drafts
+without explicit approval. GitHub Actions on the exact PR head and manual
+review are required before proposing a merge. ChatGPT must not auto-merge.
 
 ## Reproducibility contract
 - Offline tests must not query the survey archive or remote Viewer.

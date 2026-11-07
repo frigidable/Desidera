@@ -1,277 +1,73 @@
-# DESIDERA v0.2.0 — experimental galaxy-analysis workbench
+# DESIDERA
 
-**Scientific status: experimental, not publication-ready.** The default branch
-contains an object-centric Project Hub, survey and dataset services, original
-FITS inspection, fixed-ellipse measurements, and experimental scene/mask/sky
-diagnostics. Implemented code is not evidence of calibrated sky subtraction,
-science-ready PSF/SBF inference, total-flux reconstruction or accepted galaxy
-measurements. The early FITS/WCS prototype remains the basis for the numerical
-measurement layer.
+**Experimental galaxy-analysis workbench** for DESI Legacy Surveys FITS data, local galaxy projects, exploratory photometry and reproducible scientific QA.
 
-> **Version scope:** This README describes the capabilities merged into
-> `main`. Draft branches may contain additional experimental features.
-> Passing engineering tests does not establish science-ready photometry,
-> PSF models, SBF distances, or accepted measurements.
+**Scientific status:** research prototype. A feature being implemented, a successful test or a saved diagnostic does **not** certify a calibrated astronomical measurement. No PSF-based or SBF distance measurement, background estimate, reconstructed total flux or catalogue association is adopted automatically.
 
-The executable implementation is primarily in `src/lsbpipe/`. The
-`src/desidera/` package provides the current name, public imports and launchers
-without rewriting legacy provenance. Dated phase documents describe historical
-decisions and experiments; confirm current behavior in source, tests and
-exact-commit CI before relying on an older status claim.
+## Quick start
 
-## Repository navigation and development status
-
-- [Documentation map](docs/README.md): where to find scientific contracts,
-  architecture notes, original-FITS pilots, UX evidence and historical reports.
-- [Contribution and scientific-safety contract](AGENTS.md): mandatory guidance
-  for editing science code, Qt interfaces, source FITS and provenance.
-- [GitHub roadmap and work packages](https://github.com/frigidable/Desidera/issues/44):
-  the current requirements/backlog index. Use its linked issues rather than
-  treating older phase documents as a live implementation checklist.
-- [Open pull requests](https://github.com/frigidable/Desidera/pulls):
-  review in-progress work and its target branch before starting changes.
-  In particular, stacked draft PRs must remain separate until reviewed.
-- [GitHub Actions](https://github.com/frigidable/Desidera/actions):
-  source for current test outcomes; counts in historical reports below
-  describe only the environment and commit tested at that time.
-
-The distribution and new launcher are called `desidera`; the
-`src/lsbpipe/` implementation and compatibility entry points intentionally
-remain. Do not rename on-disk manifests or move existing galaxy projects
-as a repository tidy-up.
-
-## Experimental FITS/WCS integration (v0.2 prototype history)
-
-- `ObservationSet`: load matched 2D image, inverse-variance, shared MASKBITS FITS
-  for Legacy DR9/DR10/DR11, with explicit band and release. FITS loader uses
-  **Astropy** and rejects mismatched WCS grids even when array shapes match.
-- `LocalSkyEllipse`: transform true astronomical position angle (N through E)
-  and sky axis ratio into a *local* pixel ellipse from the differential WCS.
-  Handles reflections, axis rotations, shear, and non-square pixels without
-  pretending sky-PA is a pixel-space rotation angle.
-- Semantic, **band-dependent** mask policy: nonfinite / nonpositive ivar invalid;
-  `SATUR_BAND` and `ALLMASK_BAND` conservatively rejected by default;
-  `BRIGHT`, `MEDIUM`, `GALAXY`, etc. retained as warnings, **not automatically
-  rejected**. Override satur/allmask only as a documented sensitivity test.
-- Fast optional on-the-fly sky-centered FITS cutouts via `Cutout2D`, necessary
-  for memory-efficient work on Legacy brick images.
-- `measure-fits` CLI produces observed-valid-pixel radial profiles / raw COG
-  (CSV), with hashed file provenance, geometry and caveats (JSON). User passes
-  an **explicit residual background value** (zero by default); no sky estimator.
-- `scripts/make_mock_legacy_fits.py` generates three genuinely formatted but
-  **entirely synthetic** FITS images for an offline integration test.
-
-## Galaxy Project Hub (experimental)
-
-The default GUI opens an offline-first **Project Hub**, not an automatic
-network/Legacy Viewer session:
+Requires Python 3.10+ and an editable checkout:
 
 ```powershell
-python -m pip install -e ".[exact,gui,test]"
+python -m pip install -e ".[exact,gui,knowledge,test]" pytest-qt
 python -m desidera.gui
 ```
 
-In the hub:
+The desktop application opens the **Galaxy Project Hub**, where a researcher can create an object-centred project, reopen an existing galaxy folder and continue from its locally saved state. The current project-creation form is a **single-page dialog**, not the older three-step wizard described in historical design notes.
 
-- **New galaxy project** creates a portable scientific workspace even before
-  identifying ICRS coordinates or downloading FITS. Use the 3-step wizard.
-- **Import existing folder…** can recover an already downloaded object project,
-  e.g. `C:\Users\frigi\Documents\PhD\LSBpipeData\UGC_2162`, and its old
-  immutable QA history, without any redownload.
-- **Recent projects** lists previously opened objects and also detects the last
-  project from the older application version as an import suggestion.
-- **Continue selected** opens a project-bound Explorer. **All galaxy projects**
-  returns to the hub; switching is blocked while a worker is active.
-- **Relink selected** reconnects a moved project by exact UUID.
-- **Remove from recent…** forgets the highlighted project shortcut after explicit
-  confirmation, including missing or obsolete project locations. It does **not**
-  delete the object folder, original FITS, manifest, QA history or scientific
-  outputs. Use **Import existing folder…** to restore it later. A removed
-  older-version session suggestion stays hidden rather than reappearing at
-  every launch. This is deliberately **not** a delete-from-disk command.
+The main source tree remains `src/lsbpipe/` for compatibility with existing research projects and imports. `src/desidera/` contains public package/launcher compatibility code; the installable distribution is called `desidera`. Both `python -m desidera.gui` and `desidera-gui` use the same Project Hub launcher. Historical `lsbpipe` imports, `python -m lsbpipe.gui` and on-disk project identifiers are intentionally preserved.
 
-Object identity uses an immutable UUID stored in `lsbpipe-object.json`
-(schema `lsbpipe.object-project/1`). The older
-`lsbpipe-project.json` (`lsbpipe.local-project/0.1`) remains intact for
-rollback and old FITS-session compatibility. A user-local registry stores
-recent project paths, while the object manifest makes projects portable.
-No SIMBAD lookup or archive download occurs during Hub startup or project
-creation. **Galaxy Knowledge · SIMBAD…** performs explicitly initiated
-catalogue searches, preserves alternate candidates, and stores user-confirmed
-identity evidence as immutable local receipts. The Project Hub passport
-displays a confirmed SIMBAD association and its ICRS offset **offline**,
-without altering the project's target coordinates, source FITS or science
-results. Requests can switch between approved Strasbourg and Harvard mirrors.
-NED ObjectLookup is separately available through
-**Galaxy Knowledge · NED…**. It keeps independent source receipts and requires
-explicit user confirmation; the passport can show both SIMBAD and NED with
-a descriptive coordinate difference and unadopted NED redshift.
-Automated cross-catalogue identity reconciliation, positional TAP search,
-and comprehensive literature measurements remain future work.
+## Implemented engineering capabilities (not science release claims)
 
-The Galaxy Projects passport now keeps its default view **brief**:
-compact source-labelled literature facts, observation presence, and a
-historical FITS/WCS QA status. Longer warnings, literature refcodes,
-coordinate differences and saved receipt provenance remain available
-under **Sources & QA details**. The primary action is simply
-**Open project**, with the suggested step in its tooltip. See
-`docs/architecture/COMPACT_GALAXY_PASSPORT_P10I.md`.
+| Area | Current scope |
+| --- | --- |
+| **Galaxy projects** | Local create/import/relink/reopen operations, recent-project registry and preserved older manifests |
+| **Survey navigation** | Explicit DR9/DR10/DR11 search/brick selection, candidate source URLs and download management |
+| **Original FITS** | IMAGE, INVVAR, NEXP and MASKBITS dataset inspection, WCS-aware views, pixel-level coverage and diagnostic masks |
+| **Prototype photometry** | Local fixed-ellipse integration, signed flux/valid-area accounting and `measure-fits` output |
+| **Research QA** | Diagnostic scenes, residual-background candidates, sensitivity checks, run/lineage evidence and immutable configurations |
+| **Catalogues / previews** | Opt-in SIMBAD/NED searches with user-confirmed identities, local FITS thumbnails and display-only Legacy RGB previews |
 
-Galaxy Projects now shows a **source-aware scientific passport**. It
-explains why linking SIMBAD and NED is useful, displays only saved and
-confirmed catalogue identities and optional NED object-type/redshift claims
-as external unadopted values, and offers a contextual next step based on
-the selected dataset and the presence of the four original Legacy FITS
-products. Local file presence is never presented as validated FITS or
-scientific QA. Missing images use a neutral placeholder rather than a
-technical error; detailed provenance remains expandable. See
-`docs/architecture/SCIENTIFIC_GALAXY_PASSPORT_P10G.md`.
+These capabilities have different levels of validation. Read their code and tests before treating a particular mode or science quantity as accepted. The formal research backlog and adoption gates are tracked in [issue #44](https://github.com/frigidable/Desidera/issues/44) and its work packages; [unmerged PRs](https://github.com/frigidable/Desidera/pulls) may contain additional prototypes.
 
-User-confirmed SIMBAD and NED identifiers are also **clickable official
-object links** in the passport and catalogue confirmation dialogs. Links
-are derived solely from validated receipts; unconfirmed neighbours and
-corrupt evidence never produce trusted links. No catalogue lookup occurs
-on rendering. See `docs/architecture/CONFIRMED_CATALOGUE_LINKS_P10F.md`.
+### Network and data safety
 
-Galaxy Projects now displays a **compact square galaxy thumbnail**
-beside the name, coordinates and confirmed SIMBAD/NED identifiers. Its
-observational facts flow below the image at full width; verbose source
-provenance and project paths expand on demand. Secondary actions are grouped
-into **Catalogues** and **Project tools** menus.
+Creating or reopening a project must not redownload its science FITS. Archive downloads require the documented download actions. A display-only RGB preview **may be requested automatically for the selected galaxy** when it is absent from cache; disable this with `DESIDERA_DISABLE_AUTOMATIC_RGB=1`. Remote Viewer tiles and RGB previews are not calibrated science inputs.
 
-The selected project's **Legacy Surveys RGB preview loads automatically**
-after a brief stable-selection delay when missing from cache. Only the
-selected galaxy is fetched, never the complete project list. Offline it
-uses the cached RGB, otherwise the local original-FITS grayscale thumbnail.
-A failed remote request does not loop; Project tools allows explicit retry.
-Set `DESIDERA_DISABLE_AUTOMATIC_RGB=1` to turn off automatic network fetches.
-The visual caches do not affect photometry or original FITS. See
-`docs/architecture/AUTOMATIC_RGB_PASSPORT_P10E.md` for user behavior and
-`docs/architecture/GALAXY_RGB_CARDS_P10D.md` for source layer/receipt QA.
+Original FITS and existing project manifests must remain intact. A saved candidate, completed download or visually plausible image is not proof of science-grade coverage, WCS compatibility, background quality or measurement adoption.
 
-Galaxy Projects also lazily generates a **local, display-only original-FITS
-thumbnail** for the selected galaxy when a linked IMAGE product is
-available. The grayscale preview uses the saved project ICRS and WCS,
-and is cached under `.desidera/card-preview.png` with an independent
-provenance receipt. Reopening a cached galaxy does not decode the FITS
-again; source changes invalidate the cache. Use **Regenerate local FITS
-preview** to refresh explicitly. No automatic photometry, downloads,
-background estimation, original FITS writes or scientific adoption.
+## Command-line tools
 
-See `docs/architecture/LOCAL_GALAXY_CARD_PREVIEWS_P10C.md` for the preview
-source/size limits and Windows pilot, and
-`docs/architecture/GALAXY_KNOWLEDGE_READ_MODEL_P10A.md` for the
-catalogue-evidence/read-model contract.
-
-See `docs/architecture/OBJECT_CENTRIC_PROJECT_HUB_DESIGN.md` for the
-lifecycle and caveats. Old source FITS remain read-only; no QA output is
-promoted to publication-grade photometry by merely importing a project.
-
-## Install on Windows / Linux
-
-In the extracted directory, Python 3.10+:
-
-```bash
-python -m pip install -e ".[exact,test,demo]"
-python -m pytest -q
+```powershell
 python -m desidera --help
+python -m desidera demo --output demo_output
+python -m lsbpipe.surveys --help
 ```
 
-`exact` installs Astropy + Photutils, required for the recommended exact
-aperture-overlap backend. To use the independent (approximate) NumPy subpixel
-backend, install `.[astro,test,demo]` and pass `--backend subpixel`.
+The `desidera` CLI exposes the legacy reproducible synthetic demonstration and `measure-fits` for pre-existing, appropriately matched Legacy coadd FITS. To generate a **synthetic test triplet**, not observational data:
 
-## Synthetic mock FITS example (not real telescope data)
-
-```bash
+```powershell
+python -m pip install -e ".[exact,demo,test]"
 python scripts/make_mock_legacy_fits.py --output mock_fits --size 128
-python -m desidera measure-fits \
-  --image mock_fits/mock-image-r.fits \
-  --ivar mock_fits/mock-invvar-r.fits \
-  --maskbits mock_fits/mock-maskbits.fits \
-  --release dr9 --band r \
-  --ra 96.0619 --dec 77.9684 --q 0.63 --pa 127 \
-  --max-radius 8 --step 1 --background 0.0003 \
-  --backend exact --output mock_output
+python -m desidera measure-fits --image mock_fits/mock-image-r.fits --ivar mock_fits/mock-invvar-r.fits --maskbits mock_fits/mock-maskbits.fits --release dr9 --band r --ra 96.0619 --dec 77.9684 --q 0.63 --pa 127 --max-radius 8 --step 1 --background 0.0003 --backend exact --output mock_output
 ```
 
-PA is in degrees east of north on the sky; `max-radius` / `step` are arcsec;
-`background` is nMgy per pixel and **must be separately estimated** for real
-science. `--pa 127` is selected to correspond approximately to the mock source
-pixel orientation of 37 degrees under this reflected, north-up WCS.
+The `--background` input is **caller-supplied residual sky in nMgy/pixel**, not an automatically estimated sky model. Sky PA (`--pa`) is measured from north through east; radial distances are arcseconds. Outputs describe measured **valid-pixel flux**, not reconstructed whole-galaxy flux. The diagonal inverse-variance errors do not capture all correlated-coadd uncertainties. Read [photometry input contracts](docs/architecture/PHOTOMETRY_INPUT_CONTRACT_P05.md) before applying this to real telescope data.
 
-### With real DR9 NGC2146sat images
+## Testing and contribution
 
-Provide the co-registered, same-band **science image**, **inverse variance**, and
-**shared MASKBITS**. Their actual file paths are specific to your local data.
-The example below is a command template, **not a completed DR9 run**:
-
-```bash
-python -m desidera measure-fits \
-  --image "<path-to-coadd-image-r.fits>" \
-  --ivar "<path-to-coadd-invvar-r.fits>" \
-  --maskbits "<path-to-coadd-maskbits.fits>" \
-  --band r --release dr9 \
-  --ra 96.0619 --dec 77.9684 --q 0.61 --pa 135 \
-  --cutout-size 600 --max-radius 65 --step 2 \
-  --background 0 --backend exact \
-  --output "ngc2146sat_r_trial"
+```powershell
+python -m pip install -e ".[exact,gui,knowledge,test]" pytest-qt
+python -m pytest -q tests --ignore=tests/gui
+python -m pytest -q tests/gui
 ```
 
-The geometry / background values are **illustrative initial choices**, not
-adopted calibrated NGC2146sat measurements. If source files use compressed FITS
-with data in HDU 1, pass `--image-hdu 1` / `--ivar-hdu 1` / `--maskbits-hdu 1`
-selectively. `--cutout-size` is in pixels. Original files remain unchanged.
+These are local commands, not a claim that they were executed on a given machine. Consult [GitHub Actions](https://github.com/frigidable/Desidera/actions) for exact-commit CI results. Offscreen Windows Qt captures do not replace manual Windows/Legacy Viewer/FITS inspection, and successful tests do not imply scientific acceptance.
 
-For images that have already been cropped on a common WCS grid, omit the
-`--cutout-size` argument. An exact method can be slow for hundreds of apertures;
-use small, scientifically justified cutouts first.
+See [contribution and scientific-safety rules](AGENTS.md), the [documentation and evidence index](docs/README.md), and the [current roadmap](https://github.com/frigidable/Desidera/issues/44). Historical phase reports remain accessible under `docs/`, but they describe their dated branch/commit, not necessarily the present `main`.
 
-## Photometry contract and limitations
+## Scientific references
 
-Input image units: **nanomaggies per pixel**. Input inverse variance:
-**1/(nanomaggies)^2**. Unknown external FITS units cannot be silently assumed;
-this loader is for documented Legacy coadds (not arbitrary survey FITS).
-
-The original pixel values and raw signed aperture sums are preserved. Missing
-pixels are not set to zero *as physical measurements* or reconstructed: their
-weights are zero in the integral and valid area is tracked separately. COG is
-**observed valid-pixel flux**, not full galactic flux. The statistical errors
-propagate **only diagonal pixel inverse variances**; they are not appropriate as
-total errors for correlated Legacy coadds. The WCS sky ellipse is an affine
-linearization about the target; for large fields/strong distortion a full sky
-aperture integration is needed. No sky/model estimation, galaxy detection,
-PSF, matched colours or automated science acceptance are included.
-
-`manifest.json` always states `EXPERIMENTAL_NOT_ADOPTED`. No numerical result
-produced here should be reported as an adopted NGC2146sat measurement.
-
-## Historical v0.2 verification record (not current CI status)
-
-- **52 executed automated tests passed** with NumPy/SciPy/pytest.
-- **One module skipped** (`test_fits_io_astropy.py`, containing 4 integration
-  tests) because Astropy/Photutils were unavailable and package downloads were
-  blocked. This includes reading the actual FITS bytes using Astropy.
-- FITS mock writer output verified independently for 2880-byte FITS padding,
-  header cards, supported BITPIX values and binary array contents.
-- The legacy v0.1 synthetic demo still reproduces its earlier statistics.
-
-See `docs/VALIDATION_REPORT_V02.md` and `docs/TECHNICAL_DESIGN_V02.md`.
-
-## Primary references
-
-- [Legacy DR9 bitmasks](https://www.legacysurvey.org/dr9/bitmasks/)
-- [Legacy DR11 bitmasks](https://www.legacysurvey.org/dr11/bitmasks/)
-- [Legacy DR9 image files](https://www.legacysurvey.org/dr9/files/)
-- [Astropy Cutout2D](https://docs.astropy.org/en/stable/api/astropy.nddata.utils.Cutout2D.html)
-- [Photutils EllipticalAperture](https://docs.astropy.org/projects/photutils/en/latest/api/photutils.aperture.EllipticalAperture.html)
-
-
-## Name and on-disk compatibility
-
-DESIDERA is the application and distribution name. The original Python
-`lsbpipe` package, CLI aliases, immutable `lsbpipe-object.json` and
-`lsbpipe-project.json` identifiers, survey-cache locations and pre-existing
-`LSBpipeData` / `LSBpipeProjects` paths remain readable without migration.
-New GUI launch: `python -m desidera.gui`. Existing launches such as
-`python -m lsbpipe.gui` remain supported during the migration.
+- [DESI Legacy Surveys DR9 data format](https://www.legacysurvey.org/dr9/files/) and [bitmask semantics](https://www.legacysurvey.org/dr9/bitmasks/)
+- [DESI Legacy Surveys DR11 data format](https://www.legacysurvey.org/dr11/files/) and [bitmask semantics](https://www.legacysurvey.org/dr11/bitmasks/)
+- [Astropy Cutout2D](https://docs.astropy.org/en/stable/api/astropy.nddata.utils.Cutout2D.html) and [Photutils aperture methods](https://photutils.readthedocs.io/en/stable/user_guide/aperture.html)

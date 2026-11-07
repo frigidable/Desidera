@@ -1,4 +1,10 @@
-# Real DR9 FITS pilot — P3 entry gate
+# Historical real DR9 FITS pilot — P3 entry gate
+
+**ARCHIVAL RECORD:** Initial pilot status statements below predate later
+[real DR9 audit](REAL_FITS_AUDIT_DR9_0401P012.md) and
+[real CCD-table acceptance](validation/REAL_LEGACY_CCD_ACCEPTANCE_P06C.md).
+Do not interpret early "not yet read" statements as current project status,
+or later parser evidence as photometric acceptance.
 
 Status: experimental; no real pixels have yet been measured by this task.
 Branch: feature/real-fits-pilot-p3, based on feature/autonomous-ui-system.
