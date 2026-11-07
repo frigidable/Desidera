@@ -17,7 +17,7 @@ from lsbpipe.photometry.psf_joint_scene import (
     _projected_nnls, _shifted_native_kernel,
 )
 
-SCHEMA = "desidera.psf0-native-tractor-extended-scene/1"
+SCHEMA = "desidera.psf0-native-tractor-extended-scene/2"
 SERSIC_B = {1.: 1.6783469900166612, 4.: 7.669249442500804}
 PROFILE_N = {"REX": 1., "EXP": 1., "DEV": 4.}
 SUBPIXEL_GRID = 3
@@ -513,6 +513,7 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         )
     extended_audit=[]
     admitted=[]
+    admitted_rows=[]
     for item in extended_sources:
         morphology=audit_tractor_shape(item)
         record={
@@ -548,6 +549,7 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         extended_audit.append(record)
         templates.append(t)
         admitted.append(int(item["tractor_objid"]))
+        admitted_rows.append(item)
     base.update({
         "n_catalog_extended_candidates":len(extended_sources),
         "n_extended_profiles_rendered":len(admitted),
@@ -591,6 +593,24 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         z[mask], B, P, w, distance,
         guessed_fwhm_pix=guessed_fwhm_pix,
         n_base_columns=baseline_columns)
+    # One nearest already-rendered extended source is selected strictly
+    # by catalog separation/OBJID, before inspecting any fit residual.
+    # All other original rendered extended/PSF source columns are frozen
+    # across the six one-at-a-time shape perturbations.
+    chosen_index = min(
+        range(len(admitted_rows)),
+        key=lambda j: (
+            math.hypot(float(admitted_rows[j]["x_pix"])-cx,
+                       float(admitted_rows[j]["y_pix"])-cy),
+            int(admitted_rows[j]["tractor_objid"])))
+    shape_stress = _morphology_stress_p15d(
+        z=z[mask], B=B, P=P, weights=w,
+        native_radius=distance, mask=mask, kernel=k, wcs=wcs,
+        scene_origin_xy=(x0,y0), scene_width_pix=width,
+        guessed_fwhm_pix=guessed_fwhm_pix,
+        source_row=admitted_rows[chosen_index],
+        template_column=baseline_columns+chosen_index,
+        n_rendered_extended_sources=len(admitted_rows))
     regions={}
     for name,radius in [("one_guessed_fwhm",guessed_fwhm_pix),
                         ("four_guessed_fwhm",4*guessed_fwhm_pix)]:
@@ -615,6 +635,7 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
             float((rss0-rss)/rss0) if rss0>0 else None),
         central_aperture_comparison=regions,
         predeclared_2_to_4_fwhm_ring_prediction=predictive_ring,
+        p15d_morphology_controlled_stress=shape_stress,
         sky_with_minus_without_extended_at_star_nMgy_pix=
             float(sky[0]-sky0[0]),
         main_star_fit_with_extended_peak_nMgy_pix=float(a[0]),
