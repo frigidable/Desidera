@@ -261,7 +261,8 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "holdout_sky_equivalence": "CORE_NORMALIZED_UNIFORM_OFFSET_WITH_RADIAL_CONSISTENCY_V2",
         "fixed_psf_joint_native_scene": "STAR_POINT_NEIGHBORS_PLUS_PLANAR_SKY_V3_NONCAUSAL_RSS_ALGEBRA_QA_ONLY",
         "original_tractor_shape_ingestion": "NATIVE_SHAPE_R_ARCSEC_E1_E2_SERSIC_OPTIONAL_FAIL_CLOSED_P15",
-        "approximate_extended_tractor_scene": "REX_EXP_DEV_SERSIC_N1_N4_SUBPIXEL3_FIXED_PSF_NATIVE_P15_DIAGNOSTIC",
+        "approximate_extended_tractor_scene": "REX_EXP_DEV_SERSIC_N1_N4_SUBPIXEL3_FIXED_PSF_NATIVE_P15_V2_RING_HELDOUT_QA_ONLY",
+        "p15_reserved_ring_pixel_prediction": "SAME_ORIGINAL_NATIVE_PIXELS_EXCLUDE_2_TO_4_GUESSED_FWHM_FROM_BOTH_FITS_V1",
     }
     return {
         "sha256": sha256(json.dumps(
