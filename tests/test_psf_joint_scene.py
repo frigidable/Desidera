@@ -263,8 +263,11 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                      "central_aperture_comparison": {
                          "four_guessed_fwhm": {
                              "signed_rss_improvement_fraction":-.05}},
-                     "sky_with_minus_without_extended_at_star_nMgy_pix":-.0006}},
-                {"source_id":"star-0011", "role":"train",
+                     "sky_with_minus_without_extended_at_star_nMgy_pix":-.0006,
+                     "predeclared_2_to_4_fwhm_ring_prediction": {
+                         "status": "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION",
+                         "signed_predictive_ring_rss_improvement_fraction":-.12,
+                         "n_reserved_native_pixels":244}}},                {"source_id":"star-0011", "role":"train",
                  "status":"FULL_EXPANDED_NATIVE_STAMP_OUTSIDE_IMAGE"},
             ]
         }
@@ -292,6 +295,10 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "global RSS +41%" in summary
     assert "central 4 FWHM -5%" in summary
     assert "sky shift -0.0006 nMgy/pix" in summary
+    assert "HELD OUT from both fits" in summary
+    assert "predictive weighted RSS change -12%" in summary
+    assert "244 reserved native pixels" in summary
+    assert "not independent PSF QA" in summary
     assert "NOT a recovered wide PSF" in summary
 
 
