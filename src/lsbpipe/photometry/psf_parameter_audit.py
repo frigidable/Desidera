@@ -79,6 +79,14 @@ _SECONDARY_THRESHOLDS = {
         1.6783469900166612, "psf_extended_scene.py SERSIC_B[n=1]"),
     "p15_devaucouleurs_half_light_bn": (
         7.669249442500804, "psf_extended_scene.py SERSIC_B[n=4]"),
+    "p15d_morphology_radius_fractional_stress": (
+        0.10, "psf_extended_scene.py; heuristic OAT radius stress, NOT catalog sigma"),
+    "p15d_morphology_ellipticity_absolute_stress": (
+        0.05, "psf_extended_scene.py; heuristic OAT ellipticity-norm stress, NOT catalog sigma"),
+    "p15d_morphology_position_angle_degree_stress": (
+        10.0, "psf_extended_scene.py; heuristic OAT PA stress, NOT catalog sigma"),
+    "p15d_stressed_extended_sources_per_scene": (
+        1, "psf_extended_scene.py; nearest rendered source by pre-fit distance and OBJID"),
 }
 
 
