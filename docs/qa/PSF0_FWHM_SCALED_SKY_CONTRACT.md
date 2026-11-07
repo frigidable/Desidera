@@ -1885,3 +1885,18 @@ No new run on original Leo P FITS is claimed at this stage.
 The next observational test can be performed once the user's
 local original data are available; existing Github CI tests
 operate on synthetic native images and GUI fixture data.
+
+
+**P15C synthetic stress cases (same original test package):**
+Besides exact-profile injection/recovery, a deliberately incorrect
+catalog DEV radius and ellipticity must produce worse reserved-ring
+prediction than the correct fixed-injection morphology, under identical
+pixels, mask, noise weights, frozen PSF and train/test boundary.
+This tests sensitivity to source-model misspecification rather than
+claiming real DR11 morphology precision. The full candidate-source
+budget is now also checked *before* expensive convolution of all
+shape-valid nearby objects: an overloaded scene receives an
+explicit \`POTENTIAL_EXTENDED_SOURCE_BUDGET_EXCEEDED_BEFORE_RENDER\`
+status, not a partially selected subset of conveniently fitted
+galaxies. These checks are engineering and falsification evidence;
+no statistical significance or science threshold is derived.
