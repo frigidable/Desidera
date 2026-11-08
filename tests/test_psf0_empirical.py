@@ -194,6 +194,13 @@ def test_approximate_core_profile_and_no_galaxy_centroids(built):
         "measured_core_fwhm_axis_geometric_mean_native_pix"] > 0.
     assert readiness["core_geometry"]["guessed_detection_fwhm_pix_not_a_measurement"] == (
         built.recipe.guessed_fwhm_pix)
+    # DAO-only synthetic scenes lack a verified native Tractor catalog:
+    # a broad-radius profile cannot pretend neighbors are absent.
+    broad = report["diagnostic_metrics"]["original_native_outer_stellar_profile_qa"]
+    assert broad["schema"] == "desidera.psf0-original-native-wide-wing-profile/1"
+    assert broad["status"] == "NO_VERIFIED_NATIVE_CATALOG_FOR_NEIGHBOR_MASK"
+    assert broad["per_star"] == []
+    assert broad["science_adopted"] is False
     json.dumps(report, allow_nan=False)
 
 
