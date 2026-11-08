@@ -44,6 +44,7 @@ from lsbpipe.photometry.psf_core_wings_validation import (
 from lsbpipe.photometry.psf_wing_profile import (
     audit_native_broad_radius_star_profiles,
     audit_disjoint_bright_gaia_wing_probes,
+    audit_fixed_bright_gaia_neighbor_sky_stress,
 )
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
@@ -278,6 +279,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "native_core_wings_validation_qa": "PEAK_AXIS_HALFMAX_FWHM_AND_TRUNCATED_KERNEL_EEF_FAIL_CLOSED_STAGES_V1",
         "original_broad_radius_stellar_profile_qa": "SELECTED_STARS_NATIVE_1TO22_MEASURED_FWHM_22TO26_VS26TO30_SKY_CATALOG_AND_TARGET_MASKED_V1_NO_WING_CLAIM",
         "disjoint_bright_gaia_outer_profile_qa": "NATIVE_TRACTOR_GAIA_UNSHARED_16_FLUX_RANKED_PREPIXEL_CATALOG_QUALITY_GEOMETRY_WITH_TARGET_MASK_SKY_DEGENERATE_V1",
+        "fixed_bright_gaia_neighbor_sky_stress_qa": "FIXED_P16C_IDENTITIES_3V6_FWHM_NEIGHBOR_MASKS_OCTANTS_AND_22TO30_SKY_PLANE_V1_QA_ONLY",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1562,10 +1564,14 @@ def build_empirical_coadd_psf(
     disjoint_bright_gaia_qa = audit_disjoint_bright_gaia_wing_probes(
         frame, train+holdout, catalog_matcher, measured_core_geometry,
         protected_mask=protected)
+    fixed_bright_gaia_sky_stress_qa = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, catalog_matcher, disjoint_bright_gaia_qa,
+        measured_core_geometry, protected_mask=protected)
     metrics = {
         "core_wings_validation_qa": core_wings_validation_qa,
         "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
         "disjoint_bright_gaia_outer_profile_qa": disjoint_bright_gaia_qa,
+        "fixed_bright_gaia_neighbor_sky_stress_qa": fixed_bright_gaia_sky_stress_qa,
         "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
