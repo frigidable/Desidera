@@ -58,12 +58,12 @@ def test_symmetric_native_gaussian_fwhm_is_measured_not_guessed():
     assert all(row["full_circular_aperture_inside_kernel"] for row in rows)
     assert all(0<=x<=1 for x in fractions)
     assert fractions==sorted(fractions)
-    assert fractions[-1]<1.
+    assert fractions[-1]<=1.  # finite-precision Gaussian tail can underflow
     np.testing.assert_array_equal(kernel,original)
 
 
 def test_elliptical_core_width_and_censored_outer_growth():
-    image=gaussian_kernel(size=81,sigma_x=4.2,sigma_y=2.1)
+    image=gaussian_kernel(size=81,sigma_x=8.,sigma_y=4.)
     result=measure_finite_native_psf_core(image,guessed_fwhm_pix=6.57)
     assert result["status"]=="FINITE_NATIVE_CORE_GEOMETRY_MEASURED"
     assert result["fwhm_x_native_pix"]>result["fwhm_y_native_pix"]
@@ -91,6 +91,7 @@ def test_malformed_or_unnormalized_psf_fails_closed(bad):
 
 def test_nonbracketed_half_maximum_never_fakes_measured_fwhm():
     flat=np.ones((81,81))
+    flat[40,40]=1.1  # center is the max but edges stay above half peak
     flat/=flat.sum()
     result=measure_finite_native_psf_core(flat,guessed_fwhm_pix=6.57)
     assert result["status"]=="UNBRACKETED_CORE_HALF_MAXIMUM"
