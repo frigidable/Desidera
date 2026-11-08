@@ -41,6 +41,9 @@ from lsbpipe.photometry.psf_joint_scene import audit_fixed_psf_joint_scenes
 from lsbpipe.photometry.psf_core_wings_validation import (
     measure_finite_native_psf_core, evaluate_core_wings_readiness,
 )
+from lsbpipe.photometry.psf_wing_profile import (
+    audit_native_broad_radius_star_profiles,
+)
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -272,6 +275,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "p15f_native_observational_failure_diagnostics": "REPORT_PER_CATALOG_NNLS_ACTIVE_FOOTPRINT_FLUX_RING_RATIO_INACTIVE_SHAPE_STRESS_SUBPIXEL_STEP_V1",
         "p15g_cross_split_source_amplitude_qa": "SAME_FROZEN_NATIVE_TEMPLATES_GLOBAL_VS_PREDECLARED_RING_EXCLUDED_NNLS_PER_OBJID_WITHHELD_PREDICTED_FLUX_V1",
         "native_core_wings_validation_qa": "PEAK_AXIS_HALFMAX_FWHM_AND_TRUNCATED_KERNEL_EEF_FAIL_CLOSED_STAGES_V1",
+        "original_broad_radius_stellar_profile_qa": "SELECTED_STARS_NATIVE_1TO22_MEASURED_FWHM_22TO26_VS26TO30_SKY_CATALOG_MASKED_V1_NO_WING_CLAIM",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1547,8 +1551,14 @@ def build_empirical_coadd_psf(
         preclip_negative_mass_fraction=negative_fraction,
         verified_native_source_hashes=bool(source_hashes)
             and lineage is not None)
+    # P16B is an independent read-only *post-fit* view of original
+    # larger coadd cutouts; it cannot redefine the frozen core ePSF,
+    # holdouts, selected stars, the local sky, or any fit parameters.
+    broad_wing_profile_qa = audit_native_broad_radius_star_profiles(
+        frame, train+holdout, catalog_matcher, measured_core_geometry)
     metrics = {
         "core_wings_validation_qa": core_wings_validation_qa,
+        "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
         "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
