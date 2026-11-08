@@ -694,13 +694,22 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
                            base_sky_a, rtol=0, atol=1.e-10)
             and np.isclose(baseline["sky_ring_b_median_nMgy_per_pixel"],
                            base_sky_b, rtol=0, atol=1.e-10))
-        for orig, measured in zip(old["radial_profile"],
-                                  baseline["radial_profile"]):
-            raw = orig["sky_b_subtracted_median_over_original_star_peak"]
+        p16c_rings = {
+            (row["radius_inner_in_measured_fwhm"],
+             row["radius_outer_in_measured_fwhm"]): row
+            for row in old["radial_profile"]
+        }
+        for measured in baseline["radial_profile"]:
+            key = (measured["radius_inner_in_measured_fwhm"],
+                   measured["radius_outer_in_measured_fwhm"])
+            orig = p16c_rings.get(key)
+            raw = (orig.get(
+                "sky_b_subtracted_median_over_original_star_peak")
+                if orig is not None else None)
             new = measured["sky_b_subtracted_median_over_peak"]
-            agrees = bool(agrees and raw is not None and new is not None
-                          and np.isclose(raw, new, rtol=0, atol=1.e-10)
-                          ) if orig["radius_inner_in_measured_fwhm"] >= 4 else agrees
+            agrees = bool(
+                agrees and raw is not None and new is not None
+                and np.isclose(raw, new, rtol=0, atol=1.e-10))
         item["reproduces_original_p16c_three_fwhm_sky_and_profile"] = bool(agrees)
         for original_ring, stress_ring in zip(
                 baseline["radial_profile"], stress["radial_profile"]):
