@@ -639,4 +639,4 @@ def test_p15g_inactive_ring_component_is_separate_from_full_native_fit():
         "ring_predicted_component_sum_on_reserved_native_pixels_nMgy"]<1e-7
     assert out["ring_component_fits_use_only_nonreserved_original_pixels"]
     assert out["n_reserved_native_pixels"]>0
-    assert not out["no_model_selection_or_science_adoption"] is False
+    assert out["no_model_selection_or_science_adoption"]
