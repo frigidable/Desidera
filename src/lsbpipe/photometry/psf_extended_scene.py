@@ -17,7 +17,7 @@ from lsbpipe.photometry.psf_joint_scene import (
     _projected_nnls, _shifted_native_kernel,
 )
 
-SCHEMA = "desidera.psf0-native-tractor-extended-scene/2"
+SCHEMA = "desidera.psf0-native-tractor-extended-scene/3"
 SERSIC_B = {1.: 1.6783469900166612, 4.: 7.669249442500804}
 PROFILE_N = {"REX": 1., "EXP": 1., "DEV": 4.}
 SUBPIXEL_GRID = 3
