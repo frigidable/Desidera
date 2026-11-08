@@ -5,7 +5,9 @@ import numpy as np
 import pytest
 
 from lsbpipe.photometry.psf_wing_profile import (
-    audit_native_broad_radius_star_profiles, SCHEMA,
+    audit_native_broad_radius_star_profiles,
+    audit_disjoint_bright_gaia_wing_probes,
+    PROSPECTIVE_SCHEMA, SCHEMA,
 )
 
 FWHM=5.136902957677135
@@ -206,4 +208,125 @@ def test_p16b_mismatched_target_protection_mask_refuses_to_measure():
         _frame(),[_star()],matcher,_geometry(),
         protected_mask=np.zeros((3,3),dtype=bool))
     assert result["status"]=="INVALID_TARGET_PROTECTION_MASK_SHAPE"
+    assert not result["science_adopted"]
+
+
+
+def _catalog_row(i, flux, **changes):
+    row = {
+        "ref_cat":"G3", "ref_id":i, "type":"PSF",
+        "fitbits":0, "maskbits":0, "gaia_duplicated_source":False,
+        "flux":float(flux), "flux_ivar":100., "objid":1000+i,
+    }
+    row.update(changes)
+    return row
+
+
+def _prospective_catalog():
+    return SimpleNamespace(
+        source_sha256="catalog-deterministic-test-hash",
+        pixel_positions=np.array([
+            [200.,200.], [225.,200.], [200.,225.],
+            [225.,225.], [230.,230.],
+        ]),
+        rows=(
+            _catalog_row(11,300.),
+            _catalog_row(12,120.),
+            _catalog_row(13,130.),
+            _catalog_row(14,1000.,maskbits=4),
+            _catalog_row(15,200.,gaia_duplicated_source=True),
+        ),
+    )
+
+
+def test_p16c_preregistered_bright_catalog_cohort_excludes_train_holdout():
+    frame=_frame()
+    matcher=_prospective_catalog()
+    selected=_star(role="train")
+    selected.gaia_source_id=11
+    original=frame.image_nMgy.copy()
+    result=audit_disjoint_bright_gaia_wing_probes(
+        frame,[selected],matcher,_geometry())
+    assert result["schema"]==PROSPECTIVE_SCHEMA
+    assert result["status"]==(
+        "DISJOINT_BRIGHT_GAIA_NATIVE_PROFILE_FEASIBILITY_ONLY")
+    assert result["n_native_catalog_entries_examined"]==5
+    assert result["n_catalog_probes_fixed_before_original_pixel_reads"]==2
+    assert result["n_profiles_with_both_conditional_outer_skies"]==2
+    assert result["predeclared_catalog_rejection_counts"]["EXISTING_TRAIN_OR_HOLDOUT_STAR"]==1
+    assert result["predeclared_catalog_rejection_counts"]["UNSAFE_CATALOG_QUALITY_FLAGS"]==2
+    assert [(r["gaia_source_id"],r["catalog_flux_rank_in_fixed_new_cohort"])
+            for r in result["per_star"]]==[(13,1),(12,2)]
+    assert all(row["not_frozen_psf_training_or_holdout"]
+               for row in result["per_star"])
+    assert all(row["native_peak_from_postselection_3x3_original_pixels"]
+               for row in result["per_star"])
+    assert all(row["science_adopted"] is False
+               for row in result["per_star"])
+    assert result["no_profile_based_star_replacement"]
+    assert result["science_adopted"] is False
+    np.testing.assert_array_equal(frame.image_nMgy,original)
+
+
+def test_p16c_all_qualified_stars_are_fixed_before_pixel_read_no_backfill(
+        monkeypatch):
+    import lsbpipe.photometry.psf_wing_profile as mod
+    monkeypatch.setattr(mod,"PROSPECTIVE_LIMIT",1)
+    frame=_frame()
+    matcher=_prospective_catalog()
+    selected=_star(role="holdout")
+    selected.gaia_source_id=11
+    # The highest-ranked NEW source is Gaia 13 at (200,225).
+    # Removing its observed core pixels must NEVER select Gaia 12
+    # instead, since the latter would be a posthoc sample replacement.
+    frame.valid[224:227,199:202]=False
+    result=mod.audit_disjoint_bright_gaia_wing_probes(
+        frame,[selected],matcher,_geometry())
+    assert result["n_catalog_probes_fixed_before_original_pixel_reads"]==1
+    assert result["per_star"][0]["gaia_source_id"]==13
+    assert result["per_star"][0]["status"]==(
+        "NO_UNMASKED_ORIGINAL_NATIVE_CORE_PEAK")
+    assert result["n_probe_profiles_not_measurable"]==1
+    assert result["no_profile_based_star_replacement"]
+
+
+def test_p16c_new_catalog_cohort_not_fabricated_without_native_rows():
+    matcher=SimpleNamespace(pixel_positions=np.array([[200.,200.]]))
+    result=audit_disjoint_bright_gaia_wing_probes(
+        _frame(),[_star()],matcher,_geometry())
+    assert result["status"]=="NO_FULL_NATIVE_GAIA_TRACTOR_CATALOG_METADATA"
+    assert result["per_star"]==[]
+
+
+def test_p16c_prospective_star_cohort_changes_on_catalog_flux_not_image():
+    matcher=_prospective_catalog()
+    a=audit_disjoint_bright_gaia_wing_probes(
+        _frame(with_neighbor=True),[_star()],matcher,_geometry())
+    b=audit_disjoint_bright_gaia_wing_probes(
+        _frame(with_neighbor=False),[_star()],matcher,_geometry())
+    assert [s["gaia_source_id"] for s in a["per_star"]]==(
+           [s["gaia_source_id"] for s in b["per_star"]])
+    assert [s["catalog_flux_rank_in_fixed_new_cohort"] for s in a["per_star"]]==(
+           [s["catalog_flux_rank_in_fixed_new_cohort"] for s in b["per_star"]])
+    assert a["catalog_rank_uses_native_tractor_band_flux_descending"]
+    assert not a["catalog_selection_uses_image_or_wing_residuals"]
+
+
+def test_p16c_invalid_protected_target_shape_refuses_prospective_sample():
+    result=audit_disjoint_bright_gaia_wing_probes(
+        _frame(),[_star()],_prospective_catalog(),_geometry(),
+        protected_mask=np.ones((1,2),dtype=bool))
+    assert result["status"]=="INVALID_TARGET_PROTECTION_MASK_SHAPE"
+    assert not result["science_adopted"]
+
+
+def test_p16c_catalog_neighbor_overlap_is_excluded_before_profiling():
+    catalog=SimpleNamespace(
+        source_sha256="catalog",
+        pixel_positions=np.array([[200.,200.],[210.,200.]]),
+        rows=(_catalog_row(11,300.),_catalog_row(12,120.)))
+    result=audit_disjoint_bright_gaia_wing_probes(
+        _frame(),[],catalog,_geometry())
+    assert result["n_catalog_probes_fixed_before_original_pixel_reads"]==0
+    assert result["predeclared_catalog_rejection_counts"]["NEIGHBOR_CATALOG_CORE_OVERLAP"]==2
     assert not result["science_adopted"]
