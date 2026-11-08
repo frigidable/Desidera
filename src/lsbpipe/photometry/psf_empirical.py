@@ -1555,7 +1555,8 @@ def build_empirical_coadd_psf(
     # larger coadd cutouts; it cannot redefine the frozen core ePSF,
     # holdouts, selected stars, the local sky, or any fit parameters.
     broad_wing_profile_qa = audit_native_broad_radius_star_profiles(
-        frame, train+holdout, catalog_matcher, measured_core_geometry)
+        frame, train+holdout, catalog_matcher, measured_core_geometry,
+        protected_mask=protected)
     metrics = {
         "core_wings_validation_qa": core_wings_validation_qa,
         "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
