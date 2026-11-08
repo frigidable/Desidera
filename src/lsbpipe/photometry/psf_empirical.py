@@ -275,7 +275,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "p15f_native_observational_failure_diagnostics": "REPORT_PER_CATALOG_NNLS_ACTIVE_FOOTPRINT_FLUX_RING_RATIO_INACTIVE_SHAPE_STRESS_SUBPIXEL_STEP_V1",
         "p15g_cross_split_source_amplitude_qa": "SAME_FROZEN_NATIVE_TEMPLATES_GLOBAL_VS_PREDECLARED_RING_EXCLUDED_NNLS_PER_OBJID_WITHHELD_PREDICTED_FLUX_V1",
         "native_core_wings_validation_qa": "PEAK_AXIS_HALFMAX_FWHM_AND_TRUNCATED_KERNEL_EEF_FAIL_CLOSED_STAGES_V1",
-        "original_broad_radius_stellar_profile_qa": "SELECTED_STARS_NATIVE_1TO22_MEASURED_FWHM_22TO26_VS26TO30_SKY_CATALOG_MASKED_V1_NO_WING_CLAIM",
+        "original_broad_radius_stellar_profile_qa": "SELECTED_STARS_NATIVE_1TO22_MEASURED_FWHM_22TO26_VS26TO30_SKY_CATALOG_AND_TARGET_MASKED_V1_NO_WING_CLAIM",
     }
     return {
         "sha256": sha256(json.dumps(
