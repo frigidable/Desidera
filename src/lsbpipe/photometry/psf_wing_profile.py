@@ -222,7 +222,8 @@ PROSPECTIVE_MIN_DIAGONAL_TRACTOR_SNR = 20.
 
 
 def audit_disjoint_bright_gaia_wing_probes(
-    frame, stars, catalog_matcher, core_geometry, *, protected_mask=None
+    frame, stars, catalog_matcher, core_geometry, *, protected_mask=None,
+    max_catalog_probes=PROSPECTIVE_LIMIT
 ):
     """Catalog-preregistered bright-star wing *feasibility* sample.
 
@@ -232,6 +233,8 @@ def audit_disjoint_bright_gaia_wing_probes(
     coverage or perceived scientific merit. A selected star with bad original
     pixels stays selected but is returned as failed, never replaced.
     """
+    if type(max_catalog_probes) is not int or not 1 <= max_catalog_probes <= 48:
+        raise ValueError("Catalog-only fixed probe quota must be 1..48")
     from collections import Counter
     from types import SimpleNamespace
     from scipy.spatial import cKDTree
@@ -245,7 +248,7 @@ def audit_disjoint_bright_gaia_wing_probes(
         "science_adopted": False,
         "catalog_selection_uses_image_or_wing_residuals": False,
         "catalog_rank_uses_native_tractor_band_flux_descending": True,
-        "predeclared_max_catalog_star_probes": PROSPECTIVE_LIMIT,
+        "predeclared_max_catalog_star_probes": max_catalog_probes,
         "predeclared_min_diagonal_tractor_snr_not_covariance_calibrated":
             PROSPECTIVE_MIN_DIAGONAL_TRACTOR_SNR,
         "existing_kernel_training_and_fixed_holdout_stars_excluded": True,
@@ -370,7 +373,7 @@ def audit_disjoint_bright_gaia_wing_probes(
     # The quota is frozen and filled BEFORE measuring the original pixels.
     # No backfilling based on the scientific result of a selected star.
     candidates.sort(key=lambda entry: (-entry[0], entry[1], entry[2]))
-    fixed = candidates[:PROSPECTIVE_LIMIT]
+    fixed = candidates[:max_catalog_probes]
     original_native = np.asarray(frame.image_nMgy, dtype=float)
     ivar = np.asarray(frame.invvar_nMgy2, dtype=float)
     valid = np.asarray(frame.valid, dtype=bool)
@@ -743,4 +746,368 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
             row["status"] == "DESCRIPTIVE_SKY_NEIGHBOR_STRESS_ONLY"
             for row in output),
         per_star=output,
+    )
+
+
+
+# P17: fixed BEFORE inspecting any additional Leo P wing profiles.
+# This is a single catalog-constrained sensitivity experiment, not an
+# optimizer for isolation radius, sample size or science-ready PSF.
+P17_SCHEMA = "desidera.psf0-fixed-48-gaia-catalog-neighbor-masks/1"
+P17_COHORT_LIMIT = 48
+P17_FROZEN_P16C_PREFIX = 16
+P17_CONTROL_EVERY_NEW_RANK = 4
+P17_MASK_CHOICES = ("fixed_3_fwhm", "fixed_4p5_fwhm",
+                    "flux_tiered_catalog", "fixed_6_fwhm")
+P17_ADAPTIVE_FLUX_THRESHOLDS = (0.01, 0.1)
+
+
+def _p17_neighbor_mask(pixels_shape, x0, y0, positions, indices, radii):
+    """Mask *local subrectangles*: avoid stamp-sized masks per neighbor."""
+    result = np.ones(pixels_shape, dtype=bool)
+    height, width = pixels_shape
+    for j in indices:
+        x, y = map(float, positions[j])
+        radius = float(radii[j])
+        left = max(0, int(math.floor(x - radius)) - x0)
+        right = min(width, int(math.ceil(x + radius)) - x0 + 1)
+        low = max(0, int(math.floor(y - radius)) - y0)
+        high = min(height, int(math.ceil(y + radius)) - y0 + 1)
+        if left >= right or low >= high:
+            continue
+        gy, gx = np.ogrid[y0+low:y0+high, x0+left:x0+right]
+        result[low:high, left:right] &= ((gx - x)**2 + (gy - y)**2 >
+                                            radius**2)
+    return result
+
+
+def _p17_adaptive_neighbor_radii(rows, center_flux, fwhm):
+    """Predeclared Tractor-flux tiers, not a physically validated wing model.
+
+    Missing/nonpositive neighboring flux, or a non-PSF neighbor type,
+    conservatively receives 6 FWHM. Valid PSF neighbor flux ratio:
+    below 0.01 -> 3, [0.01, 0.1) -> 4.5, >=0.1 -> 6 FWHM.
+    """
+    result = []
+    for row in rows:
+        flux = row.get("flux") if isinstance(row, dict) else None
+        source_type = row.get("type") if isinstance(row, dict) else None
+        if (source_type != "PSF" or not isinstance(flux, (int, float))
+                or not math.isfinite(flux) or flux <= 0):
+            tier = 6.
+        elif flux / center_flux >= P17_ADAPTIVE_FLUX_THRESHOLDS[1]:
+            tier = 6.
+        elif flux / center_flux >= P17_ADAPTIVE_FLUX_THRESHOLDS[0]:
+            tier = 4.5
+        else:
+            tier = 3.
+        result.append(float(tier * fwhm))
+    return np.asarray(result, dtype=float)
+
+
+def audit_extended_bright_gaia_mask_experiment(
+    frame, stars, catalog_matcher, core_geometry, p16c_qa, *,
+    protected_mask=None
+):
+    """P17: 16 legacy + 24 new exploratory + 8 new identity-held-out probes.
+
+    The control cohort is fixed by the Tractor-flux rank BEFORE native-pixel
+    profiling, but still shares the same coadd and correlated sky.
+    All mask strategies are preregistered and computed for every fixed star.
+    No masking strategy is selected based on these residuals.
+    """
+    report = {
+        "schema": P17_SCHEMA,
+        "status": "NOT_RUN",
+        "science_adopted": False,
+        "target_catalog_rank_limit": P17_COHORT_LIMIT,
+        "legacy_first_16_p16c_identities_preserved": True,
+        "prospective_control_every_fourth_rank_from_17_to_48": True,
+        "selection_uses_only_catalog_and_frozen_core_geometry": True,
+        "selection_and_masking_do_not_depend_on_observed_wing_profile": True,
+        "native_catalog_flux_used_for_neighbor_mask_hypotheses_not_psf_fit":
+            True,
+        "adaptive_flux_ratio_thresholds": list(P17_ADAPTIVE_FLUX_THRESHOLDS),
+        "adaptive_non_psf_or_missing_flux_receives_6_fwhm": True,
+        "predeclared_mask_variants": list(P17_MASK_CHOICES),
+        "mask_tier_3_fwhm_for_psf_neighbor_below_flux_ratio": 0.01,
+        "mask_tier_4p5_fwhm_for_psf_neighbor_flux_ratio": [0.01, 0.1],
+        "mask_tier_6_fwhm_for_psf_neighbor_flux_ratio_at_least": 0.1,
+        "sky_plane_is_not_an_independent_calibration": True,
+        "octants_and_coadd_pixels_not_statistically_independent": True,
+        "new_control_stars_not_independent_of_same_coadd": True,
+        "no_wing_detection_or_model_fit_or_psf_adoption": True,
+        "per_star": [],
+    }
+    if (not isinstance(p16c_qa, dict) or
+            p16c_qa.get("schema") != PROSPECTIVE_SCHEMA or
+            p16c_qa.get("status") !=
+            "DISJOINT_BRIGHT_GAIA_NATIVE_PROFILE_FEASIBILITY_ONLY" or
+            len(p16c_qa.get("per_star", [])) != P17_FROZEN_P16C_PREFIX):
+        return dict(report, status="NO_COMPLETE_FROZEN_16_STAR_P16C_COHORT")
+    if (catalog_matcher is None or
+            not hasattr(catalog_matcher, "rows") or
+            not hasattr(catalog_matcher, "pixel_positions") or
+            getattr(catalog_matcher, "source_sha256", None) !=
+            p16c_qa.get("native_catalog_sha256")):
+        return dict(report, status="CATALOG_LINEAGE_OR_METADATA_MISMATCH")
+    positions = np.asarray(catalog_matcher.pixel_positions, dtype=float)
+    if (positions.shape != (len(catalog_matcher.rows), 2) or
+            not len(positions) or not np.isfinite(positions).all()):
+        return dict(report, status="INVALID_NATIVE_CATALOG_POSITIONS")
+    if (not isinstance(core_geometry, dict) or
+            core_geometry.get("status") !=
+            "FINITE_NATIVE_CORE_GEOMETRY_MEASURED"):
+        return dict(report, status="NO_FROZEN_NATIVE_CORE_GEOMETRY")
+    fwhm = core_geometry.get(
+        "measured_core_fwhm_axis_geometric_mean_native_pix")
+    if (not isinstance(fwhm, (int, float)) or
+            not math.isfinite(fwhm) or fwhm <= 0):
+        return dict(report, status="NO_FROZEN_NATIVE_CORE_FWHM")
+    if protected_mask is not None:
+        protected_mask = np.asarray(protected_mask, dtype=bool)
+        if protected_mask.shape != frame.shape:
+            return dict(report, status="INVALID_TARGET_PROTECTION_MASK_SHAPE")
+
+    # Invoke EXACT P16C catalog eligibility and brightness ordering rules
+    # with a larger, predeclared quota, preserving the original top sixteen.
+    expanded = audit_disjoint_bright_gaia_wing_probes(
+        frame, stars, catalog_matcher, core_geometry,
+        protected_mask=protected_mask,
+        max_catalog_probes=P17_COHORT_LIMIT)
+    if (expanded.get("status") !=
+            "DISJOINT_BRIGHT_GAIA_NATIVE_PROFILE_FEASIBILITY_ONLY" or
+            expanded.get("native_catalog_sha256") !=
+            p16c_qa["native_catalog_sha256"]):
+        return dict(report, status="EXPANDED_CATALOG_SELECTION_FAILED")
+    fixed = expanded["per_star"]
+    prefix_keys = ("gaia_source_id", "tractor_objid", "native_xy_pix",
+                   "native_tractor_flux_nMgy_catalog_not_direct_observed_peak",
+                   "catalog_flux_rank_in_fixed_new_cohort")
+    for a, b in zip(fixed[:P17_FROZEN_P16C_PREFIX],
+                    p16c_qa["per_star"]):
+        if any(a.get(key) != b.get(key) for key in prefix_keys):
+            return dict(report, status="P16C_FIRST_16_IDENTITIES_CHANGED")
+    if len(fixed) < P17_FROZEN_P16C_PREFIX:
+        return dict(report, status="P16C_FIRST_16_IDENTITIES_MISSING")
+    original = np.asarray(frame.image_nMgy, dtype=float)
+    inverse = np.asarray(frame.invvar_nMgy2, dtype=float)
+    half = int(math.ceil(SKY_RING_B[1] * fwhm)) + 1
+    result_stars = []
+    n_rows = len(catalog_matcher.rows)
+
+    for selected in fixed:
+        rank = int(selected["catalog_flux_rank_in_fixed_new_cohort"])
+        category = ("P16C_LEGACY_EXPLORATORY" if rank <= 16
+                    else "NEW_CATALOG_HOLDOUT" if rank % 4 == 0
+                    else "NEW_CATALOG_EXPLORATORY")
+        item = {
+            "source_id": selected["source_id"],
+            "gaia_source_id": selected["gaia_source_id"],
+            "tractor_objid": selected["tractor_objid"],
+            "catalog_rank": rank,
+            "cohort_role": category,
+            "native_xy_pix": selected["native_xy_pix"],
+            "native_tractor_flux_nMgy": selected[
+                "native_tractor_flux_nMgy_catalog_not_direct_observed_peak"],
+            "predeclared_before_new_profile_reads": True,
+            "status": "NOT_MEASURABLE",
+            "mask_variants": [],
+            "science_adopted": False,
+        }
+        if selected["status"] != (
+                "MASKED_OUTER_PROFILE_DESCRIPTIVE_SKY_DEGENERATE"):
+            item["status"] = "ORIGINAL_NATIVE_PEAK_OR_SKY_NOT_MEASURABLE"
+            result_stars.append(item)
+            continue
+        peak = selected["original_star_peak_nMgy_per_native_pixel"]
+        center_flux = item["native_tractor_flux_nMgy"]
+        x, y = map(float, selected["native_xy_pix"])
+        ix, iy = int(np.rint(x)), int(np.rint(y))
+        x0, y0 = ix - half, iy - half
+        if (x0 < 0 or y0 < 0 or ix + half >= frame.shape[1] or
+                iy + half >= frame.shape[0]):
+            item["status"] = "FULL_NATIVE_STAMP_OUTSIDE_IMAGE"
+            result_stars.append(item)
+            continue
+        sl_y, sl_x = slice(y0, iy+half+1), slice(x0, ix+half+1)
+        pixels = original[sl_y, sl_x]
+        ivar = inverse[sl_y, sl_x]
+        base = (np.asarray(frame.valid[sl_y, sl_x], dtype=bool).copy()
+                & np.isfinite(pixels) & np.isfinite(ivar) & (ivar > 0))
+        for key in (f"SATUR_{frame.band.upper()}",
+                    f"ALLMASK_{frame.band.upper()}"):
+            if key in frame.mask_reasons:
+                base &= ~np.asarray(
+                    frame.mask_reasons[key][sl_y, sl_x], dtype=bool)
+        if protected_mask is not None:
+            base &= ~protected_mask[sl_y, sl_x]
+        gy, gx = np.indices(pixels.shape, dtype=float)
+        gx += x0
+        gy += y0
+        dx, dy = (gx-x)/fwhm, (gy-y)/fwhm
+        radius = np.hypot(gx-x, gy-y)
+        sector = np.minimum(np.floor(
+            (np.arctan2(dy, dx) % (2*np.pi))*8/(2*np.pi)
+        ).astype(int), 7)
+        dcat = np.hypot(positions[:, 0]-x, positions[:, 1]-y)
+        if np.count_nonzero(dcat <= 2.5) != 1:
+            item["status"] = "CATALOG_CENTRAL_MATCH_NOT_UNIQUE"
+            result_stars.append(item)
+            continue
+        adaptive = _p17_adaptive_neighbor_radii(
+            catalog_matcher.rows, center_flux, fwhm)
+        item["n_catalog_rows_in_original_native_inventory"] = n_rows
+        item["mask_variant_summaries_are_not_independent"] = True
+        for label in P17_MASK_CHOICES:
+            radii = (
+                adaptive if label == "flux_tiered_catalog"
+                else np.full(n_rows, {
+                    "fixed_3_fwhm": 3.,
+                    "fixed_4p5_fwhm": 4.5,
+                    "fixed_6_fwhm": 6.,
+                }[label] * fwhm))
+            # Only catalog centroids close enough to intersect the stamp
+            # are traversed; no star is excluded from the fixed cohort.
+            maximum = 6.*fwhm
+            nearby = np.flatnonzero(
+                (dcat > 2.5) &
+                (positions[:, 0] >= x0-maximum) &
+                (positions[:, 0] <= ix+half+maximum) &
+                (positions[:, 1] >= y0-maximum) &
+                (positions[:, 1] <= iy+half+maximum))
+            mask = _p17_neighbor_mask(
+                pixels.shape, x0, y0, positions, nearby, radii)
+            usable = base & mask
+            sky_masks = [
+                usable & (radius >= lo*fwhm) & (radius < hi*fwhm)
+                for lo, hi in (SKY_RING_A, SKY_RING_B)
+            ]
+            sky_n = [int(np.count_nonzero(v)) for v in sky_masks]
+            skies = [
+                float(np.median(pixels[v])) if np.any(v) else None
+                for v in sky_masks
+            ]
+            plane = _p16d_conditional_sky_plane(
+                pixels, dx, dy, sky_masks[0] | sky_masks[1])
+            plane_pixels = (plane[0] + plane[1]*dx + plane[2]*dy
+                            if plane is not None else None)
+            record = {
+                "strategy": label,
+                "n_catalog_neighbors_considered_in_cutout": int(
+                    len(nearby)),
+                "n_neighbor_masks_intersecting_cutout": int(
+                    sum(
+                        (max(x0, math.floor(positions[j, 0]-radii[j])) <=
+                         min(ix+half, math.ceil(positions[j, 0]+radii[j])))
+                        and
+                        (max(y0, math.floor(positions[j, 1]-radii[j])) <=
+                         min(iy+half, math.ceil(positions[j, 1]+radii[j])))
+                        for j in nearby)),
+                "sky_ring_n_unmasked": sky_n,
+                "sky_ring_median_nMgy_per_native_pixel": skies,
+                "sky_plane_coefficients_nMgy_per_native_pixel": (
+                    list(plane) if plane is not None else None),
+                "radial_profile": [],
+            }
+            for low, high in P16D_PROFILE_RINGS_FWHM:
+                full = (radius >= low*fwhm) & (radius < high*fwhm)
+                ring = full & usable
+                n = int(np.count_nonzero(ring))
+                total = int(np.count_nonzero(full))
+                raw = float(np.median(pixels[ring])) if n else None
+                octant_values = []
+                for k in range(8):
+                    area = ring & (sector == k)
+                    octant_values.append(
+                        float(np.median(pixels[area]-skies[1])/peak)
+                        if skies[1] is not None and
+                        np.count_nonzero(area) >= P16D_MIN_OCTANT_PIXELS
+                        else None)
+                populated = [v for v in octant_values if v is not None]
+                record["radial_profile"].append({
+                    "radius_inner_in_measured_fwhm": low,
+                    "radius_outer_in_measured_fwhm": high,
+                    "n_unmasked_native_pixels": n,
+                    "unmasked_fraction": n / total if total else None,
+                    "n_octants_with_at_least_25_pixels": len(populated),
+                    "sky_a_subtracted_median_over_peak": (
+                        (raw-skies[0])/peak if raw is not None and
+                        skies[0] is not None else None),
+                    "sky_b_subtracted_median_over_peak": (
+                        (raw-skies[1])/peak if raw is not None and
+                        skies[1] is not None else None),
+                    "conditional_plane_subtracted_median_over_peak": (
+                        float(np.median((pixels-plane_pixels)[ring])/peak)
+                        if plane_pixels is not None and n else None),
+                    "sky_b_subtracted_octant_medians_over_peak":
+                        octant_values,
+                    "max_minus_min_octant_median_over_peak": (
+                        max(populated)-min(populated)
+                        if len(populated) >= 4 else None),
+                })
+            item["mask_variants"].append(record)
+        # Enforce EXACT legacy baseline continuity; do not accept a
+        # "better" mask when the old 3-FWHM result was not reproduced.
+        if rank <= P17_FROZEN_P16C_PREFIX:
+            legacy = p16c_qa["per_star"][rank-1]
+            first = item["mask_variants"][0]
+            pairs = zip(first["sky_ring_median_nMgy_per_native_pixel"],
+                        (legacy["conditional_sky_inner_ring"][
+                            "median_original_nMgy_per_native_pixel"],
+                         legacy["conditional_sky_outer_ring"][
+                            "median_original_nMgy_per_native_pixel"]))
+            agree = all(a is not None and np.isclose(
+                a, b, rtol=0, atol=1.e-10) for a, b in pairs)
+            old_rings = {
+                (r["radius_inner_in_measured_fwhm"],
+                 r["radius_outer_in_measured_fwhm"]): r
+                for r in legacy["radial_profile"]}
+            for r in first["radial_profile"]:
+                old = old_rings.get((
+                    r["radius_inner_in_measured_fwhm"],
+                    r["radius_outer_in_measured_fwhm"]))
+                measured = r["sky_b_subtracted_median_over_peak"]
+                expected = (old.get(
+                    "sky_b_subtracted_median_over_original_star_peak")
+                    if old is not None else None)
+                agree = bool(agree and measured is not None and
+                             expected is not None and np.isclose(
+                                 measured, expected, atol=1.e-10, rtol=0))
+            item["reproduces_frozen_p16c_three_fwhm"] = bool(agree)
+            if not agree:
+                item["status"] = "P16C_BASELINE_MISMATCH"
+                result_stars.append(item)
+                continue
+        item["status"] = "MULTIMASK_DESCRIPTIVE_ONLY"
+        result_stars.append(item)
+
+    return dict(
+        report,
+        status="FIXED_EXPANDED_COHORT_MASK_FEASIBILITY_ONLY",
+        native_catalog_sha256=p16c_qa["native_catalog_sha256"],
+        n_catalog_only_eligible_before_limit=expanded[
+            "n_catalog_only_geometry_eligible_before_brightness_cap"],
+        n_catalog_selected=len(fixed),
+        n_legacy_p16c_stars=sum(
+            v["cohort_role"] == "P16C_LEGACY_EXPLORATORY"
+            for v in result_stars),
+        n_new_exploratory=sum(
+            v["cohort_role"] == "NEW_CATALOG_EXPLORATORY"
+            for v in result_stars),
+        n_new_identity_holdout=sum(
+            v["cohort_role"] == "NEW_CATALOG_HOLDOUT"
+            for v in result_stars),
+        n_legacy_baseline_reproduced=sum(
+            v.get("reproduces_frozen_p16c_three_fwhm") is True
+            for v in result_stars),
+        n_multimask_stars_measured=sum(
+            v["status"] == "MULTIMASK_DESCRIPTIVE_ONLY"
+            for v in result_stars),
+        n_legacy_p16c_expected=P17_FROZEN_P16C_PREFIX,
+        planned_new_cohort_has_32_stars=(
+            len(fixed) == P17_COHORT_LIMIT),
+        n_new_catalog_holdout_stars_is_not_cross_field_validation=True,
+        no_outcome_driven_refilling=True,
+        per_star=result_stars,
     )
