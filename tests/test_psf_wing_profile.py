@@ -7,7 +7,8 @@ import pytest
 from lsbpipe.photometry.psf_wing_profile import (
     audit_native_broad_radius_star_profiles,
     audit_disjoint_bright_gaia_wing_probes,
-    PROSPECTIVE_SCHEMA, SCHEMA,
+    PROSPECTIVE_SCHEMA, SCHEMA, P16D_SCHEMA,
+    audit_fixed_bright_gaia_neighbor_sky_stress,
 )
 
 FWHM=5.136902957677135
@@ -367,3 +368,130 @@ def test_p16c_duplicate_gaia_ref_id_is_not_an_independent_star():
         "DUPLICATE_GAIA_ID_IN_NATIVE_TRACTOR_CATALOG"]==2
     assert result["n_catalog_probes_fixed_before_original_pixel_reads"]==1
     assert result["science_adopted"] is False
+
+
+
+def test_p16d_fixed_star_identities_baseline_and_read_only_stress():
+    frame = _frame()
+    matcher = _prospective_catalog()
+    selected = _star(role="train")
+    selected.gaia_source_id = 11
+    original = frame.image_nMgy.copy()
+    invvar = frame.invvar_nMgy2.copy()
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [selected], matcher, _geometry())
+    result = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, matcher, p16c, _geometry())
+    assert result["schema"] == P16D_SCHEMA
+    assert result["status"] == "FIXED_COHORT_SKY_NEIGHBOR_STRESS_QA_ONLY"
+    assert result["n_fixed_p16c_star_identities"] == 2
+    assert result["n_baseline_p16c_reproduced"] == 2
+    assert result["n_stress_profiles_with_both_sky_and_plane"] == 2
+    assert [v["gaia_source_id"] for v in result["per_star"]] == [
+        v["gaia_source_id"] for v in p16c["per_star"]]
+    assert [v["catalog_flux_rank_in_fixed_new_cohort"]
+            for v in result["per_star"]] == [1, 2]
+    assert all(v["status"] == "DESCRIPTIVE_SKY_NEIGHBOR_STRESS_ONLY"
+               for v in result["per_star"])
+    assert all(v["reproduces_original_p16c_three_fwhm_sky_and_profile"]
+               for v in result["per_star"])
+    assert all(v["bright_stars_independent_of_existing_psf_training_not_identified"]
+               is False for v in p16c["per_star"])
+    for star in result["per_star"]:
+        baseline, stress = star["mask_variants"]
+        assert [v["mask_radius_in_measured_fwhm"]
+                for v in star["mask_variants"]] == [3., 6.]
+        assert len(baseline["radial_profile"]) == 6
+        assert len(stress["radial_profile"]) == 6
+        assert baseline["conditional_outer_sky_plane_coefficients_nMgy_per_pix"]
+        assert stress["conditional_outer_sky_plane_coefficients_nMgy_per_pix"]
+        for smaller, larger in zip(baseline["radial_profile"],
+                                   stress["radial_profile"]):
+            assert larger["n_unmasked_native_pixels"] <= (
+                smaller["n_unmasked_native_pixels"])
+            assert len(larger["sky_b_subtracted_octant_medians_over_peak"]) == 8
+            assert "six_minus_three_fwhm_mask_residual_over_peak" in larger
+    assert result["fixed_p16c_cohort_never_reranked_or_replaced"]
+    assert not result["science_adopted"]
+    np.testing.assert_array_equal(original, frame.image_nMgy)
+    np.testing.assert_array_equal(invvar, frame.invvar_nMgy2)
+
+
+def test_p16d_requires_preexisting_matching_catalog_and_fixed_p16c_qa():
+    frame = _frame()
+    matcher = _prospective_catalog()
+    report = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, matcher, {}, _geometry())
+    assert report["status"] == "NO_FIXED_P16C_COHORT"
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    wrong = SimpleNamespace(
+        pixel_positions=matcher.pixel_positions, source_sha256="other-catalog")
+    bad = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, wrong, p16c, _geometry())
+    assert bad["status"] == "P16C_CATALOG_LINEAGE_MISMATCH"
+    assert bad["per_star"] == []
+    assert not bad["science_adopted"]
+
+
+def test_p16d_selected_but_failed_source_is_not_replaced():
+    frame = _frame()
+    matcher = _prospective_catalog()
+    selected = _star(role="train")
+    selected.gaia_source_id = 11
+    frame.valid[224:227, 199:202] = False
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [selected], matcher, _geometry())
+    result = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, matcher, p16c, _geometry())
+    assert len(result["per_star"]) == 2
+    assert result["per_star"][0]["gaia_source_id"] == 13
+    assert result["per_star"][0]["status"] == "P16C_PROFILE_NOT_AVAILABLE"
+    assert result["per_star"][1]["gaia_source_id"] == 12
+    assert result["n_baseline_p16c_reproduced"] == 1
+    assert not result["science_adopted"]
+
+
+def test_p16d_repeated_input_is_deterministic():
+    frame = _frame()
+    matcher = _prospective_catalog()
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    a = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, matcher, p16c, _geometry())
+    b = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, matcher, p16c, _geometry())
+    assert a == b
+    assert a["n_baseline_p16c_reproduced"] == 3
+
+
+def test_p16d_synthetic_linear_sky_gradient_is_recorded_not_adopted():
+    frame = _frame(with_neighbor=False)
+    matcher = _prospective_catalog()
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    result = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, matcher, p16c, _geometry())
+    assert result["n_baseline_p16c_reproduced"] == 3
+    assert result["n_stress_profiles_with_both_sky_and_plane"] == 3
+    assert any(abs(v["mask_variants"][0][
+        "conditional_outer_sky_plane_coefficients_nMgy_per_pix"][1]) > 0
+        for v in result["per_star"])
+    assert result["plane_is_conditional_and_can_absorb_stellar_wings"]
+    assert result["no_covariance_calibration_or_statistical_detection_test"]
+    assert not result["science_adopted"]
+
+
+def test_p16d_gui_summary_does_not_claim_wing_detection():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    frame = _frame()
+    matcher = _prospective_catalog()
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    stress = audit_fixed_bright_gaia_neighbor_sky_stress(
+        frame, matcher, p16c, _geometry())
+    summary = PSF0Panel._calibration_diagnostic_summary({
+        "fixed_bright_gaia_neighbor_sky_stress_qa": stress})
+    assert "P16D fixed P16C bright Gaia cohort" in summary
+    assert "NOT calibrated wide-angle PSF" in summary
