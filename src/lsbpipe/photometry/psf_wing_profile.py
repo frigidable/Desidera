@@ -585,7 +585,8 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
         gx += x0
         gy += y0
         dx, dy = (gx - x) / width, (gy - y) / width
-        radial = np.hypot(dx, dy)
+        native_radius = np.hypot(gx - x, gy - y)
+        radial = native_radius / width
         octants = np.minimum(
             np.floor((np.arctan2(dy, dx) % (2 * np.pi)) *
                      (8. / (2 * np.pi))).astype(int), 7)
@@ -603,6 +604,7 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
             mask_radius = mask_fwhm * width
             usable = usable_base.copy()
             eligible = ((dist > 2.5) &
+                        (dist <= half * math.sqrt(2) + mask_radius) &
                         (positions[:, 0] >= x0 - mask_radius) &
                         (positions[:, 0] <= ix + half + mask_radius) &
                         (positions[:, 1] >= y0 - mask_radius) &
@@ -616,8 +618,10 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
                 if not np.any(selection):
                     return None
                 return float(np.median(pixels[selection]))
-            sky_a_mask = usable & (radial >= 22) & (radial < 26)
-            sky_b_mask = usable & (radial >= 26) & (radial < 30)
+            sky_a_mask = (usable & (native_radius >= 22 * width)
+                          & (native_radius < 26 * width))
+            sky_b_mask = (usable & (native_radius >= 26 * width)
+                          & (native_radius < 30 * width))
             sky_a = median_in(sky_a_mask)
             sky_b = median_in(sky_b_mask)
             sky_pixels = sky_a_mask | sky_b_mask
@@ -643,7 +647,8 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
                 "radial_profile": [],
             }
             for inner, outer in P16D_PROFILE_RINGS_FWHM:
-                area = (radial >= inner) & (radial < outer)
+                area = ((native_radius >= inner * width)
+                        & (native_radius < outer * width))
                 ring = usable & area
                 total = int(np.count_nonzero(area))
                 n = int(np.count_nonzero(ring))
