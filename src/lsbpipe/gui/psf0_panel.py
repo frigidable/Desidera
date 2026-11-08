@@ -1146,6 +1146,30 @@ class PSF0Panel(QGroupBox):
                         f"  {row.get('source_id')}: "
                         f"{row.get('status', 'NO_STRESS_PROFILE')}; "
                         "no star replacement.")
+        p17 = metrics.get("extended_bright_gaia_mask_experiment_qa")
+        if isinstance(p17, dict):
+            notes.append(
+                "P17 fixed catalog-only Leo P cohort: "
+                f"{p17.get('n_catalog_selected', 0)} selected, "
+                f"{p17.get('n_legacy_p16c_stars', 0)} legacy P16C, "
+                f"{p17.get('n_new_exploratory', 0)} new exploratory and "
+                f"{p17.get('n_new_identity_holdout', 0)} new identity "
+                "holdout stars; "
+                f"{p17.get('n_legacy_baseline_reproduced', 0)}/16 "
+                "legacy 3-FWHM sky/radial profiles reproduced. "
+                "Fixed 3, 4.5, adaptive catalog-flux-tiered and "
+                "stress-test 6 FWHM neighbor masks. "
+                "NOT calibrated PSF wings, sky, covariance or independent "
+                "coadd validation. Full results in Copy QA.")
+            if p17.get("status") != (
+                    "FIXED_EXPANDED_COHORT_MASK_FEASIBILITY_ONLY"):
+                notes.append(
+                    f"  P17 blocked: {p17.get('status', 'UNKNOWN')}.")
+            else:
+                notes.append(
+                    f"  P17 native mask calculations completed for "
+                    f"{p17.get('n_multimask_stars_measured', 0)} "
+                    "preselected stars. No star replacement or PSF adoption.")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
