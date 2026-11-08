@@ -159,3 +159,27 @@ def test_failed_input_or_incomplete_holdout_cannot_pass_gate():
     assert out["preclipping_negative_absolute_mass_fraction"] is None
     assert out["status"]=="SCIENCE_GATE_HOLD"
     assert out["science_adopted"] is False
+
+
+
+def test_psf_core_wings_gui_renders_measured_fwhm_and_closed_science_gates():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    core = measure_finite_native_psf_core(
+        gaussian_kernel(), guessed_fwhm_pix=6.57)
+    readiness = evaluate_core_wings_readiness(
+        core_geometry=core, n_train=10, n_holdout=3,
+        coverage=complete_coverage(), holdout_growth_summary=growth(),
+        preclip_negative_mass_fraction=.016537987,
+        verified_native_source_hashes=True)
+    summary = PSF0Panel._calibration_diagnostic_summary({
+        "core_wings_validation_qa":readiness,
+    })
+    assert "measured native-kernel" in summary
+    assert "SCIENCE_GATE_HOLD" in summary
+    assert "finite_kernel_numerical_geometry: PASS" in summary
+    assert "predeclared_holdout_coverage: PASS" in summary
+    assert "wide_angle_wing_measurement: HOLD" in summary
+    assert "galaxy_injection_recovery: HOLD" in summary
+    assert "PASS is diagnostic completeness only" in summary
+    assert "LSB injection-recovery are unvalidated" in summary
