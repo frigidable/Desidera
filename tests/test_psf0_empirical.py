@@ -177,6 +177,23 @@ def test_approximate_core_profile_and_no_galaxy_centroids(built):
     assert report["n_train"] == len(built.training)
     assert report["n_holdout"] == len(built.holdout)
     assert report["kernel_sha256"]
+    # The new measured core QA must flow through the full real builder
+    # and its complete report, without ever promoting synthetic evidence.
+    readiness = report["diagnostic_metrics"]["core_wings_validation_qa"]
+    assert readiness["schema"] == "desidera.psf0-core-wings-validation/1"
+    assert readiness["status"] == "SCIENCE_GATE_HOLD"
+    assert not readiness["science_adopted"]
+    assert readiness["n_train_stars"] == len(built.training)
+    assert readiness["n_fixed_holdout_stars"] == len(built.holdout)
+    assert readiness["stages"]["original_native_input_provenance"]["status"] == "HOLD"
+    assert readiness["stages"]["wide_angle_wing_measurement"]["status"] == "HOLD"
+    assert readiness["stages"]["galaxy_injection_recovery"]["status"] == "HOLD"
+    assert readiness["core_geometry"]["status"] == (
+        "FINITE_NATIVE_CORE_GEOMETRY_MEASURED")
+    assert readiness["core_geometry"][
+        "measured_core_fwhm_axis_geometric_mean_native_pix"] > 0.
+    assert readiness["core_geometry"]["guessed_detection_fwhm_pix_not_a_measurement"] == (
+        built.recipe.guessed_fwhm_pix)
     json.dumps(report, allow_nan=False)
 
 
