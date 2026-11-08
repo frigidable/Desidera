@@ -9,6 +9,9 @@ from lsbpipe.photometry.psf_wing_profile import (
     audit_disjoint_bright_gaia_wing_probes,
     PROSPECTIVE_SCHEMA, SCHEMA, P16D_SCHEMA,
     audit_fixed_bright_gaia_neighbor_sky_stress,
+    audit_extended_bright_gaia_mask_experiment,
+    _p17_adaptive_neighbor_radii,
+    P17_SCHEMA, P17_COHORT_LIMIT, P17_MASK_CHOICES,
 )
 
 FWHM=5.136902957677135
@@ -495,3 +498,137 @@ def test_p16d_gui_summary_does_not_claim_wing_detection():
         "fixed_bright_gaia_neighbor_sky_stress_qa": stress})
     assert "P16D fixed P16C bright Gaia cohort" in summary
     assert "NOT calibrated wide-angle PSF" in summary
+
+
+
+def _p17_synthetic_field():
+    """48 clean Gaia positions, 1 catalog galaxy neighbor; original pixels."""
+    shape = (840, 880)
+    yy, xx = np.indices(shape, dtype=float)
+    data = .001 + .000006 * xx + .000004 * yy
+    positions = []
+    rows = []
+    for index in range(48):
+        x = 180 + 70 * (index % 8)
+        y = 180 + 70 * (index // 8)
+        data[y, x] += 5. + (48 - index) / 48.
+        positions.append([float(x), float(y)])
+        rows.append(_catalog_row(10000 + index, 500 - 3 * index))
+    # This non-Gaia neighbor is >3 FWHM away: does not change 48-star
+    # selection, but must receive the conservative adaptive mask.
+    positions.append([215., 180.])
+    rows.append(_catalog_row(999, 100., ref_cat="", type="EXP"))
+    frame = SimpleNamespace(
+        image_nMgy=data,
+        invvar_nMgy2=np.ones(shape, dtype=float) * 100.,
+        valid=np.ones(shape, dtype=bool),
+        mask_reasons={},
+        band="g",
+        shape=shape,
+    )
+    matcher = SimpleNamespace(
+        source_sha256="fixed-p17-test-catalog-hash",
+        pixel_positions=np.asarray(positions, dtype=float),
+        rows=tuple(rows),
+    )
+    return frame, matcher
+
+
+def test_p17_expands_frozen_legacy_cohort_and_preserves_holdout():
+    frame, matcher = _p17_synthetic_field()
+    original = frame.image_nMgy.copy()
+    invvar = frame.invvar_nMgy2.copy()
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    assert len(p16c["per_star"]) == 16
+    p17 = audit_extended_bright_gaia_mask_experiment(
+        frame, [], matcher, _geometry(), p16c)
+    assert p17["schema"] == P17_SCHEMA
+    assert p17["status"] == "FIXED_EXPANDED_COHORT_MASK_FEASIBILITY_ONLY"
+    assert p17["n_catalog_only_eligible_before_limit"] == 48
+    assert p17["n_catalog_selected"] == P17_COHORT_LIMIT
+    assert p17["n_legacy_p16c_stars"] == 16
+    assert p17["n_new_exploratory"] == 24
+    assert p17["n_new_identity_holdout"] == 8
+    assert p17["n_legacy_baseline_reproduced"] == 16
+    assert p17["n_multimask_stars_measured"] == 48
+    assert [v["gaia_source_id"] for v in p17["per_star"][:16]] == [
+        v["gaia_source_id"] for v in p16c["per_star"]]
+    assert [v["catalog_rank"] for v in p17["per_star"]
+            if v["cohort_role"] == "NEW_CATALOG_HOLDOUT"] == [
+                20, 24, 28, 32, 36, 40, 44, 48]
+    assert [v["mask_variants"][0]["strategy"] for v in p17["per_star"]] == [
+        "fixed_3_fwhm"] * 48
+    assert all([v["strategy"] for v in item["mask_variants"]] ==
+               list(P17_MASK_CHOICES) for item in p17["per_star"])
+    assert all(item["status"] == "MULTIMASK_DESCRIPTIVE_ONLY"
+               for item in p17["per_star"])
+    for item in p17["per_star"]:
+        a, b, adaptive, c = item["mask_variants"]
+        for small, medium, mix, large in zip(
+                a["radial_profile"], b["radial_profile"],
+                adaptive["radial_profile"], c["radial_profile"]):
+            assert (large["n_unmasked_native_pixels"] <=
+                    mix["n_unmasked_native_pixels"] <=
+                    small["n_unmasked_native_pixels"])
+            assert (large["n_unmasked_native_pixels"] <=
+                    medium["n_unmasked_native_pixels"] <=
+                    small["n_unmasked_native_pixels"])
+            assert len(mix["sky_b_subtracted_octant_medians_over_peak"]) == 8
+    assert not p17["science_adopted"]
+    assert p17["new_control_stars_not_independent_of_same_coadd"]
+    np.testing.assert_array_equal(original, frame.image_nMgy)
+    np.testing.assert_array_equal(invvar, frame.invvar_nMgy2)
+
+
+def test_p17_catalog_flux_adaptive_mask_tiers_fixed_without_pixels():
+    rows = (
+        {"type": "PSF", "flux": .5},          # .005 -> 3
+        {"type": "PSF", "flux": 5.},          # .05 -> 4.5
+        {"type": "PSF", "flux": 20.},         # .20 -> 6
+        {"type": "EXP", "flux": .1},          # morphology -> 6
+        {"type": "PSF", "flux": None},        # absent -> 6
+        {"type": "PSF", "flux": float("nan")},# nan -> 6
+        {"type": "PSF", "flux": 1.},          # exactly .01 -> 4.5
+        {"type": "PSF", "flux": 10.},         # exactly .1 -> 6
+    )
+    result = _p17_adaptive_neighbor_radii(rows, 100., 2.)
+    np.testing.assert_array_equal(result,
+                                  np.array([6., 9., 12., 12., 12.,
+                                            12., 9., 12.]))
+
+
+def test_p17_invalid_catalog_or_incomplete_p16c_fails_closed():
+    frame = _frame()
+    matcher = _prospective_catalog()
+    result = audit_extended_bright_gaia_mask_experiment(
+        frame, [], matcher, _geometry(), {})
+    assert result["status"] == "NO_COMPLETE_FROZEN_16_STAR_P16C_COHORT"
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    result = audit_extended_bright_gaia_mask_experiment(
+        frame, [], matcher, _geometry(), p16c)
+    assert result["status"] == "NO_COMPLETE_FROZEN_16_STAR_P16C_COHORT"
+    assert result["per_star"] == []
+    assert not result["science_adopted"]
+
+
+def test_p17_gui_summary_marks_masks_as_uncalibrated():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    summary = PSF0Panel._calibration_diagnostic_summary({
+        "extended_bright_gaia_mask_experiment_qa": {
+            "schema": P17_SCHEMA,
+            "status": "FIXED_EXPANDED_COHORT_MASK_FEASIBILITY_ONLY",
+            "n_catalog_selected": 48,
+            "n_legacy_p16c_stars": 16,
+            "n_new_exploratory": 24,
+            "n_new_identity_holdout": 8,
+            "n_legacy_baseline_reproduced": 16,
+            "n_multimask_stars_measured": 48,
+        },
+    })
+    assert "P17 fixed catalog-only Leo P cohort" in summary
+    assert "24 new exploratory" in summary
+    assert "8 new identity holdout" in summary
+    assert "NOT calibrated PSF wings" in summary
