@@ -232,6 +232,14 @@ def audit_approximate_sersic_sampling(*, kernel, wcs, source_xy,
         three_to_five=a35,
         five_to_seven=a57,
         three_to_seven=a37,
+        l1_step_5_to_7_larger_than_3_to_5=bool(
+            a57["shape_l1_unit_flux_difference"]
+            > a35["shape_l1_unit_flux_difference"]),
+        l1_step_ratio_5_to_7_over_3_to_5=(
+            float(a57["shape_l1_unit_flux_difference"]
+                  / a35["shape_l1_unit_flux_difference"])
+            if a35["shape_l1_unit_flux_difference"] > 0 else None),
+        decreasing_l1_step_not_proof_of_convergence=True,
         five_to_seven_not_proven_zero_or_physical_reference=True,
     )
 
@@ -339,6 +347,10 @@ def _predeclared_ring_prediction(z, B, P, weights, radius_pix, *,
         out, status="PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION",
         weighted_reserved_ring_rss_with_extended=score,
         weighted_reserved_ring_rss_without_extended=score_base,
+        extended_prediction_worse_than_point_only=bool(score>score_base),
+        reserved_ring_rss_ratio_extended_over_point_only=(
+            float(score/score_base) if score_base>0 else None),
+        worsened_ring_is_explicit_falsification_not_a_p_value=True,
         signed_predictive_ring_rss_improvement_fraction=(
             float((score_base-score)/score_base)
             if score_base>0 else None),
@@ -504,12 +516,32 @@ def _morphology_stress_p15d(
                         - B[heldout]@nominal_sky
                         - P[heldout]@nominal_a) * weights[heldout]
     nominal_rss = float(nominal_residual@nominal_residual)
+    selected_amplitude = float(nominal_a[template_column])
     result.update(
         nominal_ring_rss=nominal_rss,
         nominal_sky_at_star_nMgy_per_native_pixel=float(nominal_sky[0]),
         nominal_star_fitted_peak_nMgy_per_pixel=float(nominal_a[0]),
+        selected_extended_template_peak_amplitude_nMgy_per_pixel=
+            selected_amplitude,
+        selected_extended_template_active_in_ring_excluded_nnls=bool(
+            selected_amplitude>0),
         nominal_ring_rss_may_be_near_zero_no_calibrated_floor=True,
     )
+    if selected_amplitude<=0:
+        variants = morphology_stress_variants(source_row)
+        result.update(
+            status="PREDECLARED_SELECTED_EXTENDED_SOURCE_NNLS_INACTIVE",
+            n_successful_stress_cases=0,
+            n_skipped_or_failed_cases=len(variants),
+            cases=[{
+                k:v for k,v in case.items() if k!="catalog_row"
+            } | {
+                "status":"NOT_EVALUATED_SELECTED_EXTENDED_SOURCE_INACTIVE",
+                "original_variant_status":case["status"]
+            } for case in variants],
+            zero_sensitivity_from_inactive_source_not_evidence_of_stability=True,
+        )
+        return result
     cases = []
     for variant in morphology_stress_variants(source_row):
         entry = {
@@ -739,6 +771,22 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
     residual=(z[mask]-B@sky-P@a)*w
     residual0=(z[mask]-B@sky0-P[:,:baseline_columns]@a0)*w
     distance=np.hypot(xx-cx,yy-cy)[mask]
+    fitted_extended_components = []
+    for i, row in enumerate(admitted_rows):
+        column = baseline_columns+i
+        model = P[:,column]*float(a[column])
+        fitted_extended_components.append({
+            "tractor_objid":int(row["tractor_objid"]),
+            "tractor_type":str(row["tractor_type"]),
+            "nnls_fitted_peak_nMgy_per_native_pixel":float(a[column]),
+            "nnls_amplitude_exactly_zero":bool(a[column]==0),
+            "fitted_model_sum_on_valid_original_pixels_nMgy":
+                float(np.sum(model)),
+            "fitted_model_sum_inside_4_guessed_fwhm_nMgy":
+                float(np.sum(model[distance<=4.*guessed_fwhm_pix])),
+            "finite_footprint_model_not_catalog_total_flux":True,
+            "scientific_source_detection_not_claimed":True,
+        })
     predictive_ring = _predeclared_ring_prediction(
         z[mask], B, P, w, distance,
         guessed_fwhm_pix=guessed_fwhm_pix,
@@ -794,6 +842,11 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
     return dict(base,
         status="PARTIAL_APPROXIMATE_EXTENDED_SCENE_DIAGNOSTIC",
         fitted_extended_source_objids=admitted,
+        fitted_extended_components=fitted_extended_components,
+        n_extended_templates_with_positive_fitted_nnls_amplitude=sum(
+            not obj["nnls_amplitude_exactly_zero"]
+            for obj in fitted_extended_components),
+        rendered_template_count_does_not_imply_nonzero_fitted_flux=True,
         weighted_rss_without_extended=float(rss0),
         weighted_rss_with_extended=float(rss),
         full_scene_fractional_rss_change=(
