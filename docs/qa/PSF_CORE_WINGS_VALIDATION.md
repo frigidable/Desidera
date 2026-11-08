@@ -249,3 +249,97 @@ bright-star wing sample. A PSF core and true wide-angle
 profile cannot be inferred by choosing only the
 best-looking posthoc wing residuals from the same
 ten training and three holdout stars.
+
+
+## Real Leo P g P16B result and P16C prospective test (2026-11-09)
+
+The user's first real native P16B QA has algorithm fingerprint
+\`46d99bfee698f53fdea02c13526117a683ee19e155828c69a1eb15c5f9544501\`.
+The unchanged physical-finite PSF-kernel SHA256 is
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`.
+
+- **10/13** preselected Gaia-star profiles reached both conditional sky
+  rings, including **3/3** fixed holdouts. Three training stars,
+  \`star-0011\`, \`star-0036\`, and \`star-0097\`, were correctly withheld
+  for absent complete native 30-FWHM cutouts; no rectangular
+  clipping/imaginary ring coverage was accepted.
+- All ten samples are explicitly sky-degenerate; the native-pixel
+  catalog-neighbor core-mask counts range **28–72** per broad stamp.
+  This masks only selected-size object cores, not their scattered
+  wings or uncatalogued emission. Some original profile rings have
+  severely incomplete azimuthal coverage.
+- The brightest available training \`star-0002\` has an original
+  native-pixel peak approximately **23.317 nMgy/native pixel** and
+  conditional-outer-sky-subtracted median brightness near
+  **0.0037 nMgy/native pixel** at 4–6 measured FWHM. This is
+  descriptive original-pixel light in the 20.55–30.82 px ring,
+  **not** a demonstrated unblended, sky-calibrated stellar PSF wing.
+- The faint holdout \`star-0110\` (peak approximately
+  **0.1454 nMgy/native pixel**) has a large inner-versus-outer
+  sky-hypothesis difference **+0.0013014 of peak**; its conditional
+  radial profiles change sign repeatedly. Do not include its
+  profile in a claimed calibrated outer PSF.
+- Frozen final ePSF has not changed. All six physical accuracy/
+  wing/background/noise/spatial/injection stages remain HOLD.
+
+### P16C: predeclared distinct bright Gaia-star wing-probe cohort
+
+\`audit_disjoint_bright_gaia_wing_probes\` reads the same
+**original** DR11 native FITS and **same-brick** versioned Tractor
+Gaia metadata and generates a *new catalog-only cohort* that does
+not contain any of the original ePSF training/holdout star
+identities or native centroid matches (≤2.5 pix). The
+selection is **before reading any new profile or native core-peak
+pixels**; it NEVER uses P16B faint-star residual quality, an
+outer slope, the desired science outcome or holdout performance.
+
+Predeclared catalog/geometry requirements:
+
+- \`REF_CAT=G3\` with positive unique \`REF_ID\`, Tractor \`TYPE=PSF\`,
+  non-forced/non-frozen fitted model, valid maskbits (including
+  band-specific saturation and ALLMASK), no Gaia duplication,
+  strictly positive native-band Tractor \`FLUX\` and \`FLUX_IVAR\`,
+  and diagonal Tractor S/N ≥20 (NOT covariance-calibrated).
+- A *complete* native **30-measured-FWHM** stamp inside the brick;
+  the source center must lie outside the fixed protected galaxy
+  mask, and not have another catalog centroid within the fixed
+  **3-measured-FWHM neighbor-core-mask radius**. Reject
+  ambiguous centroids within 2.5 pix. These restrictions are
+  initial engineering sample choices, not astrophysically
+  calibrated cleanliness guarantees.
+- Sort the qualifying cohort **only by original-band Tractor
+  fitted total flux descending**, with deterministic \`REF_ID\`/
+  \`OBJID\` tie breaks; choose the **first 16**, with no later
+  backfill/replacement, regardless of native peak, original
+  wing/sky profile, saturation missed by catalog, or
+  unmodelled extended contamination.
+- After fixing all candidate identities and their catalog-flux
+  ranking, measure **original** native-pixel 3×3 local peak for
+  descriptive normalization. If no positive valid peak exists
+  in the original coadd, fail that candidate; **do not** pick
+  a different one. Profile the accepted native pixels with
+  precisely the same radial geometry, original galaxy mask,
+  catalog-neighbor core exclusions and sky hypotheses as P16B.
+
+The resulting science-HOLD QA
+\`diagnostic_metrics.disjoint_bright_gaia_outer_profile_qa\`
+has schema
+\`desidera.psf0-disjoint-bright-tractor-gaia-native-profile/1\`.
+It reports **all** catalog rejection reason counts and the
+prospective inventory. This cohort is **identity-disjoint**
+from the existing ePSF fit; it is *not* an independent
+coadd, seeing realization, star/sky covariance calibration
+or a proven clean wide-angle PSF. No per-star measurement
+changes the sample size, training, holdouts, finite kernel,
+existing P16B measures, science adoption, original WCS,
+image pixels or inverse variance.
+
+The real **P16C** Leo P experiment is not yet executed.
+Compare its observed native outer radial profiles and
+two **conditional** sky solutions before any PSF core+wing
+stitching. If these brighter sources are contaminated or
+insufficient, STOP: obtaining a separate adequately
+isolated optical field or independent bright-star
+calibration will be required. No new empirical PSF can
+be scientifically adopted without subsequent independent
+validation and quantitative LSB injection/recovery.
