@@ -2210,3 +2210,92 @@ the new P15F fields require a new native FITS run.
 Neither the original observation nor the corrective
 instrumentation licenses adopting the PSF or using these
 profile fits as fully calibrated galaxy photometry.
+
+
+### P15F original-FITS re-run and P15G cross-split component-level follow-up (2026-11-08)
+
+**User-submitted second original observation:** the Leo P g dataset
+\`dr11/south/1554p180/g\` with exact original FITS source hashes,
+frozen \`gaia_strict\` **10 train / 3 holdout** population and
+ePSF kernel SHA256
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`
+is unchanged. The P15F method fingerprint is
+\`073946fefdabd425b01052fb1ec924eeb070ae3ae865a46b52fb27dddb31bd07\`.
+All 13 P14 full-native scene fits worked, while 12/13 P15 extended
+scenes succeeded. Training \`star-0014\` still fails closed at
+the declared **28 fitted-nuisance-source cap** (10 point + 19
+morphologically valid extended sources = 29), without truncation.
+Of **130** rendered extended components over the 12 P15 scenes,
+**94** have strictly positive *full-scene* NNLS amplitudes
+(75 REX, 14 EXP, 5 DEV), and **36** are exactly inactive (32
+REX, 3 EXP, 1 DEV). This is model activity, **not** 94
+statistically confirmed galaxy detections.
+
+**P15F explained the former P15D zero-response conundrum.** The
+predeclared closest \`DEV OBJID=1941\` to frozen Gaia holdout
+\`star-0032\` has **positive global-fit amplitude
+0.00491559 nMgy/native pixel** and contributes
+**0.335084 nMgy inside 4 guessed FWHM** in that global fit;
+however its **ring-excluded** NNLS coefficient is **exactly 0**.
+The six P15D perturbation cases are now truthfully
+\`NOT_EVALUATED_SELECTED_EXTENDED_SOURCE_INACTIVE\`.
+The other two geometry-selected ring-excluded inactive sources
+are \`star-0040\` / \`EXP OBJID=3643\` and
+\`star-0011\` / \`REX OBJID=5384\`. They also have
+positive coefficients in their respective **global** fits,
+but zero when the 2–4-FWHM ring is withheld.
+Thus "zero response" must **never** be described as proof of
+robust galaxy profile subtraction. Holdout \`star-0032\` also
+still exhibits **5→7 analytic profile shape L1 0.0095121**
+versus **3→5 L1 0.0047234**: no monotonic convergence.
+
+**P15C ring failure is real and repeatable.** For training
+\`star-0022\`, the point-only ring RSS is **1838.7967**,
+extended ring RSS is **23127.0795**, ratio **12.57729**.
+The predeclared nearest \`REX OBJID=2136\`
+has **full-scene** NNLS peak amplitude
+**0.010889** but **ring-excluded** NNLS peak amplitude
+**0.123074**, a drift factor ~**11.3×**.
+This comparison follows two different fitting masks and
+does **not** by itself establish why the ring residual grows:
+star amplitude, sky plane and all other nuisance-source
+coefficients may change. The three Gaia-star heldout
+reserved-ring signed changes remain
+\`star-0110 −0.012064%\`,
+\`star-0032 +0.135074%\`,
+\`star-0148 −0.034061%\`; positive means *less*
+RSS for the extended source model. No claim of statistical
+significance or external Tractor equivalence is made.
+
+**P15G follow-up instrumentation** (requires a **subsequent**
+original-FITS run, not falsely claimed to exist in the P15F
+JSON): keep both predeclared ring-excluded and global NNLS
+solutions, original native pixels, frozen source templates,
+morphologies, PSF, WCS, star split and source cap
+unchanged. For **every geometrically admitted Tractor
+extended-source column**, report the original catalog OBJID,
+TYPE, full-scene fitted peak, ring-excluded fitted peak,
+on/off toggling across fits, the ratio of amplitudes when the
+global amplitude is positive, and the *conditional
+ring-predicted native-pixel component sum*. Also report
+ring-excluded star/sky-plane conditional changes and count
+components switching active boundaries across the
+two fitting masks. These are **component prediction
+diagnostics**, not independent residual error
+attributions, calibrated detections or confidence
+intervals; no new source ranking or fitting-based
+source exclusion. Existing original fit is not rerun
+within the QA field. The withheld-ring predictive
+schema advances to \`/2\`, the P15 scene schema to \`/4\`,
+and the method fingerprint includes the P15G code path.
+
+The GUI now highlights the **maximum** withheld-ring
+extended-to-point-only RSS ratio across *all*
+original stars, including the problematic training
+star \`star-0022\` (post-hoc descriptive maximum),
+and gives the frozen geometrically selected neighbor's
+full-vs-ring-excluded NNLS peak values on
+holdout stars. The original FITS science gate
+remains \`science_adopted=false\`, no PSF,
+astrophysical photometry, SBF result or full
+Tractor-consistent model is validated.
