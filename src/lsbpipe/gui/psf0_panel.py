@@ -1091,6 +1091,31 @@ class PSF0Panel(QGroupBox):
                     notes.append(
                         f"  {row.get('source_id', '?')}: P16B not measured "
                         f"({row.get('status', 'UNKNOWN')}).")
+        prospective = metrics.get("disjoint_bright_gaia_outer_profile_qa")
+        if isinstance(prospective, dict):
+            notes.append(
+                "P16C disjoint Gaia/Tractor bright-star candidates "
+                "(catalog-flux-ranked BEFORE inspecting image wings): "
+                f"{prospective.get('n_profiles_with_both_conditional_outer_skies', 0)}/"
+                f"{prospective.get('n_catalog_probes_fixed_before_original_pixel_reads', 0)} "
+                "original native profiles; "
+                f"{prospective.get('n_catalog_only_geometry_eligible_before_brightness_cap', 0)} "
+                "catalog/geometry-eligible before fixed sample cap. "
+                "Distinct from kernel train/holdout identities, but "
+                "NOT independently calibrated PSF wings or background.")
+            for row in prospective.get("per_star", [])[:4]:
+                if row.get("status") == (
+                        "MASKED_OUTER_PROFILE_DESCRIPTIVE_SKY_DEGENERATE"):
+                    notes.append(
+                        f"  {row.get('source_id')}: Gaia {row.get('gaia_source_id')}, "
+                        f"Tractor flux {row.get('native_tractor_flux_nMgy_catalog_not_direct_observed_peak', 0):.3g} nMgy; "
+                        "two outer-sky medians differ by "
+                        f"{row.get('sky_difference_over_star_peak', 0):+.4g} "
+                        "times native observed peak. Descriptive only.")
+                else:
+                    notes.append(
+                        f"  {row.get('source_id')}: P16C profile unavailable "
+                        f"({row.get('status', 'UNKNOWN')}); no replacement.")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
