@@ -1243,6 +1243,15 @@ class PSF0Panel(QGroupBox):
                                     f"central 4 FWHM {100*local_gain:+.3g}%, "
                                     f"sky shift {sky_change:+.4g} nMgy/pix. "
                                     "Uncalibrated, incomplete source geometry.")
+                            active = scene.get(
+                                "n_extended_templates_with_positive_fitted_nnls_amplitude")
+                            if active is not None:
+                                notes.append(
+                                    "    P15F fitted extended-source NNLS "
+                                    f"amplitudes > 0: {active}/"
+                                    f"{scene.get('n_extended_profiles_rendered', 0)} "
+                                    "(positive amplitude is NOT source detection; "
+                                    "rendered does not imply fitted).")
                             withheld = scene.get(
                                 "predeclared_2_to_4_fwhm_ring_prediction", {})
                             if withheld.get("status") == (
@@ -1257,6 +1266,17 @@ class PSF0Panel(QGroupBox):
                                         f"{withheld.get('n_reserved_native_pixels', 0)} "
                                         "reserved native pixels. Coadd pixels "
                                         "are correlated; not independent PSF QA.")
+                                    if withheld.get(
+                                            "extended_prediction_worse_than_point_only"):
+                                        ratio = withheld.get(
+                                            "reserved_ring_rss_ratio_extended_over_point_only")
+                                        if ratio is not None:
+                                            notes.append(
+                                                "    P15F WARNING: extended scene "
+                                                f"predicts withheld ring {ratio:.4g}× "
+                                                "point-only weighted RSS; "
+                                                "this is a descriptive out-of-fit "
+                                                "failure, not a statistical test.")
                             else:
                                 notes.append(
                                     "    P15 2–4 FWHM withheld-ring check: "
@@ -1301,6 +1321,14 @@ class PSF0Panel(QGroupBox):
                                     "    P15D morphology stress: "
                                     f"{stress.get('status', 'UNAVAILABLE')}; "
                                     "no derived uncertainty.")
+                                if stress.get("status") == (
+                                        "PREDECLARED_SELECTED_EXTENDED_SOURCE_NNLS_INACTIVE"):
+                                    notes.append(
+                                        "    P15F: selected Tractor OBJID="
+                                        f"{stress.get('selected_tractor_objid')} "
+                                        "has ZERO fitted amplitude with ring "
+                                        "excluded; zero morphology response "
+                                        "would be uninformative.")
                             sampling = scene.get(
                                 "p15e_analytic_subpixel_convergence", {})
                             if sampling.get("status") == (
@@ -1319,6 +1347,13 @@ class PSF0Panel(QGroupBox):
                                         "(unit-flux within same native mask; "
                                         "NOT true Tractor rendering or "
                                         "a calibrated PSF tolerance).")
+                                    if sampling.get(
+                                            "l1_step_5_to_7_larger_than_3_to_5"):
+                                        notes.append(
+                                            "    P15F WARNING: 5→7 L1 change "
+                                            "EXCEEDS 3→5 for selected source; "
+                                            "quadrature has no demonstrated "
+                                            "monotonic convergence.")
                             else:
                                 notes.append(
                                     "    P15E subpixel convergence: "
