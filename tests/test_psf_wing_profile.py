@@ -330,3 +330,20 @@ def test_p16c_catalog_neighbor_overlap_is_excluded_before_profiling():
     assert result["n_catalog_probes_fixed_before_original_pixel_reads"]==0
     assert result["predeclared_catalog_rejection_counts"]["NEIGHBOR_CATALOG_CORE_OVERLAP"]==2
     assert not result["science_adopted"]
+
+
+
+def test_p16c_gui_prospective_cohort_is_descriptive_only():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    sample=_star(role="train")
+    sample.gaia_source_id=11
+    qa=audit_disjoint_bright_gaia_wing_probes(
+        _frame(),[sample],_prospective_catalog(),_geometry())
+    summary=PSF0Panel._calibration_diagnostic_summary({
+        "disjoint_bright_gaia_outer_profile_qa":qa})
+    assert "P16C disjoint Gaia/Tractor bright-star candidates" in summary
+    assert "2/2 original native profiles" in summary
+    assert "Distinct from kernel train/holdout identities" in summary
+    assert "NOT independently calibrated PSF wings or background" in summary
+    assert "wing-cat-0001" in summary
