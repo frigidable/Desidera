@@ -1064,6 +1064,33 @@ class PSF0Panel(QGroupBox):
                 "PASS is diagnostic completeness only, NOT physical "
                 "PSF accuracy; outer wings, coadd covariance and "
                 "LSB injection-recovery are unvalidated.")
+        wide = metrics.get("original_native_outer_stellar_profile_qa")
+        if isinstance(wide, dict):
+            notes.append(
+                "P16B original-pixel broad-radius selected-star probe: "
+                f"{wide.get('n_scenes_with_two_outer_sky_hypotheses', 0)}/"
+                f"{wide.get('n_selected_stars', 0)} usable native cutouts; "
+                f"fixed holdouts "
+                f"{wide.get('n_fixed_holdouts_with_outer_profile', 0)}/"
+                f"{wide.get('n_fixed_holdouts_in_original_selected_inventory', 0)}. "
+                "Two disjoint outer-sky hypotheses, catalog neighbor "
+                "cores masked; NOT a calibrated wide PSF or sky.")
+            for row in wide.get("per_star", []):
+                if row.get("role") != "holdout":
+                    continue
+                if row.get("status") == (
+                        "MASKED_OUTER_PROFILE_DESCRIPTIVE_SKY_DEGENERATE"):
+                    notes.append(
+                        f"  {row.get('source_id', '?')}: "
+                        "P16B sky-annulus median difference / stellar "
+                        f"peak={row.get('sky_difference_over_star_peak', 0):+.4g}; "
+                        f"{row.get('n_catalog_neighbors_whose_cores_were_masked', 0)} "
+                        "catalog neighbors masked within 3 measured FWHM; "
+                        "outer wings and background remain degenerate.")
+                else:
+                    notes.append(
+                        f"  {row.get('source_id', '?')}: P16B not measured "
+                        f"({row.get('status', 'UNKNOWN')}).")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
