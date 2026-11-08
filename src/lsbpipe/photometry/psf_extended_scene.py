@@ -17,7 +17,7 @@ from lsbpipe.photometry.psf_joint_scene import (
     _projected_nnls, _shifted_native_kernel,
 )
 
-SCHEMA = "desidera.psf0-native-tractor-extended-scene/3"
+SCHEMA = "desidera.psf0-native-tractor-extended-scene/4"
 SERSIC_B = {1.: 1.6783469900166612, 4.: 7.669249442500804}
 PROFILE_N = {"REX": 1., "EXP": 1., "DEV": 4.}
 SUBPIXEL_GRID = 3
@@ -308,7 +308,7 @@ def _predeclared_ring_prediction(z, B, P, weights, radius_pix, *,
             & (radius_pix <= 4.*guessed_fwhm_pix))
     train = ~ring
     out = {
-        "schema": "desidera.psf0-p15-native-annular-predictive-check/1",
+        "schema": "desidera.psf0-p15-native-annular-predictive-check/2",
         "heldout_radius_inner_guessed_fwhm": 2.,
         "heldout_radius_outer_guessed_fwhm": 4.,
         "n_fitting_native_pixels": int(np.count_nonzero(train)),
@@ -813,11 +813,21 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         n_base_columns=baseline_columns)
     ring_components = predictive_ring.get(
         "ring_excluded_extended_components")
+    if (ring_components is not None
+            and len(ring_components)!=len(admitted_rows)):
+        # A provenance mismatch must remain explicit, never attach wrong
+        # Tractor identities to otherwise valid anonymous fit columns.
+        predictive_ring = dict(
+            predictive_ring,
+            status="RING_EXCLUDED_COMPONENT_COUNT_MISMATCH",
+            ring_excluded_extended_components=[],
+            catalog_identity_for_ring_components_unverified=True,
+        )
+        ring_components=None
     if ring_components is not None:
         # Same fixed design columns; enrich the independent ring-excluded
         # fit with catalog IDs and compare it to the pre-existing global
         # solution. This does NOT use the reserved ring in any refit.
-        assert len(ring_components)==len(admitted_rows)
         for j, component in enumerate(ring_components):
             original = fitted_extended_components[j]
             full_amplitude = original[
