@@ -38,6 +38,9 @@ from lsbpipe.photometry.psf_parameter_audit import (
     audit_gaia_catalog_seeds_vs_dao,
 )
 from lsbpipe.photometry.psf_joint_scene import audit_fixed_psf_joint_scenes
+from lsbpipe.photometry.psf_core_wings_validation import (
+    measure_finite_native_psf_core, evaluate_core_wings_readiness,
+)
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
 STATUS = "EXPERIMENTAL_PSF_NOT_ADOPTED"
@@ -268,6 +271,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "p15e_external_reference_gate": "EXPLICIT_MATCHED_TRACTOR_STAMP_REQUIRED_NO_INVENTED_EXTERNAL_REFERENCE_V1",
         "p15f_native_observational_failure_diagnostics": "REPORT_PER_CATALOG_NNLS_ACTIVE_FOOTPRINT_FLUX_RING_RATIO_INACTIVE_SHAPE_STRESS_SUBPIXEL_STEP_V1",
         "p15g_cross_split_source_amplitude_qa": "SAME_FROZEN_NATIVE_TEMPLATES_GLOBAL_VS_PREDECLARED_RING_EXCLUDED_NNLS_PER_OBJID_WITHHELD_PREDICTED_FLUX_V1",
+        "native_core_wings_validation_qa": "PEAK_AXIS_HALFMAX_FWHM_AND_TRUNCATED_KERNEL_EEF_FAIL_CLOSED_STAGES_V1",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1530,8 +1534,21 @@ def build_empirical_coadd_psf(
         frame, kernel, train+holdout, catalog_matcher,
         protected_mask=protected,
         guessed_fwhm_pix=cfg.guessed_fwhm_pix)
-    # FWHM here is only the guessed finder width, NOT measured EPSF FWHM.
+    # The finder FWHM remains a GUESS for candidate selection and older
+    # fixed-annulus holdout tests; this measured kernel-core FWHM is a
+    # separate QA result and never changes the original star selection.
+    measured_core_geometry = measure_finite_native_psf_core(
+        kernel, guessed_fwhm_pix=cfg.guessed_fwhm_pix)
+    core_wings_validation_qa = evaluate_core_wings_readiness(
+        core_geometry=measured_core_geometry,
+        n_train=len(train), n_holdout=len(holdout),
+        coverage=final_holdout_coverage,
+        holdout_growth_summary=final_growth_summary,
+        preclip_negative_mass_fraction=negative_fraction,
+        verified_native_source_hashes=bool(source_hashes)
+            and lineage is not None)
     metrics = {
+        "core_wings_validation_qa": core_wings_validation_qa,
         "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
