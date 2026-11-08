@@ -45,6 +45,7 @@ from lsbpipe.photometry.psf_wing_profile import (
     audit_native_broad_radius_star_profiles,
     audit_disjoint_bright_gaia_wing_probes,
     audit_fixed_bright_gaia_neighbor_sky_stress,
+    audit_extended_bright_gaia_mask_experiment,
 )
 from lsbpipe.sky_geometry import ellipse_from_wcs
 
@@ -280,6 +281,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "original_broad_radius_stellar_profile_qa": "SELECTED_STARS_NATIVE_1TO22_MEASURED_FWHM_22TO26_VS26TO30_SKY_CATALOG_AND_TARGET_MASKED_V1_NO_WING_CLAIM",
         "disjoint_bright_gaia_outer_profile_qa": "NATIVE_TRACTOR_GAIA_UNSHARED_16_FLUX_RANKED_PREPIXEL_CATALOG_QUALITY_GEOMETRY_WITH_TARGET_MASK_SKY_DEGENERATE_V1",
         "fixed_bright_gaia_neighbor_sky_stress_qa": "FIXED_P16C_IDENTITIES_3V6_FWHM_NEIGHBOR_MASKS_OCTANTS_AND_22TO30_SKY_PLANE_V1_QA_ONLY",
+        "extended_bright_gaia_mask_experiment_qa": "FIRST_48_CATALOG_FLUX_RANKED_16_LEGACY_24_NEW_EXPLORATORY_8_NEW_IDENTITY_HOLDOUT_WITH_3_4P5_FLUX_TIERED_6_NEIGHBOR_MASKS_V1_NO_SCIENCE_ADOPTION",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1567,11 +1569,15 @@ def build_empirical_coadd_psf(
     fixed_bright_gaia_sky_stress_qa = audit_fixed_bright_gaia_neighbor_sky_stress(
         frame, catalog_matcher, disjoint_bright_gaia_qa,
         measured_core_geometry, protected_mask=protected)
+    extended_bright_gaia_mask_qa = audit_extended_bright_gaia_mask_experiment(
+        frame, train+holdout, catalog_matcher, measured_core_geometry,
+        disjoint_bright_gaia_qa, protected_mask=protected)
     metrics = {
         "core_wings_validation_qa": core_wings_validation_qa,
         "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
         "disjoint_bright_gaia_outer_profile_qa": disjoint_bright_gaia_qa,
         "fixed_bright_gaia_neighbor_sky_stress_qa": fixed_bright_gaia_sky_stress_qa,
+        "extended_bright_gaia_mask_experiment_qa": extended_bright_gaia_mask_qa,
         "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
