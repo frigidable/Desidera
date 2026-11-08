@@ -266,6 +266,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "p15d_morphology_stress": "NEAREST_RENDERED_TRACTOR_EXTENDED_OAT_RADIUS10PCT_ELLIPTICITY0P05_PA10DEG_FIXED_RING_V1_QA_ONLY",
         "p15e_profile_sampling_convergence": "ANALYTIC_SERSIC_SAME_NATIVE_FINITE_PSF_GRID3_5_7_NOT_EXACT_TRACTOR_V1",
         "p15e_external_reference_gate": "EXPLICIT_MATCHED_TRACTOR_STAMP_REQUIRED_NO_INVENTED_EXTERNAL_REFERENCE_V1",
+        "p15f_native_observational_failure_diagnostics": "REPORT_PER_CATALOG_NNLS_ACTIVE_FOOTPRINT_FLUX_RING_RATIO_INACTIVE_SHAPE_STRESS_SUBPIXEL_STEP_V1",
     }
     return {
         "sha256": sha256(json.dumps(
