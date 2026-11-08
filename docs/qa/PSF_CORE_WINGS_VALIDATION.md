@@ -424,3 +424,80 @@ For the local Leo P rerun, preserve the original options
 alongside unchanged \`kernel_sha256\`, \`n_train=10\`, \`n_holdout=3\`,
 and \`science_adopted=false\`. Keep the full JSON as the experiment
 record. The stage remains \`SCIENCE_GATE_HOLD\`.
+
+
+## P16D original Leo P g result — 2026-11-09
+
+Input: the user-provided unmodified scientific QA export for
+\`dr11/south/1554p180/g\`; method SHA256
+\`e984d2560da95c0dd8409d4a59d9723e790e441d6f86a531a3f5bf410307a5af\`.
+Its original ePSF SHA256 remains
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`,
+81×81 pixels and measured peak-axis geometric-mean FWHM 5.13690296 px;
+10 training and 3 original independent-identity holdout stars, unchanged.
+
+- 16/16 P16C catalog-selected stars and sky/radial profiles exactly
+  reproduced in the 3-FWHM P16D baseline; 16/16 have both conditional
+  sky-ring values and conditional planar backgrounds for both radii.
+  Those are **computational completeness measures**, not scientific
+  wing detections or adequate unmasked ring coverage.
+- Median available annular area across these fixed 16 stars (3-FWHM
+  masks -> 6-FWHM masks):
+
+  | Ring (measured FWHM) | 3-FWHM masked | 6-FWHM masked |
+  | --- | ---: | ---: |
+  | 4–6 | 85.7% | 40.1% |
+  | 6–8 | 72.9% | 27.7% |
+  | 8–12 | 67.9% | 25.8% |
+  | 12–16 | 72.7% | 20.3% |
+  | 16–20 | 70.2% | 23.1% |
+  | 20–22 | 66.1% | 18.8% |
+
+- Illustrative *post-result diagnostic*, not a preregistered adoption
+  gate: requiring >=50% unmasked area AND >=6 populated octants under
+  the 6-FWHM neighbor mask gives 4/16 usable samples at 4–6 FWHM,
+  1/16 at 6–8 FWHM, and 0/16 at every measured ring from 8–22 FWHM.
+- At 4–6 FWHM 14/16 of the 6-FWHM-mask ring medians are positive
+  against the outer 26–30 FWHM constant-sky hypothesis; 13/16
+  positive after subtracting the alternative outer-sky plane.
+  This does not establish wing detection. In the 8–12 FWHM ring,
+  just 10/16 stars preserve their ring-residual sign between 3-FWHM
+  and 6-FWHM masks, and the median absolute mask-induced residual
+  change is 1.72e-5 of the native peak, compared with a median
+  6-FWHM-mask ring residual of -8.42e-6 of peak. The median
+  absolute change induced by plane-versus-constant-sky subtraction
+  in that ring is 4.51e-6 of peak.
+- \`wing-cat-0014\` and \`wing-cat-0015\` retain just 18 and 7 native
+  pixels, respectively, in their 6-FWHM-mask 4–6 FWHM rings.
+  Both have 0 populated octants. In particular, the large positive
+  4–6 FWHM residual of \`wing-cat-0015\` must not be interpreted
+  as wing evidence.
+
+**Scientific decision:** STOP wide-angle PSF estimation from the
+16-star Leo P cohort with the available coadd alone. The stress test
+demonstrates that the nominal profiles cannot reliably constrain
+the **outer** wings with conservative neighbor masking; the two
+background hypotheses and the plane remain degenerate with possible
+real stellar flux, and covariance has not been calibrated. This does
+not prove the true stellar wings are absent, nor does it invalidate
+the native coadd or justify adopting the unvalidated 81×81 core.
+Keep \`science_adopted=false\`, \`SCIENCE_GATE_HOLD\`; preserve the
+unchanged original P16C cohort and the P16D report as a documented
+negative feasibility pilot.
+
+**Next scientific experiment:** independently choose a sufficiently
+star-rich, less crowded DESI Legacy coadd field via *catalog-only*
+preregistered criteria for brightness, unsaturated core, complete
+outer stamps, neighbor separation and azimuthal coverage, before
+inspecting candidate wing residuals. Define galaxy-aperture-dependent
+outer radial extent and quantitative predeclared stability/uncertainty
+requirements; compare field-wise wing profile measurements to the
+existing Leo P data only after the new selection is fixed. Do not
+relax Leo P's isolation cuts post hoc, average its 16 incomplete
+profiles, or manufacture a wide-angle core+wing PSF.
+
+**Additional caution:** a 6-FWHM circular neighbor exclusion can
+cut into a target's own intermediate radial annulus when another
+Tractor source lies within 6 FWHM of the target; its severity is
+a feature of this deliberately conservative stress test, not a
+physically calibrated optimal masking policy.
