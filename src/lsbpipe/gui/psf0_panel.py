@@ -1039,6 +1039,31 @@ class PSF0Panel(QGroupBox):
     def _calibration_diagnostic_summary(metrics):
         """Compact GUI evidence; full non-adopting arrays remain in Copy QA."""
         notes = ["Parameter calibration diagnostics (NOT scientific adoption):"]
+        readiness = metrics.get("core_wings_validation_qa")
+        if isinstance(readiness, dict):
+            core = readiness.get("core_geometry", {})
+            measured = core.get(
+                "measured_core_fwhm_axis_geometric_mean_native_pix")
+            if measured is not None:
+                notes.append(
+                    "Core & Wings Validation: measured native-kernel "
+                    f"axis-geometric FWHM={measured:.3f} px, "
+                    "independent of the input detection guess; "
+                    f"science {readiness.get('status', 'HOLD')}.")
+            else:
+                notes.append(
+                    "Core & Wings Validation: core width could not be "
+                    f"measured ({core.get('status', 'UNKNOWN')}); "
+                    "science remains HOLD.")
+            for name, evidence in readiness.get("stages", {}).items():
+                if isinstance(evidence, dict):
+                    notes.append(
+                        f"  {name}: {evidence.get('status', 'HOLD')} — "
+                        f"{evidence.get('current_evidence', 'missing')}.")
+            notes.append(
+                "PASS is diagnostic completeness only, NOT physical "
+                "PSF accuracy; outer wings, coadd covariance and "
+                "LSB injection-recovery are unvalidated.")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
