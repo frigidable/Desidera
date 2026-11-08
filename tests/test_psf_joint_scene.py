@@ -258,6 +258,7 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                  "p15_extended_tractor_scene": {
                      "status":"PARTIAL_APPROXIMATE_EXTENDED_SCENE_DIAGNOSTIC",
                      "n_extended_profiles_rendered":1,
+                     "n_extended_templates_with_positive_fitted_nnls_amplitude":1,
                      "n_catalog_extended_candidates":2,
                      "full_scene_fractional_rss_change":.41,
                      "central_aperture_comparison": {
@@ -267,11 +268,14 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                      "predeclared_2_to_4_fwhm_ring_prediction": {
                          "status": "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION",
                          "signed_predictive_ring_rss_improvement_fraction":-.12,
+                         "reserved_ring_rss_ratio_extended_over_point_only":1.12,
+                         "extended_prediction_worse_than_point_only":True,
                          "n_reserved_native_pixels":244},
                      "p15e_analytic_subpixel_convergence": {
                          "status": "THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR",
                          "three_to_five": {"shape_l1_unit_flux_difference":.0023},
-                         "five_to_seven": {"shape_l1_unit_flux_difference":.0007}},
+                         "five_to_seven": {"shape_l1_unit_flux_difference":.0047},
+                         "l1_step_5_to_7_larger_than_3_to_5":True},
                      "p15e_external_tractor_reference": {
                          "status": "ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED"},
                      "p15d_morphology_controlled_stress": {
@@ -321,7 +325,10 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "P15D controlled morphology stress" in summary
     assert "P15E analytic Sérsic subpixel" in summary
     assert "3→5 L1=0.0023" in summary
-    assert "5→7 L1=0.0007" in summary
+    assert "5→7 L1=0.0047" in summary
+    assert "P15F fitted extended-source NNLS amplitudes > 0: 1/1" in summary
+    assert "P15F WARNING: extended scene predicts withheld ring 1.12×" in summary
+    assert "P15F WARNING: 5→7 L1 change EXCEEDS 3→5" in summary
     assert "NOT true Tractor rendering" in summary
     assert "ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED" in summary
     assert "no external profile comparison certified" in summary
