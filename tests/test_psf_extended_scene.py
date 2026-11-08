@@ -10,6 +10,7 @@ from lsbpipe.photometry.psf_extended_scene import (
     convolved_native_sersic, pilot_extended_scene,
     morphology_stress_variants, audit_approximate_sersic_sampling,
     compare_analytic_stamp_to_external_tractor,
+    _morphology_stress_p15d,
 )
 from lsbpipe.photometry.psf_joint_scene import _shifted_native_kernel
 
@@ -136,6 +137,14 @@ def test_extended_pilot_recovers_synthetic_model_and_does_not_mutate_pixels():
     assert out["n_extended_profiles_rendered"]==1
     assert out["n_extended_catalog_unmodeled"]==0
     assert out["fitted_extended_source_objids"]==[1941]
+    assert out["n_extended_templates_with_positive_fitted_nnls_amplitude"]==1
+    fit=out["fitted_extended_components"][0]
+    assert fit["tractor_objid"]==1941
+    assert fit["tractor_type"]=="DEV"
+    assert not fit["nnls_amplitude_exactly_zero"]
+    assert fit["nnls_fitted_peak_nMgy_per_native_pixel"]>0
+    assert fit["fitted_model_sum_inside_4_guessed_fwhm_nMgy"]>0
+    assert fit["finite_footprint_model_not_catalog_total_flux"]
     assert out["weighted_rss_with_extended"] < 1e-10
     assert out["weighted_rss_without_extended"] > 0.
     assert out["full_scene_fractional_rss_change"]>.99
@@ -146,6 +155,8 @@ def test_extended_pilot_recovers_synthetic_model_and_does_not_mutate_pixels():
         out["n_valid_original_native_pixels"])
     assert ring["weighted_reserved_ring_rss_without_extended"] > 0
     assert ring["weighted_reserved_ring_rss_with_extended"] < 1e-10
+    assert ring["reserved_ring_rss_ratio_extended_over_point_only"] < 1e-10
+    assert not ring["extended_prediction_worse_than_point_only"]
     assert ring["signed_predictive_ring_rss_improvement_fraction"] > .99
     assert ring["both_fits_exclude_all_reserved_ring_pixels"]
     assert ring["pixel_resampling_covariance_across_ring_boundary_unmodeled"]
@@ -490,3 +501,85 @@ def test_p15e_masked_stamps_are_never_compared_on_different_pixel_sets():
     assert report["common_native_pixel_shape_comparison"][
         "shape_l1_unit_flux_difference"]==pytest.approx(0.)
     assert not report["science_adopted"]
+
+
+
+def test_p15f_inactive_nominal_selected_source_stress_does_not_claim_robustness():
+    # Construct an exact baseline star+plane signal with *negative*
+    # extended-source-shaped mismatch. Its nonnegative NNLS coefficient
+    # is exactly at the inactive boundary; geometry stresses then lack
+    # evidence about the catalogued galaxy.
+    yy,xx=np.indices((81,81),dtype=float)
+    star=np.exp(-.5*((xx-40.)**2+(yy-40.)**2)/3.**2)
+    neighbor=np.exp(-.5*((xx-59.)**2+(yy-40.)**2)/4.**2)
+    P=np.column_stack((star.ravel(),neighbor.ravel()))
+    B=np.column_stack((
+        np.ones(81*81),
+        ((xx-40.)/40.).ravel(),
+        ((yy-40.)/40.).ravel()))
+    z=(.2+25*star-3*neighbor).ravel()
+    result=_morphology_stress_p15d(
+        z=z,B=B,P=P,weights=np.ones_like(z),
+        native_radius=np.hypot(xx-40.,yy-40.).ravel(),
+        mask=np.ones((81,81),dtype=bool),
+        kernel=_kernel(),wcs=_wcs(),
+        scene_origin_xy=(0,0),scene_width_pix=81,
+        guessed_fwhm_pix=6.57,
+        source_row=_item("DEV",x_pix=59.,y_pix=40.),
+        template_column=1,n_rendered_extended_sources=1)
+    assert result["status"]==(
+        "PREDECLARED_SELECTED_EXTENDED_SOURCE_NNLS_INACTIVE")
+    assert result["selected_extended_template_peak_amplitude_nMgy_per_pixel"]==0
+    assert not result["selected_extended_template_active_in_ring_excluded_nnls"]
+    assert result["zero_sensitivity_from_inactive_source_not_evidence_of_stability"]
+    assert result["n_successful_stress_cases"]==0
+    assert result["n_skipped_or_failed_cases"]==6
+    assert all(case["status"]==(
+        "NOT_EVALUATED_SELECTED_EXTENDED_SOURCE_INACTIVE")
+        for case in result["cases"])
+    assert not result["science_adopted"]
+
+
+def test_p15f_increased_grid_step_is_explicit_not_hidden():
+    comparison=audit_approximate_sersic_sampling(
+        kernel=_kernel(),wcs=_wcs(),source_xy=(40.06,40.01),
+        origin_xy=(0,0),width=81,
+        morphology=audit_tractor_shape(
+            _item("DEV",shape_r_arcsec=.4)),
+        valid=np.ones((81,81),dtype=bool))
+    assert comparison["status"]==(
+        "THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR")
+    a=comparison["three_to_five"]["shape_l1_unit_flux_difference"]
+    b=comparison["five_to_seven"]["shape_l1_unit_flux_difference"]
+    assert comparison["l1_step_5_to_7_larger_than_3_to_5"]==(b>a)
+    assert comparison["l1_step_ratio_5_to_7_over_3_to_5"]==pytest.approx(
+        b/a)
+    assert comparison["decreasing_l1_step_not_proof_of_convergence"]
+    assert not comparison["science_adopted"]
+
+
+def test_p15f_zero_or_worse_reserved_ring_score_reports_explicit_ratio():
+    from lsbpipe.photometry.psf_extended_scene import (
+        _predeclared_ring_prediction)
+    yy,xx=np.indices((81,81),dtype=float)
+    radii=np.hypot(xx-40.,yy-40.).ravel()
+    B=np.column_stack((np.ones(81*81),
+        ((xx-40.)/40.).ravel(),((yy-40.)/40.).ravel()))
+    star=np.exp(-.5*((xx-40.)**2+(yy-40.)**2)/3.**2).ravel()
+    ext=np.exp(-.5*((xx-61.)**2+(yy-40.)**2)/5.**2).ravel()
+    P=np.column_stack((star,ext))
+    # Native profile differs between the fitting region and ring.
+    # This guarantees no unsupported universal "improved" claim.
+    z=.2+20*star
+    ring=(radii>2*6.57)&(radii<=4*6.57)
+    z[ring]+=8*ext[ring]
+    a=_predeclared_ring_prediction(
+        z,B,P,np.ones_like(z),radii,
+        guessed_fwhm_pix=6.57,n_base_columns=1)
+    assert a["status"]=="PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION"
+    assert a["reserved_ring_rss_ratio_extended_over_point_only"]==pytest.approx(
+        a["weighted_reserved_ring_rss_with_extended"] /
+        a["weighted_reserved_ring_rss_without_extended"])
+    assert a["extended_prediction_worse_than_point_only"]==(
+        a["reserved_ring_rss_ratio_extended_over_point_only"]>1.)
+    assert a["worsened_ring_is_explicit_falsification_not_a_p_value"]
