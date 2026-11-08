@@ -270,6 +270,13 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
                          "signed_predictive_ring_rss_improvement_fraction":-.12,
                          "reserved_ring_rss_ratio_extended_over_point_only":1.12,
                          "extended_prediction_worse_than_point_only":True,
+                         "n_extended_components_positive_with_ring_excluded":0,
+                         "n_extended_components_full_positive_but_ring_excluded_zero":1,
+                         "ring_excluded_extended_components": [{
+                             "tractor_objid":1941,
+                             "full_scene_nnls_peak_amplitude_nMgy_per_pixel":.0049,
+                             "ring_excluded_nnls_peak_amplitude_nMgy_per_pixel":0.0,
+                         }],
                          "n_reserved_native_pixels":244},
                      "p15e_analytic_subpixel_convergence": {
                          "status": "THREE_GRID_ANALYTIC_CONVERGENCE_MEASURED_NOT_TRACTOR",
@@ -328,6 +335,13 @@ def test_joint_scene_gui_summary_has_no_false_science_adoption():
     assert "5→7 L1=0.0047" in summary
     assert "P15F fitted extended-source NNLS amplitudes > 0: 1/1" in summary
     assert "P15F WARNING: extended scene predicts withheld ring 1.12×" in summary
+    assert "P15G WORST withheld-ring extrapolation" in summary
+    assert "star-0032 (holdout)" in summary
+    assert "extended/point-only weighted RSS 1.12×" in summary
+    assert "P15G ring-excluded positive extended NNLS amplitudes: 0/1" in summary
+    assert "full-positive→ring-zero: 1" in summary
+    assert "P15G preselected extended OBJID=1941" in summary
+    assert "full NNLS peak=0.0049, ring-excluded peak=0" in summary
     assert "P15F WARNING: 5→7 L1 change EXCEEDS 3→5" in summary
     assert "NOT true Tractor rendering" in summary
     assert "ORIGINAL_MATCHED_TRACTOR_REFERENCE_NOT_SUPPLIED" in summary
