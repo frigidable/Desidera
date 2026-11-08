@@ -292,6 +292,13 @@ def audit_disjoint_bright_gaia_wing_probes(
     minimum_other_catalog_separation = (
         NEIGHBOR_MASK_RADIUS_IN_MEASURED_FWHM * width
     )
+    # REF_ID is an identity, not a guarantee that the catalog itself has
+    # no duplicated REF_ID across separate Tractor rows. Refuse every
+    # ambiguous Gaia identity before catalog-only flux ranking.
+    gaia_identity_counts = Counter(
+        (row.get("ref_id") for row in rows
+         if isinstance(row, dict) and row.get("ref_cat") == "G3"
+         and isinstance(row.get("ref_id"), int) and row["ref_id"] > 0))
     candidates = []
     rejected = Counter()
     for index, (row, xy) in enumerate(zip(rows, positions)):
@@ -303,6 +310,9 @@ def audit_disjoint_bright_gaia_wing_probes(
                 not isinstance(row.get("ref_id"), int) or
                 row["ref_id"] <= 0 or row.get("type") != "PSF"):
             rejected["NOT_VERIFIED_GAIA_PSF"] += 1
+            continue
+        if gaia_identity_counts[row["ref_id"]] != 1:
+            rejected["DUPLICATE_GAIA_ID_IN_NATIVE_TRACTOR_CATALOG"] += 1
             continue
         if (not isinstance(flux, (float, int)) or
                 not isinstance(ivar, (float, int)) or
@@ -349,8 +359,13 @@ def audit_disjoint_bright_gaia_wing_probes(
             if sep <= minimum_other_catalog_separation:
                 rejected["NEIGHBOR_CATALOG_CORE_OVERLAP"] += 1
                 continue
+        try:
+            objid = int(row["objid"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            rejected["MISSING_TRACTOR_OBJECT_ID"] += 1
+            continue
         candidates.append((float(flux), int(row["ref_id"]),
-                           int(row["objid"]), int(index)))
+                           objid, int(index)))
 
     # The quota is frozen and filled BEFORE measuring the original pixels.
     # No backfilling based on the scientific result of a selected star.
