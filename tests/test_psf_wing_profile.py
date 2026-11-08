@@ -176,3 +176,34 @@ def test_p16b_gui_reports_original_profile_without_wing_adoption():
     assert "Two disjoint outer-sky hypotheses" in summary
     assert "P16B sky-annulus median difference / stellar peak=" in summary
     assert "NOT a calibrated wide PSF or sky" in summary
+
+
+
+def test_p16b_existing_galaxy_target_mask_blocks_outer_sky_pixels():
+    frame=_frame(with_neighbor=False)
+    yy,xx=np.indices(frame.shape)
+    r=np.hypot(xx-200.,yy-200.)
+    protected=(r>22.*FWHM)&(r<26.*FWHM)&(xx>200)
+    matcher=SimpleNamespace(
+        pixel_positions=np.array([[200.,200.]]))
+    result=audit_native_broad_radius_star_profiles(
+        frame,[_star()],matcher,_geometry(),protected_mask=protected)
+    assert result["status"]=="ORIGINAL_NATIVE_OUTER_PROFILE_FEASIBILITY_ONLY"
+    assert result["original_target_protection_mask_applied"]
+    star=result["per_star"][0]
+    assert star["original_target_protection_mask_applied"]
+    inner=star["conditional_sky_inner_ring"]
+    outer=star["conditional_sky_outer_ring"]
+    assert inner["unmasked_coverage_fraction"]<.6
+    assert outer["unmasked_coverage_fraction"]==pytest.approx(1.)
+    assert star["stellar_wing_detection_not_claimed"]
+
+
+def test_p16b_mismatched_target_protection_mask_refuses_to_measure():
+    matcher=SimpleNamespace(
+        pixel_positions=np.array([[200.,200.]]))
+    result=audit_native_broad_radius_star_profiles(
+        _frame(),[_star()],matcher,_geometry(),
+        protected_mask=np.zeros((3,3),dtype=bool))
+    assert result["status"]=="INVALID_TARGET_PROTECTION_MASK_SHAPE"
+    assert not result["science_adopted"]
