@@ -201,6 +201,13 @@ def test_approximate_core_profile_and_no_galaxy_centroids(built):
     assert broad["status"] == "NO_VERIFIED_NATIVE_CATALOG_FOR_NEIGHBOR_MASK"
     assert broad["per_star"] == []
     assert broad["science_adopted"] is False
+    independent = report["diagnostic_metrics"]["disjoint_bright_gaia_outer_profile_qa"]
+    assert independent["schema"] == (
+        "desidera.psf0-disjoint-bright-tractor-gaia-native-profile/1")
+    assert independent["status"] == (
+        "NO_FULL_NATIVE_GAIA_TRACTOR_CATALOG_METADATA")
+    assert independent["per_star"] == []
+    assert independent["science_adopted"] is False
     json.dumps(report, allow_nan=False)
 
 
