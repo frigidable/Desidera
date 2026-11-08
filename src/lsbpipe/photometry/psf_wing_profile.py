@@ -418,6 +418,8 @@ def audit_disjoint_bright_gaia_wing_probes(
             frame, star, positions, float(width), protected_mask)
         result.update(identity)
         result["native_peak_from_postselection_3x3_original_pixels"] = True
+        # P16B has no independent bright-star sample; P16C does.
+        result["bright_stars_independent_of_existing_psf_training_not_identified"] = False
         result["science_adopted"] = False
         profiles.append(result)
     return dict(
@@ -443,4 +445,286 @@ def audit_disjoint_bright_gaia_wing_probes(
         catalog_qualified_source_inventory_count=len(candidates),
         no_profile_based_star_replacement=True,
         per_star=profiles,
+    )
+
+
+# P16D: read-only stress test on the EXACT preselected P16C identities.
+# Do not use outcomes to re-rank, replace, retrain or adopt any star/PSF.
+P16D_SCHEMA = "desidera.psf0-fixed-bright-gaia-neighbor-sky-stress/1"
+P16D_MASK_RADII_FWHM = (3., 6.)
+P16D_PROFILE_RINGS_FWHM = ((4., 6.), (6., 8.), (8., 12.),
+                           (12., 16.), (16., 20.), (20., 22.))
+P16D_MIN_SKY_PIXELS = 100
+P16D_MIN_OCTANT_PIXELS = 25
+
+
+def _p16d_conditional_sky_plane(pixels, dx, dy, fit_mask):
+    """Clipped planar background *hypothesis*, never a calibrated sky."""
+    if np.count_nonzero(fit_mask) < P16D_MIN_SKY_PIXELS:
+        return None
+    yy = pixels[fit_mask]
+    design = np.column_stack((np.ones(yy.size), dx[fit_mask],
+                              dy[fit_mask]))
+    keep = np.ones(yy.size, dtype=bool)
+    if np.linalg.matrix_rank(design) != 3:
+        return None
+    for _ in range(3):
+        if np.count_nonzero(keep) < P16D_MIN_SKY_PIXELS:
+            return None
+        coeff = np.linalg.lstsq(design[keep], yy[keep], rcond=None)[0]
+        residual = yy - design @ coeff
+        center = np.median(residual[keep])
+        scatter = 1.4826 * np.median(np.abs(residual[keep] - center))
+        if not np.isfinite(scatter) or scatter <= 0:
+            break
+        next_keep = np.abs(residual - center) <= 3. * scatter
+        if (np.count_nonzero(next_keep) < P16D_MIN_SKY_PIXELS
+                or np.array_equal(next_keep, keep)):
+            break
+        keep = next_keep
+    coeff = np.linalg.lstsq(design[keep], yy[keep], rcond=None)[0]
+    if not np.all(np.isfinite(coeff)):
+        return None
+    return tuple(float(v) for v in coeff)
+
+
+def audit_fixed_bright_gaia_neighbor_sky_stress(
+    frame, catalog_matcher, p16c_qa, core_geometry, *, protected_mask=None
+):
+    """P16D: fixed-cohort mask-radius, octant and sky-plane sensitivity.
+
+    Evaluates catalog neighbors at 3 and 6 measured FWHM; compares two
+    disjoint sky-ring constants with a fitted outer (22--30 FWHM) plane.
+    These are descriptive, highly correlated coadd-pixel statistics.
+    They cannot certify stellar wings, a sky model or a photometric PSF.
+    """
+    report = {
+        "schema": P16D_SCHEMA,
+        "status": "NOT_RUN",
+        "science_adopted": False,
+        "fixed_p16c_cohort_never_reranked_or_replaced": True,
+        "pixels_invvar_and_psf_kernel_unchanged": True,
+        "mask_radii_in_measured_fwhm": list(P16D_MASK_RADII_FWHM),
+        "radial_rings_in_measured_fwhm": [
+            list(v) for v in P16D_PROFILE_RINGS_FWHM],
+        "sky_rings_in_measured_fwhm": [
+            list(SKY_RING_A), list(SKY_RING_B)],
+        "plane_fit_uses_pooled_22_to_30_fwhm_pixels": True,
+        "plane_is_conditional_and_can_absorb_stellar_wings": True,
+        "uncataloged_sources_and_neighbor_wings_unmodeled": True,
+        "no_covariance_calibration_or_statistical_detection_test": True,
+        "no_core_wing_stitching_or_science_adoption": True,
+        "per_star": [],
+    }
+    if not isinstance(p16c_qa, dict) or (
+            p16c_qa.get("schema") != PROSPECTIVE_SCHEMA or
+            p16c_qa.get("status") !=
+            "DISJOINT_BRIGHT_GAIA_NATIVE_PROFILE_FEASIBILITY_ONLY"):
+        return dict(report, status="NO_FIXED_P16C_COHORT")
+    if catalog_matcher is None or not hasattr(catalog_matcher, "pixel_positions"):
+        return dict(report, status="NO_VERIFIED_NATIVE_CATALOG")
+    if (p16c_qa.get("native_catalog_sha256") !=
+            getattr(catalog_matcher, "source_sha256", None)):
+        return dict(report, status="P16C_CATALOG_LINEAGE_MISMATCH")
+    positions = np.asarray(catalog_matcher.pixel_positions, dtype=float)
+    if (positions.ndim != 2 or positions.shape[1] != 2 or
+            len(positions) == 0 or not np.isfinite(positions).all()):
+        return dict(report, status="INVALID_NATIVE_CATALOG_POSITIONS")
+    width = (core_geometry.get(
+        "measured_core_fwhm_axis_geometric_mean_native_pix")
+        if isinstance(core_geometry, dict) and core_geometry.get("status") ==
+        "FINITE_NATIVE_CORE_GEOMETRY_MEASURED" else None)
+    if (not isinstance(width, (float, int)) or
+            not math.isfinite(width) or width <= 0):
+        return dict(report, status="NO_MEASURED_NATIVE_CORE_FWHM")
+    if protected_mask is not None:
+        protected_mask = np.asarray(protected_mask, dtype=bool)
+        if protected_mask.shape != frame.shape:
+            return dict(report, status="INVALID_TARGET_PROTECTION_MASK")
+    original = np.asarray(frame.image_nMgy, dtype=float)
+    inverse = np.asarray(frame.invvar_nMgy2, dtype=float)
+    half = int(math.ceil(SKY_RING_B[1] * width)) + 1
+    ny, nx = frame.shape
+    output = []
+    for old in p16c_qa.get("per_star", []):
+        item = {
+            "source_id": old.get("source_id"),
+            "gaia_source_id": old.get("gaia_source_id"),
+            "catalog_flux_rank_in_fixed_new_cohort": old.get(
+                "catalog_flux_rank_in_fixed_new_cohort"),
+            "p16c_status": old.get("status"),
+            "status": "NOT_EVALUATED",
+            "mask_variants": [],
+            "science_adopted": False,
+        }
+        if old.get("status") != (
+                "MASKED_OUTER_PROFILE_DESCRIPTIVE_SKY_DEGENERATE"):
+            item["status"] = "P16C_PROFILE_NOT_AVAILABLE"
+            output.append(item)
+            continue
+        x, y = map(float, old["native_xy_pix"])
+        ix, iy = int(np.rint(x)), int(np.rint(y))
+        x0, y0 = ix - half, iy - half
+        if (x0 < 0 or y0 < 0 or ix + half >= nx or iy + half >= ny):
+            item["status"] = "FULL_ORIGINAL_STAMP_OUTSIDE_IMAGE"
+            output.append(item)
+            continue
+        rows, cols = slice(y0, iy + half + 1), slice(x0, ix + half + 1)
+        pixels = original[rows, cols]
+        ivar = inverse[rows, cols]
+        usable_base = (np.asarray(frame.valid[rows, cols], dtype=bool).copy()
+                       & np.isfinite(pixels) & np.isfinite(ivar) & (ivar > 0))
+        for key in (f"SATUR_{frame.band.upper()}",
+                    f"ALLMASK_{frame.band.upper()}"):
+            if key in frame.mask_reasons:
+                usable_base &= ~np.asarray(
+                    frame.mask_reasons[key][rows, cols], dtype=bool)
+        if protected_mask is not None:
+            usable_base &= ~protected_mask[rows, cols]
+        gy, gx = np.indices(pixels.shape, dtype=float)
+        gx += x0
+        gy += y0
+        dx, dy = (gx - x) / width, (gy - y) / width
+        radial = np.hypot(dx, dy)
+        octants = np.minimum(
+            np.floor((np.arctan2(dy, dx) % (2 * np.pi)) *
+                     (8. / (2 * np.pi))).astype(int), 7)
+        peak = float(old["original_star_peak_nMgy_per_native_pixel"])
+        if not math.isfinite(peak) or peak <= 0:
+            item["status"] = "INVALID_P16C_NATIVE_PEAK"
+            output.append(item)
+            continue
+        dist = np.hypot(positions[:, 0] - x, positions[:, 1] - y)
+        if np.count_nonzero(dist <= 2.5) != 1:
+            item["status"] = "CATALOG_CENTRAL_MATCH_CHANGED"
+            output.append(item)
+            continue
+        for mask_fwhm in P16D_MASK_RADII_FWHM:
+            mask_radius = mask_fwhm * width
+            usable = usable_base.copy()
+            eligible = ((dist > 2.5) &
+                        (positions[:, 0] >= x0 - mask_radius) &
+                        (positions[:, 0] <= ix + half + mask_radius) &
+                        (positions[:, 1] >= y0 - mask_radius) &
+                        (positions[:, 1] <= iy + half + mask_radius))
+            neighbor_indices = np.flatnonzero(eligible)
+            for j in neighbor_indices:
+                px, py = positions[j]
+                usable &= ((gx - px) ** 2 + (gy - py) ** 2 >
+                           mask_radius ** 2)
+            def median_in(selection):
+                if not np.any(selection):
+                    return None
+                return float(np.median(pixels[selection]))
+            sky_a_mask = usable & (radial >= 22) & (radial < 26)
+            sky_b_mask = usable & (radial >= 26) & (radial < 30)
+            sky_a = median_in(sky_a_mask)
+            sky_b = median_in(sky_b_mask)
+            sky_pixels = sky_a_mask | sky_b_mask
+            plane = _p16d_conditional_sky_plane(pixels, dx, dy, sky_pixels)
+            sky_model = (plane[0] + plane[1] * dx + plane[2] * dy
+                         if plane is not None else None)
+            record = {
+                "mask_radius_in_measured_fwhm": mask_fwhm,
+                "n_catalog_neighbors_whose_cores_masked": int(
+                    len(neighbor_indices)),
+                "sky_ring_a_n_unmasked": int(np.count_nonzero(sky_a_mask)),
+                "sky_ring_b_n_unmasked": int(np.count_nonzero(sky_b_mask)),
+                "sky_ring_a_median_nMgy_per_pixel": sky_a,
+                "sky_ring_b_median_nMgy_per_pixel": sky_b,
+                "sky_a_minus_b_over_native_peak": (
+                    (sky_a - sky_b) / peak if sky_a is not None and
+                    sky_b is not None else None),
+                "conditional_outer_sky_plane_coefficients_nMgy_per_pix": (
+                    list(plane) if plane is not None else None),
+                "conditional_plane_center_minus_sky_b_over_peak": (
+                    (plane[0] - sky_b) / peak if plane is not None
+                    and sky_b is not None else None),
+                "radial_profile": [],
+            }
+            for inner, outer in P16D_PROFILE_RINGS_FWHM:
+                area = (radial >= inner) & (radial < outer)
+                ring = usable & area
+                total = int(np.count_nonzero(area))
+                n = int(np.count_nonzero(ring))
+                octant_values = []
+                for sector in range(8):
+                    subset = ring & (octants == sector)
+                    octant_values.append(
+                        float(np.median(pixels[subset] - sky_b) / peak)
+                        if sky_b is not None and
+                        np.count_nonzero(subset) >= P16D_MIN_OCTANT_PIXELS
+                        else None)
+                populated = [v for v in octant_values if v is not None]
+                raw = median_in(ring)
+                plane_residual = (
+                    float(np.median((pixels - sky_model)[ring]) / peak)
+                    if sky_model is not None and n else None)
+                record["radial_profile"].append({
+                    "radius_inner_in_measured_fwhm": inner,
+                    "radius_outer_in_measured_fwhm": outer,
+                    "n_unmasked_native_pixels": n,
+                    "unmasked_fraction": n / total if total else None,
+                    "sky_a_subtracted_median_over_peak": (
+                        (raw - sky_a) / peak if raw is not None
+                        and sky_a is not None else None),
+                    "sky_b_subtracted_median_over_peak": (
+                        (raw - sky_b) / peak if raw is not None
+                        and sky_b is not None else None),
+                    "conditional_plane_subtracted_median_over_peak":
+                        plane_residual,
+                    "sky_b_subtracted_octant_medians_over_peak":
+                        octant_values,
+                    "n_octants_with_at_least_25_pixels": len(populated),
+                    "max_minus_min_octant_median_over_peak": (
+                        max(populated) - min(populated)
+                        if len(populated) >= 4 else None),
+                })
+            item["mask_variants"].append(record)
+        baseline, stress = item["mask_variants"]
+        base_sky_a = old["conditional_sky_inner_ring"][
+            "median_original_nMgy_per_native_pixel"]
+        base_sky_b = old["conditional_sky_outer_ring"][
+            "median_original_nMgy_per_native_pixel"]
+        # Reproduce P16C at 3 FWHM before interpreting mask stress.
+        agrees = (
+            baseline["sky_ring_a_median_nMgy_per_pixel"] is not None
+            and baseline["sky_ring_b_median_nMgy_per_pixel"] is not None
+            and np.isclose(baseline["sky_ring_a_median_nMgy_per_pixel"],
+                           base_sky_a, rtol=0, atol=1.e-10)
+            and np.isclose(baseline["sky_ring_b_median_nMgy_per_pixel"],
+                           base_sky_b, rtol=0, atol=1.e-10))
+        for orig, measured in zip(old["radial_profile"],
+                                  baseline["radial_profile"]):
+            raw = orig["sky_b_subtracted_median_over_original_star_peak"]
+            new = measured["sky_b_subtracted_median_over_peak"]
+            agrees = bool(agrees and raw is not None and new is not None
+                          and np.isclose(raw, new, rtol=0, atol=1.e-10)
+                          ) if orig["radius_inner_in_measured_fwhm"] >= 4 else agrees
+        item["reproduces_original_p16c_three_fwhm_sky_and_profile"] = bool(agrees)
+        for original_ring, stress_ring in zip(
+                baseline["radial_profile"], stress["radial_profile"]):
+            a = original_ring["sky_b_subtracted_median_over_peak"]
+            b = stress_ring["sky_b_subtracted_median_over_peak"]
+            stress_ring["six_minus_three_fwhm_mask_residual_over_peak"] = (
+                b - a if a is not None and b is not None else None)
+        item["status"] = (
+            "BASELINE_P16C_REPRODUCTION_MISMATCH" if not agrees
+            else "DESCRIPTIVE_SKY_NEIGHBOR_STRESS_ONLY"
+            if all(v["sky_ring_b_median_nMgy_per_pixel"] is not None
+                   and v["conditional_outer_sky_plane_coefficients_nMgy_per_pix"]
+                   is not None for v in item["mask_variants"])
+            else "INSUFFICIENT_SKY_OR_PLANE_COVERAGE")
+        output.append(item)
+    return dict(
+        report,
+        status="FIXED_COHORT_SKY_NEIGHBOR_STRESS_QA_ONLY",
+        n_fixed_p16c_star_identities=len(output),
+        n_baseline_p16c_reproduced=sum(
+            row.get("reproduces_original_p16c_three_fwhm_sky_and_profile")
+            is True for row in output),
+        n_stress_profiles_with_both_sky_and_plane=sum(
+            row["status"] == "DESCRIPTIVE_SKY_NEIGHBOR_STRESS_ONLY"
+            for row in output),
+        per_star=output,
     )
