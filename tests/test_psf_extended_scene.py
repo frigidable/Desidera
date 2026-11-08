@@ -162,6 +162,24 @@ def test_extended_pilot_recovers_synthetic_model_and_does_not_mutate_pixels():
     assert ring["pixel_resampling_covariance_across_ring_boundary_unmodeled"]
     assert ring["psf_itself_not_independently_trained_for_every_star"]
     assert ring["no_model_selection_or_science_adoption"]
+    assert ring["ring_component_fits_use_only_nonreserved_original_pixels"]
+    assert ring["n_extended_components_positive_with_ring_excluded"]==1
+    assert ring["n_extended_components_full_positive_but_ring_excluded_zero"]==0
+    assert ring["n_extended_components_full_zero_but_ring_excluded_positive"]==0
+    assert len(ring["ring_excluded_extended_components"])==1
+    split=ring["ring_excluded_extended_components"][0]
+    assert split["tractor_objid"]==1941
+    assert split["tractor_type"]=="DEV"
+    assert split["design_matrix_column"]==1
+    assert not split["ring_excluded_nnls_amplitude_exactly_zero"]
+    assert split["ring_excluded_nnls_peak_amplitude_nMgy_per_pixel"]>0
+    assert split["ring_predicted_component_sum_on_reserved_native_pixels_nMgy"]>0
+    assert split["ring_excluded_to_full_peak_amplitude_ratio"]==pytest.approx(
+        1.,rel=1e-7)
+    assert split["split_fit_amplitudes_are_conditional_not_source_detection"]
+    assert not split["full_scene_active_ring_excluded_inactive"]
+    assert not split["full_scene_inactive_ring_excluded_active"]
+    assert ring["ring_split_diagnostics_are_not_independent_star_holdouts"]
     assert out["central_aperture_comparison"]["four_guessed_fwhm"][
         "same_original_native_pixels_globally_fit_models"]
     assert out["no_coadd_covariance_or_parameter_uncertainty_model"]
@@ -585,3 +603,40 @@ def test_p15f_zero_or_worse_reserved_ring_score_reports_explicit_ratio():
     assert a["extended_prediction_worse_than_point_only"]
     assert a["reserved_ring_rss_ratio_extended_over_point_only"]>1.
     assert a["worsened_ring_is_explicit_falsification_not_a_p_value"]
+
+
+
+def test_p15g_inactive_ring_component_is_separate_from_full_native_fit():
+    # Extended profile appears only in the reserved ring. A global
+    # regression can fit it, but a fit that does not see the ring
+    # must not claim that it measured its amplitude.
+    from lsbpipe.photometry.psf_extended_scene import (
+        _predeclared_ring_prediction, _projected_nnls)
+    yy,xx=np.indices((81,81),dtype=float)
+    radius=np.hypot(xx-40.,yy-40.).ravel()
+    B=np.column_stack((np.ones(81*81),
+                       ((xx-40.)/40.).ravel(),
+                       ((yy-40.)/40.).ravel()))
+    star=np.exp(-.5*((xx-40.)**2+(yy-40.)**2)/3.**2).ravel()
+    galaxy=np.exp(-.5*((xx-60.)**2+(yy-40.)**2)/5.**2).ravel()
+    P=np.column_stack((star,galaxy))
+    reserved=(radius>2*6.57)&(radius<=4*6.57)
+    z=.1+20*star
+    z[reserved]+=4*galaxy[reserved]
+    weights=np.ones_like(z)
+    global_amplitudes,_,_,_=_projected_nnls(z,B,P,weights)
+    out=_predeclared_ring_prediction(
+        z,B,P,weights,radius,guessed_fwhm_pix=6.57,
+        n_base_columns=1)
+    assert out["status"]=="PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION"
+    assert global_amplitudes[1]>0
+    # Floating arithmetic may make an inactive boundary tiny
+    # rather than identically zero, so test magnitude rather than
+    # imposing an unphysical diagnostic threshold.
+    assert out["ring_excluded_extended_components"][0][
+        "ring_excluded_nnls_peak_amplitude_nMgy_per_pixel"]<1e-8
+    assert out["ring_excluded_extended_components"][0][
+        "ring_predicted_component_sum_on_reserved_native_pixels_nMgy"]<1e-7
+    assert out["ring_component_fits_use_only_nonreserved_original_pixels"]
+    assert out["n_reserved_native_pixels"]>0
+    assert not out["no_model_selection_or_science_adoption"] is False
