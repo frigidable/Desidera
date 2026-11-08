@@ -201,7 +201,9 @@ marked unavailable, never silently truncated.
 Require the verified same-brick native Tractor catalog and
 exactly one counterpart within 2.5 native pixels. Mask
 the **cores** of every other original-catalog position inside
-the patch at a fixed **3 measured-FWHM radius**. This
+the patch at a fixed **3 measured-FWHM radius**, and
+also preserve the already predeclared **Leo P target-exclusion
+mask** on the whole larger stamp and both sky annuli. This
 does NOT remove wings of catalogued neighboring stars,
 unmodelled broad halo/deblending errors, diffraction,
 background galaxies or scattered light. Original valid,
