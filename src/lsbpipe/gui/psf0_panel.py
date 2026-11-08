@@ -1116,6 +1116,36 @@ class PSF0Panel(QGroupBox):
                     notes.append(
                         f"  {row.get('source_id')}: P16C profile unavailable "
                         f"({row.get('status', 'UNKNOWN')}); no replacement.")
+        stress = metrics.get("fixed_bright_gaia_neighbor_sky_stress_qa")
+        if isinstance(stress, dict):
+            notes.append(
+                "P16D fixed P16C bright Gaia cohort: "
+                f"{stress.get('n_baseline_p16c_reproduced', 0)}/"
+                f"{stress.get('n_fixed_p16c_star_identities', 0)} "
+                "baseline profiles reproduced; "
+                f"{stress.get('n_stress_profiles_with_both_sky_and_plane', 0)} "
+                "sky-plane + 3/6 measured-FWHM mask stress profiles. "
+                "Original-pixel descriptive QA ONLY; "
+                "NOT calibrated wide-angle PSF or background.")
+            for row in stress.get("per_star", [])[:4]:
+                variants = row.get("mask_variants", [])
+                if len(variants) == 2 and variants[1].get("radial_profile"):
+                    first = variants[1]["radial_profile"][0]
+                    difference = first.get(
+                        "six_minus_three_fwhm_mask_residual_over_peak")
+                    spread = first.get(
+                        "max_minus_min_octant_median_over_peak")
+                    notes.append(
+                        f"  {row.get('source_id')}: "
+                        f"{row.get('status')}; 4-6 FWHM "
+                        f"mask-stress Δ/peak={difference if difference is not None else 'N/A'}, "
+                        f"octant spread/peak={spread if spread is not None else 'N/A'}. "
+                        "No detection significance or PSF adoption.")
+                else:
+                    notes.append(
+                        f"  {row.get('source_id')}: "
+                        f"{row.get('status', 'NO_STRESS_PROFILE')}; "
+                        "no star replacement.")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
