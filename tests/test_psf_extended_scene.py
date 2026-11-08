@@ -570,9 +570,11 @@ def test_p15f_zero_or_worse_reserved_ring_score_reports_explicit_ratio():
     P=np.column_stack((star,ext))
     # Native profile differs between the fitting region and ring.
     # This guarantees no unsupported universal "improved" claim.
-    z=.2+20*star
+    # The source is present only on the fit pixels, but its assumed
+    # extrapolation has the wrong sign in reserved pixels.
+    z=.2+20*star+5*ext
     ring=(radii>2*6.57)&(radii<=4*6.57)
-    z[ring]+=8*ext[ring]
+    z[ring]-=10*ext[ring]
     a=_predeclared_ring_prediction(
         z,B,P,np.ones_like(z),radii,
         guessed_fwhm_pix=6.57,n_base_columns=1)
@@ -580,6 +582,6 @@ def test_p15f_zero_or_worse_reserved_ring_score_reports_explicit_ratio():
     assert a["reserved_ring_rss_ratio_extended_over_point_only"]==pytest.approx(
         a["weighted_reserved_ring_rss_with_extended"] /
         a["weighted_reserved_ring_rss_without_extended"])
-    assert a["extended_prediction_worse_than_point_only"]==(
-        a["reserved_ring_rss_ratio_extended_over_point_only"]>1.)
+    assert a["extended_prediction_worse_than_point_only"]
+    assert a["reserved_ring_rss_ratio_extended_over_point_only"]>1.
     assert a["worsened_ring_is_explicit_falsification_not_a_p_value"]
