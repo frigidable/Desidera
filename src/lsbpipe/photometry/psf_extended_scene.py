@@ -356,6 +356,26 @@ def _predeclared_ring_prediction(z, B, P, weights, radius_pix, *,
             if score_base>0 else None),
         training_extended_design_condition_number=float(condition),
         training_point_only_design_condition_number=float(condition_base),
+        ring_excluded_extended_scene_star_peak_nMgy_per_pixel=float(
+            fitted[0]),
+        ring_excluded_point_only_star_peak_nMgy_per_pixel=float(
+            baseline[0]),
+        ring_excluded_extended_minus_point_only_sky_at_star_nMgy_per_pixel=float(
+            sky[0]-sky_base[0]),
+        ring_excluded_extended_components=[
+            {
+                "design_matrix_column":int(j),
+                "ring_excluded_nnls_peak_amplitude_nMgy_per_pixel":
+                    float(fitted[j]),
+                "ring_excluded_nnls_amplitude_exactly_zero":
+                    bool(fitted[j]==0.),
+                "ring_predicted_component_sum_on_reserved_native_pixels_nMgy":
+                    float(np.sum(P[ring,j]*fitted[j])),
+                "component_flux_is_not_an_independent_error_attribution":True,
+            }
+            for j in range(n_base_columns,P.shape[1])
+        ],
+        ring_component_fits_use_only_nonreserved_original_pixels=True,
         negative_ring_gain_retained_instead_of_clamped=True,
         not_chi_squared_without_coadd_covariance=True,
     )
@@ -791,6 +811,46 @@ def pilot_extended_scene(image, invvar, valid, *, wcs, kernel, target_xy,
         z[mask], B, P, w, distance,
         guessed_fwhm_pix=guessed_fwhm_pix,
         n_base_columns=baseline_columns)
+    ring_components = predictive_ring.get(
+        "ring_excluded_extended_components")
+    if ring_components is not None:
+        # Same fixed design columns; enrich the independent ring-excluded
+        # fit with catalog IDs and compare it to the pre-existing global
+        # solution. This does NOT use the reserved ring in any refit.
+        assert len(ring_components)==len(admitted_rows)
+        for j, component in enumerate(ring_components):
+            original = fitted_extended_components[j]
+            full_amplitude = original[
+                "nnls_fitted_peak_nMgy_per_native_pixel"]
+            ring_amplitude = component[
+                "ring_excluded_nnls_peak_amplitude_nMgy_per_pixel"]
+            component.update(
+                tractor_objid=int(admitted_rows[j]["tractor_objid"]),
+                tractor_type=str(admitted_rows[j]["tractor_type"]),
+                full_scene_nnls_peak_amplitude_nMgy_per_pixel=float(
+                    full_amplitude),
+                full_scene_active_ring_excluded_inactive=bool(
+                    full_amplitude>0. and ring_amplitude==0.),
+                full_scene_inactive_ring_excluded_active=bool(
+                    full_amplitude==0. and ring_amplitude>0.),
+                ring_excluded_to_full_peak_amplitude_ratio=(
+                    float(ring_amplitude/full_amplitude)
+                    if full_amplitude>0. else None),
+                split_fit_amplitudes_are_conditional_not_source_detection=True,
+            )
+        predictive_ring.update(
+            n_extended_components_positive_with_ring_excluded=sum(
+                not component[
+                    "ring_excluded_nnls_amplitude_exactly_zero"]
+                for component in ring_components),
+            n_extended_components_full_positive_but_ring_excluded_zero=sum(
+                component["full_scene_active_ring_excluded_inactive"]
+                for component in ring_components),
+            n_extended_components_full_zero_but_ring_excluded_positive=sum(
+                component["full_scene_inactive_ring_excluded_active"]
+                for component in ring_components),
+            ring_split_diagnostics_are_not_independent_star_holdouts=True,
+        )
     # One nearest already-rendered extended source is selected strictly
     # by catalog separation/OBJID, before inspecting any fit residual.
     # All other original rendered extended/PSF source columns are frozen
