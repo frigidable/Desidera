@@ -96,12 +96,20 @@ def measure_finite_native_psf_core(kernel, *, guessed_fwhm_pix):
     for multiple in RADII_IN_MEASURED_FWHM:
         r = float(multiple*measured)
         fully_contained = bool(r <= full_radius)
+        # Sum in float64, divide by the *actual* finite-kernel
+        # normalization and remove only machine-roundoff overshoots.
+        # The [0,1] clamp is a numerical probability bound, NOT a
+        # correction for unknown astrophysical power in outer wings.
+        included_fraction = None
+        if fully_contained:
+            raw = float(image[radius <= r].sum()/image.sum())
+            included_fraction = float(min(1., max(0., raw)))
         enclosed.append({
             "radius_in_measured_axial_geometric_fwhm":multiple,
             "radius_native_pix":r,
-            "enclosed_fraction_of_finite_kernel":(
-                float(image[radius <= r].sum()) if fully_contained else None),
+            "enclosed_fraction_of_finite_kernel":included_fraction,
             "full_circular_aperture_inside_kernel":fully_contained,
+            "only_float_roundoff_clamped_to_unit_interval":True,
             "not_total_physical_psf_flux":True,
         })
     return dict(
