@@ -334,7 +334,12 @@ changes the sample size, training, holdouts, finite kernel,
 existing P16B measures, science adoption, original WCS,
 image pixels or inverse variance.
 
-The real **P16C** Leo P experiment is not yet executed.
+The real **P16C** Leo P `g` experiment was executed on
+2026-11-09: 5363 original Tractor rows, 100 catalog/geometry-eligible
+Gaia candidates before the fixed cap, 16 fixed identities, 16 measured
+native outer profiles. All 16 share the DR11 coadd's calibration and sky.
+The new identities do not validate wide wings. The faintest stars and
+neighbor-rich fields remain background/contamination limited.
 Compare its observed native outer radial profiles and
 two **conditional** sky solutions before any PSF core+wing
 stitching. If these brighter sources are contaminated or
@@ -343,3 +348,79 @@ isolated optical field or independent bright-star
 calibration will be required. No new empirical PSF can
 be scientifically adopted without subsequent independent
 validation and quantitative LSB injection/recovery.
+
+
+## P16D: one bounded, preregistered neighbor and sky stress test
+
+**Purpose:** decide whether the same fixed 16 P16C Gaia sources support
+a stable outer profile in this one DR11 coadd, or whether the Leo P
+field must be set aside in favor of an independently chosen field.
+This is the intended one bounded P16D experiment, NOT a sequence of
+retuned deblending or selection attempts.
+
+P16D is read-only and attaches to the **existing** PSF-0 QA as
+\`diagnostic_metrics.fixed_bright_gaia_neighbor_sky_stress_qa\`, schema
+\`desidera.psf0-fixed-bright-gaia-neighbor-sky-stress/1\`.
+
+It keeps P16C's native catalog hash, all fixed Gaia IDs and order,
+native coadd images/invvar, original protected target mask, unchanged
+81×81 ePSF, FWHM measured on that kernel, train/holdout split, and
+scientific HOLD. A missing/mismatched catalog, core geometry, stamp,
+or original P16C result fails closed, rather than constructing a
+replacement star list.
+
+Predeclared nuisance-model comparison (fixed before viewing P16D results):
+
+1. Original catalog-neighbor core exclusion at **3 measured FWHM**;
+   conservative stress exclusion at **6 measured FWHM**. Both use the
+   same original Tractor centroids and identical native-pixel masks,
+   apart from the fixed radius. These masks deliberately do *not* model
+   the actual wings of unmasked neighbors or uncataloged sources.
+2. The original non-overlapping constant background hypotheses
+   \`22–26 FWHM\` and \`26–30 FWHM\`. Additionally fit a robust
+   first-order spatial plane using the **pooled 22–30 FWHM pixels**
+   (three iterations with 3-MAD clipping); this is a conditional
+   alternative, not a calibrated sky truth. It can absorb real wings.
+3. Measure original-pixel medians in the same six outer bins,
+   \`4–6\`, \`6–8\`, \`8–12\`, \`12–16\`, \`16–20\`, \`20–22\`
+   measured FWHM. Record usable-area fractions, both constant-sky
+   residuals, plane-subtracted residuals and normalized differences
+   between the two masking radii.
+4. Split each ring into eight fixed azimuthal sectors; only report
+   a sector median with at least **25 unmasked original pixels**.
+   Missing sectors stay null. Neither sector-to-sector spread nor a
+   positive ring median is a covariance-calibrated detection.
+5. **Internal invariance check:** at exactly 3 FWHM, P16D must
+   reproduce the original P16C sky-ring medians and each matching
+   radial-bin residual within a fixed absolute tolerance \`1e-10\`
+   in its native units. If not, label the source
+   \`BASELINE_P16C_REPRODUCTION_MISMATCH\`; do not interpret the
+   stress difference. No reranking or backfilling is permitted.
+
+**What P16D does NOT establish:** a wing detection at 8–30 FWHM, a
+wide-PSF total flux, noise covariance, the optimal neighbor mask,
+photometric uncertainty bounds, a science-ready PSF, or a distance.
+The fixed mask radii are sensitivity hypotheses, not choices to be
+optimized on the same stars.
+
+**Decision after the real Leo P run:**
+
+- If both masking radii leave usable, reasonably well-populated annuli
+  and the conditional sky alternatives yield comparable *outer*
+  profiles without large octant anisotropy, advance to a separately
+  defined core/wing modeling and independent-star validation experiment.
+- If outer ring residuals are comparable to mask/sky perturbations,
+  or most annuli become poorly covered, **do not coadd the 16 profiles
+  or fit a wide PSF**. Prefer another, prospectively chosen DESI field
+  with better isolated bright stars, or independently calibrated
+  exposure-level/bright-star information.
+- No numerical scientific acceptance thresholds may be tuned after
+  inspecting this pilot; a subsequent adoption must use a declared
+  galaxy-photometry error budget and prospective injection/recovery.
+
+For the local Leo P rerun, preserve the original options
+\`gaia_strict\`, detection FWHM \`6.57 px\`,
+\`outer_sky_isolation_footprint\`. Confirm the new schema exists
+alongside unchanged \`kernel_sha256\`, \`n_train=10\`, \`n_holdout=3\`,
+and \`science_adopted=false\`. Keep the full JSON as the experiment
+record. The stage remains \`SCIENCE_GATE_HOLD\`.
