@@ -586,7 +586,6 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
         gy += y0
         dx, dy = (gx - x) / width, (gy - y) / width
         native_radius = np.hypot(gx - x, gy - y)
-        radial = native_radius / width
         octants = np.minimum(
             np.floor((np.arctan2(dy, dx) % (2 * np.pi)) *
                      (8. / (2 * np.pi))).astype(int), 7)
@@ -725,7 +724,10 @@ def audit_fixed_bright_gaia_neighbor_sky_stress(
         item["status"] = (
             "BASELINE_P16C_REPRODUCTION_MISMATCH" if not agrees
             else "DESCRIPTIVE_SKY_NEIGHBOR_STRESS_ONLY"
-            if all(v["sky_ring_b_median_nMgy_per_pixel"] is not None
+            if all(v["sky_ring_a_n_unmasked"] >= P16D_MIN_SKY_PIXELS
+                   and v["sky_ring_b_n_unmasked"] >= P16D_MIN_SKY_PIXELS
+                   and v["sky_ring_a_median_nMgy_per_pixel"] is not None
+                   and v["sky_ring_b_median_nMgy_per_pixel"] is not None
                    and v["conditional_outer_sky_plane_coefficients_nMgy_per_pix"]
                    is not None for v in item["mask_variants"])
             else "INSUFFICIENT_SKY_OR_PLANE_COVERAGE")
