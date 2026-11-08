@@ -1214,6 +1214,27 @@ class PSF0Panel(QGroupBox):
                         f"{p15.get('n_attempted_after_p14', 0)} "
                         "native scenes numerically fitted; "
                         "NOT a recovered wide PSF or full Tractor renderer.")
+                    worse = []
+                    for audited in joint.get("per_star", []):
+                        pred = audited.get(
+                            "p15_extended_tractor_scene", {}).get(
+                                "predeclared_2_to_4_fwhm_ring_prediction", {})
+                        ratio = pred.get(
+                            "reserved_ring_rss_ratio_extended_over_point_only")
+                        if (isinstance(ratio, (int, float))
+                                and np.isfinite(ratio) and ratio > 1.):
+                            worse.append((
+                                float(ratio),
+                                audited.get("source_id", "?"),
+                                audited.get("role", "?")))
+                    if worse:
+                        ratio, source_id, role = max(worse)
+                        notes.append(
+                            "P15G WORST withheld-ring extrapolation among "
+                            f"audited stars: {source_id} ({role}), "
+                            f"extended/point-only weighted RSS {ratio:.4g}×. "
+                            "Post-hoc maximum, correlated coadd pixels, "
+                            "NOT source attribution or a science gate.")
                     for star in joint.get("per_star", []):
                         if star.get("role") != "holdout":
                             continue
@@ -1282,8 +1303,39 @@ class PSF0Panel(QGroupBox):
                                     "    P15 2–4 FWHM withheld-ring check: "
                                     f"{withheld.get('status', 'NOT_AVAILABLE')}; "
                                     "no predictive claim.")
+                            if withheld.get("status") == (
+                                    "PREDECLARED_RING_OUT_OF_SAMPLE_PIXEL_PREDICTION"):
+                                active_in_ring_fit = withheld.get(
+                                    "n_extended_components_positive_with_ring_excluded")
+                                if active_in_ring_fit is not None:
+                                    notes.append(
+                                        "    P15G ring-excluded positive "
+                                        f"extended NNLS amplitudes: "
+                                        f"{active_in_ring_fit}/"
+                                        f"{scene.get('n_extended_profiles_rendered', 0)}; "
+                                        "full-positive→ring-zero: "
+                                        f"{withheld.get('n_extended_components_full_positive_but_ring_excluded_zero', 0)}. "
+                                        "Conditional fit activity, not detection.")
                             stress = scene.get(
                                 "p15d_morphology_controlled_stress", {})
+                            selected_id = stress.get("selected_tractor_objid")
+                            for component in withheld.get(
+                                    "ring_excluded_extended_components", []):
+                                if component.get("tractor_objid") != selected_id:
+                                    continue
+                                full_amp = component.get(
+                                    "full_scene_nnls_peak_amplitude_nMgy_per_pixel")
+                                ring_amp = component.get(
+                                    "ring_excluded_nnls_peak_amplitude_nMgy_per_pixel")
+                                if (full_amp is not None and ring_amp is not None):
+                                    notes.append(
+                                        "    P15G preselected extended "
+                                        f"OBJID={selected_id}: "
+                                        f"full NNLS peak={full_amp:.5g}, "
+                                        f"ring-excluded peak={ring_amp:.5g} "
+                                        "nMgy/pix. No separate source detection "
+                                        "or flux uncertainty follows.")
+                                break
                             if stress.get("status") == (
                                     "PREDECLARED_MORPHOLOGY_STRESS_DIAGNOSTIC"):
                                 responses = stress.get(
