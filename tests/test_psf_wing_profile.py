@@ -347,3 +347,23 @@ def test_p16c_gui_prospective_cohort_is_descriptive_only():
     assert "Distinct from kernel train/holdout identities" in summary
     assert "NOT independently calibrated PSF wings or background" in summary
     assert "wing-cat-0001" in summary
+
+
+
+def test_p16c_duplicate_gaia_ref_id_is_not_an_independent_star():
+    catalog=SimpleNamespace(
+        source_sha256="catalog",
+        pixel_positions=np.array([
+            [200.,200.],[230.,200.],[200.,230.]]),
+        rows=(
+            _catalog_row(11,300.),
+            _catalog_row(11,400.),
+            _catalog_row(12,200.),
+        ))
+    result=audit_disjoint_bright_gaia_wing_probes(
+        _frame(),[],catalog,_geometry())
+    assert [v["gaia_source_id"] for v in result["per_star"]]==[12]
+    assert result["predeclared_catalog_rejection_counts"][
+        "DUPLICATE_GAIA_ID_IN_NATIVE_TRACTOR_CATALOG"]==2
+    assert result["n_catalog_probes_fixed_before_original_pixel_reads"]==1
+    assert result["science_adopted"] is False
