@@ -150,3 +150,100 @@ If all milestones pass to a reviewed band/use-case-specific
 error budget, a separately reviewed production/adoption path
 may be implemented. If not, retain a scientifically defensible
 core-only experimental PSF and report the limits honestly.
+
+
+## First original Leo P g P16 result (2026-11-09)
+
+From the first real original-FITS output,
+\`dr11/south/1554p180/g\`, P16 method
+\`627222e7f3f5193ffb10db274112ef4201d58ca50b7e493fcc4ba6b3c2ad361a\`:
+
+- The exact original 81×81 kernel hash remains
+  \`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`.
+  The original sample remains 10 training/3 fixed Gaia holdouts.
+- Its **peak-axis half-maximum widths** are **4.963218 px**
+  (native X) and **5.316666 px** (native Y); geometric mean
+  **5.136903 native pix**, compared with a **6.57 native pix
+  detection FWHM guess**. The measured width is **21.81% lower**
+  than the guess. The axis max/min ratio is **1.071213**.
+  The native kernel peak is at exact 81×81 grid center (40,40).
+- Fractions of the 81×81 **finite-normalized** kernel within
+  1, 2, 3, 4 **measured** FWHM circular radii are
+  **0.8035703, 0.9403957, 0.9720075, 0.9831932**.
+  These are *not* true wide-angle PSF encircled-energy
+  fractions; there may be substantial flux outside the 81×81
+  support and/or absorbed into sky fitting.
+- On three fixed independent holdouts the previous
+  4×**guessed** FWHM median absolute core-normalized
+  growth mismatch is **0.095869648**; this uses a different
+  aperture and normalization and is NOT a calibrated
+  galaxy-photometry flux bias.
+- Exactly three numerical/provenance **availability** stages
+  PASS; six scientific accuracy/wing/noise/spatial/injection
+  stages HOLD. The global gate is
+  \`SCIENCE_GATE_HOLD\`, not adopted. The native negative
+  absolute ePSF precursor fraction remains **0.016537987**.
+
+The wide-angle PSF is therefore **not validated** by the
+finite-kernel encircled fraction or native FWHM.
+
+## P16B — original-image outer-profile feasibility, before any PSF wing fit
+
+A separate **read-only** follow-up
+\`src/lsbpipe/photometry/psf_wing_profile.py\` uses **original
+native coadd pixels** and the same already frozen 10+3 stars;
+it does NOT retrain, change or accept any PSF. For each selected
+source, use an original large odd-pixel native stamp that fully
+contains the disjoint sky-hypothesis rings through **30 measured
+native-kernel FWHM**. A star outside this entire footprint is
+marked unavailable, never silently truncated.
+
+Require the verified same-brick native Tractor catalog and
+exactly one counterpart within 2.5 native pixels. Mask
+the **cores** of every other original-catalog position inside
+the patch at a fixed **3 measured-FWHM radius**. This
+does NOT remove wings of catalogued neighboring stars,
+unmodelled broad halo/deblending errors, diffraction,
+background galaxies or scattered light. Original valid,
+inverse-variance and SATUR/ALLMASK masks are also retained.
+
+Record original-pixel robust annular medians and eight-sector
+coverage for the immutable annular edges **1,2,3,4,6,8,
+12,16,20,22** measured-FWHM units. Two **non-overlapping**
+outer sky hypotheses use measured-FWHM rings **22–26**
+and **26–30**, respectively. Compare the same annular
+original-pixel median after subtracting either *conditional*
+constant sky and dividing by the star's original measured
+peak. These sky estimates are deliberately **not** claimed
+to be free of the target star's outer PSF wings or of
+spatial sky gradients; differences are a sky/wing
+degeneracy diagnostic only.
+
+The original catalog mask can leave incomplete azimuthal
+coverage and cannot remove other source wings. Per-annulus
+usable pixel counts, geometric coverage and octant counts
+must be retained, with an explicit cannot-measure status
+for missing data/counterpart/sky. The program must **never**
+use the outer-profile evidence to alter original training,
+holdout roles, current PSF kernel, assumed finder FWHM,
+legacy fixed-ring diagnostics or science-adoption status.
+
+QA serialization:
+\`diagnostic_metrics.original_native_outer_stellar_profile_qa\`
+with schema
+\`desidera.psf0-original-native-wide-wing-profile/1\`.
+Expected success status
+\`MASKED_OUTER_PROFILE_DESCRIPTIVE_SKY_DEGENERATE\`
+means *raw data can be inspected*, not stellar wings have
+been measured without bias. This is not an independent
+bright-star sample, a certified sky model, a calibrated
+PSF wing, or a science pass. The initial scientific
+stage \`wide_angle_wing_measurement\` remains **HOLD**.
+
+**Next** after checking the Leo P P16B real output: if
+selected stars are confused or limited by spatial
+coverage, design a *separately fixed* prospective
+bright-star wing sample. A PSF core and true wide-angle
+profile cannot be inferred by choosing only the
+best-looking posthoc wing residuals from the same
+ten training and three holdout stars.
