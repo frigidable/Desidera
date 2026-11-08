@@ -159,3 +159,20 @@ def test_p16b_repeated_input_is_deterministic():
     b=audit_native_broad_radius_star_profiles(
         frame,[_star()],matcher,_geometry())
     assert a==b
+
+
+
+def test_p16b_gui_reports_original_profile_without_wing_adoption():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    matcher=SimpleNamespace(pixel_positions=np.array([
+        [200.,200.],[225.,200.]]))
+    q=audit_native_broad_radius_star_profiles(
+        _frame(),[_star()],matcher,_geometry())
+    summary=PSF0Panel._calibration_diagnostic_summary({
+        "original_native_outer_stellar_profile_qa":q})
+    assert "P16B original-pixel broad-radius" in summary
+    assert "fixed holdouts 1/1" in summary
+    assert "Two disjoint outer-sky hypotheses" in summary
+    assert "P16B sky-annulus median difference / stellar peak=" in summary
+    assert "NOT a calibrated wide PSF or sky" in summary
