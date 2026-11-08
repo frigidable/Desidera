@@ -19,7 +19,7 @@ SKY_RING_B = (26., 30.)
 NEIGHBOR_MASK_RADIUS_IN_MEASURED_FWHM = 3.
 
 
-def _star_outer_profile(frame, star, positions, fwhm_pix):
+def _star_outer_profile(frame, star, positions, fwhm_pix, protected_mask):
     """Read-only original-pixel annular medians with explicit limitations."""
     center_x, center_y = float(star.x_pix), float(star.y_pix)
     record = {
@@ -48,6 +48,8 @@ def _star_outer_profile(frame, star, positions, fwhm_pix):
         if key in frame.mask_reasons:
             usable &= ~np.asarray(frame.mask_reasons[key][rows,cols],dtype=bool)
     usable &= np.isfinite(pixels)&np.isfinite(inv)&(inv>0)
+    if protected_mask is not None:
+        usable &= ~protected_mask[rows,cols]
     gy,gx=np.indices(pixels.shape,dtype=float)
     gx+=x0
     gy+=y0
@@ -125,6 +127,7 @@ def _star_outer_profile(frame, star, positions, fwhm_pix):
         n_catalog_neighbors_whose_cores_were_masked=n_intersecting,
         catalog_neighbor_exclusion_radius_native_pix=float(neighbor_radius),
         catalog_mask_only_covers_neighbor_cores_not_their_wings=True,
+        original_target_protection_mask_applied=protected_mask is not None,
         conditional_sky_inner_ring=sky_a,
         conditional_sky_outer_ring=sky_b,
         sky_hypotheses_from_disjoint_original_native_annuli=True,
@@ -142,7 +145,8 @@ def _star_outer_profile(frame, star, positions, fwhm_pix):
 
 
 def audit_native_broad_radius_star_profiles(frame, stars, catalog_matcher,
-                                            core_geometry):
+                                            core_geometry, *,
+                                            protected_mask=None):
     """Probe broad-radius feasibility on unchanged selected-star coadd pixels.
 
     Does not choose or reject stars from residuals. In particular, fixed
@@ -172,6 +176,10 @@ def audit_native_broad_radius_star_profiles(frame, stars, catalog_matcher,
     if (positions.ndim!=2 or positions.shape[1]!=2
             or not len(positions) or not np.isfinite(positions).all()):
         return dict(out,status="INVALID_NATIVE_CATALOG_POSITIONS")
+    if protected_mask is not None:
+        protected_mask=np.asarray(protected_mask,dtype=bool)
+        if protected_mask.shape!=frame.shape:
+            return dict(out,status="INVALID_TARGET_PROTECTION_MASK_SHAPE")
     if not isinstance(core_geometry,dict):
         return dict(out,status="NO_CORE_GEOMETRY")
     width=core_geometry.get(
@@ -181,7 +189,8 @@ def audit_native_broad_radius_star_profiles(frame, stars, catalog_matcher,
             or not math.isfinite(width) or width<=0):
         return dict(out,status="NO_MEASURED_NATIVE_CORE_FWHM")
     rows=[
-        _star_outer_profile(frame, star, positions, float(width))
+        _star_outer_profile(frame, star, positions, float(width),
+                            protected_mask)
         for star in stars
     ]
     n_ok=sum(x["status"]=="MASKED_OUTER_PROFILE_DESCRIPTIVE_SKY_DEGENERATE"
@@ -192,6 +201,7 @@ def audit_native_broad_radius_star_profiles(frame, stars, catalog_matcher,
         n_selected_stars=len(rows),
         n_scenes_with_two_outer_sky_hypotheses=n_ok,
         n_scenes_not_measurable=len(rows)-n_ok,
+        original_target_protection_mask_applied=protected_mask is not None,
         n_fixed_holdouts_in_original_selected_inventory=sum(
             x["role"]=="holdout" for x in rows),
         n_fixed_holdouts_with_outer_profile=sum(
