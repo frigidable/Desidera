@@ -1119,7 +1119,7 @@ def audit_extended_bright_gaia_mask_experiment(
 # P18 is a new, predeclared single *diagnostic* morphology hypothesis.
 # It does not retroactively select the most favorable P17 mask or modify
 # the already frozen PSF training / 16-star P16C or 48-star P17 cohorts.
-P18_SCHEMA = "desidera.psf0-catalog-shape-neighbor-sector-sky/1"
+P18_SCHEMA = "desidera.psf0-catalog-shape-neighbor-sector-sky/2"
 P18_POINT_CORE_FWHM = (3., 3.5, 4.5)   # ratio <0.1; 0.1..1; >=1
 P18_EXTENDED_HALF_LIGHT_FACTOR = 4.
 P18_MISSING_EXTENDED_SHAPE_FWHM = 6.
@@ -1176,18 +1176,31 @@ def _p18_neighbor_footprint(row, center_flux, fwhm, arcsec_per_pix):
 
 
 def _p18_sky_to_pixel_matrix(frame, x, y):
-    """Local WCS Jacobian: native pixel offsets to east/north arcsec.
+    """Local native-pixel to east/north tangent Jacobian (arcsec/pixel).
 
-    A CD-derived local tangent approximation is valid only for small
-    (<~arcminute) stamps. No assumed 0.262-arcsec/pixel fallback.
+    For TAN images the WCS CD/PC matrix is already defined in the
+    intermediate projection plane, NOT in raw RA/DEC sky increments.
+    Multiplying that matrix by cos(dec) again biases the east scale.
+    Instead finite-difference the full native WCS near the source,
+    including SIP distortion when present, then convert the local RA
+    derivative to east with cos(dec) exactly once. At high declination,
+    near WCS discontinuities or with ill-conditioned Jacobians, fail.
     """
     if not hasattr(frame, "wcs"):
         return None
     try:
-        mat = np.asarray(frame.wcs.pixel_scale_matrix, dtype=float)
-        _ra, dec = frame.wcs.all_pix2world(float(x), float(y), 0)
-        mat = mat*3600.
-        mat[0] *= math.cos(math.radians(float(dec)))
+        coords = np.asarray(frame.wcs.all_pix2world(
+            np.array([x, x+1., x-1., x, x]),
+            np.array([y, y, y, y+1., y-1.]), 0),dtype=float)
+        if coords.shape != (2,5) or not np.isfinite(coords).all():
+            return None
+        dec0 = float(coords[1,0])
+        cosdec = math.cos(math.radians(dec0))
+        if abs(cosdec) < 1.e-5:
+            return None
+        d_ra = (coords[0,[1,3]]-coords[0,[2,4]]+180.)%360.-180.
+        d_dec = coords[1,[1,3]]-coords[1,[2,4]]
+        mat = np.stack([d_ra*cosdec,d_dec])*1800.
     except (AttributeError, TypeError, ValueError, IndexError):
         return None
     if (mat.shape != (2, 2) or not np.isfinite(mat).all() or
@@ -1282,6 +1295,7 @@ def audit_catalog_shape_neighbor_and_sky_sensitivity(
         "missing_or_uninterpretable_shape_fallback_fwhm":
             P18_MISSING_EXTENDED_SHAPE_FWHM,
         "ellipticity_convention": "(1-q)/(1+q), angle in tangent east/north",
+        "local_wcs_jacobian": "FULL_ALL_PIX2WORLD_CENTRAL_DIFFERENCE_EAST_NORTH_V2",
         "sky_sector_deletions_correlated_not_error_bars": True,
         "sky_model_not_validated": True,
         "coadd_noise_covariance_not_calibrated": True,
