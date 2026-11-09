@@ -1,0 +1,273 @@
+"""SC1 native WCS/ICRS scene editor: functional offline Qt regressions."""
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import numpy as np
+import pytest
+from astropy.wcs import WCS
+
+pytest.importorskip("pytestqt")
+pytest.importorskip("PySide6")
+
+from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+from lsbpipe.gui.scene_editor import (
+    SceneEditor, scene_shape_from_world_points, scene_shape_outline,
+)
+from lsbpipe.photometry.mask_drafts import (
+    read_active_mask_draft, save_mask_draft,
+)
+from lsbpipe.photometry.sky_masks import (
+    SkyMaskDraft, SkyMaskEdit, SkyMaskShape, evaluate_mask_draft,
+)
+from lsbpipe.surveys.legacy import SkyField
+from lsbpipe.surveys.object_projects import create_object_project
+
+
+def _native_wcs(*, flipped=False):
+    w = WCS(naxis=2)
+    w.wcs.crpix = [49.,49.]
+    w.wcs.crval = [359.999, 60.]
+    w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    w.wcs.cd = np.array(
+        [[.26, .055], [-.040, -.26]] if flipped else
+        [[-.26, .055], [.040, .26]], dtype=float)/3600.
+    return w
+
+
+def _data(project_id, *, band="g", wcs=None):
+    size=96
+    yy,xx = np.indices((size,size))
+    image = (yy+.25*xx)*1e-4
+    hard = np.zeros((size,size),dtype=bool)
+    hard[48,48] = True
+    rgba=np.zeros((size,size,4),dtype=np.uint8)
+    rgba[hard] = (238,89,104,160)
+    return {
+        "status":"NATIVE_SCENE_CUTOUT_NOT_SCIENCE_ADOPTED",
+        "data":{"image":image,"invvar":np.ones_like(image),
+                "nexp":np.ones_like(image),
+                "maskbits":np.zeros_like(image,dtype=np.uint32)},
+        "wcs":wcs or _native_wcs(),
+        "pixel_shape":(size,size),
+        "rgb":np.full((size,size,3),132,dtype=np.uint8),
+        "hard_rgba":rgba,
+        "native_hard":hard,
+        "band":band,
+        "source":f"DR11 south · 1554p600 · {band}",
+        "display_width_arcmin":6.,
+        "project_field_width_arcmin":6.,
+        "project_id":project_id,
+        "hdu_indices":{"image":1,"invvar":1,"nexp":1,"maskbits":1},
+    }
+
+
+def _click_at_native(editor,x,y):
+    # The same FITS/Qt vertical inversion used by the real image viewer.
+    editor._on_click(x+.5,editor._loaded["pixel_shape"][0]-y-.5)
+
+
+def _make_editor(qtbot,tmp_path,monkeypatch):
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR",str(tmp_path/"session"))
+    p=create_object_project("Leo P",tmp_path/"Leo_P",
+                            field=SkyField(359.999,60.,6.))
+    w=SceneEditor()
+    qtbot.addWidget(w)
+    w.resize(1100,700)
+    w.show()
+    w.bind_project(p.root)
+    assert w._draft.project_id==p.project_id
+    assert not (p.root/"analyses").exists()
+    w._accept_dataset(_data(p.project_id))
+    return w,p
+
+
+def test_scene_is_real_second_stage_without_auto_loading_fits(
+        qtbot,tmp_path,monkeypatch):
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR",str(tmp_path/"session"))
+    p=create_object_project("Leo P",tmp_path/"LeoP",
+                            field=SkyField(359.999,60.,6.))
+    import lsbpipe.gui.scene_editor as module
+    calls=[]
+    monkeypatch.setattr(
+        module,"load_scene_original_cutout",
+        lambda *args,**kwargs:calls.append((args,kwargs)))
+    view=PhotometryWorkspace()
+    qtbot.addWidget(view)
+    view.show()
+    view.bind_project(p)
+    assert view.stage_tabs.count()==2
+    assert view.stage_tabs.tabText(0)=="1 · PSF-0"
+    assert view.stage_tabs.tabText(1)=="2 · Scene & Masks"
+    assert view.scene_editor._project_id==p.project_id
+    view.stage_tabs.setCurrentWidget(view.scene_editor)
+    assert calls==[]
+    assert view.scene_editor._loaded is None
+    assert not (p.root/"analyses").exists()
+    assert view.scene_editor.draft.edits==()
+    assert "NOT validated" in view.scene_editor.warning.text()
+
+
+def test_icrs_circle_ellipse_and_wraparound_on_native_rotated_wcs():
+    w=_native_wcs(flipped=True)
+    # Each shape is constructed from *world* positions sampled via the
+    # actual WCS, never by interpreting RA delta as an east angle.
+    c=(float(x)%360. for x in w.all_pix2world(48.,48.,0))
+    center=tuple(c)
+    endpoint=tuple(map(float,w.all_pix2world(62.,48.,0)))
+    endpoint=(endpoint[0]%360.,endpoint[1])
+    circle=scene_shape_from_world_points(
+        "circle",(center,endpoint))
+    ellipse=scene_shape_from_world_points(
+        "ellipse",(center,endpoint),axis_ratio=.43)
+    assert circle.radius_arcsec==pytest.approx(ellipse.a_arcsec)
+    assert ellipse.q==.43
+    assert 0<=ellipse.pa_deg<180
+    for shape in (circle,ellipse):
+        outline=scene_shape_outline(shape,w,96)
+        assert outline.boundingRect().width()>5.
+        assert outline.boundingRect().height()>5.
+        assert np.isfinite(outline.boundingRect().center().x())
+    vertices=[
+        tuple(map(float,w.all_pix2world(x,y,0)))
+        for x,y in [(34.,34.),(65.,34.),(60.,65.),(34.,65.)]]
+    vertices=[(ra%360.,dec) for ra,dec in vertices]
+    polygon=scene_shape_from_world_points("polygon",tuple(vertices))
+    assert len(polygon.vertices)==4
+    assert scene_shape_outline(polygon,w,96).boundingRect().width()>10.
+
+
+def test_live_scene_edits_undo_redo_review_save_and_reopen(
+        qtbot,tmp_path,monkeypatch):
+    w,p=_make_editor(qtbot,tmp_path,monkeypatch)
+    native=tmp_path/"unmodified_original.fits"
+    native.write_bytes(b"DO NOT WRITE NATIVE FITS")
+    before=hashlib.sha256(native.read_bytes()).hexdigest()
+    w.mode.setCurrentIndex(w.mode.findData("ellipse"))
+    w.axis_ratio.setValue(.55)
+    _click_at_native(w,48,48)
+    _click_at_native(w,70,53)
+    assert len(w.draft.edits)==1
+    ellipse=w.draft.edits[0]
+    assert ellipse.purpose=="protect_target"
+    assert ellipse.shape.kind=="ellipse"
+    assert ellipse.shape.q==.55
+    assert len(w._paths)==1
+    w.mode.setCurrentIndex(w.mode.findData("polygon"))
+    w.purpose.setCurrentIndex(w.purpose.findData("exclude"))
+    w.scope.setCurrentIndex(w.scope.findData("band"))
+    for x,y in [(23,22),(34,22),(36,38),(23,37)]:
+        _click_at_native(w,x,y)
+    w.finish_polygon()
+    assert len(w.draft.edits)==2
+    assert w.draft.edits[-1].band=="g"
+    assert w.draft.edits[-1].shape.kind=="polygon"
+    w.undo()
+    assert len(w.draft.edits)==1
+    w.redo()
+    assert len(w.draft.edits)==2
+    w.edits.setCurrentRow(0)
+    w.remove_selected()
+    assert len(w.draft.edits)==1
+    w.undo()
+    assert len(w.draft.edits)==2
+
+    w.save_draft()
+    loaded,digest=read_active_mask_draft(p.root)
+    assert loaded==w.draft
+    assert digest==w._saved_digest
+    assert "Not science adopted" in w.status.text()
+    oldfile=p.root/"analyses"/"mask-drafts"/f"draft-{digest}.json"
+    assert oldfile.exists()
+    assert hashlib.sha256(native.read_bytes()).hexdigest()==before
+
+    other=SceneEditor()
+    qtbot.addWidget(other)
+    other.bind_project(p.root)
+    assert other.draft==loaded
+    assert other._loaded is None  # loading saved scene never opens FITS
+    other._accept_dataset(_data(p.project_id))
+    assert len(other._paths)==2
+    # Hard invalid pixels remain prohibited even in protected target.
+    qa=evaluate_mask_draft(
+        other.draft,other._loaded["wcs"],(96,96),"g",
+        native_hard=other._loaded["native_hard"])
+    assert qa["native_hard"][48,48]
+    assert qa["excluded"][48,48]
+    assert qa["status"]=="MASK_DRAFT_NOT_ADOPTED"
+    assert not (p.root/"qa-runs").exists()
+
+
+def test_band_local_native_overlays_and_shared_icrs_geometry(
+        qtbot,tmp_path,monkeypatch):
+    w,p=_make_editor(qtbot,tmp_path,monkeypatch)
+    w.mode.setCurrentIndex(w.mode.findData("circle"))
+    w.scope.setCurrentIndex(w.scope.findData("all"))
+    _click_at_native(w,48,48)
+    _click_at_native(w,65,48)
+    circle=w.draft.edits[0]
+    assert circle.band is None
+    gpath=scene_shape_outline(circle.shape,_native_wcs(),96)
+    w.set_band("r")
+    assert w.draft.edits==(circle,)
+    assert w._loaded is None
+    assert len(w._paths)==0
+    w._accept_dataset(_data(p.project_id,band="r",wcs=_native_wcs(flipped=True)))
+    assert len(w._paths)==1
+    rpath=scene_shape_outline(circle.shape,_native_wcs(flipped=True),96)
+    assert rpath.boundingRect().width()>0
+    assert abs(gpath.boundingRect().center().x() -
+               rpath.boundingRect().center().x())<2
+    assert "R band" not in w.status.text() or "original" in w.status.text()
+    w.set_band("g")
+    assert w._loaded is None
+    assert w.draft.edits==(circle,)
+
+
+def test_optimistic_concurrency_refuses_to_overwrite_other_scene_draft(
+        qtbot,tmp_path,monkeypatch):
+    w,p=_make_editor(qtbot,tmp_path,monkeypatch)
+    w.mode.setCurrentIndex(w.mode.findData("circle"))
+    _click_at_native(w,48,48)
+    _click_at_native(w,58,48)
+    w.save_draft()
+    saved,sha=read_active_mask_draft(p.root)
+    external=saved.with_edit(SkyMaskEdit(
+        "other_researcher", "exclude",
+        SkyMaskShape("circle",(359.999,60.),radius_arcsec=3.)))
+    other_sha=save_mask_draft(p.root,external,expected_digest=sha)
+    _click_at_native(w,50,40)
+    _click_at_native(w,66,41)
+    w.save_draft()
+    assert "NOT saved" in w.status.text()
+    current,digest=read_active_mask_draft(p.root)
+    assert digest==other_sha
+    assert current==external
+    assert len(w.draft.edits)==2
+
+
+def test_explicit_asynchronous_load_drops_stale_band_result(
+        qtbot,tmp_path,monkeypatch):
+    w,p=_make_editor(qtbot,tmp_path,monkeypatch)
+    import lsbpipe.gui.scene_editor as module
+    from threading import Event
+    started=Event()
+    release=Event()
+    def slow_loader(*args,**kwargs):
+        started.set()
+        release.wait(2)
+        return _data(p.project_id,band=args[1])
+    monkeypatch.setattr(module,"load_scene_original_cutout",slow_loader)
+    w.load_original()
+    assert started.wait(2)
+    w.set_band("r")
+    release.set()
+    qtbot.waitUntil(lambda: w._future is None, timeout=4000)
+    assert w._loaded is None
+    assert w.draft is not None
+    assert w.load_btn.isEnabled()
+    w.load_original()
+    qtbot.waitUntil(lambda: w._loaded is not None, timeout=4000)
+    assert w._loaded["band"]=="r"
+    w.shutdown()
