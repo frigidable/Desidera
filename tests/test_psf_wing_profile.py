@@ -1018,6 +1018,22 @@ def test_p20_blank_controls_are_within_same_brick_and_fixed_catalog_grid():
     frame.shape = frame.image_nMgy.shape
     blank = _within_brick_blank_controls(
         frame,matcher,p17["per_star"],FWHM,None)
+    assert blank["catalog_only_stratified_selection"] == (
+        "NEAREST_GEOMETRIC_CENTER_OF_EACH_4X4_BRICK_TILE_V2")
+    assert blank["selection_geometry_revised_after_p20_pilot_review_not_blind"]
+    assert (blank["n_16_spatial_tiles_with_eligible_controls"] ==
+            blank["n_catalog_fixed_blank_controls"])
+    assert (blank["n_catalog_geometry_eligible_before_tile_selection"] >=
+            blank["n_catalog_fixed_blank_controls"])
+    tiles = [(item["tile_x"], item["tile_y"])
+             for item in blank["selected_native_pixel_tiles"]]
+    assert len(tiles) == len(set(tiles))
+    assert all(0 <= x < 4 and 0 <= y < 4 for x,y in tiles)
+    assert all(
+        int(4*item["center_native_xy_pix"][0]/frame.shape[1]) ==
+        item["tile_x"] and
+        int(4*item["center_native_xy_pix"][1]/frame.shape[0]) ==
+        item["tile_y"] for item in blank["selected_native_pixel_tiles"])
     assert blank["n_catalog_fixed_blank_controls"] > 0
     assert blank["n_catalog_fixed_blank_controls"] <= 16
     assert blank["n_measured_blank_controls"] > 0
