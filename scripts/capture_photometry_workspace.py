@@ -1,0 +1,96 @@
+"""Deterministic offline P1.1 Photometry screenshot and geometry evidence.
+
+Pure GUI visualization: no FITS read, no science calculations, no archive.
+Both states use synthetic metadata; never infer scientific readiness.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import tempfile
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
+
+from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+from lsbpipe.surveys.object_projects import (
+    create_object_project, save_object_project)
+from lsbpipe.surveys.legacy import SkyField
+from lsbpipe.surveys.dataset_integrity import _expected_paths
+
+
+def capture(output_dir: Path) -> list[dict]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    app = QApplication.instance() or QApplication([])
+    manifest = []
+    sizes = ((1366, 768), (1600, 900), (1920, 1080))
+    with tempfile.TemporaryDirectory(prefix="desidera-photo-capture-") as temporary:
+        root = Path(temporary)
+        os.environ["LSBPIPE_SESSION_DIR"] = str(root / "session")
+        project = create_object_project(
+            "Synthetic LSB test object", root / "synthetic_galaxy",
+            field=SkyField(40.096208, 1.22925, 5.))
+        widget = PhotometryWorkspace()
+        try:
+            for state in ("no_selection", "three_paths_present"):
+                if state == "three_paths_present":
+                    project.selected_dataset = ("dr9", "south", "0401p012", "r")
+                    project.data_root = root / "inputs"
+                    project.data_root.mkdir(exist_ok=True)
+                    save_object_project(project)
+                    paths = _expected_paths(
+                        project.data_root, project.selected_dataset)
+                    for kind in ("image", "nexp", "maskbits"):
+                        path = paths[kind]
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b"synthetic non-FITS fixture")
+                widget.bind_project(project)
+                for width, height in sizes:
+                    widget.resize(width, height)
+                    widget.show()
+                    app.processEvents()
+                    actual = widget.size()
+                    if actual.width() != width or actual.height() != height:
+                        raise RuntimeError(
+                            f"Photometry window resized unexpectedly: {actual}")
+                    path = output_dir / f"photometry_{state}_{width}x{height}.png"
+                    picture = widget.grab()
+                    if picture.isNull() or not picture.save(str(path), "PNG"):
+                        raise RuntimeError(f"Cannot capture {path}")
+                    record = {
+                        "path": str(path),
+                        "state": state,
+                        "fixture": "SYNTHETIC_NON_FITS_METADATA",
+                        "source_status": widget.source_state.text(),
+                        "scientific_status": "NOT_MEASURED_NOT_ADOPTED",
+                        "size_logical": [width, height],
+                        "size_image": [picture.width(), picture.height()],
+                        "device_pixel_ratio": picture.devicePixelRatio(),
+                        "heading_visible": widget.title.isVisible(),
+                        "source_table_rows": widget.table.rowCount(),
+                        "source_panel_geometry": [
+                            widget.table.x(), widget.table.y(),
+                            widget.table.width(), widget.table.height()],
+                        "visual_reviewed": False,
+                    }
+                    manifest.append(record)
+            widget.hide()
+        finally:
+            widget.close()
+            widget.deleteLater()
+    destination = output_dir / "photometry_capture_manifest.json"
+    destination.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8")
+    return manifest
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", type=Path, required=True)
+    args = parser.parse_args()
+    records = capture(args.output_dir)
+    print(f"Captured {len(records)} non-scientific photometry screenshots.")

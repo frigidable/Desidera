@@ -35,6 +35,7 @@ from lsbpipe.gui.target_input import (
 from lsbpipe.gui.qa_workbench import ScienceQAControls
 from lsbpipe.gui.fits_explorer import FITSExplorer
 from lsbpipe.gui.dataset_manager import DatasetManager
+from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.gui.four_layer_comparison import FourLayerComparison
 from lsbpipe.gui.multiband_comparison import MultibandComparison, load_multiband_originals
 from lsbpipe.gui.fits_raster import prepare_fits_explorer
@@ -182,6 +183,14 @@ class SurveyExplorer(QMainWindow):
         self.dataset_manager_btn.clicked.connect(self._open_dataset_manager)
         self.dataset_manager_btn.setVisible(False)
         panel.addWidget(self.dataset_manager_btn)
+        self.photometry_btn = QPushButton("Photometry · preparation")
+        self.photometry_btn.setObjectName("workspace_open_photometry")
+        self.photometry_btn.setToolTip(
+            "Open the separate scientific photometry screen for this galaxy. "
+            "No measurements are performed or adopted by navigation.")
+        self.photometry_btn.clicked.connect(self._open_photometry)
+        self.photometry_btn.setVisible(False)
+        panel.addWidget(self.photometry_btn)
         self.workflow_stage = QLabel("01 / 03 · Target")
         self.workflow_stage.setObjectName("workflow_stage")
         self.workflow_stage.setStyleSheet(
@@ -642,9 +651,10 @@ class SurveyExplorer(QMainWindow):
         self.four_layer_comparison = FourLayerComparison(self.preview_tabs)
         self.multiband_comparison = MultibandComparison(self.preview_tabs)
         self.dataset_manager = DatasetManager(self.preview_tabs)
+        self.photometry_workspace = PhotometryWorkspace(self.preview_tabs)
         for optional_page in (
                 self.four_layer_comparison, self.multiband_comparison,
-                self.dataset_manager):
+                self.dataset_manager, self.photometry_workspace):
             optional_page.hide()
         self.dataset_manager.registerRequested.connect(
             self._index_dataset_root)
@@ -660,6 +670,10 @@ class SurveyExplorer(QMainWindow):
             self._index_brick_ccd_catalog)
         self.dataset_manager.backRequested.connect(
             self._leave_dataset_manager)
+        self.photometry_workspace.backRequested.connect(
+            self._leave_photometry)
+        self.photometry_workspace.sourcesRequested.connect(
+            self._open_dataset_manager)
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
@@ -685,6 +699,7 @@ class SurveyExplorer(QMainWindow):
         self._object_project = project
         self.back_to_projects.setVisible(True)
         self.dataset_manager_btn.setVisible(True)
+        self.photometry_btn.setVisible(True)
         from lsbpipe.surveys.dataset_registry import read_dataset_index
         self.dataset_manager.bind_project(project, read_dataset_index(project.root))
         self.setWindowTitle(
@@ -749,6 +764,33 @@ class SurveyExplorer(QMainWindow):
         finally:
             self._restoring_local_project = False
         self._refresh_workflow()
+
+    def _open_photometry(self):
+        """Open an isolated, explicitly non-adopted photometry workbench."""
+        project = self._object_project
+        if project is None:
+            QMessageBox.information(
+                self, "Galaxy project required",
+                "Open a galaxy project before entering Photometry.")
+            return
+        if self.thread is not None:
+            self.message.setText("Finish the active task before changing workspaces.")
+            return
+        try:
+            self.photometry_workspace.bind_project(project)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            QMessageBox.warning(self, "Cannot open Photometry", str(exc))
+            return
+        if self.preview_tabs.indexOf(self.photometry_workspace) < 0:
+            self.preview_tabs.addTab(self.photometry_workspace, "Photometry")
+        self.preview_tabs.setCurrentWidget(self.photometry_workspace)
+        self.data_drawer.hide()
+
+    def _leave_photometry(self):
+        if self.fits_explorer._dataset is not None:
+            self.preview_tabs.setCurrentWidget(self.fits_explorer)
+        else:
+            self.preview_tabs.setCurrentWidget(self.sky)
 
     def _open_dataset_manager(self):
         """Navigate to the object's observational inventory, never online."""
@@ -1318,16 +1360,24 @@ class SurveyExplorer(QMainWindow):
         self.comparison_btn.setVisible(bool(local_available or image_ready))
         manager_active = (
             self.preview_tabs.currentWidget() is self.dataset_manager)
+        photometry_active = (
+            self.preview_tabs.currentWidget() is self.photometry_workspace)
+        auxiliary_active = manager_active or photometry_active
         self.band_compare_btn.setVisible(
-            bool(local_available) and not manager_active)
+            bool(local_available) and not auxiliary_active)
         self.comparison_btn.setVisible(
-            bool(local_available or image_ready) and not manager_active)
-        self.data_toggle.setEnabled(not manager_active)
+            bool(local_available or image_ready) and not auxiliary_active)
+        self.data_toggle.setEnabled(not auxiliary_active)
         if manager_active:
             self.workflow_stage.setText("02 / 04 · Data sources")
             self.workflow_hint.setText(
                 "Inspect indexed observations and WCS footprints. "
                 "No primary analysis source has been adopted.")
+        if photometry_active:
+            self.workflow_stage.setText("03 / 04 · Photometry")
+            self.workflow_hint.setText(
+                "Read-only input preparation. No photometric science run "
+                "is implemented or adopted on this screen.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
             else "Data & diagnostics")
@@ -1951,7 +2001,9 @@ class SurveyExplorer(QMainWindow):
             self.preview_label.setText(
                 "Data Manager · offline observational provenance"
                 if self.preview_tabs.currentWidget() is self.dataset_manager
-                else "Original FITS · read-only")
+                else ("Photometry · preparation only · no measurements"
+                      if self.preview_tabs.currentWidget() is self.photometry_workspace
+                      else "Original FITS · read-only"))
         else:
             self.preview_label.setText(
                 "Sky preview · not calibrated FITS")
