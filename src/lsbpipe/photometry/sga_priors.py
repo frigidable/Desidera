@@ -287,13 +287,17 @@ def fetch_viewer_sga2025_priors(
         doc = json.loads(payload)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ValueError("SGA2025 Viewer returned invalid JSON") from exc
-    fields = ("rd", "name", "radiusArcsec", "abRatio", "posAngle",
-              "pgc", "groupname")
+    fields = ("rd", "name", "radiusArcsec", "abRatio", "posAngle", "pgc")
     if (not isinstance(doc, dict) or
             not all(isinstance(doc.get(key), list) for key in fields)):
         raise ValueError("SGA2025 Viewer geometry schema mismatch")
     count = len(doc["rd"])
-    if count > 2048 or any(len(doc[key]) != count for key in fields):
+    # The public Viewer omits groupname entirely for an empty region;
+    # a present nonempty groupname column must still match row count.
+    groupnames = doc.get("groupname", [""]*count)
+    if (count > 2048 or not isinstance(groupnames, list) or
+            len(groupnames) != count or
+            any(len(doc[key]) != count for key in fields)):
         raise ValueError("SGA2025 Viewer arrays are inconsistent")
     digest = hashlib.sha256(payload).hexdigest()
     priors = []
@@ -333,7 +337,7 @@ def fetch_viewer_sga2025_priors(
             flags.append("NO_STABLE_VIEWER_REF_ID")
         label = str(doc["name"][index]).strip()
         if not label:
-            label = str(doc["groupname"][index]).strip() or (
+            label = str(groupnames[index]).strip() or (
                 f"Viewer entry {index+1}")
         # A transient negative row key is only a UI disambiguator;
         # never claim that it is a persistent SGA2025 object identifier.
