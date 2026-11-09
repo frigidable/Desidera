@@ -143,6 +143,18 @@ def test_multiscale_sensitivity_reports_nearby_thresholds_and_low_confidence():
     assert qa["trial_count"]==4
     assert qa["sensitivity_status"]=="MULTISCALE_DIAGNOSTIC_NOT_SCIENCE_VALIDATED"
     assert all("state" in trial for trial in qa["trials"])
+    assert qa["minimum_spatial_iou"] is not None
+    assert 0. <= qa["minimum_spatial_iou"] <= 1.
+    # A reference mask in the wrong spatial location is not allowed to
+    # pass merely because its area and axis ratio look plausible.
+    offset_pixels = np.array(model.component_indices + image.size,copy=True)
+    offset_pixels.setflags(write=False)
+    shifted=replace(model,component_indices=offset_pixels)
+    spatial=assess_local_isophote_sensitivity(
+        image,good,(120.,120.),shifted,
+        threshold_contrast=2.2,smooth_sigma_pix=3.,bridge_guard_pix=2)
+    assert "LOW_SPATIAL_OVERLAP_BETWEEN_ISOPHOTES" in spatial["flags"]
+    assert spatial["confidence"]=="LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE"
     # Force a known displaced reference to confirm the safety gate does
     # not silently accept large offsets even when other trials succeed.
     displaced=replace(model,seed=replace(
