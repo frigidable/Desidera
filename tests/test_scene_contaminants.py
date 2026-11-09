@@ -126,3 +126,44 @@ def test_missing_catalogue_and_unsupported_release_fail_closed(
     with pytest.raises(ValueError,match="DR11 South only"):
         prepare_scene_contamination(
             dataset,project,SkyMaskDraft(project.project_id),(155.,18.))
+
+
+def test_tractor_ellipticity_creates_native_wcs_ellipses_not_round_disks():
+    """DR11 Tractor epsilon shape is a sky-plane PA, not raw pixel angle."""
+    ny=nx=241
+    protected=np.zeros((ny,nx),bool)
+    catalog=[{"type":"EXP","flux":100., "flux_ivar":5.,
+              "shape_r_arcsec":6., "shape_e1":.5, "shape_e2":0.,
+              "objid":23}]
+    mask,stats=conservative_catalogue_mask(
+        (ny,nx),np.array([[120.,120.]]),catalog,
+        arcsec_per_pixel=1.,protected=protected,wcs=_wcs())
+    assert stats["elliptical_catalog_sources"]==1
+    assert mask[120,120]
+    assert mask[137,120]  # phi=0 -> PA=0, major axis along north
+    assert not mask[120,137]  # extended source is no longer a round mask
+    assert stats["masked_catalog_sources"]==1
+
+
+def test_tractor_missing_or_unphysical_shape_falls_back_without_guessing_pa():
+    protected=np.zeros((241,241),bool)
+    rows=[{**_row("SER",flux=100.,shape_r=6.),
+           "shape_e1":None,"shape_e2":None}]
+    mask,stats=conservative_catalogue_mask(
+        (241,241),np.array([[110.,110.]]),rows,
+        arcsec_per_pixel=1.,protected=protected,wcs=_wcs())
+    assert stats["elliptical_catalog_sources"]==0
+    assert stats["missing_shape_fallbacks"]==1
+    assert mask[110,127] and mask[127,110]
+
+
+def test_catalogue_target_overlap_records_source_for_manual_review():
+    protected=np.zeros((241,241),bool)
+    protected[110:131,110:131]=True
+    rows=[{**_row(), "objid":418}]
+    mask,stats=conservative_catalogue_mask(
+        (241,241),np.array([[136.,120.]]),rows,
+        arcsec_per_pixel=1.,protected=protected)
+    assert stats["skipped_target_overlap"]==1
+    assert not mask.any()
+    assert stats["near_target_sources"][0]["objid"]==418
