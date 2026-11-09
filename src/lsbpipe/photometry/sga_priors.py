@@ -180,6 +180,17 @@ def read_local_sga_priors(path, target_icrs, *, radius_arcmin=3.):
                 flags.append("D26_NOT_DIRECT_SB26")
             bit = int(_scalar(row, "ELLIPSEBIT", names, 0) or 0)
             mode = int(_scalar(row, "ELLIPSEMODE", names, 0) or 0)
+            if release == "SGA2020":
+                # SGA-2020 ELLIPSEBIT is a bit-index mask; not the
+                # similarly named SGA2025 bit-value/status vocabulary.
+                if bit & ((1 << 1) | (1 << 2)):
+                    flags.append("SGA2020_TOO_SMALL_FOR_ELLIPSE_FIT")
+                if bit & (1 << 3):
+                    flags.append("SGA2020_ELLIPSE_FIT_FAILED")
+                if bit & (1 << 4):
+                    flags.append("SGA2020_ELLIPSE_NOT_FITTED")
+                if bit & (1 << 5):
+                    flags.append("SGA2020_ELLIPSE_REJECTED")
             if release == "SGA2025":
                 flags.append("SGA2025_DRAFT_NOT_FINAL_RELEASE")
                 if bit & 16384:
