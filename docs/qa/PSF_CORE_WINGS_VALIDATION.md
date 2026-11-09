@@ -588,3 +588,125 @@ before adopting any core+wing PSF.
 
 This adds no new branch, data directory, alternative PSF
 product, empirical wing fit, or automatic science gate.
+
+
+## P17 real Leo P g result — 2026-11-09
+
+Source: user-provided full native DR11 QA export,
+\`dr11/south/1554p180/g\` (JSON text file SHA256
+\`8b9821162935cf1d9b92799c72eaafae0d5fa6eff79c98a65519edf65cbe5875\`).
+Implementation-method SHA256:
+\`86dec8f63d050561a1aaed17612b918bccdd24184f0f10d97229ec50d63c9ca2\`.
+The original 81×81 ePSF SHA256
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`,
+10 training + 3 holdout stars, and \`science_adopted=false\`
+are unchanged.
+
+**Lineage and execution: PASS**. The 100 eligible catalog-only
+candidates remain available. All fixed 48 have measurable native
+profiles under the P17 diagnostic, with 16 legacy, 24 new exploratory,
+8 new identity-heldout stars. The 16 legacy 3-FWHM sky and radial
+P16C baselines reproduce exactly within the declared tolerance.
+All 48 have four recorded mask variants. Seven of the 1,152
+annular mask×star×radius entries have *no* native pixels;
+all seven are under the 6-FWHM stress mask. "48 measurable stars"
+must **not** be reported as 48 independently adequate wing profiles.
+
+**Unmasked area** (median across all 48; 4 mask strategies in
+3, 4.5, catalog-flux-tiered, 6 measured FWHM order):
+
+| Ring (FWHM) | 3 FWHM | 4.5 FWHM | Tiered | 6 FWHM |
+| --- | ---: | ---: | ---: | ---: |
+| 4–6 | 72.3% | 50.3% | 37.8% | 28.0% |
+| 6–8 | 72.9% | 46.1% | 34.7% | 25.3% |
+| 8–12 | 71.0% | 49.2% | 37.5% | 26.0% |
+| 12–16 | 73.9% | 48.0% | 36.0% | 24.9% |
+| 16–20 | 72.5% | 47.9% | 38.0% | 25.6% |
+| 20–22 | 72.3% | 47.8% | 38.2% | 27.1% |
+
+For comparison, a **post-result descriptive diagnostic** requiring
+at least 50% unmasked area AND at least six octants each with at
+least 25 pixels has these qualifying star counts (out of 48):
+
+| Ring | 3 FWHM | 4.5 FWHM | Tiered | 6 FWHM |
+| --- | ---: | ---: | ---: | ---: |
+| 4–6 | 43 | 20 | 14 | 9 |
+| 8–12 | 44 | 23 | 8 | 3 |
+| 12–16 | 47 | 21 | 6 | 0 |
+
+The corresponding **8 new heldout identities** at 8–12 FWHM
+qualify 7, 5, 2, **0** times, respectively. These are
+*illustrative spatial/area diagnostics* and not preregistered
+statistical acceptance or proof that a 3-FWHM mask cleans
+neighboring PSF wings. The catalog-flux-tiered variant is
+more spatially destructive than uniform 4.5 FWHM in this
+field; by design it assigns 6-FWHM masks to non-PSF
+neighbors regardless of their flux. The rule is not
+validated by these results.
+
+**Source-brightness selection effect:** median catalog Tractor
+\`g\` flux of the 16 legacy stars is 176.52 nMgy,
+compared with 15.08 nMgy for 24 new exploratory stars and
+13.39 nMgy for eight new controls. Increasing the count
+does not increase the flux-limited information in faint
+outer wings: the newly added probes are roughly an order
+of magnitude fainter.
+
+**Normalized residual and sky sensitivity** (3-FWHM mask,
+all values relative to each star's original native peak):
+
+- At 4–6 FWHM, 15/16 legacy stars have a positive residual
+  under each of the 3 and 4.5 FWHM masks; legacy
+  median residual under 3-FWHM mask: +9.24e-5, median
+  absolute deviation 1.54e-5. But only 5/8 new
+  heldout stars have a positive residual with the
+  3-FWHM mask (median +4.16e-5; MAD 1.73e-4).
+  This is **not** independent validation of a detected wing.
+- At 8–12 FWHM under the 3-FWHM mask, the all-star median
+  signed residual is +5.22e-6 of peak but the median
+  **absolute** residual is 5.42e-5. The median absolute
+  change from 3 to 4.5 FWHM is 3.70e-5,
+  and 37/48 source-residual signs agree across those masks;
+  from 3 to 6 FWHM, the median absolute change reaches
+  9.25e-5 (over 47 sources with non-null residuals).
+  The spatial coverage of the 6-FWHM results is poor.
+- For the 32 NEW stars at 8–12 FWHM with 3-FWHM
+  masking, the median absolute stellar residual is
+  1.41e-4 of peak, while the median absolute difference
+  between the two disjoint sky-ring hypotheses is
+  1.18e-4 of peak, and median absolute constant-versus-plane
+  offset is 4.79e-5. Sky subtraction is therefore a
+  limiting nuisance at the flux level being investigated.
+- At 4–6 FWHM under the 3-FWHM mask, the new 24
+  exploratory stars have median normalized azimuthal
+  max-minus-min octant spread of 2.86e-3 of peak,
+  compared with a median signed radial residual
+  +1.71e-4. The eight new controls have median octant
+  spread 2.50e-3 and median signed residual +4.16e-5.
+  These are angular-scatter diagnostics, **not** calibrated
+  errors or formal detection significances.
+
+**Interpretation and decision:** P17 successfully demonstrates
+the *number* of available Gaia stars is not the binding catalog
+constraint. The 3-FWHM mask retains usable geometry for most
+of the 48 objects; the uniform 6-FWHM and the current
+catalog-flux-tiered masks erase too much annular area.
+However, the additional stars are much fainter,
+show large sector-to-sector variation, and the 8-star
+identity holdout does not provide brightness-matched,
+sky/covariance-independent evidence of broad wings.
+There is no validated 4–22-FWHM stellar PSF; the
+original ePSF and \`SCIENCE_GATE_HOLD\` persist.
+
+Do **not** choose a "winning" P17 mask post hoc from this
+report, or extend the cohort to 100 simply to increase N.
+Retain Leo P as a **diagnostic** field for developing
+source-specific neighbor footprints and explicit sky
+uncertainty; require a separately selected, sufficiently
+bright and spatially isolated **independent** DESI
+field (and ultimately individual-exposure/covariance
+checks) for any scientific confirmation. Predeclare
+morphology-aware contamination and recovery tests
+before implementing them; do not assume a model-subtracted
+neighbor is correctly decontaminated from a coadd
+without injection/recovery validation.
