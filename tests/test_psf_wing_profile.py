@@ -907,6 +907,7 @@ def test_single_brick_closure_sky_available_does_not_hide_empty_ring():
     ring = altered["per_star"][19]["radial_profile"][0]
     ring["sky_b_subtracted_median_over_peak"] = None
     ring["unmasked_fraction"] = 0.
+    ring["n_unmasked_native_pixels"] = 0
     ring["n_octants_with_at_least_25_pixels"] = 0
     result = finalize_single_brick_empirical_psf(
         dataset_id="dr11/south/1554p180/g",
