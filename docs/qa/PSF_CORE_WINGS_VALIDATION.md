@@ -1258,3 +1258,188 @@ These tests do NOT inject galaxies; galaxy
 injection–recovery is reserved for the separate
 photometric stage and cannot be used as a
 prerequisite for simply obtaining P20 diagnostics.
+
+
+## P20 first real Leo P g pilot and blank-site stratification audit — 2026-11-09
+
+Source: user-provided complete QA JSON
+\`Вставленный текст(20261109-112230).txt\` (5,189,925 bytes),
+SHA256
+\`ae7e7e77fbd06a26f240196a49443062f13c925effb6bade567793065ef46abf\`.
+Native data: \`dr11/south/1554p180/g\`;
+the frozen kernel SHA256 and 10-train/3-core-holdout
+sample are unchanged. P18 was recomputed with the
+corrected full-local-WCS Jacobian, schema
+\`desidera.psf0-catalog-shape-neighbor-sector-sky/2\`.
+Native catalog SHA256 remains
+\`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c\`.
+P20 has status
+\`SAME_BRICK_WING_SKY_AND_SPATIAL_FEASIBILITY_ONLY\`;
+no galaxy injections or extra bricks were used,
+and \`psf_wings_validated=false\` is retained.
+
+**P18 /2 geometry after WCS repair:** all 48 same
+Gaia IDs and all 48 conditional sky solutions are
+present. Median geometric unmasked fractions and
+descriptive >=50% area and >=6 25-pixel-octant counts:
+
+| Annulus | P18 /2 median unmasked fraction | Qualifying /48 | P17 3-FWHM qualifying /48 |
+| --- | ---: | ---: | ---: |
+| 4–6 measured FWHM | 67.42% | 35 | 43 |
+| 6–8 | 64.32% | 37 | 40 |
+| 8–12 | 63.60% | 38 | 44 |
+| 12–16 | 68.36% | 43 | 47 |
+| 16–20 | 65.88% | 38 | 46 |
+| 20–22 | 64.80% | 40 | 47 |
+
+Rank-20 P17-new identity-heldout remains without
+any native unmasked pixels at 4–6 and 6–8 FWHM,
+although the fixed 48/48 sky estimators are obtained.
+The engineering closure counts two physically empty
+stellar annular measurements. The old P18 /1
+numbers must NOT replace the recomputed /2 results.
+
+**P20 12/4 fixed bright split:** all 12 bright
+training IDs entered each of three sky-hypothesis
+robust joint models, with 70 valid annular measurements
+out of 72 possible. All four retrospectively withheld
+bright ID predictions were available. The median of
+the four per-star median absolute prediction residuals
+is \`1.588e-5\` of each respective native star peak.
+This is neither a calibrated confidence interval nor
+a genuinely blind prospective test; source positions
+and all 16 bright stars were previously inspected.
+
+For the primary sky-B (26–30 measured FWHM)
+model, the six common conditional radial candidates
+(4–6, 6–8, 8–12, 12–16, 16–20, 20–22 FWHM)
+relative to native star peak are:
+\`[+1.11170e-4, +5.75650e-6, +4.69000e-6,
++1.83734e-6, -3.28261e-7, +8.65722e-7]\`.
+Across fixed sky A / B / conditional-plane hypotheses,
+the 4–6 candidate ranges \`1.10372e-4\` to
+\`1.11170e-4\`, while the 8–12 candidate ranges
+\`3.70854e-6\` to \`4.69000e-6\`.
+At 16–20 the shared candidate is NEGATIVE
+under all three sky hypotheses. It is not
+a physically nonnegative wide-PSF profile.
+Sky nuisance offsets are constrained through
+an explicit regularization prior, leaving the
+absolute wing/sky zero-point nonidentifiable.
+
+**Do not call 4–6 FWHM an outer-wing detection
+beyond the existing kernel.** The 81×81 ePSF
+has a 40-native-pixel fully contained radial
+extent, or **7.787 measured FWHM** using the
+frozen 5.13690296-pixel width. Thus 4–6 FWHM
+is INSIDE the existing kernel, and 6–8 straddles
+the kernel's circular-support boundary. A
+meaningful wide-wing model would need to
+reconcile the finite original 2D kernel
+with measured stellar annuli to prevent
+double-counting and mismatched flux
+normalization. P20 itself has not fitted
+or tested that reconciliation.
+
+**Blank controls and residual structures:** initial
+P20 fixed-grid/row-first pilot selected 16/16
+catalog-eligible native blank controls, all
+with valid A/B sky rings, with 15 fully measured
+six-bin radial-null vectors. The outer 8–12
+FWHM ring has median absolute blank
+\`7.004e-5 nMgy/native pixel\`; at a median
+original bright-star peak of
+\`7.334 nMgy/native pixel\` the indicative
+ratio is \`9.55e-6\`, exceeding the shared
+8–12 stellar candidate \`4.690e-6\`.
+Caution: ratio of medians is an
+illustration, not a matched per-star error
+propagation. At 4–6, median absolute
+blank-null \`1.443e-4 nMgy/native pixel\`
+corresponds to about \`1.97e-5\` of
+the same median peak, below but not
+negligible relative to the positive
+4–6 candidate. The blank-field
+spatial annular-median covariance
+has 15 complete control vectors;
+the coadd noise-only covariance
+is NOT calibrated or isolated.
+
+The same-brick blank-pixel lag analysis
+after fixed 5-MAD clipping and local
+plane subtraction reports median
+nearest-pixel correlation
+\(\rho_{(1,0)}=+0.1301\),
+\(\rho_{(0,1)}=+0.1290\)
+and two-pixel correlations
+\(\rho_{(2,0)}=-0.0651\),
+\(\rho_{(0,2)}=-0.0633\).
+These are empirical masked coadd
+pixel-lag correlations, not
+noise-only standard errors or evidence
+that the 15 annular null vectors
+are independent.
+
+**Audit discovery requiring rerun:** the first
+P20 blank-site-selection implementation
+took the *first four eligible positions*
+within each half-brick quadrant, scanning
+the candidate grid by increasing y then
+x. Consequently the 16 nominal blank
+controls occupied only **7 of 16**
+equal 4×4 native-brick spatial tiles;
+the four quadrants were numerically
+balanced but the control sample was
+not evenly distributed within them.
+This compromises claims about the
+global same-brick background null
+and spatial covariance. The earlier
+first-run blank values above are
+**pilot evidence only**, retained
+with its original QA SHA256.
+
+**Corrective P20 control-selection method /3:** use
+the SAME fixed nonoverlapping native
+grid, original catalog, exclusions
+and per-site sky profile measurements,
+but examine every catalog-geometry-
+eligible grid point first and choose
+exactly ONE candidate closest to
+the center of each 4×4 spatial
+tile, with fixed y/x deterministic
+tie breaking. A tile without an
+eligible candidate is reported
+empty; an attempted control that
+later fails native sky measurement
+is not replaced. This is a
+transparent POST-PILOT improvement
+in sampling, not a blind prospective
+test. The revised control site
+coordinates are additionally exported
+in \`selected_native_pixel_tiles\`;
+the method fingerprint is changed.
+No user-adjusted star fitting or
+sky-ring retuning was performed.
+All blank-null / covariance /
+joint-profile results from the
+initial report must be recomputed
+after this geometry change.
+The 12/4 fixed star IDs and
+P18 /2 WCS repair are unchanged.
+
+**Current decision:** the pilot demonstrates
+a robust positive conditional radial
+component within the existing 81×81
+core but not a resolved, independently
+calibrated physical wide-angle PSF
+beyond 7.787 FWHM. The 8–22-FWHM
+candidate is comparable to
+blank-field and local-background
+sensitivity; the outer annuli can
+be negative. Keep all PSF wings,
+spatial representativity and science
+adoption flags on HOLD, pending
+revised same-brick spatial-null QA
+and subsequent science audit.
+Galaxy injections remain outside
+this PSF development stage.
