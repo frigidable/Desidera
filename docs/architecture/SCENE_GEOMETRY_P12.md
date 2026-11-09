@@ -323,3 +323,56 @@ A later full Tractor-model/empirical-PSF-aware source model (not the
 all-source coadd model image blindly subtracted from data) is required
 before calibrated outer-isophote extraction or scientific adoption.
 The manual drafts remain useful for resolving explicitly flagged blends.
+
+
+## 2026-11-09 · SC1 morphology and stability acceptance corrections
+
+Real Leo P `i`-band masking revealed a 47,407-pixel connected area,
+`q≈0.60`, and a large ≈59.4-native-pixel centroid displacement
+from the selected object ICRS. The northern lobe cannot be promoted to
+a measured isophote on one threshold alone.
+
+**Source-type-aware contamination:** where DR11 Tractor supplies
+`SHAPE_R`, `SHAPE_E1/E2` for an extended `EXP/DEV/SER` source, a
+source-specific *elliptical screening envelope* is oriented using the
+catalogue ellipticity convention and the native celestial WCS pixel
+Jacobian. See [DR11 Tractor catalogue shapes](https://www.legacysurvey.org/dr11/catalogs/):
+`epsilon=(a-b)/(a+b)*exp(2i*phi)`, and the astronomical
+north-through-east `PA=(180-phi)%180`. `PSF`, `REX` and objects
+without usable shape data remain circular or explicitly use a round
+fallback. The radial extent remains deliberately heuristic, NOT an
+actual Tractor-rendered pixel model or a calibrated PSF-wing mask.
+Source envelopes intersecting the protected galaxy are not masked;
+their catalogue positions receive amber **review** rings. These
+unresolved neighbours may still contaminate the proposed boundary.
+
+**Object-bound contour stability:** the connected-source detector
+can optionally apply a 2-native-pixel morphological opening to remove
+thin bridges (toggle OFF to inspect possible real filaments). A separate
+diagnostic repeats the local search at neighboring thresholds and
+smoothing values, reporting four trials, area ratio, axis-ratio spread
+and offset of the light centroid from the selected ICRS anchor.
+Failed trials remain failures in QA, not cherry-picked away.
+A strong offset or unstable contour receives
+`LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE`, is drawn orange, and
+cannot be added even as a DRAFT unless the user checks the explicit
+manual-review override. This is a **risk flag**, not a p-value or
+scientific measurement of galaxy morphology.
+
+**GUI review:** the image remains read-only; the researcher can
+toggle the purple neighbour-screening layer, adjust its opacity,
+toggle the unresolved-identity amber rings, inspect the concise QA
+summary or expand the evidence/trial details, and compare thin-bridge
+opening ON/OFF. An automatically derived isophote is **band-local**
+by default; `Apply this band-derived shape to all bands` is separate,
+off by default and requires explicit action. Ordinary manual ICRS
+regions retain their existing all-band capability. All accepted
+regions remain versioned, reversible, unadopted drafts.
+
+**Outstanding scientific gates:** an accurate 2D individual-source
+Tractor rendering with observational PSF / coadd weighting;
+position-dependent empirical-PSF wings; galaxy-neighbour deblending;
+residual sky spatial structure and independent sky holdouts;
+cross-band detection consistency with different morphology;
+robust physical surface-brightness isophotal fitting and injected
+recovery tests. No test in this stage establishes those claims.
