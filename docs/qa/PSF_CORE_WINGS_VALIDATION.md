@@ -1208,3 +1208,53 @@ No galaxy injections are required *for P20*
 or performed here; they remain necessary
 for scientific validation of later
 galaxy photometry.
+
+
+### P18 WCS correction discovered during P20 verification
+
+The earlier real Leo P P18 report dated 2026-11-09 used schema
+\`desidera.psf0-catalog-shape-neighbor-sector-sky/1\`.
+A source review identified a local-Jacobian bug: P18 multiplied
+\`WCS.pixel_scale_matrix\` by \(\cos\delta\) even though for TAN
+the pixel CD/PC map is already defined in the *intermediate
+projection plane*. This produced an artificial reduction of
+the east scale (about 5% at Leo P's declination of 18 degrees,
+larger nearer the poles). The previous P18 empirical
+coverage, ellipse geometry and sky statistics are retained
+as HISTORICAL QA, not silently re-labelled as v2.
+
+The corrected WCS maps the native center and four +/-1-pixel
+offsets with \`all_pix2world\` (full WCS including any SIP),
+uses the centered finite difference, unwraps RA differences
+across the 0/360 boundary and converts the local RA
+difference to east with the central \(\cos\delta\) precisely
+ONCE. A TAN reference-point regression at declination
+60 degrees checks equal physical east/north scales
+\`0.262 arcsec/native pixel\` and an RA-wrap case.
+It fails closed near the poles or ill-conditioned WCS.
+The corrected P18 QA uses **schema /2**, with an updated
+method fingerprint. Every numerical P18/P20 comparison
+requires a NEW same-brick pipeline run; do not mix
+old P18 /1 QA values with newly computed /2 values.
+
+P20 additionally measures descriptive native pixel-lag
+covariances in sky control patches after a fixed
+5-MAD clip and local planar detrending:
+lags (0,0), (1,0), (0,1), (2,0), (0,2), (1,1).
+Where >=8 complete control centers are available,
+report the sample 6x6 covariance of same-brick
+six-annulus *blank median estimators*. A smaller
+sample explicitly reports insufficient evidence.
+This is useful evidence of the coadd's empirical
+short-range spatial correlation and large-scale
+null structure, but it does NOT automatically
+equal the covariance of noise-only pixels in the
+presence of uncatalogued faint sources, cirrus,
+residual instrumental structures or resampling.
+Therefore \`noise_covariance_validated\` and the
+science adoption gates remain unchanged.
+
+These tests do NOT inject galaxies; galaxy
+injection–recovery is reserved for the separate
+photometric stage and cannot be used as a
+prerequisite for simply obtaining P20 diagnostics.
