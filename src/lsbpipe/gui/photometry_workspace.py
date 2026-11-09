@@ -36,6 +36,7 @@ class PhotometryWorkspace(QWidget):
     psf0AutoFwhmRequested = Signal(object)
     psf0TractorRequested = Signal(object)
     psf0BatchRequested = Signal(object)
+    navigationChanged = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -43,6 +44,7 @@ class PhotometryWorkspace(QWidget):
         self._project_root = None
         self._bound_project_id = None
         self._bound_source_identity = None
+        self._suppress_navigation = False
         self._tab_source_identity = None
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
@@ -274,9 +276,46 @@ class PhotometryWorkspace(QWidget):
                "No final galaxy segmentation or adopted photometry.")
         root.addWidget(self.stage_tabs, 1)
         self.stage_tabs.currentChanged.connect(self._stage_changed)
+        self.stage_tabs.currentChanged.connect(self._emit_navigation)
+        self.band_tabs.currentChanged.connect(self._emit_navigation)
+        self.scene_editor.band.currentIndexChanged.connect(self._emit_navigation)
         self._set_view_mode()
         self._update_band_tab_statuses()
         self._apply_science_reflow()
+
+    def current_navigation(self):
+        stage = ("scene" if self.stage_tabs.currentWidget() is self.scene_editor
+                 else "psf0")
+        if stage == "scene":
+            band = self.scene_editor.band.currentData()
+        else:
+            panel = self.band_tabs.currentWidget()
+            band = panel.band.currentData() if panel is not None else None
+        return stage, band if band in ("g", "r", "i", "z") else "g"
+
+    def _emit_navigation(self, *_):
+        if self._suppress_navigation or self._project_root is None:
+            return
+        stage, band = self.current_navigation()
+        self.navigationChanged.emit(stage, band)
+
+    def restore_navigation(self, *, stage, band):
+        """Restore user location only; never run PSF/scene FITS workers."""
+        if stage not in ("psf0", "scene") or band not in ("g", "r", "i", "z"):
+            raise ValueError("Unknown photometry resume location")
+        self._suppress_navigation = True
+        try:
+            panel = self.psf0_panels.get(band)
+            if panel is not None:
+                index = self.band_tabs.indexOf(panel)
+                if index >= 0:
+                    self.band_tabs.setCurrentIndex(index)
+            self.scene_editor.set_band(band)
+            self.stage_tabs.setCurrentWidget(
+                self.scene_editor if stage == "scene"
+                else self.stage_tabs.widget(0))
+        finally:
+            self._suppress_navigation = False
 
     def _stage_changed(self, index):
         if index == self.stage_tabs.indexOf(self.scene_editor):
@@ -475,6 +514,7 @@ class PhotometryWorkspace(QWidget):
             and Path(saved.root) == self._project_root
             and saved.project_id == self._bound_project_id
             and identity == self._bound_source_identity)
+        self._suppress_navigation = True
         self._project_root = Path(saved.root)
         self.scene_editor.bind_project(self._project_root)
         self._bound_project_id = saved.project_id
@@ -482,7 +522,10 @@ class PhotometryWorkspace(QWidget):
         # A new UUID, release/region/brick or data root invalidates PSFs.
         # Changing only the saved default band does NOT change the four
         # native per-band input datasets, so existing PSF evidence survives.
-        self.refresh(force=not same_project)
+        try:
+            self.refresh(force=not same_project)
+        finally:
+            self._suppress_navigation = False
 
     def refresh(self, *, force=False):
         # Only a new project or explicit Refresh can discard a preview.
