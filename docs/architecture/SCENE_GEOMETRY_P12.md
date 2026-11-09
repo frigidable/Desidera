@@ -352,7 +352,11 @@ thin bridges (toggle OFF to inspect possible real filaments). A separate
 diagnostic repeats the local search at neighboring thresholds and
 smoothing values, reporting four trials, area ratio, axis-ratio spread
 and offset of the light centroid from the selected ICRS anchor.
-Failed trials remain failures in QA, not cherry-picked away.
+The actual *native-pixel component intersection-over-union (IoU)*
+against the main threshold is also required: matching area and q
+alone cannot hide a spatially displaced lobe. A minimum overlap
+below 0.50 is explicitly flagged. Failed trials remain failures
+in QA, not cherry-picked away.
 A strong offset or unstable contour receives
 `LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE`, is drawn orange, and
 cannot be added even as a DRAFT unless the user checks the explicit
