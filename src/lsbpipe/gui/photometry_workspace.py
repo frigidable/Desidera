@@ -23,16 +23,6 @@ from lsbpipe.photometry.readiness import inspect_photometry_inputs
 from lsbpipe.gui.psf0_panel import PSF0Panel
 from lsbpipe.gui.psf0_full_qa import detailed_band_report
 
-_STAGES = (
-    ("01", "Data preparation", "Original FITS, WCS, native masks and calibration"),
-    ("02", "Scene initialization", "Tentative sources, PSF star candidates and target protection"),
-    ("03", "Preliminary sky", "Detection background and local star-cutout sky"),
-    ("04", "PSF reconstruction", "Empirical per-band PSF, spatial QA and extended wings"),
-    ("05", "Scene & smart masks", "PSF-aware contaminants and reviewed manual masks"),
-    ("06", "Sky reconstruction", "Galaxy residual sky, holdouts and diffuse-light degeneracy"),
-    ("07", "Refinement & QA", "Conditionally revisit PSF, masks, sky and uncertainty"),
-    ("08", "Galaxy photometry", "Isophotes, structural models, colors and science results"),
-)
 
 
 class PhotometryWorkspace(QWidget):
@@ -97,36 +87,6 @@ class PhotometryWorkspace(QWidget):
             "radial comparison and scientific rejection status.")
         root.addWidget(self.band_selector)
 
-        # The original eight unclickable scientific stage cards consumed
-        # almost a third of the screen. Keep the roadmap accessible, but
-        # the ordinary PSF workflow must have one primary work area.
-        self.workflow_toggle = QPushButton("Scientific roadmap (8 stages)  ▸")
-        self.workflow_toggle.setObjectName("photometry_workflow_toggle")
-        self.workflow_toggle.setCheckable(True)
-        self.workflow_toggle.setMaximumWidth(325)
-        self.workflow_details = QGroupBox("Scientific workflow · planned modules")
-        self.workflow_details.setObjectName("photometry_workflow_details")
-        workflow_layout = QVBoxLayout(self.workflow_details)
-        for number, name, description in _STAGES:
-            block = QGroupBox(f"{number} · {name}")
-            block.setObjectName(f"photometry_stage_{number}")
-            stage = QVBoxLayout(block)
-            caption = QLabel(description)
-            caption.setWordWrap(True)
-            caption.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            stage.addWidget(caption)
-            workflow_layout.addWidget(block)
-        workflow_layout.addWidget(QLabel(
-            "Only PSF-0 preview is currently implemented. Later stages "
-            "remain plans, not executable actions."))
-        self.workflow_details.setVisible(False)
-        self.workflow_details.setMaximumWidth(980)
-        self.workflow_toggle.toggled.connect(
-            self.workflow_details.setVisible)
-        self.workflow_toggle.toggled.connect(
-            lambda checked: self.workflow_toggle.setText(
-                "Scientific roadmap (8 stages)  ▾" if checked else
-                "Scientific roadmap (8 stages)  ▸"))
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
         center_scroll.setMinimumWidth(0)
@@ -144,24 +104,19 @@ class PhotometryWorkspace(QWidget):
         body.setContentsMargins(8, 2, 8, 2)
         body.setSpacing(12)
         mode_row = QHBoxLayout()
-        mode_caption = QLabel("Workspace view")
+        mode_caption = QLabel("Controls")
         mode_caption.setObjectName("psf0_workspace_view_caption")
         mode_row.addWidget(mode_caption)
         self.view_mode = QComboBox()
         self.view_mode.setObjectName("psf0_workspace_view_mode")
-        self.view_mode.addItem("Guided · essentials", "guided")
-        self.view_mode.addItem("Research · all controls", "research")
+        self.view_mode.addItem("Standard", "guided")
+        self.view_mode.addItem("Advanced diagnostics", "research")
         self.view_mode.setToolTip(
             "Changes which controls are visible, never the PSF recipe, "
             "source FITS, independent holdouts or scientific QA.")
         mode_row.addWidget(self.view_mode)
         mode_row.addStretch(1)
         body.addLayout(mode_row)
-        # Keep the optional scientific roadmap aligned to the same narrow
-        # content column as the PSF controls instead of spanning the window.
-        body.addWidget(self.workflow_toggle, 0, Qt.AlignLeft)
-        body.addWidget(self.workflow_details)
-
         source_box = QGroupBox("Observation selection · saved project state")
         self.source_box = source_box
         source_layout = QVBoxLayout(source_box)
@@ -212,16 +167,16 @@ class PhotometryWorkspace(QWidget):
         # at once. A band never shares its preview, exclusions or QA
         # with another band, and batch runs still visit all four.
 
-        batch = QGroupBox("PSF preview · optical filters")
+        batch = QGroupBox("Multi-band PSF diagnostics")
         batch.setObjectName("psf0_four_band_toolbar")
         batch_layout = QVBoxLayout(batch)
         batch_note = QLabel(
-            "Batch processing · original griz FITS remain unchanged. "
-            "Each band keeps independent non-adopted results.")
+            "Process available bands with independent QA. Original FITS "
+            "are never modified; results are not adopted automatically.")
         batch_note.setWordWrap(True)
         batch_layout.addWidget(batch_note)
         batch_buttons = QHBoxLayout()
-        self.build_all_psfs_btn = QPushButton("Run all available bands")
+        self.build_all_psfs_btn = QPushButton("Build PSF for available bands")
         self.build_all_psfs_btn.setObjectName("psf0_build_all_bands")
         self.build_all_psfs_btn.setToolTip(
             "Runs one real native FITS/Tractor PSF-0 diagnostic for each "
@@ -291,46 +246,6 @@ class PhotometryWorkspace(QWidget):
         # available band on bind, not a second shared scientific panel.
         self.psf0_panel = self.psf0_panels["g"]
 
-        method_box = QGroupBox("Measurement design")
-        self.method_box = method_box
-        method_layout = QVBoxLayout(method_box)
-        for heading, detail in (
-            ("Preparatory scene",
-             "Identify preliminary sources and target-protected regions; "
-             "pre-PSF user mask drafts are provisional and never science-adopted."),
-            ("Star-cutout sky",
-             "Estimate local residual backgrounds before building an empirical PSF. "
-             "Keep this distinct from the final galaxy sky solution."),
-            ("PSF before final masks",
-             "Compare global, local and spatial models per filter with held-out "
-             "stars; evaluate extended wings and survey-specific halo subtraction."),
-            ("Final scene and sky",
-             "Review PSF-aware contaminant masks, refine residual galaxy sky, "
-             "and conditionally revisit upstream models when QA demands."),
-            ("Photometry & final evidence",
-             "Measure fixed/free isophotes and PSF-convolved models; propagate "
-             "mask, sky and PSF uncertainty with immutable run provenance."),
-        ):
-            line = QLabel(f"<b>{heading}</b> — {detail}")
-            line.setTextFormat(Qt.RichText)
-            line.setWordWrap(True)
-            line.setMargin(5)
-            method_layout.addWidget(line)
-        self.method_details_toggle = QPushButton(
-            "Scientific methodology and planned steps  ▸")
-        self.method_details_toggle.setObjectName(
-            "photometry_methodology_toggle")
-        self.method_details_toggle.setCheckable(True)
-        self.method_details_toggle.setMaximumWidth(390)
-        self.method_details_toggle.toggled.connect(method_box.setVisible)
-        self.method_details_toggle.toggled.connect(
-            lambda checked: self.method_details_toggle.setText(
-                "Scientific methodology and planned steps  ▾" if checked else
-                "Scientific methodology and planned steps  ▸"))
-        method_box.setVisible(False)
-        body.addWidget(self.method_details_toggle, 0, Qt.AlignLeft)
-        body.addWidget(method_box)
-
         self.blocker = QLabel(
             "PSF-0 preview is experimental and not adopted science. "
             "No final background, masks, photometry or SBF is implemented. "
@@ -361,17 +276,12 @@ class PhotometryWorkspace(QWidget):
         research = self.view_mode.currentData() == "research"
         for panel in self.psf0_panels.values():
             panel.set_research_mode(research)
-        # Make the selected band's science panels the default workflow;
-        # help and methodological details stay available in Research.
-        self.workflow_toggle.setVisible(research)
-        self.workflow_details.setVisible(
-            research and self.workflow_toggle.isChecked())
+        # No speculative multi-stage roadmap or duplicated methodology
+        # boxes in the operational PSF workbench. Scientific workflow
+        # details live in repository docs and reproducible full QA.
         self.source_details_toggle.setVisible(research)
         self.source_box.setVisible(
             research and self.source_details_toggle.isChecked())
-        self.method_details_toggle.setVisible(research)
-        self.method_box.setVisible(
-            research and self.method_details_toggle.isChecked())
         self.copy_full_qa_btn.setVisible(research)
         # Complete JSON export remains accessible in Guided mode.
         self._update_band_tab_statuses()
