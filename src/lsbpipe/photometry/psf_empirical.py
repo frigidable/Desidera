@@ -38,6 +38,7 @@ from lsbpipe.photometry.psf_parameter_audit import (
     audit_gaia_catalog_seeds_vs_dao,
 )
 from lsbpipe.photometry.psf_joint_scene import audit_fixed_psf_joint_scenes
+from lsbpipe.photometry.psf_brick_wings import audit_brick_joint_wings_sky_spatial
 from lsbpipe.photometry.psf_core_wings_validation import (
     measure_finite_native_psf_core, evaluate_core_wings_readiness,
     finalize_single_brick_empirical_psf,
@@ -286,6 +287,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "extended_bright_gaia_mask_experiment_qa": "FIRST_48_CATALOG_FLUX_RANKED_16_LEGACY_24_NEW_EXPLORATORY_8_NEW_IDENTITY_HOLDOUT_WITH_3_4P5_FLUX_TIERED_6_NEIGHBOR_MASKS_V1_NO_SCIENCE_ADOPTION",
         "catalog_shape_neighbor_sky_qa": "P18_FIXED_P17_48_TRACTOR_SHAPE_R_E1_E2_WCS_TANGENT_4RE_PLUS_PSF_CORE_AND_OCTANT_SKY_DELETIONS_NO_ADOPTION_V1",
         "single_brick_empirical_psf_closure_qa": "P19_BRICK_ONLY_P17_P18_FROZEN_48_MATCHED_BRIGHTNESS_COHORT_6_RING_SKY_MASK_SPATIAL_QUADRANT_NO_SCIENCE_ADOPTION_V1",
+        "same_brick_joint_wing_sky_spatial_qa": "P20_NATIVE_BRICK_CATALOG_GRID_BLANKS_BRIGHT_FIXED12_4_RETROSPECTIVE_HOLDOUT_ROBUST_JOINT_SKY_A_B_PLANE_AND_QUADRANT_PREDICTION_V1",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1587,6 +1589,10 @@ def build_empirical_coadd_psf(
         p18_qa=shape_neighbor_sky_qa,
         verified_native_sources=bool(source_hashes) and lineage is not None,
     )
+    same_brick_wing_sky_spatial_qa = audit_brick_joint_wings_sky_spatial(
+        frame, catalog_matcher, measured_core_geometry,
+        extended_bright_gaia_mask_qa, shape_neighbor_sky_qa,
+        protected_mask=protected)
     metrics = {
         "core_wings_validation_qa": core_wings_validation_qa,
         "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
@@ -1595,6 +1601,7 @@ def build_empirical_coadd_psf(
         "extended_bright_gaia_mask_experiment_qa": extended_bright_gaia_mask_qa,
         "catalog_shape_neighbor_sky_qa": shape_neighbor_sky_qa,
         "single_brick_empirical_psf_closure_qa": single_brick_closure_qa,
+        "same_brick_joint_wing_sky_spatial_qa": same_brick_wing_sky_spatial_qa,
         "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
