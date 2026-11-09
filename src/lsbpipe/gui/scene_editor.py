@@ -922,7 +922,7 @@ class SceneEditor(QWidget):
         # Amber review rings are source identities whose provisional
         # footprint touches protected target light. They are NOT masked.
         self._conflict_paths.clear()
-        for candidate in counts_candidates := result["stats"].get(
+        for candidate in result["stats"].get(
                 "near_target_sources", ())[:64]:
             radius = min(15., max(5., candidate["radius_pix"]*.35))
             cx, cy = candidate["x"]+.5, ny-candidate["y"]-.5
