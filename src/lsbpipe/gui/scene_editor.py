@@ -712,6 +712,151 @@ class SceneEditor(QWidget):
         if self._native_overlay is not None:
             self._native_overlay.setVisible(self.show_hard.isChecked())
 
+    def _clear_isophote_preview(self, *_):
+        """Discard display-only candidate, without changing saved scene edits."""
+        if self._isophote_preview is not None:
+            if self._isophote_preview.scene() is self.graphics:
+                self.graphics.removeItem(self._isophote_preview)
+            self._isophote_preview = None
+        self._isophote_proposal = None
+        self._refresh_controls()
+
+    def _pick_isophote_center(self):
+        if self._loaded is None:
+            return
+        self._clear_isophote_preview()
+        self._cancel_pending()
+        self._picking_isophote_center = True
+        self.view.set_drawing(True)
+        self.iso_details.setText(
+            "Click the diffuse galaxy centre once on the ORIGINAL FITS; "
+            "this is an anchor for connected emission, not a fitted centre.")
+
+    def _reset_isophote_center(self):
+        self._picking_isophote_center = False
+        self._isophote_center_icrs = None
+        self.view.set_drawing(self.mode.currentData() != "pan")
+        self._clear_isophote_preview()
+        self.iso_details.setText(
+            "Detection anchor reset to saved galaxy ICRS coordinates. "
+            "No image pixels or masks changed.")
+
+    def _generate_isophote(self):
+        if (self._loaded is None or self._future is not None or
+                self._project_target is None or self._draft is None):
+            self.iso_details.setText(
+                "Load the original FITS of a galaxy with known ICRS first.")
+            return
+        self._picking_isophote_center = False
+        self.view.set_drawing(self.mode.currentData() != "pan")
+        self._clear_isophote_preview()
+        center = (self._isophote_center_icrs
+                  if self._isophote_center_icrs is not None
+                  else self._project_target)
+        self._future = self._executor.submit(
+            propose_scene_isophote, self._loaded, center,
+            float(self.iso_threshold.value()),
+            float(self.iso_smooth.value()))
+        self._work_kind = "isophote"
+        self._active_generation = self._load_generation
+        self.iso_details.setText(
+            "Finding connected diffuse emission around selected ICRS "
+            "position; estimating provisional local sky in a worker…")
+        self._poll_timer.start()
+        self._refresh_controls()
+
+    def _accept_isophote_result(self, result):
+        if (self._loaded is None or
+                result["status"] != "LOCAL_ISOPHOTE_PROPOSAL_NOT_ADOPTED" or
+                result["project_id"] != self._project_id or
+                result["band"] != self._band or
+                result["source"] != self._loaded["source"]):
+            raise ValueError("Proposed isophote belongs to an old source/band")
+        for kind in ("contour", "ellipse"):
+            scene_shape_outline(
+                result[kind], self._loaded["wcs"],
+                self._loaded["pixel_shape"][0])
+        self._isophote_proposal = result
+        model = result["proposal"]
+        self.iso_details.setText(
+            f"PROVISIONAL {self._band.upper()} isophote: "
+            f"{model.seed.component_pixels} connected px, "
+            f"sky {model.local_sky:.4g} nMgy/pix, "
+            f"smoothed RMS {model.smoothed_sky_rms:.3g}, "
+            f"contrast ≥{model.threshold_contrast:g}, "
+            f"q={model.seed.q:.2f}, "
+            f"centroid offset {model.seed.centroid_offset_pix:.1f} px. "
+            "NOT a calibrated outer isophote; PSF wings, contaminants, "
+            "spatial sky gradients and correlated-noise significance "
+            "require review. Flags: " + ", ".join(model.flags))
+        self._show_isophote_preview()
+
+    def _show_isophote_preview(self, *_):
+        if self._isophote_preview is not None:
+            if self._isophote_preview.scene() is self.graphics:
+                self.graphics.removeItem(self._isophote_preview)
+            self._isophote_preview = None
+        if self._isophote_proposal is None or self._loaded is None:
+            self._refresh_controls()
+            return
+        shape = self._isophote_proposal[self.iso_shape.currentData()]
+        try:
+            path = scene_shape_outline(
+                shape, self._loaded["wcs"], self._loaded["pixel_shape"][0])
+        except (ValueError, TypeError, IndexError) as exc:
+            self.iso_details.setText("Cannot display proposal: " + str(exc))
+            self._isophote_proposal = None
+            self._refresh_controls()
+            return
+        item = QGraphicsPathItem(path)
+        pen = QPen(QColor("#63e0ef"), 2.5, Qt.DashLine)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        item.setZValue(4.)
+        self.graphics.addItem(item)
+        self._isophote_preview = item
+        self._refresh_controls()
+
+    def _accept_isophote(self):
+        """One explicit user action adds a DRAFT, never adopted photometry."""
+        if (self._isophote_proposal is None or
+                self._loaded is None or self._draft is None or
+                self._isophote_preview is None):
+            return
+        proposed = self._isophote_proposal
+        if (proposed["band"] != self._band or
+                proposed["project_id"] != self._project_id or
+                proposed["source"] != self._loaded["source"]):
+            self._clear_isophote_preview()
+            self.iso_details.setText("Stale isophote: recalculate on current FITS.")
+            return
+        kind = self.iso_shape.currentData()
+        model = proposed["proposal"]
+        provenance = (
+            f"AUTO_ISOPHOTE_PRELIMINARY band={self._band} "
+            f"kind={kind} contrast={model.threshold_contrast:g} "
+            f"smooth_pix={model.smoothing_pix:g} "
+            f"local_sky={model.local_sky:.7g} "
+            f"smoothed_rms={model.smoothed_sky_rms:.7g} "
+            f"source={proposed['source']}")
+        comment = (self.comment.text().strip() + " | " + provenance).strip(" |")
+        try:
+            edit = SkyMaskEdit(
+                "sc1_iso_" + uuid4().hex,
+                "protect_target",
+                proposed[kind],
+                band=(None if self.scope.currentData() == "all" else self._band),
+                comment=comment[:512])
+            self._push_edits(self._draft.edits + (edit,))
+        except (ValueError, TypeError) as exc:
+            self.iso_details.setText("Proposed region rejected: " + str(exc))
+            return
+        self._clear_isophote_preview()
+        self.iso_details.setText(
+            "Provisional " + kind + " added to the scene DRAFT. "
+            "Undo/Remove or Redraw selected can revise it; it will be "
+            "autosaved as an unadopted user-reviewed mask. No science adopted.")
+
     def _mode_changed(self, *_):
         primitive = self.mode.currentData()
         self.view.set_drawing(primitive != "pan")
@@ -993,6 +1138,16 @@ class SceneEditor(QWidget):
             ready and 0 <= self.edits.currentRow() < len(self._draft.edits))
         self.edit_btn.setEnabled(
             active and 0 <= self.edits.currentRow() < len(self._draft.edits))
+        worker_idle = self._future is None or self._future.done()
+        self.iso_generate.setEnabled(active and worker_idle
+                                     and self._project_target is not None)
+        self.iso_pick_center.setEnabled(active and worker_idle)
+        self.iso_reset_center.setEnabled(active and worker_idle)
+        self.iso_accept.setEnabled(
+            active and worker_idle and self._isophote_proposal is not None
+            and self._isophote_preview is not None)
+        self.iso_discard.setEnabled(self._isophote_proposal is not None)
+        self.iso_shape.setEnabled(self._isophote_proposal is not None)
         self._update_hard_overlay()
 
     def shutdown(self):
