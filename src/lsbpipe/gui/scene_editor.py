@@ -780,10 +780,85 @@ class SceneEditor(QWidget):
         self._isophote_proposal = None
         self._refresh_controls()
 
+    def _discard_prepared_masks(self):
+        """Invalidate candidate masks whenever target, source or edits change."""
+        self._clear_isophote_preview()
+        if self._contamination_overlay is not None:
+            if self._contamination_overlay.scene() is self.graphics:
+                self.graphics.removeItem(self._contamination_overlay)
+            self._contamination_overlay = None
+        self._contamination = None
+        self.iso_mask_status.setText(
+            "Neighbour masks need preparation for the current "
+            "source, band, target centre and scene-draft revision.")
+        self._refresh_controls()
+
+    def _prepare_neighbour_masks(self):
+        if (self._loaded is None or self._future is not None or
+                self._project_root is None or self._draft is None or
+                self._project_target is None):
+            return
+        self._discard_prepared_masks()
+        centre = (self._isophote_center_icrs
+                  if self._isophote_center_icrs is not None
+                  else self._project_target)
+        self._future = self._executor.submit(
+            prepare_scene_neighbour_masks, self._loaded,
+            str(self._project_root), self._draft, centre)
+        self._work_kind = "contamination"
+        self._active_generation = self._load_generation
+        self.iso_mask_status.setText(
+            "Reading local Tractor source identities and preparing "
+            "provisional, non-destructive native masks in background…")
+        self._poll_timer.start()
+        self._refresh_controls()
+
+    def _accept_contamination_result(self, result):
+        if (self._loaded is None or self._draft is None or
+                result.get("status") !=
+                "CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED" or
+                result["project_id"] != self._project_id or
+                result["dataset_source"] != self._loaded["source"] or
+                result["band"] != self._band or
+                result["draft_digest"] != self._draft.digest or
+                result["anchor_icrs"] !=
+                (self._isophote_center_icrs
+                 if self._isophote_center_icrs is not None
+                 else self._project_target)):
+            raise ValueError("Prepared masks do not match current scene")
+        if np.shape(result["mask"]) != tuple(self._loaded["pixel_shape"]):
+            raise ValueError("Contaminant mask grid mismatch")
+        self._contamination = result
+        ny, nx = self._loaded["pixel_shape"]
+        layer = np.zeros((ny, nx, 4), dtype=np.uint8)
+        layer[result["auto_mask"]] = (175, 106, 238, 104)
+        self._contamination_overlay = QGraphicsPixmapItem(
+            FITSExplorer._pixmap(layer, alpha=True))
+        self._contamination_overlay.setZValue(2.5)
+        self.graphics.addItem(self._contamination_overlay)
+        self._update_contamination_overlay()
+        counts = result["stats"]
+        self.iso_mask_status.setText(
+            f"PRELIMINARY per-band mask · "
+            f"{counts['masked_catalog_sources']} Tractor neighbours masked, "
+            f"{counts['skipped_target_overlap']} overlapping galaxy "
+            f"protection (review manually), "
+            f"{counts['excluded_pixels']} proposed excluded pixels, "
+            f"{counts['native_hard_pixels']} hard-invalid original pixels. "
+            f"Local catalogue SHA-256 {result['catalog_sha256'][:12]}…; "
+            "NOT a Tractor image/model subtraction or validated PSF wings. "
+            "Flags: " + ", ".join(result["flags"]))
+        self._refresh_controls()
+
+    def _update_contamination_overlay(self, *_):
+        if self._contamination_overlay is not None:
+            self._contamination_overlay.setVisible(
+                self.iso_mask_toggle.isChecked())
+
     def _pick_isophote_center(self):
         if self._loaded is None:
             return
-        self._clear_isophote_preview()
+        self._discard_prepared_masks()
         self._cancel_pending()
         self._picking_isophote_center = True
         self.view.set_drawing(True)
@@ -795,16 +870,19 @@ class SceneEditor(QWidget):
         self._picking_isophote_center = False
         self._isophote_center_icrs = None
         self.view.set_drawing(self.mode.currentData() != "pan")
-        self._clear_isophote_preview()
+        self._discard_prepared_masks()
         self.iso_details.setText(
             "Detection anchor reset to saved galaxy ICRS coordinates. "
             "No image pixels or masks changed.")
 
     def _generate_isophote(self):
         if (self._loaded is None or self._future is not None or
-                self._project_target is None or self._draft is None):
+                self._project_target is None or self._draft is None or
+                self._contamination is None):
             self.iso_details.setText(
-                "Load the original FITS of a galaxy with known ICRS first.")
+                "Prepare and inspect the current Tractor catalogue "
+                "neighbour mask before isophotal detection. "
+                "Raw-image detection is disabled.")
             return
         self._picking_isophote_center = False
         self.view.set_drawing(self.mode.currentData() != "pan")
@@ -815,7 +893,7 @@ class SceneEditor(QWidget):
         self._future = self._executor.submit(
             propose_scene_isophote, self._loaded, center,
             float(self.iso_threshold.value()),
-            float(self.iso_smooth.value()))
+            float(self.iso_smooth.value()), self._contamination)
         self._work_kind = "isophote"
         self._active_generation = self._load_generation
         self.iso_details.setText(
@@ -964,7 +1042,7 @@ class SceneEditor(QWidget):
         if pixel is None:
             return
         primitive = self.mode.currentData()
-        if primitive == "pan":
+        if primitive == "pan" and not self._picking_isophote_center:
             return
         ny = self._loaded["pixel_shape"][0]
         xpix, ypix = float(x_scene)-.5, float(ny)-float(y_scene)-.5
@@ -976,10 +1054,10 @@ class SceneEditor(QWidget):
             self._picking_isophote_center = False
             self._isophote_center_icrs = (float(ra)%360., float(dec))
             self.view.set_drawing(self.mode.currentData() != "pan")
-            self._clear_isophote_preview()
+            self._discard_prepared_masks()
             self.iso_details.setText(
                 f"Galaxy candidate centre: RA {ra%360:.7f}°, "
-                f"Dec {dec:+.7f}°. Run Find connected isophote.")
+                f"Dec {dec:+.7f}°. Prepare masks, then find isophote.")
             return
         self._pending_world.append((float(ra)%360., float(dec)))
         self._pending_scene.append((float(x_scene),float(y_scene)))
@@ -1035,6 +1113,7 @@ class SceneEditor(QWidget):
         self._redo.clear()
         self._draft = SkyMaskDraft(
             self._draft.project_id, tuple(edits), self._draft.revision + 1)
+        self._discard_prepared_masks()
         self.status.setText(
             f"Changed scene draft: {len(edits)} regions; unsaved, "
             "not a scientifically adopted source mask.")
@@ -1050,6 +1129,7 @@ class SceneEditor(QWidget):
         self._redo.append(self._draft.edits)
         self._draft = SkyMaskDraft(
             self._draft.project_id, previous, self._draft.revision + 1)
+        self._discard_prepared_masks()
         self._redraw_outlines()
         self._refresh_controls()
         self._autosave_timer.start()
@@ -1062,6 +1142,7 @@ class SceneEditor(QWidget):
         self._undo.append(self._draft.edits)
         self._draft = SkyMaskDraft(
             self._draft.project_id, upcoming, self._draft.revision + 1)
+        self._discard_prepared_masks()
         self._redraw_outlines()
         self._refresh_controls()
         self._autosave_timer.start()
@@ -1204,8 +1285,13 @@ class SceneEditor(QWidget):
         self.edit_btn.setEnabled(
             active and 0 <= self.edits.currentRow() < len(self._draft.edits))
         worker_idle = self._future is None or self._future.done()
-        self.iso_generate.setEnabled(active and worker_idle
-                                     and self._project_target is not None)
+        self.iso_prepare.setEnabled(
+            active and worker_idle and self._project_target is not None)
+        self.iso_mask_toggle.setEnabled(self._contamination is not None)
+        self.iso_generate.setEnabled(
+            active and worker_idle and self._project_target is not None
+            and self._contamination is not None
+            and self._draft.digest == self._contamination["draft_digest"])
         self.iso_pick_center.setEnabled(active and worker_idle)
         self.iso_reset_center.setEnabled(active and worker_idle)
         self.iso_accept.setEnabled(
