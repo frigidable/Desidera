@@ -231,3 +231,49 @@ FITS cutout or a remotely displayed preview.
 P1.3: implement residual-sky candidates, holdout regions and a
 threshold-consensus/iterative isophote initializer, then compare
 against photutils and AutoProf before any photometric adoption.
+
+
+## 2026-11-09 · SC1 preliminary isophote suggestion in GUI
+
+The object-bound **Scene & Masks** editor now offers a bounded
+`Find connected isophote` diagnostic for native original Legacy IMAGE and
+its independent native hard-validity mask. A project ICRS position anchors
+the component, and a researcher may alternatively click a diffuse-light
+centre. Settings are **local smoothed-background contrast** (not a
+calibrated sigma level) and Gaussian smoothing in native pixels.
+
+- A clipped local background location and empirical smoothed-background
+  dispersion are measured in a distant annulus, independent of any later
+  adopted sky model. The original IMAGE is never overwritten.
+- A 4-connected threshold component close to the selected centre is
+  identified inside a bounded search aperture. Failure/no detection and
+  aperture-edge truncation are reported rather than inventing an object.
+- The actual connected-component **outer polygon** is traced on native
+  pixel-cell edges, softly simplified to at most 192 sky vertices and
+  transformed by original WCS into ICRS. Its two-pixel display margin,
+  local-sky estimate, threshold and smoothing are diagnostic metadata.
+- An independent **moment ellipse** is available from the same connected
+  component, with bright-peak weights clipped to reduce knot domination,
+  centre anchored to the selected galaxy coordinate, and local WCS
+  tangent mapping into sky PA/axis ratio.
+- Both alternatives are **preview-only** until the user clicks
+  `Add proposed region`, which creates a revisioned, non-adopted
+  `protect_target` ICRS mask; Undo and the existing immutable draft
+  revision/optimistic concurrency mechanism remain active. `Discard`
+  writes nothing. The same sky geometry can be reprojected in another
+  band; any actual physical differences between the bands still require
+  review.
+- Native FITS cutout loading, catalogue queries, adopted PSF/sky
+  dependencies and saved science calculations are not triggered by
+  suggestion. Display stretch may be switched between faint/standard
+  asinh and faint linear without changing the scientific arrays.
+
+**Science limitations:** no validated spatial sky model, PSF wing
+subtraction, external Gaia/Tractor contaminant removal, correlated-noise
+false-positive calibration, multi-scale consensus, isophote fitting
+(Jedrzejewski), partial-pixel segmentation uncertainty or final photometry.
+Local annulus clipping may be biased by neighboring sources or galaxy
+halos. Even if a contour appears visually convincing on Leo P, it is
+an exploratory user-reviewed **mask boundary**, not a measured or
+science-adopted galaxy isophote. Do not quote its `a`, `q`, `PA` or
+footprint as calibrated morphology without independent validation.
