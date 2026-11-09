@@ -225,6 +225,12 @@ class SceneEditor(QWidget):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(45)
         self._poll_timer.timeout.connect(self._poll_load)
+        # Human-drawn drafts are automatically checkpointed, never
+        # adopted or promoted to an approved segmentation.
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.setInterval(650)
+        self._autosave_timer.timeout.connect(self.flush_autosave)
         self._paths = []
         self._available = True
         self._band = "g"
@@ -391,6 +397,7 @@ class SceneEditor(QWidget):
     def bind_project(self, project_root):
         """Metadata and saved draft only: never open FITS or download on entry."""
         if project_root is None:
+            self.flush_autosave()
             self._switch_source(None, None)
             self._project_root = None
             self._project_id = None
@@ -404,6 +411,7 @@ class SceneEditor(QWidget):
                project.selected_dataset, str(project.data_root))
         if key == self._source_key:
             return
+        self.flush_autosave()
         # Keep unsaved revisions in memory if researcher navigates to a
         # different project and later comes back in the same GUI session.
         if self._draft is not None and self._project_root is not None:
@@ -660,6 +668,7 @@ class SceneEditor(QWidget):
             "not a scientifically adopted source mask.")
         self._redraw_outlines()
         self._refresh_controls()
+        self._autosave_timer.start()
 
     def undo(self):
         if self._draft is None or not self._undo:
@@ -671,6 +680,7 @@ class SceneEditor(QWidget):
             self._draft.project_id, previous, self._draft.revision + 1)
         self._redraw_outlines()
         self._refresh_controls()
+        self._autosave_timer.start()
 
     def redo(self):
         if self._draft is None or not self._redo:
@@ -682,6 +692,7 @@ class SceneEditor(QWidget):
             self._draft.project_id, upcoming, self._draft.revision + 1)
         self._redraw_outlines()
         self._refresh_controls()
+        self._autosave_timer.start()
 
     def edit_selected(self):
         if self._draft is None or self._loaded is None:
@@ -719,6 +730,7 @@ class SceneEditor(QWidget):
             self._draft.edits[:index] + self._draft.edits[index+1:])
 
     def save_draft(self):
+        self._autosave_timer.stop()
         if self._project_root is None or self._draft is None:
             return
         try:
@@ -734,6 +746,29 @@ class SceneEditor(QWidget):
         self.status.setText(
             f"Saved immutable scene DRAFT {digest[:12]} · "
             f"revision {self._draft.revision}. Not science adopted.")
+        self._refresh_controls()
+
+    def flush_autosave(self):
+        """Persist changed ICRS drafts only; refuse stale concurrent HEAD."""
+        self._autosave_timer.stop()
+        if (self._project_root is None or self._draft is None or
+                not self._available or
+                self._draft.digest == self._saved_digest):
+            return
+        try:
+            digest = save_mask_draft(
+                self._project_root, self._draft,
+                expected_digest=self._saved_digest)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.status.setText(
+                "SCENE DRAFT AUTOSAVE FAILED: " + str(exc)
+                + ". Your unsaved edits remain in this session; "
+                  "reconcile the external revision before closing.")
+            return
+        self._saved_digest = digest
+        self.status.setText(
+            f"Scene draft autosaved · {digest[:12]} · "
+            f"{len(self._draft.edits)} regions · NOT SCIENCE ADOPTED.")
         self._refresh_controls()
 
     def _redraw_outlines(self):
@@ -799,6 +834,7 @@ class SceneEditor(QWidget):
         self._update_hard_overlay()
 
     def shutdown(self):
+        self.flush_autosave()
         self._load_generation += 1
         self._poll_timer.stop()
         self._executor.shutdown(wait=False, cancel_futures=True)
