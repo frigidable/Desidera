@@ -494,8 +494,12 @@ class SceneEditor(QWidget):
         opacity_row.addWidget(self.iso_opacity)
         iso_layout.addLayout(opacity_row)
         self.iso_show_conflicts = QCheckBox(
-            "Highlight unresolved target overlaps")
-        self.iso_show_conflicts.setChecked(True)
+            "Show 20 nearest unresolved neighbours")
+        self.iso_show_conflicts.setChecked(False)
+        self.iso_show_conflicts.setToolTip(
+            "Hide clutter by default. Enable to inspect the 20 closest "
+            "catalogued sources left unmasked near the galaxy; counts "
+            "still include all unresolved sources.")
         self.iso_show_conflicts.toggled.connect(
             self._update_contamination_overlay)
         iso_layout.addWidget(self.iso_show_conflicts)
@@ -521,6 +525,16 @@ class SceneEditor(QWidget):
         self.iso_generate.setObjectName("scene_isophote_generate")
         self.iso_generate.clicked.connect(self._generate_isophote)
         iso_layout.addWidget(self.iso_generate)
+        iso_layout.addWidget(QLabel("Compare threshold / smoothing"))
+        self.iso_candidate = QComboBox()
+        self.iso_candidate.setObjectName("scene_isophote_trial_selector")
+        self.iso_candidate.setToolTip(
+            "Switch between four actual ICRS contours from nearby detection "
+            "thresholds/scales. A stable area alone does not guarantee "
+            "spatial agreement. No trial is science-adopted.")
+        self.iso_candidate.currentIndexChanged.connect(
+            self._show_isophote_preview)
+        iso_layout.addWidget(self.iso_candidate)
         self.iso_shape = QComboBox()
         self.iso_shape.addItem("Native isophote contour", "contour")
         self.iso_shape.addItem("Equivalent ICRS ellipse", "ellipse")
@@ -862,6 +876,9 @@ class SceneEditor(QWidget):
                 self.graphics.removeItem(self._isophote_preview)
             self._isophote_preview = None
         self._isophote_proposal = None
+        self.iso_candidate.blockSignals(True)
+        self.iso_candidate.clear()
+        self.iso_candidate.blockSignals(False)
         self.iso_summary.setText(
             "No current proposal. Run masked detection to compare contours.")
         self.iso_low_conf_override.setChecked(False)
@@ -1038,6 +1055,22 @@ class SceneEditor(QWidget):
             raise ValueError("Neighbour masks changed during detection")
         self._isophote_proposal = result
         self.iso_low_conf_override.setChecked(False)
+        self.iso_candidate.blockSignals(True)
+        self.iso_candidate.clear()
+        for index, trial in enumerate(result["sensitivity"]["trials"]):
+            variant = (result.get("alternatives") or ())[index] if (
+                result.get("alternatives")) else (
+                {"model":result["proposal"]} if index == 0 else None)
+            if variant is None:
+                continue
+            label = (
+                f"{'Reference' if index == 0 else 'Alternative '+str(index)}"
+                f" · {trial['threshold']:.2f} contrast / "
+                f"{trial['smooth_pix']:.1f} px / "
+                f"{trial['connected_pixels']:,} pixels")
+            self.iso_candidate.addItem(label, index)
+        self.iso_candidate.setCurrentIndex(0)
+        self.iso_candidate.blockSignals(False)
         model = result["proposal"]
         sensitivity = result["sensitivity"]
         low = sensitivity["confidence"].startswith("LOW_CONFIDENCE")
@@ -1076,6 +1109,22 @@ class SceneEditor(QWidget):
             "must be independently reviewed.")
         self._show_isophote_preview()
 
+    def _selected_isophote(self):
+        """Return active trial in memory, without saving or refitting FITS."""
+        proposal = self._isophote_proposal
+        if proposal is None:
+            return None
+        alternatives = proposal.get("alternatives")
+        if not alternatives:
+            # Legacy test payloads and initial standalone SC1 proposals.
+            return {"model": proposal["proposal"],
+                    "contour":proposal["contour"],
+                    "ellipse":proposal["ellipse"]}
+        index = self.iso_candidate.currentData()
+        if not isinstance(index, int) or not 0 <= index < len(alternatives):
+            return None
+        return alternatives[index]
+
     def _show_isophote_preview(self, *_):
         if self._isophote_preview is not None:
             if self._isophote_preview.scene() is self.graphics:
@@ -1084,7 +1133,11 @@ class SceneEditor(QWidget):
         if self._isophote_proposal is None or self._loaded is None:
             self._refresh_controls()
             return
-        shape = self._isophote_proposal[self.iso_shape.currentData()]
+        candidate = self._selected_isophote()
+        if candidate is None:
+            self._refresh_controls()
+            return
+        shape = candidate[self.iso_shape.currentData()]
         try:
             path = scene_shape_outline(
                 shape, self._loaded["wcs"], self._loaded["pixel_shape"][0])
@@ -1103,6 +1156,20 @@ class SceneEditor(QWidget):
         item.setZValue(4.)
         self.graphics.addItem(item)
         self._isophote_preview = item
+        if self.iso_candidate.count():
+            model = candidate["model"]
+            summary = self._isophote_proposal["sensitivity"]
+            label = ("LOW CONFIDENCE" if low else "PRELIMINARY")
+            self.iso_summary.setText(
+                f"{label} · trial {self.iso_candidate.currentData()} · "
+                f"{model.seed.component_pixels:,} pixels; "
+                f"q={model.seed.q:.2f}; "
+                f"centroid offset={model.seed.centroid_offset_pix:.1f} px. "
+                f"Across four trials: area ratio "
+                f"{summary['area_ratio']:.2f}, min IoU "
+                f"{summary.get('minimum_spatial_iou') if summary.get('minimum_spatial_iou') is not None else float('nan'):.2f}. "
+                + ("Manual-review override required." if low
+                   else "No science adoption."))
         self._refresh_controls()
 
     def _accept_isophote(self):
@@ -1130,10 +1197,14 @@ class SceneEditor(QWidget):
                 "explicit manual-review override is checked.")
             return
         kind = self.iso_shape.currentData()
-        model = proposed["proposal"]
+        candidate = self._selected_isophote()
+        if candidate is None:
+            return
+        model = candidate["model"]
         scope = None if self.iso_share_bands.isChecked() else self._band
         provenance = (
             f"AUTO_ISOPHOTE_PRELIMINARY from_band={self._band} "
+            f"trial={self.iso_candidate.currentData()} "
             f"scope={'all_optical_EXPLICIT' if scope is None else self._band} "
             f"confidence={sensitivity['confidence']} "
             f"manual_override={int(self.iso_low_conf_override.isChecked())} "
@@ -1150,7 +1221,7 @@ class SceneEditor(QWidget):
             edit = SkyMaskEdit(
                 "sc1_iso_" + uuid4().hex,
                 "protect_target",
-                proposed[kind],
+                candidate[kind],
                 band=scope,
                 comment=comment[:512])
             self._push_edits(self._draft.edits + (edit,))
@@ -1472,6 +1543,9 @@ class SceneEditor(QWidget):
             and self._isophote_preview is not None)
         self.iso_discard.setEnabled(self._isophote_proposal is not None)
         self.iso_shape.setEnabled(self._isophote_proposal is not None)
+        self.iso_candidate.setEnabled(
+            active and self._isophote_proposal is not None
+            and self.iso_candidate.count() > 1)
         self._update_hard_overlay()
 
     def shutdown(self):
