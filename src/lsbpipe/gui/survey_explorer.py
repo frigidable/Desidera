@@ -117,6 +117,8 @@ class SurveyExplorer(QMainWindow):
         self._last_download_root = None
         self._local_project = None
         self._object_project = None
+        self._psf_restore_source_key = None
+        self._psf_restore_pending_key = None
         self._returning_to_hub = False
         self._restore_session = restore_session
         self._launch_remote = launch_remote
@@ -834,6 +836,80 @@ class SurveyExplorer(QMainWindow):
         self.data_drawer.hide()
         stage, band = self.photometry_workspace.current_navigation()
         self._remember_photometry_navigation(stage, band)
+        # Defer I/O until the workspace has been attached. Never hash FITS
+        # in the Qt event loop or rebuild a PSF merely to redisplay it.
+        source_key = self._psf0_source_key()
+        QTimer.singleShot(
+            0, lambda key=source_key: self._restore_psf0_if_needed(key))
+
+    def _psf0_source_key(self):
+        project = self._object_project
+        if project is None:
+            return None
+        # The saved default band is navigation, not the identity of all
+        # four independent native PSF input datasets.
+        selected = project.selected_dataset
+        return (project.project_id, str(project.root),
+                str(project.data_root),
+                tuple(selected[:3]) if selected is not None else None)
+
+    def _restore_psf0_if_needed(self, source_key):
+        """Restore saved QA in a worker once per session/source identity."""
+        if (source_key is None or source_key != self._psf0_source_key()
+                or self._psf_restore_source_key == source_key
+                or self._psf_restore_pending_key == source_key):
+            return
+        if self.thread is not None:
+            # An active operation wins: its result may be newer than the
+            # historical checkpoint. The user can explicitly Refresh later.
+            return
+        from lsbpipe.photometry.psf_gui_backend import read_saved_psf0_bands
+        root = source_key[1]
+        self._psf_restore_pending_key = source_key
+
+        def work(progress):
+            return read_saved_psf0_bands(root)
+
+        def finished(recovered):
+            if source_key != self._psf0_source_key():
+                self._psf_restore_pending_key = None
+                return
+            self._psf_restore_pending_key = None
+            self._psf_restore_source_key = source_key
+            applied = []
+            for band, preview in recovered["restored"].items():
+                panel = self.photometry_workspace.psf0_panels[band]
+                # Never discard a fresh preview computed in this session.
+                if panel.active_preview is None:
+                    panel.show_restored_result(preview)
+                    applied.append(band.upper())
+            warnings = recovered["warnings"]
+            if warnings:
+                self.photometry_workspace.batch_status.setText(
+                    "Saved PSF checkpoint warnings (stale/invalid evidence "
+                    "was not adopted): " + "; ".join(
+                        str(name) + ": " + str(detail)
+                        for name, detail in list(warnings.items())[:5]))
+            elif applied:
+                self.photometry_workspace.batch_status.setText(
+                    "Restored saved experimental PSF-0 for "
+                    + ", ".join(applied)
+                    + ". Source FITS/catalogue checks passed. Not adopted.")
+            self.photometry_workspace._update_band_tab_statuses()
+
+        def failed(message):
+            if source_key != self._psf0_source_key():
+                return
+            self._psf_restore_pending_key = None
+            self.photometry_workspace.batch_status.setText(
+                "Could not restore saved PSF-0: " + message
+                + ". No model was accepted or recomputed.")
+
+        self._start(work, finished, failed, operation_name="psf0-restore")
+        if self.thread is not None:
+            self.photometry_workspace.set_psf_busy(True)
+        else:
+            self._psf_restore_pending_key = None
 
     def _run_project_psf0(self, request):
         """Dispatch genuine Leo P native-band ePSF in the existing GUI thread pool."""
