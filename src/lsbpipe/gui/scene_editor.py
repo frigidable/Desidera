@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPathItem,
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
+    QGroupBox, QScrollArea,
 )
 
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
@@ -31,6 +32,9 @@ from lsbpipe.photometry.mask_drafts import (
 )
 from lsbpipe.photometry.sky_masks import (
     SkyMaskDraft, SkyMaskEdit, SkyMaskShape,
+)
+from lsbpipe.photometry.ellipse_seed import (
+    propose_local_isophote, seed_as_sky_geometry,
 )
 from lsbpipe.survey import legacy_validity
 from lsbpipe.surveys.legacy import SkyField, BrickHit
@@ -178,6 +182,37 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
     return path
 
 
+def propose_scene_isophote(dataset, center_icrs, threshold, smoothing):
+    """Only numeric FITS/WCS work in background; Qt object creation in GUI."""
+    wcs = dataset["wcs"]
+    x, y = wcs.all_world2pix(
+        float(center_icrs[0]), float(center_icrs[1]), 0)
+    if not (math.isfinite(float(x)) and math.isfinite(float(y))):
+        raise ValueError("Selected ICRS galaxy center cannot be projected")
+    model = propose_local_isophote(
+        dataset["data"]["image"], ~dataset["native_hard"],
+        (float(x), float(y)),
+        threshold_contrast=float(threshold), smooth_sigma_pix=float(smoothing))
+    geometry = seed_as_sky_geometry(model.seed, wcs)
+    ellipse = SkyMaskShape(
+        "ellipse",
+        center=(geometry["ra_deg"], geometry["dec_deg"]),
+        a_arcsec=geometry["sma_arcsec"],
+        q=geometry["q_sky"],
+        pa_deg=geometry["pa_north_through_east_deg"])
+    coords = np.asarray(model.contour_xy)
+    ra, dec = wcs.all_pix2world(coords[:, 0], coords[:, 1], 0)
+    if not (np.isfinite(ra).all() and np.isfinite(dec).all()):
+        raise ValueError("WCS cannot project proposed isophotal contour")
+    contour = SkyMaskShape(
+        "polygon", vertices=tuple((float(a)%360., float(b))
+                                  for a, b in zip(ra, dec)))
+    return {"status":model.state, "ellipse":ellipse, "contour":contour,
+            "proposal":model, "band":dataset["band"],
+            "project_id":dataset["project_id"],
+            "source":dataset["source"]}
+
+
 class SceneDrawingView(FITSGraphicsView):
     pointChosen = Signal(float, float)
 
@@ -224,7 +259,13 @@ class SceneEditor(QWidget):
         self._preview_path = None
         self._replace_index = None
         self._loaded = None
+        self._isophote_proposal = None
+        self._isophote_preview = None
+        self._isophote_center_icrs = None
+        self._picking_isophote_center = False
+        self._project_target = None
         self._future = None
+        self._work_kind = None
         self._load_generation = 0
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="desidera-scene-fits")
@@ -281,6 +322,15 @@ class SceneEditor(QWidget):
         self.load_btn.setObjectName("scene_load_original")
         self.load_btn.clicked.connect(self.load_original)
         toolbar.addWidget(self.load_btn)
+        self.display_mode = QComboBox()
+        self.display_mode.setObjectName("scene_image_stretch")
+        self.display_mode.addItem("Asinh · faint", ("faint", "asinh"))
+        self.display_mode.addItem("Asinh · standard", ("standard", "asinh"))
+        self.display_mode.addItem("Linear · faint", ("faint", "linear"))
+        self.display_mode.currentIndexChanged.connect(self._rerender_image)
+        self.display_mode.setToolTip(
+            "Display-only stretch on original IMAGE values; no science data changed.")
+        toolbar.addWidget(self.display_mode)
         self.fit_btn = QPushButton("Fit")
         self.fit_btn.clicked.connect(lambda: self.view.fit_image())
         toolbar.addWidget(self.fit_btn)
@@ -330,6 +380,69 @@ class SceneEditor(QWidget):
         self.comment.setObjectName("scene_edit_comment")
         self.comment.setPlaceholderText("Optional reason / source identity")
         control_layout.addWidget(self.comment)
+
+        # A threshold contour and a moment-ellipse are offered separately.
+        # The researcher must inspect and explicitly accept either one.
+        isogroup = QGroupBox("Suggest galaxy isophote · preliminary")
+        isogroup.setObjectName("scene_isophote_group")
+        iso_layout = QVBoxLayout(isogroup)
+        settings_row = QHBoxLayout()
+        settings_row.addWidget(QLabel("Contrast"))
+        self.iso_threshold = QDoubleSpinBox()
+        self.iso_threshold.setObjectName("scene_isophote_threshold")
+        self.iso_threshold.setRange(1., 8.)
+        self.iso_threshold.setSingleStep(.3)
+        self.iso_threshold.setDecimals(1)
+        self.iso_threshold.setValue(2.2)
+        self.iso_threshold.setToolTip(
+            "Local smoothed-background contrast, NOT calibrated significance.")
+        settings_row.addWidget(self.iso_threshold)
+        settings_row.addWidget(QLabel("Smooth px"))
+        self.iso_smooth = QDoubleSpinBox()
+        self.iso_smooth.setObjectName("scene_isophote_smoothing")
+        self.iso_smooth.setRange(1.,12.)
+        self.iso_smooth.setSingleStep(1.)
+        self.iso_smooth.setDecimals(1)
+        self.iso_smooth.setValue(4.)
+        settings_row.addWidget(self.iso_smooth)
+        iso_layout.addLayout(settings_row)
+        center_row = QHBoxLayout()
+        self.iso_pick_center = QPushButton("Pick galaxy centre")
+        self.iso_pick_center.setObjectName("scene_isophote_pick_center")
+        self.iso_pick_center.clicked.connect(self._pick_isophote_center)
+        center_row.addWidget(self.iso_pick_center)
+        self.iso_reset_center = QPushButton("Use target ICRS")
+        self.iso_reset_center.clicked.connect(self._reset_isophote_center)
+        center_row.addWidget(self.iso_reset_center)
+        iso_layout.addLayout(center_row)
+        self.iso_generate = QPushButton("Find connected isophote")
+        self.iso_generate.setObjectName("scene_isophote_generate")
+        self.iso_generate.clicked.connect(self._generate_isophote)
+        iso_layout.addWidget(self.iso_generate)
+        self.iso_shape = QComboBox()
+        self.iso_shape.addItem("Native isophote contour", "contour")
+        self.iso_shape.addItem("Equivalent ICRS ellipse", "ellipse")
+        self.iso_shape.currentIndexChanged.connect(self._show_isophote_preview)
+        iso_layout.addWidget(self.iso_shape)
+        proposal_actions = QHBoxLayout()
+        self.iso_accept = QPushButton("Add proposed region")
+        self.iso_accept.setObjectName("scene_isophote_accept")
+        self.iso_accept.clicked.connect(self._accept_isophote)
+        proposal_actions.addWidget(self.iso_accept)
+        self.iso_discard = QPushButton("Discard")
+        self.iso_discard.clicked.connect(self._clear_isophote_preview)
+        proposal_actions.addWidget(self.iso_discard)
+        iso_layout.addLayout(proposal_actions)
+        self.iso_details = QLabel(
+            "Uses local provisional sky and native FITS. No PSF/sky/stellar "
+            "correction or science adoption. Review before accepting.")
+        self.iso_details.setWordWrap(True)
+        self.iso_details.setObjectName("scene_isophote_evidence")
+        iso_layout.addWidget(self.iso_details)
+        self.iso_threshold.valueChanged.connect(self._clear_isophote_preview)
+        self.iso_smooth.valueChanged.connect(self._clear_isophote_preview)
+        control_layout.addWidget(isogroup)
+
         buttons = QHBoxLayout()
         self.finish_btn = QPushButton("Finish polygon")
         self.finish_btn.setObjectName("scene_finish_polygon")
@@ -342,6 +455,7 @@ class SceneEditor(QWidget):
         control_layout.addWidget(QLabel("Unadopted edits (click one to remove)"))
         self.edits = QListWidget()
         self.edits.setObjectName("scene_edits_list")
+        self.edits.setMinimumHeight(95)
         self.edits.currentRowChanged.connect(self._refresh_controls)
         control_layout.addWidget(self.edits, 1)
         history = QHBoxLayout()
@@ -380,7 +494,12 @@ class SceneEditor(QWidget):
         self.status.setWordWrap(True)
         self.status.setObjectName("scene_status")
         control_layout.addWidget(self.status)
-        splitter.addWidget(controls)
+        controls_scroll = QScrollArea(self)
+        controls_scroll.setObjectName("scene_controls_scroll")
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setWidget(controls)
+        controls_scroll.setMinimumWidth(315)
+        splitter.addWidget(controls_scroll)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([920, 345])
@@ -413,6 +532,9 @@ class SceneEditor(QWidget):
             self._refresh_controls()
             return
         project = read_object_project(project_root)
+        self._project_target = (
+            (project.field.ra_deg, project.field.dec_deg)
+            if project.field is not None else None)
         key = (str(Path(project.root).resolve()), project.project_id,
                project.selected_dataset, str(project.data_root))
         if key == self._source_key:
@@ -465,6 +587,10 @@ class SceneEditor(QWidget):
         self._pending_scene = []
         self._preview_path = None
         self._replace_index = None
+        self._isophote_proposal = None
+        self._isophote_preview = None
+        self._isophote_center_icrs = None
+        self._picking_isophote_center = False
         self.graphics.clear()
         self._image = None
         self._native_overlay = None
@@ -509,6 +635,7 @@ class SceneEditor(QWidget):
         self._future = self._executor.submit(
             load_scene_original_cutout, str(self._project_root),
             self._band, width)
+        self._work_kind = "load"
         self._active_generation = self._load_generation
         self._poll_timer.start()
 
@@ -518,16 +645,27 @@ class SceneEditor(QWidget):
             return
         self._poll_timer.stop()
         self._future = None
+        kind = self._work_kind
+        self._work_kind = None
         if self._active_generation != self._load_generation:
             self._refresh_controls()
             return
         try:
             result = future.result()
-            self._accept_dataset(result)
+            if kind == "isophote":
+                self._accept_isophote_result(result)
+            else:
+                self._accept_dataset(result)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError,
                 MemoryError) as exc:
-            self.status.setText(
-                f"Original FITS scene could not be displayed: {exc}")
+            if kind == "isophote":
+                self.iso_details.setText(
+                    "No proposal: " + str(exc)
+                    + ". Try adjusting contrast/smoothing or pick the "
+                      "diffuse component centre. Nothing was saved.")
+            else:
+                self.status.setText(
+                    f"Original FITS scene could not be displayed: {exc}")
         self._refresh_controls()
 
     def _accept_dataset(self, data):
@@ -560,6 +698,15 @@ class SceneEditor(QWidget):
             f"{data['project_field_width_arcmin']:g}′ project field. "
             "Native bad pixels shown; all masks are DRAFT only.")
         self._refresh_controls()
+
+    def _rerender_image(self, *_):
+        if self._loaded is None or self._image is None:
+            return
+        contrast, scaling = self.display_mode.currentData()
+        raster = rgb_for_layer(
+            self._loaded["data"]["image"], "image", self._band,
+            contrast=contrast, scaling=scaling)
+        self._image.setPixmap(FITSExplorer._pixmap(raster))
 
     def _update_hard_overlay(self, *_):
         if self._native_overlay is not None:
@@ -614,6 +761,15 @@ class SceneEditor(QWidget):
         ra, dec = self._loaded["wcs"].all_pix2world(xpix, ypix, 0)
         if not np.isfinite(ra) or not np.isfinite(dec) or abs(dec) > 90:
             self.status.setText("Invalid WCS position; shape not added.")
+            return
+        if self._picking_isophote_center:
+            self._picking_isophote_center = False
+            self._isophote_center_icrs = (float(ra)%360., float(dec))
+            self.view.set_drawing(self.mode.currentData() != "pan")
+            self._clear_isophote_preview()
+            self.iso_details.setText(
+                f"Galaxy candidate centre: RA {ra%360:.7f}°, "
+                f"Dec {dec:+.7f}°. Run Find connected isophote.")
             return
         self._pending_world.append((float(ra)%360., float(dec)))
         self._pending_scene.append((float(x_scene),float(y_scene)))
