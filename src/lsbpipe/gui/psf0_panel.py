@@ -1205,6 +1205,25 @@ class PSF0Panel(QGroupBox):
                     "Empirical PSF single-brick characterization "
                     f"NOT complete: {closed.get('status', 'UNKNOWN')}; "
                     "original core and science gates unchanged.")
+        p20 = metrics.get("same_brick_joint_wing_sky_spatial_qa")
+        if isinstance(p20, dict):
+            blanks = p20.get("blank_sky_controls") or {}
+            notes.append(
+                "P20 same-brick wing/sky diagnostic: "
+                f"{p20.get('n_bright_joint_fit_train', 0)} bright "
+                "training stars, "
+                f"{p20.get('n_bright_fixed_identity_holdout', 0)} "
+                "historically inspected bright rank-holdouts, "
+                f"{blanks.get('n_measured_blank_controls', 0)} native "
+                "same-brick blank controls and four fixed spatial "
+                "quadrant holdouts. Three sky hypotheses, "
+                "one nuisance offset per bright star. "
+                "NO calibrated PSF wings or science adoption. "
+                "See full Copy QA.")
+            if p20.get("status") != (
+                    "SAME_BRICK_WING_SKY_AND_SPATIAL_FEASIBILITY_ONLY"):
+                notes.append(
+                    f"  P20 blocked: {p20.get('status', 'UNKNOWN')}.")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
