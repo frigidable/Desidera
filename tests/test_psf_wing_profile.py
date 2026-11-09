@@ -12,6 +12,9 @@ from lsbpipe.photometry.psf_wing_profile import (
     audit_extended_bright_gaia_mask_experiment,
     _p17_adaptive_neighbor_radii,
     P17_SCHEMA, P17_COHORT_LIMIT, P17_MASK_CHOICES,
+    P18_SCHEMA, audit_catalog_shape_neighbor_and_sky_sensitivity,
+    _p18_neighbor_footprint, _p18_shape_mask,
+    _p18_sky_sector_deletion,
 )
 
 FWHM=5.136902957677135
@@ -632,3 +635,159 @@ def test_p17_gui_summary_marks_masks_as_uncalibrated():
     assert "24 new exploratory" in summary
     assert "8 new identity holdout" in summary
     assert "NOT calibrated PSF wings" in summary
+
+
+
+def test_p18_tractor_shape_ellipticity_and_missing_shape_fallback():
+    fwhm, scale = 2., .5
+    point = _p18_neighbor_footprint({
+        "type": "PSF", "flux": 1.
+    }, 100., fwhm, scale)
+    assert point == (3., 3., 0., "CATALOG_PSF")
+    extended = _p18_neighbor_footprint({
+        "type": "EXP", "flux": 1., "shape_r_arcsec": 2.,
+        "shape_e1": .6, "shape_e2": 0.
+    }, 100., fwhm, scale)
+    assert extended[0] > extended[1] > point[0]
+    assert extended[2] == 0.
+    assert extended[3] == "EXTENDED_SHAPE_ELLIPSE"
+    missing = _p18_neighbor_footprint({
+        "type": "DEV", "flux": .01, "shape_r_arcsec": None,
+        "shape_e1": 0., "shape_e2": 0.
+    }, 100., fwhm, scale)
+    assert missing[-1] == "MISSING_SHAPE_FALLBACK"
+    assert missing[:2] == (6., 6.)
+    circular = _p18_neighbor_footprint({
+        "type": "REX", "flux": 1., "shape_r_arcsec": 2.,
+        "shape_e1": None, "shape_e2": None
+    }, 100., fwhm, scale)
+    assert circular[0] == circular[1]
+    assert circular[-1] == "EXTENDED_SHAPE_ELLIPSE"
+    bad = _p18_neighbor_footprint({
+        "type": "EXP", "flux": 1., "shape_r_arcsec": 2.,
+        "shape_e1": 1.2, "shape_e2": 0.
+    }, 100., fwhm, scale)
+    assert bad[-1] == "INVALID_ELLIPTICITY_FALLBACK"
+
+
+def test_p18_rotated_ellipse_masks_major_axis_not_all_octants():
+    catalog = [
+        {"type": "PSF", "flux": 100.},
+        {"type": "EXP", "flux": 1., "shape_r_arcsec": 2.,
+         "shape_e1": .6, "shape_e2": 0.},
+    ]
+    keep, flags, n = _p18_shape_mask(
+        (101,101), 0, 0,
+        np.array([[50.,50.], [70.,50.]]), catalog,
+        0, 100., 2., np.array([[.5,0.],[0.,.5]]))
+    assert n == 1
+    assert flags == {"EXTENDED_SHAPE_ELLIPSE": 1}
+    assert not keep[50,80]
+    assert keep[60,70]
+    # 90-degree rotation of ellipticity must rotate the footprint.
+    catalog[1]["shape_e1"] = -.6
+    rotated, _, _ = _p18_shape_mask(
+        (101,101), 0, 0,
+        np.array([[50.,50.], [70.,50.]]), catalog,
+        0, 100., 2., np.array([[.5,0.],[0.,.5]]))
+    assert rotated[50,80]
+    assert not rotated[60,70]
+
+
+def test_p18_sky_sector_deletion_is_sensitivity_not_errorbar():
+    yy, xx = np.indices((241,241), dtype=float)
+    radius = np.hypot(xx-120,yy-120)
+    octants = (np.floor(
+        (np.arctan2(yy-120,xx-120)%(2*np.pi))*8/(2*np.pi)
+    ).astype(int))
+    pixels = .01 + .00001*xx + .00002*yy
+    full, replicates, sensitivity = _p18_sky_sector_deletion(
+        pixels, np.ones_like(pixels,dtype=bool), radius, octants,
+        3., 10.)
+    assert np.isfinite(full)
+    assert len(replicates) == 8
+    assert sensitivity > 0
+    assert len(set(replicates)) > 1
+
+
+def test_p18_fixed_cohort_shape_footprints_and_sky_are_read_only():
+    from astropy.wcs import WCS
+    frame, matcher = _p17_synthetic_field()
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [440.,420.]
+    wcs.wcs.crval = [155.,18.]
+    wcs.wcs.cdelt = [-.262/3600., .262/3600.]
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    frame.wcs = wcs
+    # Original rows 48 Gaia stars. One non-Gaia extended
+    # neighbor with genuine SHAPE_R/E1/E2, not an invented point PSF.
+    matcher.rows[48]["shape_r_arcsec"] = 1.2
+    matcher.rows[48]["shape_e1"] = .2
+    matcher.rows[48]["shape_e2"] = 0.
+    original = frame.image_nMgy.copy()
+    inverse = frame.invvar_nMgy2.copy()
+    valid = frame.valid.copy()
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    p17 = audit_extended_bright_gaia_mask_experiment(
+        frame, [], matcher, _geometry(), p16c)
+    p18 = audit_catalog_shape_neighbor_and_sky_sensitivity(
+        frame, matcher, _geometry(), p17)
+    assert p18["schema"] == P18_SCHEMA
+    assert p18["status"] == (
+        "FIXED_P17_COHORT_MORPHOLOGY_SKY_DIAGNOSTIC_ONLY")
+    assert p18["n_fixed_star_identities"] == 48
+    assert p18["n_new_identity_holdout"] == 8
+    assert p18["n_profiles_with_both_sky_and_plane"] == 48
+    assert [r["gaia_source_id"] for r in p18["per_star"]] == [
+        r["gaia_source_id"] for r in p17["per_star"]]
+    assert all(v["status"] ==
+               "MORPHOLOGY_MASK_AND_SKY_DESCRIPTIVE_ONLY"
+               for v in p18["per_star"])
+    assert all(len(v["radial_profile"]) == 6
+               for v in p18["per_star"])
+    assert all(len(v["sky_b_leave_one_octant_out_medians_nMgy"]) == 8
+               for v in p18["per_star"])
+    assert any(v["catalog_footprint_class_counts"].get(
+        "EXTENDED_SHAPE_ELLIPSE",0) > 0 for v in p18["per_star"])
+    assert not p18["science_adopted"]
+    np.testing.assert_array_equal(original,frame.image_nMgy)
+    np.testing.assert_array_equal(inverse,frame.invvar_nMgy2)
+    np.testing.assert_array_equal(valid,frame.valid)
+
+
+def test_p18_no_wcs_or_catalog_lineage_fails_closed():
+    frame, matcher = _p17_synthetic_field()
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    p17 = audit_extended_bright_gaia_mask_experiment(
+        frame, [], matcher, _geometry(), p16c)
+    altered = SimpleNamespace(
+        source_sha256="another-catalog-hash",
+        rows=matcher.rows, pixel_positions=matcher.pixel_positions)
+    bad = audit_catalog_shape_neighbor_and_sky_sensitivity(
+        frame, altered, _geometry(), p17)
+    assert bad["status"] == "CATALOG_LINEAGE_MISMATCH"
+    assert bad["per_star"] == []
+    without_wcs = audit_catalog_shape_neighbor_and_sky_sensitivity(
+        frame, matcher, _geometry(), p17)
+    assert without_wcs["n_profiles_with_both_sky_and_plane"] == 0
+    assert all(v["status"] == "MISSING_OR_UNSAFE_WCS_TANGENT_MATRIX"
+               for v in without_wcs["per_star"])
+    assert not without_wcs["science_adopted"]
+
+
+def test_p18_gui_displays_only_descriptive_status():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    text = PSF0Panel._calibration_diagnostic_summary({
+        "catalog_shape_neighbor_sky_qa": {
+            "schema": P18_SCHEMA,
+            "status": "FIXED_P17_COHORT_MORPHOLOGY_SKY_DIAGNOSTIC_ONLY",
+            "n_fixed_star_identities":48,
+            "n_profiles_with_both_sky_and_plane":44,
+        },
+    })
+    assert "P18 catalog morphology / sky sensitivity" in text
+    assert "48 fixed P17 identities" in text
+    assert "NO calibrated sky uncertainty" in text
