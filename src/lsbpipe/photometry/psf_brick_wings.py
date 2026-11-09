@@ -272,7 +272,7 @@ def _within_brick_blank_controls(frame, matcher, stars, fwhm,
                         _med(corr),
                 }
                 for i,(lx,ly) in enumerate(
-                    ((0,0),(1,0),(0,1),(2,0),(1,1)))
+                    ((0,0),(1,0),(0,1),(2,0),(0,2),(1,1)))
                 for values,corr in [(
                     [x["native_pixel_lag_diagnostic"]["lag_samples"][i][
                         "sample_lag_covariance_nMgy2_per_pixel2"]
