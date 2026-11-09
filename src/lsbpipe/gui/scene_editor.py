@@ -445,6 +445,14 @@ class SceneEditor(QWidget):
         self.iso_smooth.setValue(4.)
         settings_row.addWidget(self.iso_smooth)
         iso_layout.addLayout(settings_row)
+        self.iso_bridge_guard = QCheckBox(
+            "Conservative contour · suppress thin bridges (2 px)")
+        self.iso_bridge_guard.setObjectName("scene_isophote_bridge_guard")
+        self.iso_bridge_guard.setChecked(True)
+        self.iso_bridge_guard.setToolTip(
+            "Binary morphological opening; can remove real clumpy or "
+            "tidal features. Compare with guard OFF before interpretation.")
+        iso_layout.addWidget(self.iso_bridge_guard)
         center_row = QHBoxLayout()
         self.iso_pick_center = QPushButton("Pick galaxy centre")
         self.iso_pick_center.setObjectName("scene_isophote_pick_center")
@@ -467,12 +475,39 @@ class SceneEditor(QWidget):
         self.iso_mask_toggle.setChecked(True)
         self.iso_mask_toggle.toggled.connect(self._update_contamination_overlay)
         iso_layout.addWidget(self.iso_mask_toggle)
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("Mask opacity"))
+        self.iso_opacity = QSlider(Qt.Horizontal)
+        self.iso_opacity.setObjectName("scene_neighbour_mask_opacity")
+        self.iso_opacity.setRange(0, 100)
+        self.iso_opacity.setValue(45)
+        self.iso_opacity.valueChanged.connect(self._update_contamination_overlay)
+        opacity_row.addWidget(self.iso_opacity)
+        iso_layout.addLayout(opacity_row)
+        self.iso_show_conflicts = QCheckBox(
+            "Highlight unresolved target overlaps")
+        self.iso_show_conflicts.setChecked(True)
+        self.iso_show_conflicts.toggled.connect(
+            self._update_contamination_overlay)
+        iso_layout.addWidget(self.iso_show_conflicts)
         self.iso_mask_status = QLabel(
             "Neighbour mask not prepared. Local DR11 South Tractor "
             "catalogue required; obtain it through PSF-0 if absent.")
         self.iso_mask_status.setObjectName("scene_neighbor_mask_status")
         self.iso_mask_status.setWordWrap(True)
         iso_layout.addWidget(self.iso_mask_status)
+        self.iso_mask_details_toggle = QToolButton()
+        self.iso_mask_details_toggle.setText("Mask provenance and cautions")
+        self.iso_mask_details_toggle.setCheckable(True)
+        self.iso_mask_details_toggle.setChecked(False)
+        self.iso_mask_details_toggle.setObjectName("scene_mask_details_toggle")
+        iso_layout.addWidget(self.iso_mask_details_toggle)
+        self.iso_mask_details = QLabel("")
+        self.iso_mask_details.setWordWrap(True)
+        self.iso_mask_details.setVisible(False)
+        self.iso_mask_details_toggle.toggled.connect(
+            self.iso_mask_details.setVisible)
+        iso_layout.addWidget(self.iso_mask_details)
         self.iso_generate = QPushButton("2 · Find masked isophote")
         self.iso_generate.setObjectName("scene_isophote_generate")
         self.iso_generate.clicked.connect(self._generate_isophote)
@@ -482,6 +517,21 @@ class SceneEditor(QWidget):
         self.iso_shape.addItem("Equivalent ICRS ellipse", "ellipse")
         self.iso_shape.currentIndexChanged.connect(self._show_isophote_preview)
         iso_layout.addWidget(self.iso_shape)
+        self.iso_share_bands = QCheckBox(
+            "Apply this band-derived shape to all bands (explicit)")
+        self.iso_share_bands.setObjectName("scene_isophote_share_bands")
+        self.iso_share_bands.setChecked(False)
+        self.iso_share_bands.setToolTip(
+            "Default is native-band only. A common ICRS boundary needs "
+            "deliberate confirmation and independent per-band QA.")
+        iso_layout.addWidget(self.iso_share_bands)
+        self.iso_low_conf_override = QCheckBox(
+            "Allow low-confidence DRAFT after manual review")
+        self.iso_low_conf_override.setObjectName(
+            "scene_isophote_review_override")
+        self.iso_low_conf_override.setChecked(False)
+        self.iso_low_conf_override.toggled.connect(self._refresh_controls)
+        iso_layout.addWidget(self.iso_low_conf_override)
         proposal_actions = QHBoxLayout()
         self.iso_accept = QPushButton("Add proposed region")
         self.iso_accept.setObjectName("scene_isophote_accept")
@@ -491,14 +541,28 @@ class SceneEditor(QWidget):
         self.iso_discard.clicked.connect(self._clear_isophote_preview)
         proposal_actions.addWidget(self.iso_discard)
         iso_layout.addLayout(proposal_actions)
+        self.iso_summary = QLabel(
+            "No contour yet. Run source screening, then a multi-scale proposal.")
+        self.iso_summary.setObjectName("scene_isophote_summary")
+        self.iso_summary.setWordWrap(True)
+        iso_layout.addWidget(self.iso_summary)
+        self.iso_details_toggle = QToolButton()
+        self.iso_details_toggle.setText("Isophote QA and all sensitivity trials")
+        self.iso_details_toggle.setCheckable(True)
+        self.iso_details_toggle.setChecked(False)
+        self.iso_details_toggle.setObjectName("scene_isophote_details_toggle")
+        iso_layout.addWidget(self.iso_details_toggle)
         self.iso_details = QLabel(
             "Uses local provisional sky and native FITS. No PSF/sky/stellar "
             "correction or science adoption. Review before accepting.")
         self.iso_details.setWordWrap(True)
         self.iso_details.setObjectName("scene_isophote_evidence")
+        self.iso_details.setVisible(False)
+        self.iso_details_toggle.toggled.connect(self.iso_details.setVisible)
         iso_layout.addWidget(self.iso_details)
         self.iso_threshold.valueChanged.connect(self._clear_isophote_preview)
         self.iso_smooth.valueChanged.connect(self._clear_isophote_preview)
+        self.iso_bridge_guard.toggled.connect(self._clear_isophote_preview)
         control_layout.addWidget(isogroup)
 
         buttons = QHBoxLayout()
