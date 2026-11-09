@@ -219,22 +219,31 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
         threshold_contrast=float(threshold),
         smooth_sigma_pix=float(smoothing),
         bridge_guard_pix=int(bridge_guard_pix))
-    geometry = seed_as_sky_geometry(model.seed, wcs)
-    ellipse = SkyMaskShape(
-        "ellipse",
-        center=(geometry["ra_deg"], geometry["dec_deg"]),
-        a_arcsec=geometry["sma_arcsec"],
-        q=geometry["q_sky"],
-        pa_deg=geometry["pa_north_through_east_deg"])
-    coords = np.asarray(model.contour_xy)
-    ra, dec = wcs.all_pix2world(coords[:, 0], coords[:, 1], 0)
-    if not (np.isfinite(ra).all() and np.isfinite(dec).all()):
-        raise ValueError("WCS cannot project proposed isophotal contour")
-    contour = SkyMaskShape(
-        "polygon", vertices=tuple((float(a)%360., float(b))
-                                  for a, b in zip(ra, dec)))
+    def sky_shapes(candidate):
+        geometry = seed_as_sky_geometry(candidate.seed, wcs)
+        ellipse = SkyMaskShape(
+            "ellipse",
+            center=(geometry["ra_deg"], geometry["dec_deg"]),
+            a_arcsec=geometry["sma_arcsec"],
+            q=geometry["q_sky"],
+            pa_deg=geometry["pa_north_through_east_deg"])
+        coords = np.asarray(candidate.contour_xy)
+        ra, dec = wcs.all_pix2world(coords[:, 0], coords[:, 1], 0)
+        if not (np.isfinite(ra).all() and np.isfinite(dec).all()):
+            raise ValueError("WCS cannot project trial isophotal contour")
+        contour = SkyMaskShape(
+            "polygon", vertices=tuple((float(a)%360., float(b))
+                                      for a,b in zip(ra,dec)))
+        return {"ellipse":ellipse, "contour":contour,
+                "model":candidate}
+
+    alternatives = tuple(
+        (sky_shapes(candidate) if candidate is not None else None)
+        for candidate in sensitivity["trial_models"])
+    ellipse, contour = alternatives[0]["ellipse"], alternatives[0]["contour"]
     return {"status":model.state, "ellipse":ellipse, "contour":contour,
-            "proposal":model, "band":dataset["band"],
+            "proposal":model, "alternatives":alternatives,
+            "band":dataset["band"],
             "project_id":dataset["project_id"],
             "source":dataset["source"],
             "catalog_sha256":contamination["catalog_sha256"],
