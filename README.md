@@ -13,7 +13,7 @@ python -m pip install -e ".[exact,gui,knowledge,test]" pytest-qt
 python -m desidera.gui
 ```
 
-The desktop application opens the **Galaxy Project Hub**, where a researcher can create an object-centred project, reopen an existing galaxy folder and continue from its locally saved state. The current project-creation form is a **single-page dialog**, not the older three-step wizard described in historical design notes.
+The desktop application opens the **Galaxy Project Hub**, where a researcher can create an object-centred project, reopen an existing galaxy folder and continue from its locally saved state. Photometry Workspace runs **core + holdout empirical PSF QA by default**; the historically intensive same-brick P15–P20 analysis is available only through an explicit checkbox in **Advanced diagnostics**. The complete scientific pilot remains archived; an unrun audit is never reported as passed. The current project-creation form is a **single-page dialog**, not the older three-step wizard described in historical design notes.
 
 The main source tree remains `src/lsbpipe/` for compatibility with existing research projects and imports. `src/desidera/` contains public package/launcher compatibility code; the installable distribution is called `desidera`. Both `python -m desidera.gui` and `desidera-gui` use the same Project Hub launcher. Historical `lsbpipe` imports, `python -m lsbpipe.gui` and on-disk project identifiers are intentionally preserved.
 
