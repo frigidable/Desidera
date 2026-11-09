@@ -91,8 +91,11 @@ def inspect_leo_p_inputs(project_root: str | Path, bands=("r", "g", "z")):
 def run_leo_p_pilot(project_root: str | Path, *, bands=("r", "g", "z"),
                     config: PSF0Config | None = None,
                     protection_arcsec: float | None = None,
-                    save_diagnostic: bool = False) -> dict:
+                    save_diagnostic: bool = False,
+                    extended_research_qa: bool = False) -> dict:
     """Actual PSF-0 requires real original FITS; never manufactures mock data."""
+    if type(extended_research_qa) is not bool:
+        raise TypeError("extended_research_qa must be bool")
     preflight = inspect_leo_p_inputs(project_root, bands)
     project = read_object_project(project_root)
     release, region, brick, _ = project.selected_dataset
@@ -101,6 +104,8 @@ def run_leo_p_pilot(project_root: str | Path, *, bands=("r", "g", "z"),
     if not math.isfinite(radius) or not 0 < radius <= 1800:
         raise ValueError("Invalid explicit Leo P protection radius")
     outcome = {"preflight": preflight, "target_protection_arcsec": radius,
+               "postfit_qa_scope_requested": (
+                   "full_research" if extended_research_qa else "standard_core"),
                "band_results": [], "scientific_status": "PSF0_DIAGNOSTIC_NOT_ADOPTED"}
     cfg = config or PSF0Config()
     for entry in preflight["bands"]:
@@ -116,7 +121,8 @@ def run_leo_p_pilot(project_root: str | Path, *, bands=("r", "g", "z"),
                 band=band, hash_inputs=True, require_explicit_bunit=True)
             result = build_empirical_coadd_psf(
                 frame, target_icrs_deg=LEO_P_WORKING_ICRS,
-                target_protection_arcsec=radius, config=cfg)
+                target_protection_arcsec=radius, config=cfg,
+                extended_research_qa=extended_research_qa)
             report = result.report()
             if save_diagnostic:
                 location = export_psf0_diagnostic(
@@ -143,6 +149,9 @@ def main() -> int:
                         help="Explicit initial guess, not a measured seeing")
     parser.add_argument("--target-radius-arcsec", type=float, default=None,
                         help="Override conservative protected Leo P region")
+    parser.add_argument("--full-research-qa", action="store_true",
+                        help="Explicit opt-in: full historical P15–P20 "
+                             "same-brick research diagnostics (slow)")
     parser.add_argument("--save-diagnostic", action="store_true",
                         help="Explicitly write immutable experimental PSF FITS + QA")
     args = parser.parse_args()
@@ -150,7 +159,8 @@ def main() -> int:
     report = run_leo_p_pilot(
         args.project_root, bands=args.bands, config=cfg,
         protection_arcsec=args.target_radius_arcsec,
-        save_diagnostic=args.save_diagnostic)
+        save_diagnostic=args.save_diagnostic,
+        extended_research_qa=args.full_research_qa)
     print(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False))
     return 0 if any(row.get("status") == "EXPERIMENTAL_PSF_NOT_ADOPTED"
                     for row in report["band_results"]) else 2
