@@ -334,3 +334,92 @@ def test_scene_circle_outline_uses_true_spherical_bearing_and_arcsec_radius():
         96.-center_y-.5,abs=.1)
     assert path.boundingRect().width()>40.
     assert path.boundingRect().height()>40.
+
+
+def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
+        qtbot, tmp_path, monkeypatch):
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    data = _data(project.project_id)
+    yy, xx = np.indices((96,96))
+    rng = np.random.default_rng(71)
+    # Native coadd in nMgy/pix with a resolved, faint elongated source
+    # at the exact ICRS centre plus unrelated compact sources.
+    ang = np.deg2rad(25.)
+    major = np.cos(ang)*(xx-48.) + np.sin(ang)*(yy-48.)
+    minor = -np.sin(ang)*(xx-48.) + np.cos(ang)*(yy-48.)
+    data["data"]["image"] = (
+        .7 + rng.normal(0., .18, size=xx.shape)
+        + 1.7*np.exp(-.5*((major/9.)**2+(minor/5.)**2)))
+    editor._accept_dataset(data)
+    original = data["data"]["image"].copy()
+    assert editor.iso_generate.isEnabled()
+    assert editor.draft.edits == ()
+
+    editor.iso_smooth.setValue(2.)
+    editor.iso_threshold.setValue(2.5)
+    editor.iso_generate.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None
+        and editor._isophote_proposal is not None, timeout=10000)
+    assert editor._isophote_preview is not None
+    assert editor.iso_accept.isEnabled()
+    assert editor.draft.edits == ()
+    assert not (project.root/"analyses").exists()
+    assert "NOT a calibrated outer isophote" in editor.iso_details.text()
+    assert editor._isophote_proposal["contour"].kind == "polygon"
+    assert editor._isophote_proposal["ellipse"].kind == "ellipse"
+    editor.iso_shape.setCurrentIndex(editor.iso_shape.findData("ellipse"))
+    assert editor._isophote_preview is not None
+    editor.iso_discard.click()
+    assert editor._isophote_proposal is None
+    assert editor.draft.edits == ()
+    assert not (project.root/"analyses").exists()
+
+    editor.iso_generate.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None
+        and editor._isophote_proposal is not None, timeout=10000)
+    editor.iso_shape.setCurrentIndex(editor.iso_shape.findData("contour"))
+    editor.iso_accept.click()
+    assert len(editor.draft.edits) == 1
+    edit = editor.draft.edits[0]
+    assert edit.shape.kind == "polygon"
+    assert edit.purpose == "protect_target"
+    assert edit.band is None
+    assert "AUTO_ISOPHOTE_PRELIMINARY" in edit.comment
+    assert np.array_equal(data["data"]["image"],original)
+    assert editor._isophote_proposal is None
+    editor.save_draft()
+    saved, _ = read_active_mask_draft(project.root)
+    assert saved.edits == (edit,)
+    editor.undo()
+    assert editor.draft.edits == ()
+    editor.redo()
+    assert editor.draft.edits == (edit,)
+    editor.set_band("r")
+    editor._accept_dataset(_data(project.project_id, band="r",
+                                 wcs=_native_wcs(flipped=True)))
+    assert len(editor._paths) == 1
+
+
+def test_isophote_worker_result_is_discarded_after_band_switch(
+        qtbot, tmp_path, monkeypatch):
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    import lsbpipe.gui.scene_editor as module
+    from threading import Event
+    started, release = Event(), Event()
+
+    def delayed(*args):
+        started.set()
+        release.wait(2)
+        return {"status":"LOCAL_ISOPHOTE_PROPOSAL_NOT_ADOPTED",
+                "band":"g", "project_id":project.project_id,
+                "source":"old source"}
+    monkeypatch.setattr(module, "propose_scene_isophote", delayed)
+    editor.iso_generate.click()
+    assert started.wait(2.)
+    editor.set_band("r")
+    release.set()
+    qtbot.waitUntil(lambda: editor._future is None, timeout=4000)
+    assert editor._isophote_proposal is None
+    assert editor.draft.edits == ()
