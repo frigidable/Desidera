@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from lsbpipe.photometry.readiness import inspect_photometry_inputs
 from lsbpipe.gui.psf0_panel import PSF0Panel
 from lsbpipe.gui.psf0_full_qa import detailed_band_report
+from lsbpipe.gui.scene_editor import SceneEditor
 
 
 
@@ -76,6 +77,16 @@ class PhotometryWorkspace(QWidget):
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
 
+        # These are two real user workflows in ONE object-bound
+        # Photometry Workspace, not eight non-executable roadmap cards.
+        self.stage_tabs = QTabWidget(self)
+        self.stage_tabs.setObjectName("photometry_science_stage_tabs")
+        psf_stage = QWidget(self.stage_tabs)
+        psf_stage.setObjectName("photometry_psf_stage")
+        psf_stage_layout = QVBoxLayout(psf_stage)
+        psf_stage_layout.setContentsMargins(0, 0, 0, 0)
+        psf_stage_layout.setSpacing(7)
+        self.stage_tabs.addTab(psf_stage, "1 · PSF-0")
         # One persistent selector, not a tab strip that disappears behind
         # the scroll area when the user examines PSF settings or QA.
         self.band_selector = QTabBar(self)
@@ -85,7 +96,7 @@ class PhotometryWorkspace(QWidget):
         self.band_selector.setToolTip(
             "Select g/r/i/z to inspect its independent PSF model, "
             "radial comparison and scientific rejection status.")
-        root.addWidget(self.band_selector)
+        psf_stage_layout.addWidget(self.band_selector)
 
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
@@ -255,10 +266,26 @@ class PhotometryWorkspace(QWidget):
         self.blocker.setVisible(False)
         body.addWidget(self.blocker)
         center_scroll.setWidget(central)
-        root.addWidget(center_scroll, 1)
+        psf_stage_layout.addWidget(center_scroll, 1)
+        self.scene_editor = SceneEditor(self.stage_tabs)
+        self.stage_tabs.addTab(self.scene_editor, "2 · Scene & Masks")
+        self.stage_tabs.setTabToolTip(
+            1, "Original FITS/WCS editor; editable ICRS mask drafts. "
+               "No final galaxy segmentation or adopted photometry.")
+        root.addWidget(self.stage_tabs, 1)
+        self.stage_tabs.currentChanged.connect(self._stage_changed)
         self._set_view_mode()
         self._update_band_tab_statuses()
         self._apply_science_reflow()
+
+    def _stage_changed(self, index):
+        if index == self.stage_tabs.indexOf(self.scene_editor):
+            band = self.band_tabs.currentWidget().band.currentData()
+            if band in ("g", "r", "i", "z"):
+                self.scene_editor.set_band(band)
+        # Opening Scene is deliberately read-only: local FITS load needs
+        # the explicit Load original FITS button. Mask revision saving
+        # also requires a separate explicit researcher action.
 
     def _apply_science_reflow(self):
         if hasattr(self, "psf0_panels"):
@@ -449,6 +476,7 @@ class PhotometryWorkspace(QWidget):
             and saved.project_id == self._bound_project_id
             and identity == self._bound_source_identity)
         self._project_root = Path(saved.root)
+        self.scene_editor.bind_project(self._project_root)
         self._bound_project_id = saved.project_id
         self._bound_source_identity = identity
         # A new UUID, release/region/brick or data root invalidates PSFs.
@@ -459,6 +487,7 @@ class PhotometryWorkspace(QWidget):
     def refresh(self, *, force=False):
         # Only a new project or explicit Refresh can discard a preview.
         # Re-entering the same project/photometry view is non-destructive.
+        self.scene_editor.bind_project(self._project_root)
         for panel in self.psf0_panels.values():
             if force and panel._project_root is not None:
                 panel._project_root = self._project_root
