@@ -103,7 +103,12 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 major = max(major, 7.)
                 if source_type != "REX":
                     missing_shape += 1
-        r_pix = major/arcsec_per_pixel
+        # The geometric-mean scale is insufficient for a rotated or
+        # anisotropic native WCS: bound *both* axes by the smallest
+        # singular value of the local east/north pixel Jacobian.
+        min_scale = (float(np.min(np.linalg.svd(jacobian, compute_uv=False)))
+                     if pa is not None else arcsec_per_pixel)
+        r_pix = major/min_scale
         if (x+r_pix < 0 or x-r_pix >= nx or
                 y+r_pix < 0 or y-r_pix >= ny):
             outside += 1
