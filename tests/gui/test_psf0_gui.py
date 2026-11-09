@@ -83,7 +83,10 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     assert panel.experiment.count() == 6
     assert tuple(window.photometry_workspace.psf0_panels) == ("g", "r", "i", "z")
     assert window.photometry_workspace.psf0_panels["r"] is panel
-    assert panel.experiment.currentData() == "baseline"
+    assert panel.experiment.currentData() == "outer_sky_isolation_footprint"
+    # Explicitly choose the historical baseline in this A/B regression;
+    # it is no longer the default end-user recipe.
+    panel.experiment.setCurrentIndex(panel.experiment.findData("baseline"))
     assert panel.band.currentData() == "r"
     assert panel.protection.value() == pytest.approx(90.)
     assert not panel.save_btn.isEnabled()
@@ -332,7 +335,8 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert [workspace.band_selector.tabText(i)
             for i in range(4)] == [
         "G · No FITS", "R · No FITS", "I · No FITS", "Z · No FITS"]
-    assert not workspace.workflow_details.isVisible()
+    assert not hasattr(workspace, "workflow_details")
+    assert not hasattr(workspace, "workflow_toggle")
     assert not workspace.psf0_panels["g"].inspection_details.isVisible()
     assert not workspace.psf0_panels["g"].advanced_details.isVisible()
     assert workspace.psf0_panels["g"].kernel_view.isVisible()
@@ -340,7 +344,7 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert not workspace.psf0_panels["g"].kernel_view.pixmap()
     assert not workspace.psf0_panels["g"].profile_view.pixmap()
     assert workspace.source_details_toggle.isCheckable()
-    assert workspace.method_details_toggle.isCheckable()
+    assert not hasattr(workspace, "method_details_toggle")
 
     # Scientific configuration of an inactive band must not be reset.
     g = workspace.psf0_panels["g"]
@@ -369,12 +373,8 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert g.inspection_details.isVisible()
     assert g.advanced_details.isVisible()
 
-    workspace.workflow_toggle.click()
-    assert workspace.workflow_details.isVisible()
     workspace.source_details_toggle.click()
     assert workspace.source_details_toggle.isChecked()
-    workspace.method_details_toggle.click()
-    assert workspace.method_details_toggle.isChecked()
     # No mock project/FITS is required; these are presentation-only controls.
 
 
@@ -390,8 +390,10 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
     r = workspace.psf0_panels["r"]
     assert workspace.view_mode.currentData() == "guided"
     assert not g.protection.isVisible()
-    assert not g.review_btn.isVisible()
-    assert not g.save_btn.isVisible()
+    assert g.review_btn.isVisible()
+    assert g.save_btn.isVisible()
+    assert not g.catalog_policy.isVisible()
+    assert not g.experiment.isVisible()
     assert not workspace.copy_full_qa_btn.isVisible()
     assert g.fwhm.isVisible()
     assert "target protected" in g.mode_context.text()
@@ -412,7 +414,9 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
     assert workspace.copy_full_qa_btn.isVisible()
     g.advanced_toggle.click()
     assert g.advanced_details.isVisible()
-    assert g.mode_context.text().startswith("Research controls visible")
+    assert g.catalog_policy.isVisible()
+    assert g.experiment.isVisible()
+    assert g.mode_context.text().startswith("Advanced methods available")
     assert (g.fwhm.value(), g.protection.value(),
             g.catalog_policy.currentData(), g.experiment.currentData()) == request
     workspace.band_tabs.setCurrentWidget(r)
@@ -422,6 +426,7 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
     assert not g.protection.isVisible()
     assert not g.advanced_details.isVisible()
     assert "123.0 arcsec" in g.mode_context.text()
+    assert "Non-default experimental configuration" in g.mode_context.text()
     assert (g.fwhm.value(), g.protection.value(),
             g.catalog_policy.currentData(), g.experiment.currentData()) == request
 
@@ -474,7 +479,6 @@ def test_photometry_fills_normal_desktop_and_hides_empty_psf_footprint(
     assert column.maximumWidth() == 1400
     assert column.width() <= 1400
     assert column.width() >= 1300
-    assert w.workflow_toggle.maximumWidth() == 325
     assert w.source_details_toggle.maximumWidth() == 390
     assert w.band_tabs.maximumWidth() >= 1400
     for band, panel in w.psf0_panels.items():
