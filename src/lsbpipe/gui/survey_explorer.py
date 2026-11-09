@@ -865,6 +865,13 @@ class SurveyExplorer(QMainWindow):
             return
         from lsbpipe.photometry.psf_gui_backend import read_saved_psf0_bands
         root = source_key[1]
+        archive = Path(root) / "analyses" / "psf-pilots"
+        # Avoid starting a worker (and briefly blocking GUI operations) for
+        # projects with no historical PSF results at all. A symlinked archive
+        # is still passed to the backend to be explicitly rejected.
+        if not archive.exists() and not archive.is_symlink():
+            self._psf_restore_source_key = source_key
+            return
         self._psf_restore_pending_key = source_key
 
         def work(progress):
