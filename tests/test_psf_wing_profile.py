@@ -22,7 +22,8 @@ from lsbpipe.photometry.psf_core_wings_validation import (
 )
 from lsbpipe.photometry.psf_brick_wings import (
     audit_brick_joint_wings_sky_spatial, _joint_nuisance_fit,
-    _within_brick_blank_controls, SCHEMA as P20_SCHEMA,
+    _within_brick_blank_controls, _blank_pixel_lag_covariance,
+    _blank_annular_covariance, SCHEMA as P20_SCHEMA,
 )
 
 FWHM=5.136902957677135
@@ -1021,6 +1022,11 @@ def test_p20_blank_controls_are_within_same_brick_and_fixed_catalog_grid():
     assert blank["n_catalog_fixed_blank_controls"] <= 16
     assert blank["n_measured_blank_controls"] > 0
     assert len(blank["per_ring"]) == 6
+    assert "pixel_lag_diagnostics" in blank
+    assert blank["pixel_lag_diagnostics"][
+        "n_controls_with_lag_measurements"] > 0
+    assert len(blank["pixel_lag_diagnostics"]["per_lag"]) == 6
+    assert "annular_median_estimator_blank_sample_covariance" in blank
     for site in blank["per_control"]:
         x,y=site["center_native_xy_pix"]
         assert 0<x<frame.shape[1] and 0<y<frame.shape[0]
@@ -1086,3 +1092,46 @@ def test_p18_native_tan_wcs_jacobian_does_not_double_correct_cosdec():
     wcs.wcs.crval = [359.999999,60.]
     wrapped = _p18_sky_to_pixel_matrix(frame,599.,599.)
     np.testing.assert_allclose(wrapped,mat,atol=1e-5,rtol=0)
+
+
+
+def test_p20_native_pixel_lag_covariance_detects_actual_adjacent_correlation():
+    rng=np.random.default_rng(24)
+    white=rng.normal(size=(121,121))
+    # Synthetic correlated native pixel field, not a mocked covariance
+    # matrix: each horizontal pixel shares half its generating noise.
+    data=.001*white+.0006*np.roll(white,1,axis=1)
+    data=data+np.arange(121,dtype=float)[None,:]*.00001
+    good=np.ones_like(data,dtype=bool)
+    good[:3,:]=False
+    snapshot=data.copy()
+    audit=_blank_pixel_lag_covariance(data,good)
+    assert audit["status"] == (
+        "PLANE_DETRENDED_NATIVE_LAG_SENSITIVITY_ONLY")
+    assert audit["n_native_pixels_used"]>10000
+    assert audit["lag_samples"][0][
+        "lag_correlation_relative_to_zero"] == pytest.approx(1.,abs=.01)
+    assert audit["lag_samples"][1][
+        "lag_correlation_relative_to_zero"] > .2
+    assert not audit["is_calibrated_noise_only_covariance"]
+    np.testing.assert_array_equal(data,snapshot)
+
+
+def test_p20_annular_median_blank_control_covariance_needs_eight_patches():
+    seven=[{"status":"BLANK_CONDITIONAL_PROFILE_ONLY",
+             "radial_residual_nMgy_per_pixel":[.01*i+k*.001 for k in range(6)]}
+           for i in range(7)]
+    unavailable=_blank_annular_covariance(seven)
+    assert unavailable["status"]==(
+        "TOO_FEW_COMPLETE_BLANK_PATCHES_FOR_COVARIANCE")
+    assert unavailable["matrix_nMgy2_per_pixel2"] is None
+    eighth={"status":"BLANK_CONDITIONAL_PROFILE_ONLY",
+            "radial_residual_nMgy_per_pixel":[.2+k*.003 for k in range(6)]}
+    available=_blank_annular_covariance(seven+[eighth])
+    assert available["status"]==(
+        "BLANK_ANNULAR_MEDIAN_SPATIAL_SAMPLE_COVARIANCE_ONLY")
+    covariance=np.asarray(available["matrix_nMgy2_per_pixel2"])
+    assert covariance.shape==(6,6)
+    np.testing.assert_allclose(covariance,covariance.T)
+    assert np.all(np.diag(covariance)>=0)
+    assert not available["not_calibrated_noise_only_covariance"] is False
