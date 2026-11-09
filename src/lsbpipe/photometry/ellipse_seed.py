@@ -300,7 +300,8 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
                            center_xy: tuple[float, float], *,
                            threshold_contrast: float = 2.2,
                            smooth_sigma_pix: float = 4.,
-                           max_radius_pix: float = 380.) -> LocalIsophotalProposal:
+                           max_radius_pix: float = 380.,
+                           bridge_guard_pix: int = 0) -> LocalIsophotalProposal:
     """Propose a TARGET-ANCHORED local threshold isophote, never an adopted one.
 
     Estimates a constant provisional sky from a distant annulus of the
@@ -310,7 +311,9 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
     NOT a calibrated surface-brightness isophote or reliable noise sigma.
     No source FITS are written and no photometric sums are produced.
     """
-    from scipy.ndimage import binary_dilation, gaussian_filter, label
+    from scipy.ndimage import (
+        binary_dilation, binary_opening, gaussian_filter, label,
+    )
 
     data = np.asarray(image, dtype=float)
     accepted = np.asarray(valid)
@@ -325,8 +328,10 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
         raise ValueError("Galaxy centre outside this native FITS cutout")
     if (not 1. <= threshold_contrast <= 8. or
             not 1. <= smooth_sigma_pix <= 12. or
-            not 60. <= max_radius_pix <= 750.):
-        raise ValueError("Isophote contrast/smoothing/search settings out of range")
+            not 60. <= max_radius_pix <= 750. or
+            type(bridge_guard_pix) is not int or
+            not 0 <= bridge_guard_pix <= 8):
+        raise ValueError("Isophote contrast/smoothing/bridge settings out of range")
     good = accepted & np.isfinite(data)
     yy, xx = np.ogrid[:ny, :nx]
     distance_sq = (xx-x0)**2+(yy-y0)**2
@@ -352,6 +357,11 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
     y1, y2 = max(0, int(y0-box)), min(ny, int(y0+box)+2)
     strength = smoothed[y1:y2, x1:x2] / smooth_rms
     positive = supported[y1:y2, x1:x2] & (strength >= threshold_contrast)
+    if bridge_guard_pix:
+        # A morphology diagnostic: remove links thinner than the selected
+        # native-pixel opening radius, never claiming real tidal features
+        # are unphysical. The user can turn this guard OFF to compare.
+        positive = binary_opening(positive, iterations=bridge_guard_pix)
     connected, count = label(positive)  # 4-connected: diagonal specks do not bridge
     if not count:
         raise ValueError(
@@ -413,6 +423,8 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
     flags = ["BACKGROUND_CONSTANT_NOT_VALIDATED",
              "NO_VALIDATED_PSFWINGS_OR_MODEL_SUBTRACTION",
              "CONTOUR_PADDING_2_NATIVE_PIXELS"]
+    if bridge_guard_pix:
+        flags.append(f"THIN_BRIDGE_OPENING_{bridge_guard_pix}PX")
     if centroid_offset > max(12., seed.sma_pix*.30):
         flags.append("CENTROID_OFFSET_REVIEW")
     if q > .94:
@@ -425,3 +437,84 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
         sky_pixels=int(np.count_nonzero(sky_mask)),
         threshold_contrast=threshold_contrast,
         smoothing_pix=smooth_sigma_pix, flags=tuple(flags))
+
+
+def assess_local_isophote_sensitivity(
+        image: np.ndarray, valid: np.ndarray,
+        center_xy: tuple[float, float], reference: LocalIsophotalProposal,
+        *, threshold_contrast: float, smooth_sigma_pix: float,
+        bridge_guard_pix: int = 0) -> dict:
+    """Evaluate multi-threshold/multi-scale robustness without an S/N claim.
+
+    This is an exploratory QA gate. The local sky remains provisional and
+    correlated noise is NOT calibrated. Failed nearby thresholds count as
+    low confidence, rather than being removed from the denominator.
+    """
+    variants = (
+        (max(1., threshold_contrast-.5), smooth_sigma_pix),
+        (min(8., threshold_contrast+.65), smooth_sigma_pix),
+        (threshold_contrast, min(12., smooth_sigma_pix*1.35)),
+    )
+    trials = [{
+        "threshold": float(threshold_contrast),
+        "smooth_pix": float(smooth_sigma_pix),
+        "connected_pixels": reference.seed.component_pixels,
+        "q": reference.seed.q,
+        "centroid_offset_pix": reference.seed.centroid_offset_pix,
+        "state": "DETECTED",
+    }]
+    failed = 0
+    for contrast, smooth in variants:
+        try:
+            model = propose_local_isophote(
+                image, valid, center_xy,
+                threshold_contrast=contrast,
+                smooth_sigma_pix=smooth,
+                bridge_guard_pix=bridge_guard_pix)
+            trials.append({
+                "threshold": float(contrast),
+                "smooth_pix": float(smooth),
+                "connected_pixels": model.seed.component_pixels,
+                "q": model.seed.q,
+                "centroid_offset_pix": model.seed.centroid_offset_pix,
+                "state": "DETECTED",
+            })
+        except ValueError as exc:
+            failed += 1
+            trials.append({
+                "threshold": float(contrast),
+                "smooth_pix": float(smooth),
+                "state": "NO_STABLE_COMPONENT",
+                "reason": str(exc)[:240],
+            })
+    detected = [trial for trial in trials if trial["state"]=="DETECTED"]
+    areas = [trial["connected_pixels"] for trial in detected]
+    ratios = [trial["q"] for trial in detected]
+    offsets = [trial["centroid_offset_pix"] for trial in detected]
+    area_ratio = float(max(areas)/min(areas))
+    q_span = float(max(ratios)-min(ratios))
+    max_offset = float(max(offsets))
+    flags = []
+    if failed:
+        flags.append("CONTOUR_FAILS_NEARBY_THRESHOLDS")
+    if area_ratio > 2.2:
+        flags.append("CONTOUR_AREA_UNSTABLE")
+    if q_span > .25:
+        flags.append("ELLIPTICITY_UNSTABLE")
+    if max_offset > max(16., .25*reference.seed.sma_pix):
+        flags.append("UNANCHORED_CENTROID_DRIFT")
+    # No unreviewed automatic adoption even in the best case; this only
+    # distinguishes a candidate worth reviewing from an unstable one.
+    confidence = ("REVIEWABLE_PRELIMINARY" if not flags
+                  else "LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE")
+    return {
+        "confidence": confidence,
+        "flags": tuple(flags),
+        "trial_count": len(trials),
+        "failed_trials": failed,
+        "area_ratio": area_ratio,
+        "q_spread": q_span,
+        "max_centroid_offset_pix": max_offset,
+        "trials": tuple(trials),
+        "sensitivity_status": "MULTISCALE_DIAGNOSTIC_NOT_SCIENCE_VALIDATED",
+    }
