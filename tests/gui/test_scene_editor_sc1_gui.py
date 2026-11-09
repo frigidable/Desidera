@@ -352,7 +352,42 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
         + 1.7*np.exp(-.5*((major/9.)**2+(minor/5.)**2)))
     editor._accept_dataset(data)
     original = data["data"]["image"].copy()
+    assert editor.iso_prepare.isEnabled()
+    assert not editor.iso_generate.isEnabled()  # no raw-image fallback
+    assert editor.draft.edits == ()
+
+    import lsbpipe.gui.scene_editor as module
+    from types import SimpleNamespace
+    source_masks = []
+
+    def fake_prepare(dataset, root, draft, centre):
+        mask = np.zeros(dataset["pixel_shape"], bool)
+        mask[5:12, 78:85] = True
+        source_masks.append((dataset["band"], root))
+        return {
+            "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "mask":mask, "auto_mask":mask.copy(),
+            "protected":np.zeros_like(mask),
+            "hard":dataset["native_hard"].copy(),
+            "project_id":project.project_id,
+            "draft_digest":draft.digest,
+            "dataset_source":dataset["source"], "band":dataset["band"],
+            "anchor_icrs":centre, "catalog_sha256":"a"*64,
+            "stats":{"masked_catalog_sources":1,
+                     "skipped_target_overlap":0,
+                     "excluded_pixels":49, "native_hard_pixels":1},
+            "flags":("PSF_WINGS_NOT_VALIDATED",),
+        }
+
+    monkeypatch.setattr(module, "prepare_scene_neighbour_masks",
+                        fake_prepare)
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None
+        and editor._contamination is not None, timeout=10000)
+    assert source_masks == [("g", str(project.root))]
     assert editor.iso_generate.isEnabled()
+    assert editor._contamination_overlay is not None
     assert editor.draft.edits == ()
 
     editor.iso_smooth.setValue(2.)
@@ -400,6 +435,8 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
     editor._accept_dataset(_data(project.project_id, band="r",
                                  wcs=_native_wcs(flipped=True)))
     assert len(editor._paths) == 1
+    assert editor._contamination is None
+    assert not editor.iso_generate.isEnabled()
 
 
 def test_isophote_worker_result_is_discarded_after_band_switch(
@@ -416,6 +453,25 @@ def test_isophote_worker_result_is_discarded_after_band_switch(
                 "band":"g", "project_id":project.project_id,
                 "source":"old source"}
     monkeypatch.setattr(module, "propose_scene_isophote", delayed)
+    def prepare(dataset, root, draft, center):
+        mask = np.zeros(dataset["pixel_shape"],bool)
+        return {
+            "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "mask":mask, "auto_mask":mask,
+            "project_id":project.project_id,
+            "dataset_source":dataset["source"], "band":dataset["band"],
+            "draft_digest":draft.digest, "anchor_icrs":center,
+            "catalog_sha256":"f"*64,
+            "stats":{"masked_catalog_sources":0,
+                     "skipped_target_overlap":0,
+                     "excluded_pixels":0, "native_hard_pixels":1},
+            "flags":(),
+        }
+    monkeypatch.setattr(module, "prepare_scene_neighbour_masks",prepare)
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._contamination is not None,
+        timeout=4000)
     editor.iso_generate.click()
     assert started.wait(2.)
     editor.set_band("r")
