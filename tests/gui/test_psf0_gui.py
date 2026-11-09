@@ -79,6 +79,11 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     window.photometry_btn.click()
     panel = window.photometry_workspace.psf0_panel
     assert window.preview_tabs.currentWidget() is window.photometry_workspace
+    # The standard policy is strict Gaia; the legacy DAO-only A/B
+    # fixture deliberately opts into the archived diagnostic mode.
+    assert not panel.run_btn.isEnabled()
+    panel.catalog_policy.setCurrentIndex(
+        panel.catalog_policy.findData("dao_diagnostic"))
     assert panel.run_btn.isEnabled()
     assert panel.experiment.count() == 6
     assert tuple(window.photometry_workspace.psf0_panels) == ("g", "r", "i", "z")
@@ -396,7 +401,7 @@ def test_guided_vs_research_changes_visibility_not_recipe(qtbot):
     assert not g.experiment.isVisible()
     assert not workspace.copy_full_qa_btn.isVisible()
     assert g.fwhm.isVisible()
-    assert "target protected" in g.mode_context.text()
+    assert "Target protected" in g.mode_context.text()
     # Native project selection is absent, but the recipe is still editable.
     g.fwhm.setValue(6.25)
     g.protection.setValue(123.)
