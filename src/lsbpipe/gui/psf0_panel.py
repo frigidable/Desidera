@@ -1218,6 +1218,20 @@ class PSF0Panel(QGroupBox):
                     f"  P17 native mask calculations completed for "
                     f"{p17.get('n_multimask_stars_measured', 0)} "
                     "preselected stars. No star replacement or PSF adoption.")
+        execution = metrics.get("postfit_qa_execution")
+        if isinstance(execution, dict):
+            if execution.get("mode") == "standard_core":
+                notes.append(
+                    "Standard core + independent holdout QA completed. "
+                    "Historical native-brick P15–P20 spatial/wing/sky "
+                    "research audits were NOT RUN, NOT PASSED; enable "
+                    "'Run full historical P15–P20 research QA' in Advanced "
+                    "diagnostics to execute them. Core science HOLD remains.")
+            elif execution.get("mode") == "full_research":
+                notes.append(
+                    "Full original-brick P15–P20 diagnostic research "
+                    "requested and executed. Descriptive QA does not "
+                    "certify wide-angle PSF wings or science adoption.")
         p18 = metrics.get("catalog_shape_neighbor_sky_qa")
         if isinstance(p18, dict):
             notes.append(
