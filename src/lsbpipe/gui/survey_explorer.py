@@ -683,6 +683,8 @@ class SurveyExplorer(QMainWindow):
         self.photometry_workspace.psf0TractorRequested.connect(
             self._acquire_project_psf0_tractor)
         from lsbpipe.gui.psf0_batch_controller import launch as launch_psf0_batch
+        self.photometry_workspace.navigationChanged.connect(
+            self._remember_photometry_navigation)
         self.photometry_workspace.psf0BatchRequested.connect(
             lambda request: launch_psf0_batch(self, request))
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
@@ -727,6 +729,7 @@ class SurveyExplorer(QMainWindow):
                         project.data_root, from_object=True):
                     raise ValueError(
                         "Cannot open this project's saved original FITS inventory")
+                self._resume_object_workflow()
                 return
         self._restoring_local_project = True
         try:
@@ -775,6 +778,35 @@ class SurveyExplorer(QMainWindow):
         finally:
             self._restoring_local_project = False
         self._refresh_workflow()
+        self._resume_object_workflow()
+
+    def _resume_object_workflow(self):
+        """Navigate directly to the last working stage; never start analysis."""
+        project = self._object_project
+        if project is None:
+            return
+        from lsbpipe.photometry.project_resume import read_project_resume
+        try:
+            state = read_project_resume(project.root)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.message.setText(
+                "Saved workflow location cannot be trusted: "
+                + str(exc) + ". Original project remains available.")
+            return
+        if state.get("location") == "photometry" and state["source_matches"]:
+            self._open_photometry()
+
+    def _remember_photometry_navigation(self, stage, band):
+        if self._object_project is None:
+            return
+        from lsbpipe.photometry.project_resume import save_project_resume
+        try:
+            save_project_resume(
+                self._object_project.root, stage=stage, band=band,
+                location="photometry")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.message.setText(
+                "Workflow position could not be saved: " + str(exc))
 
     def _open_photometry(self):
         """Open an isolated, explicitly non-adopted photometry workbench."""
@@ -788,7 +820,11 @@ class SurveyExplorer(QMainWindow):
             self.message.setText("Finish the active task before changing workspaces.")
             return
         try:
+            from lsbpipe.photometry.project_resume import read_project_resume
+            state = read_project_resume(project.root)
             self.photometry_workspace.bind_project(project)
+            self.photometry_workspace.restore_navigation(
+                stage=state["stage"], band=state["band"])
         except (OSError, ValueError, KeyError, TypeError) as exc:
             QMessageBox.warning(self, "Cannot open Photometry", str(exc))
             return
@@ -796,6 +832,8 @@ class SurveyExplorer(QMainWindow):
             self.preview_tabs.addTab(self.photometry_workspace, "Photometry")
         self.preview_tabs.setCurrentWidget(self.photometry_workspace)
         self.data_drawer.hide()
+        stage, band = self.photometry_workspace.current_navigation()
+        self._remember_photometry_navigation(stage, band)
 
     def _run_project_psf0(self, request):
         """Dispatch genuine Leo P native-band ePSF in the existing GUI thread pool."""
@@ -962,6 +1000,17 @@ class SurveyExplorer(QMainWindow):
                            "explicit diagnostic export.")
 
     def _leave_photometry(self):
+        self.photometry_workspace.scene_editor.flush_autosave()
+        if self._object_project is not None:
+            from lsbpipe.photometry.project_resume import save_project_resume
+            stage, band = self.photometry_workspace.current_navigation()
+            try:
+                save_project_resume(
+                    self._object_project.root, stage=stage, band=band,
+                    location="survey")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                self.message.setText(
+                    "Survey location could not be saved: " + str(exc))
         if self.fits_explorer._dataset is not None:
             self.preview_tabs.setCurrentWidget(self.fits_explorer)
         else:
@@ -1198,6 +1247,11 @@ class SurveyExplorer(QMainWindow):
                 "Finish the active task before leaving this galaxy project.")
             return
         self._save_project_state()
+        if self._object_project is not None:
+            self.photometry_workspace.scene_editor.flush_autosave()
+            if self.preview_tabs.currentWidget() is self.photometry_workspace:
+                stage, band = self.photometry_workspace.current_navigation()
+                self._remember_photometry_navigation(stage, band)
         self.returnToProjects.emit()
 
     def _save_object_project_context(self):
@@ -2694,6 +2748,11 @@ class SurveyExplorer(QMainWindow):
         else:
             self._project_save_timer.stop()
             self._save_project_state()
+            self.photometry_workspace.scene_editor.flush_autosave()
+            if (self._object_project is not None and
+                    self.preview_tabs.currentWidget() is self.photometry_workspace):
+                stage, band = self.photometry_workspace.current_navigation()
+                self._remember_photometry_navigation(stage, band)
             if self._object_project is not None and not self._returning_to_hub:
                 self.returnToProjects.emit()
                 event.ignore()
