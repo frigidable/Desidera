@@ -133,16 +133,12 @@ def scene_shape_from_world_points(kind: str, points: tuple, *,
 
 def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
     """Native WCS -> Qt image path, including rotation and RA wrap."""
-    from astropy.coordinates import SkyCoord
-    import astropy.units as u
     if shape.kind == "polygon":
         ra = np.array([p[0] for p in shape.vertices])
         dec = np.array([p[1] for p in shape.vertices])
     else:
         angle = np.linspace(0, 2*np.pi, 97)[:-1]
-        center = SkyCoord(shape.center[0]*u.deg,
-                          shape.center[1]*u.deg, frame="icrs")
-        if shape.kind == "circle":
+         if shape.kind == "circle":
             east = shape.radius_arcsec*np.sin(angle)
             north = shape.radius_arcsec*np.cos(angle)
         else:
@@ -151,13 +147,23 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
             b = a*shape.q
             east = a*np.sin(pa)*np.cos(angle)+b*np.cos(pa)*np.sin(angle)
             north = a*np.cos(pa)*np.cos(angle)-b*np.sin(pa)*np.sin(angle)
-        # Astropy spherical_offsets_by expects (position_angle, separation),
-        # NOT independent (east, north) angular components.
-        bearing = np.arctan2(east, north)*u.rad
-        distance = np.hypot(east, north)*u.arcsec
-        offsets = center.spherical_offsets_by(bearing, distance)
-        ra = offsets.ra.deg
-        dec = offsets.dec.deg
+        # Great-circle destination from east/north angular offsets. Using
+        # a direct spherical formula avoids WCS NaNs at the RA=0 meridian
+        # seen in the Windows/Astropy SC1 GUI regression. No pixel
+        # resampling, and PA remains measured from north through east.
+        bearing = np.arctan2(east, north)
+        distance = np.deg2rad(np.hypot(east, north) / 3600.)
+        ra0 = math.radians(shape.center[0])
+        dec0 = math.radians(shape.center[1])
+        dec_rad = np.arcsin(np.clip(
+            math.sin(dec0)*np.cos(distance)
+            + math.cos(dec0)*np.sin(distance)*np.cos(bearing),
+            -1., 1.))
+        ra_rad = ra0 + np.arctan2(
+            np.sin(bearing)*np.sin(distance)*math.cos(dec0),
+            np.cos(distance)-math.sin(dec0)*np.sin(dec_rad))
+        ra = np.mod(np.rad2deg(ra_rad), 360.)
+        dec = np.rad2deg(dec_rad)
     xx, yy = wcs.all_world2pix(ra, dec, 0)
     if not np.isfinite(xx).all() or not np.isfinite(yy).all():
         raise ValueError("Native WCS cannot display the selected sky shape")
