@@ -14,6 +14,7 @@ For current capabilities and runnable entry points, use the [top-level README](.
 
 ## Current integration checkpoint
 
+- [Scientific photometry development plan, 2026-11-09](validation/PHOTOMETRY_SCIENCE_CORE_PLAN_2026-11-09.md): source-checked execution sequence after PSF-0, including uncertainty, WCS, aperture measurement, validation and issue-level acceptance.
 - [Repository checkpoint, 2026-11-09](validation/REPOSITORY_CHECKPOINT_2026-11-09.md): merged PRs #39–#43, CI and science statuses, user-workflow simplification, and historical branch triage.
 - [Empirical PSF core and broad-wing audit](qa/PSF_CORE_WINGS_VALIDATION.md): the preserved Leo P DR11 South g-band P16–P20 analysis, measured radius limitations and unresolved wide-angle wings.
 
