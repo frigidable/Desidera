@@ -417,3 +417,31 @@ spatial sky estimation, followed by multi-band and masked-isophotal
 profile fitting, injection/recovery QA, and real-FITS comparison.
 No one-shot connected threshold, bridge suppression or chosen
 trial is a defensible calibrated outer isophote by itself.
+
+
+## 2026-11-09 · Four explicit ICRS trial contours and focused conflict review
+
+The reproducibility-oriented sensitivity diagnostic now retains its
+actual per-trial native-pixel contours and moment ellipses *in memory*
+alongside the four scalar QA records. The GUI offers a
+`Compare threshold / smoothing` selector (reference plus successful
+alternatives). Switching it projects the selected alternative on the
+same original FITS WCS; it does not rerun data loading, modify the
+original image, or save a mask. A failed detection remains recorded
+as a failure, not fabricated into a preview. Selecting `Add proposed
+region` after the explicit low-confidence science gate records the
+**selected trial's** geometry, contrast, smoothing and trial index,
+instead of silently saving the baseline shape.
+
+All automatic science constraints remain: no automatic adoption or
+band sharing, unresolved Tractor blend warnings, independent native
+image validity, no empirical PSF subtraction, no final sky photometry.
+`Show 20 nearest unresolved neighbours` is off by default to avoid
+obscuring weak galaxy light, and when enabled selects the nearest
+catalogued conflicts by native-pixel distance to the ICRS target
+anchor. The total number of conflicts remains in the QA report.
+
+The Leo P screenshots showing a nearly unchanged contour after
+2-pixel morphological opening are the motivation for this explicit
+threshold/scale contour comparison. They do not establish that
+either northward structure is real or spurious.
