@@ -172,7 +172,6 @@ class PSF0Panel(QGroupBox):
             "validation. Both require the exact original DR11 brick "
             "Tractor FITS and enforce image/cutout, isolation, SNR, mask "
             "and morphology gates. DAO-only is explicitly unverified.")
-        catalogue_row.addWidget(self.catalog_policy)
         self.get_tractor_btn = QPushButton("Get DR11 Tractor + Gaia…")
         self.get_tractor_btn.setMaximumWidth(260)
         self.get_tractor_btn.setObjectName("psf0_get_tractor_gaia")
@@ -182,7 +181,7 @@ class PSF0Panel(QGroupBox):
             "catalogue from the official Legacy Surveys archive into "
             "the current Leo P project's data root. No new project.")
         catalogue_row.addWidget(self.get_tractor_btn, 0, Qt.AlignLeft)
-        form.addRow("PSF star selection", catalogue_row)
+        form.addRow("Gaia/Tractor source", catalogue_row)
         self.fwhm = QDoubleSpinBox()
         self.fwhm.setObjectName("psf0_fwhm_guess")
         self.fwhm.setRange(2.5, 20.)
@@ -218,12 +217,13 @@ class PSF0Panel(QGroupBox):
         self.experiment.setAccessibleName("Controlled PSF reconstruction diagnostic")
         for key, info in PSF0_DIAGNOSTIC_EXPERIMENTS.items():
             self.experiment.addItem(info["label"], key)
+        self.experiment.setCurrentIndex(
+            self.experiment.findData("outer_sky_isolation_footprint"))
         self.experiment.currentIndexChanged.connect(self._band_changed)
         self.experiment.setToolTip(
             "Controlled one-factor comparisons to investigate the actual "
             "Leo P outer-wing failure. These tests are not scientific PSF "
             "selection and may change the selected star sample.")
-        form.addRow("Diagnostic experiment", self.experiment)
         self.recipe_geometry = QLabel(
             "Recipe geometry will be shown here. The initial FWHM is a "
             "guess, not a validated PSF measurement.")
@@ -266,7 +266,7 @@ class PSF0Panel(QGroupBox):
         self.gaia_source.setObjectName("psf0_gaia_catalog_source")
         self.gaia_source.setWordWrap(True)
         self.advanced_toggle = QPushButton(
-            "Advanced settings provenance  ▸")
+            "Experimental methods and provenance  ▸")
         self.advanced_toggle.setObjectName("psf0_advanced_toggle")
         self.advanced_toggle.setCheckable(True)
         self.advanced_toggle.setMaximumWidth(340)
@@ -275,6 +275,14 @@ class PSF0Panel(QGroupBox):
         self.advanced_details.setObjectName("psf0_advanced_details")
         advanced_layout = QVBoxLayout(self.advanced_details)
         advanced_layout.setContentsMargins(2, 0, 2, 0)
+        selection_label = QLabel("Star-selection policy · experimental alternatives")
+        selection_label.setWordWrap(True)
+        advanced_layout.addWidget(selection_label)
+        advanced_layout.addWidget(self.catalog_policy)
+        experiment_label = QLabel("Research-only reconstruction variants")
+        experiment_label.setWordWrap(True)
+        advanced_layout.addWidget(experiment_label)
+        advanced_layout.addWidget(self.experiment)
         advanced_layout.addWidget(self.recipe_geometry)
         advanced_layout.addWidget(self.prior_source)
         advanced_layout.addWidget(self.gaia_source)
@@ -283,12 +291,12 @@ class PSF0Panel(QGroupBox):
             self.advanced_details.setVisible)
         self.advanced_toggle.toggled.connect(
             lambda checked: self.advanced_toggle.setText(
-                "Advanced settings provenance  ▾" if checked else
-                "Advanced settings provenance  ▸"))
+                "Experimental methods and provenance  ▾" if checked else
+                "Experimental methods and provenance  ▸"))
         controls.addWidget(self.advanced_details)
 
         actions = QHBoxLayout()
-        self.run_btn = QPushButton("Build PSF preview")
+        self.run_btn = QPushButton("Build empirical PSF")
         self.run_btn.setObjectName("psf0_run_button")
         self.run_btn.setToolTip(
             "Runs real FITS validation, star selection and ePSF calculation "
@@ -509,8 +517,11 @@ class PSF0Panel(QGroupBox):
         # fixed-band workspace panels use the shared g/r/i/z tab strip.
         self._control_form.setRowVisible(
             self.band, self.fixed_band is None)
-        for action in (self.review_btn, self.save_btn, self.copy_qa_btn,
-                       self.advanced_toggle):
+        # Inspecting the stellar sample and explicitly saving an
+        # accepted *diagnostic* are normal scientific tasks.
+        self.review_btn.setVisible(True)
+        self.save_btn.setVisible(True)
+        for action in (self.copy_qa_btn, self.advanced_toggle):
             action.setVisible(self._research_mode)
         # A previously expanded provenance widget must not remain exposed
         # after hiding its controlling disclosure button in Guided mode.
@@ -521,14 +532,20 @@ class PSF0Panel(QGroupBox):
     def _update_mode_context(self):
         if self._research_mode:
             self.mode_context.setText(
-                "Research controls visible. Science status: NOT ADOPTED.")
+                "Advanced methods available. The full original-FITS and "
+                "star QA is preserved; science status: NOT ADOPTED.")
         else:
-            policy = self.catalog_policy.currentText()
-            experiment = self.experiment.currentText()
+            policy = self.catalog_policy.currentData()
+            experiment = self.experiment.currentData()
+            altered = (policy != "gaia_strict" or
+                       experiment != "outer_sky_isolation_footprint")
+            method = ("Non-default experimental configuration is active. "
+                      if altered else "Gaia/Tractor stars · FWHM-scaled sky. ")
             self.mode_context.setText(
-                f"Guided view · {experiment} · {policy} · "
-                f"target protected within {self.protection.value():.1f} arcsec. "
-                "Full recipe remains active; no PSF is adopted.")
+                method +
+                f"Target protected within {self.protection.value():.1f} arcsec. "
+                "Empirical PSF is a diagnostic until validated; original FITS "
+                "remain unchanged.")
 
     def overview_state(self):
         """Short, honest status for the g/r/i/z tab strip."""
@@ -639,17 +656,23 @@ class PSF0Panel(QGroupBox):
             self.catalog_policy.blockSignals(True)
             self.catalog_policy.setCurrentIndex(
                 self.catalog_policy.findData(
-                    "gaia_strict" if snapshot.get("gaia_tractor_present_unverified")
-                    else "dao_diagnostic"))
+                    "gaia_strict"))
             self.catalog_policy.blockSignals(False)
             self.prior_source.setText(
                 "FWHM: initial 4.80 px code default (not measured). "
                 f"Target protection: max(saved project radius, 90″) = "
                 f"{snapshot['target_protection_default_arcsec']:.1f}″. "
                 "The galaxy protection radius cannot be inferred from PSF seeing.")
-            self.status.setText(
-                "Original FITS paths found, but not yet validated. "
-                "Click Build PSF preview to verify FITS/WCS/units and run.")
+            if snapshot.get("gaia_tractor_present_unverified"):
+                self.status.setText(
+                    "Original FITS and Gaia/Tractor catalogue found, "
+                    "not yet verified. Build empirical PSF to check "
+                    "FITS/WCS, stellar identities and quality.")
+            else:
+                self.status.setText(
+                    "Gaia/Tractor catalogue missing. Get the original "
+                    "brick-matched star catalogue to enable PSF fitting; "
+                    "DAO-only is available only under Advanced diagnostics.")
             if not available:
                 self.status.setText(
                     "No complete local native FITS quartet for PSF-0. "
@@ -787,6 +810,10 @@ class PSF0Panel(QGroupBox):
                     e["band"] == self.band.currentData() and
                     e["paths_present_unverified"]
                     for e in self._snapshot["bands"])):
+            return None
+        if (self.catalog_policy.currentData() in
+                ("gaia_strict", "tractor_psf_validated") and
+                not self._snapshot.get("gaia_tractor_present_unverified")):
             return None
         return {
             "project_root": str(self._project_root),
