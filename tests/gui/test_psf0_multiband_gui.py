@@ -31,6 +31,14 @@ def _setup(qtbot, tmp_path, monkeypatch):
         for src in _expected_paths(root, ("dr11","south","1554p180",band)).values():
             src.parent.mkdir(parents=True, exist_ok=True)
             src.write_bytes(b"offline placeholder -- NEVER accepted as science")
+    # Path-only fixture: the GUI sees a matching ORIGINAL BRICK catalogue.
+    # Its bytes are intentionally non-FITS; the worker is mocked and no
+    # test here claims native-science validation.
+    from lsbpipe.photometry.psf_tractor_gaia import tractor_catalog_location
+    catalog, _ = tractor_catalog_location(
+        root, release="dr11", region="south", brick="1554p180")
+    catalog.parent.mkdir(parents=True, exist_ok=True)
+    catalog.write_bytes(b"synthetic path-only tractor fixture; not science FITS")
     window.photometry_btn.click()
     return window, project
 
@@ -97,7 +105,9 @@ def test_four_band_batch_preserves_independent_results_and_reports(
     assert [x[0] for x in seen] == ["g","r","i","z"]
     assert [x[1] for x in seen] == pytest.approx(
         [6.57,5.41,4.33,3.75])
-    assert [x[2] for x in seen] == [31,31,55,31]
+    # Standard defaults to the registered FWHM-scaled recipe;
+    # i is explicitly set to the historical alternative above.
+    assert [x[2] for x in seen] == [81,69,55,51]
     for band in ("g","i","z"):
         assert workspace.psf0_panels[band]._qa_payload is not None
         assert "REJECTED" in workspace.psf0_panels[band].status.text()
