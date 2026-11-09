@@ -397,6 +397,14 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
         lambda: editor._future is None
         and editor._isophote_proposal is not None, timeout=10000)
     assert editor._isophote_preview is not None
+    assert editor.iso_summary.text()
+    assert "area ratio" in editor.iso_summary.text()
+    if not editor.iso_accept.isEnabled():
+        assert editor._isophote_proposal["sensitivity"][
+            "confidence"].startswith("LOW_CONFIDENCE")
+        editor._accept_isophote()  # direct method cannot bypass the gate
+        assert editor.draft.edits == ()
+        editor.iso_low_conf_override.setChecked(True)
     assert editor.iso_accept.isEnabled()
     assert editor.draft.edits == ()
     assert not (project.root/"analyses").exists()
@@ -415,12 +423,14 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
         lambda: editor._future is None
         and editor._isophote_proposal is not None, timeout=10000)
     editor.iso_shape.setCurrentIndex(editor.iso_shape.findData("contour"))
+    if not editor.iso_accept.isEnabled():
+        editor.iso_low_conf_override.setChecked(True)
     editor.iso_accept.click()
     assert len(editor.draft.edits) == 1
     edit = editor.draft.edits[0]
     assert edit.shape.kind == "polygon"
     assert edit.purpose == "protect_target"
-    assert edit.band is None
+    assert edit.band == "g"  # native-band default for source-derived contours
     assert "AUTO_ISOPHOTE_PRELIMINARY" in edit.comment
     assert np.array_equal(data["data"]["image"],original)
     assert editor._isophote_proposal is None
@@ -434,7 +444,7 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
     editor.set_band("r")
     editor._accept_dataset(_data(project.project_id, band="r",
                                  wcs=_native_wcs(flipped=True)))
-    assert len(editor._paths) == 1
+    assert len(editor._paths) == 0  # never leak g segmentation to r implicitly
     assert editor._contamination is None
     assert not editor.iso_generate.isEnabled()
 
@@ -479,3 +489,70 @@ def test_isophote_worker_result_is_discarded_after_band_switch(
     qtbot.waitUntil(lambda: editor._future is None, timeout=4000)
     assert editor._isophote_proposal is None
     assert editor.draft.edits == ()
+
+
+def test_isophote_share_to_all_bands_requires_explicit_opt_in(qtbot,tmp_path,
+                                                                monkeypatch):
+    editor, project=_make_editor(qtbot,tmp_path,monkeypatch)
+    from lsbpipe.photometry.sky_masks import SkyMaskShape
+    from types import SimpleNamespace
+    assert not editor.iso_share_bands.isChecked()
+    shape=SkyMaskShape("ellipse",center=(359.999,60.),a_arcsec=8.,
+                       q=.7,pa_deg=20.)
+    editor._contamination={
+        "catalog_sha256":"d"*64,"draft_digest":editor.draft.digest}
+    editor._isophote_proposal={
+        "status":"LOCAL_ISOPHOTE_PROPOSAL_NOT_ADOPTED",
+        "band":"g","project_id":project.project_id,
+        "source":editor._loaded["source"],
+        "catalog_sha256":"d"*64,"draft_digest":editor.draft.digest,
+        "ellipse":shape,"contour":shape,
+        "bridge_guard_pix":2,
+        "sensitivity":{"confidence":"REVIEWABLE_PRELIMINARY","flags":()},
+        "proposal":SimpleNamespace(
+            threshold_contrast=2.2,smoothing_pix=4.,
+            local_sky=0.,smoothed_sky_rms=.1)}
+    editor.iso_shape.setCurrentIndex(editor.iso_shape.findData("ellipse"))
+    editor._show_isophote_preview()
+    assert editor.iso_accept.isEnabled()
+    editor.iso_share_bands.setChecked(True)
+    editor.iso_accept.click()
+    assert editor.draft.edits[0].band is None
+    assert "scope=all_optical_EXPLICIT" in editor.draft.edits[0].comment
+    editor.set_band("r")
+    editor._accept_dataset(_data(project.project_id,band="r",
+                                 wcs=_native_wcs(flipped=True)))
+    assert len(editor._paths)==1
+
+
+def test_mask_opacity_and_conflict_review_markers(qtbot,tmp_path,monkeypatch):
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    data=_data(project.project_id)
+    visible=np.zeros(data["pixel_shape"],bool)
+    visible[20:30,20:30]=True
+    result={
+       "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+       "mask":visible,"auto_mask":visible.copy(),
+       "project_id":project.project_id,"dataset_source":data["source"],
+       "band":"g","draft_digest":editor.draft.digest,
+       "anchor_icrs":editor._project_target,"catalog_sha256":"b"*64,
+       "stats":{"masked_catalog_sources":1,
+                "elliptical_catalog_sources":1,
+                "skipped_target_overlap":1,
+                "near_target_sources":(
+                    {"x":48.,"y":48.,"objid":77,
+                     "type":"PSF","radius_pix":9.},),
+                "excluded_pixels":100,"native_hard_pixels":1},
+       "flags":("PSF_WINGS_NOT_VALIDATED",)}
+    editor._accept_contamination_result(result)
+    assert len(editor._conflict_paths)==1
+    assert editor._contamination_overlay.isVisible()
+    editor.iso_opacity.setValue(20)
+    assert editor._contamination_overlay.opacity()==pytest.approx(.2)
+    editor.iso_mask_toggle.setChecked(False)
+    assert not editor._contamination_overlay.isVisible()
+    editor.iso_show_conflicts.setChecked(False)
+    assert not editor._conflict_paths[0].isVisible()
+    editor._discard_prepared_masks()
+    assert len(editor._conflict_paths)==0
+    assert not editor.iso_generate.isEnabled()
