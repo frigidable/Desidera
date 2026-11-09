@@ -151,7 +151,11 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
             b = a*shape.q
             east = a*np.sin(pa)*np.cos(angle)+b*np.cos(pa)*np.sin(angle)
             north = a*np.cos(pa)*np.cos(angle)-b*np.sin(pa)*np.sin(angle)
-        offsets = center.spherical_offsets_by(east*u.arcsec, north*u.arcsec)
+        # Astropy spherical_offsets_by expects (position_angle, separation),
+        # NOT independent (east, north) angular components.
+        bearing = np.arctan2(east, north)*u.rad
+        distance = np.hypot(east, north)*u.arcsec
+        offsets = center.spherical_offsets_by(bearing, distance)
         ra = offsets.ra.deg
         dec = offsets.dec.deg
     xx, yy = wcs.all_world2pix(ra, dec, 0)
