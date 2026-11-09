@@ -1417,7 +1417,9 @@ in sampling, not a blind prospective
 test. The revised control site
 coordinates are additionally exported
 in \`selected_native_pixel_tiles\`;
-the method fingerprint is changed.
+the method fingerprint is changed. P20 QA schema now
+advances from `/1` for the first pilot to `/2`
+for the post-pilot 4×4-tile-stratified protocol.
 No user-adjusted star fitting or
 sky-ring retuning was performed.
 All blank-null / covariance /
