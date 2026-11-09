@@ -1131,7 +1131,7 @@ class SceneEditor(QWidget):
             f"kind={kind} threshold={model.threshold_contrast:g} "
             f"smooth_pix={model.smoothing_pix:g} "
             f"bridge_pix={proposed['bridge_guard_pix']} "
-            f"min_iou={sensitivity['minimum_spatial_iou']} "
+            f"min_iou={sensitivity.get('minimum_spatial_iou')} "
             f"sky={model.local_sky:.7g} "
             f"rms={model.smoothed_sky_rms:.7g} "
             f"TractorSHA256={proposed['catalog_sha256']} "
