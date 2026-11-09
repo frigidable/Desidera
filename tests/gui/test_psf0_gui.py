@@ -708,8 +708,11 @@ def test_standard_psf_gui_offers_opt_in_full_p15_p20_qa_only_in_advanced(qtbot):
     panel.set_research_mode(True)
     panel.advanced_toggle.click()
     assert panel.extended_qa.isVisible()
+    panel._active_exclusions = ("star-0002",)
     panel.extended_qa.setChecked(True)
+    assert panel._active_exclusions == ("star-0002",)
     research = panel.make_run_request()
+    assert research["excluded_training_star_ids"] == ("star-0002",)
     assert research["extended_research_qa"] is True
     assert research["experiment"] == normal["experiment"]
     assert research["fwhm_pix"] == normal["fwhm_pix"]
@@ -723,4 +726,5 @@ def test_standard_psf_gui_offers_opt_in_full_p15_p20_qa_only_in_advanced(qtbot):
     assert "Full P15–P20 research audit ENABLED" in panel.mode_context.text()
     assert panel.make_run_request()["extended_research_qa"] is True
     panel.extended_qa.setChecked(False)
+    assert panel._active_exclusions == ("star-0002",)
     assert panel.make_run_request()["extended_research_qa"] is False
