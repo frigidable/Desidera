@@ -465,9 +465,17 @@ class PhotometryWorkspace(QWidget):
                 panel.refresh_sources()
             else:
                 panel.bind_project(self._project_root)
+        # Select the first native band with a complete on-disk quartet,
+        # even when Gaia/Tractor has not yet been downloaded. Otherwise a
+        # project with only R-band FITS lands incorrectly on empty G rather
+        # than explaining the missing star catalogue on the usable band.
         self.psf0_panel = next(
             (panel for panel in self.psf0_panels.values()
-             if panel.run_btn.isEnabled()), self.psf0_panels["g"])
+             if panel._snapshot is not None and any(
+                 entry["band"] == panel.band.currentData() and
+                 entry["paths_present_unverified"]
+                 for entry in panel._snapshot["bands"])),
+            self.psf0_panels["g"])
         source_key = (self._bound_project_id, self._bound_source_identity)
         if source_key != self._tab_source_identity:
             # A newly bound project opens on its first usable band.
