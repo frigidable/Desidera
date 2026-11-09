@@ -445,3 +445,49 @@ The Leo P screenshots showing a nearly unchanged contour after
 2-pixel morphological opening are the motivation for this explicit
 threshold/scale contour comparison. They do not establish that
 either northward structure is real or spurious.
+
+
+## 2026-11-09 · SGA-assisted initial geometry and shredding guard
+
+This stage introduces an **optional** source-aware SGA prior without
+replacing Desidera's independent deep Legacy LSB analysis:
+
+1. The researcher chooses an **existing local FITS** (SGA-2020
+   `ELLIPSE` or draft SGA-2025 `SGA2025` HDU) through the GUI.
+   Background FITS reading, RA-wrapped positional matching and a full
+   source SHA-256 are read-only and bounded. Neither remote access nor
+   a new project directory nor catalog copying is invoked.
+2. Every match within 3 arcmin is shown with its **SGA ID, name and
+   separation**. The researcher must explicitly choose one; an
+   ambiguous positional match is never guessed. Unsupported/missing
+   geometry is not extrapolated.
+3. D26 (an isophotal diameter or **fallback** reference, depending on
+   the `D26_REF` flag), PA and b/a produce a **gold dashed ICRS
+   central prior** for comparison with the diffuse optical structure.
+   `D26_REF` and `ELLIPSEBIT/ELLIPSEMODE` diagnostic flags are
+   retained; SGA-2025 is flagged **DRAFT/NOT FINAL RELEASE**.
+   This geometric prior is neither the galaxy's final size nor an
+   upper bound on the LSB search radius. The FITS cutout and all
+   saved photometry/drafts remain unchanged.
+4. A **separate, unchecked opt-in** allows the selected central
+   SGA ellipse to protect plausible object light during the
+   existing local DR11 South Tractor neighbour-mask preparation.
+   No opt-in => no masking/photometry changes. Inside the SGA ellipse,
+   unmasked overlapping non-Gaia Tractor sources are labelled
+   `POSSIBLE_GALAXY_SHRED`, not automatically classified as
+   contaminants. Sources with Gaia counterparts remain
+   `GAIA_COUNTERPART_REVIEW`; all such objects remain subject to
+   researcher review. The existing protected circle, manually drawn
+   regions and hard-invalid FITS masks continue to apply.
+5. SGA and Tractor share imaging and inference machinery. Their
+   agreement must **not** be counted as two independent constraints
+   on galaxy membership/geometry. The output records both original
+   Tractor catalogue SHA-256 and explicit selected SGA catalogue
+   SHA-256/SGAID for provenance.
+
+The reader does not implement remote SGA cross-match services,
+automated SHRED/foreground probability classification, full
+per-component Tractor rendering, empirical PSF wing subtraction,
+spatially variable residual sky estimation, or a validated new
+outer-isophote prior. All of these need scientific research/benchmark
+gates rather than silent interpolation or adopted measurements.
