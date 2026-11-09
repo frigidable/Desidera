@@ -575,3 +575,88 @@ def test_mask_opacity_and_conflict_review_markers(qtbot,tmp_path,monkeypatch):
     editor._discard_prepared_masks()
     assert len(editor._conflict_paths)==0
     assert not editor.iso_generate.isEnabled()
+
+
+def test_sga_choice_explicit_core_protection_and_wcs_preview(
+        qtbot,tmp_path,monkeypatch):
+    from lsbpipe.photometry.sga_priors import SGAGeometryPrior,SGAPriorLookup
+    import lsbpipe.gui.scene_editor as module
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    p=SGAGeometryPrior(
+        release="SGA2020",sga_id=72,name="Leo P",
+        ra_deg=359.999,dec_deg=60.,offset_arcsec=0.,
+        d26_arcmin=.26,d26_ref="SB26",ba=.6,pa_deg=45.,
+        ellipsebit=0,ellipsemode=0,flags=(),
+        source_sha256="f"*64,source_path="localSGA.fits")
+    second=SGAGeometryPrior(
+        release="SGA2020",sga_id=73,name="Other target",
+        ra_deg=359.9992,dec_deg=60.,offset_arcsec=.4,
+        d26_arcmin=.10,d26_ref="LEDA",ba=.9,pa_deg=90.,
+        ellipsebit=0,ellipsemode=0,
+        flags=("D26_NOT_DIRECT_SB26",),
+        source_sha256="f"*64,source_path="localSGA.fits")
+    result=SGAPriorLookup(
+        "SGA2020","localSGA.fits","f"*64,(p,second))
+    editor._accept_sga_lookup(result)
+    assert editor._sga_candidate is None
+    assert editor._sga_item is None
+    assert editor.sga_candidates.count()==3
+    assert not editor.sga_use_prior.isChecked()
+    editor.sga_candidates.setCurrentIndex(1)
+    assert editor._sga_candidate==p
+    assert editor._sga_item is not None
+    assert "CENTRAL PRIOR" in editor.sga_status.text()
+    assert not editor.sga_use_prior.isChecked()
+    calls=[]
+    def fake_prep(*args):
+        calls.append(args)
+        image=editor._loaded
+        zeros=np.zeros(image["pixel_shape"],bool)
+        return {
+          "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+          "mask":zeros,"auto_mask":zeros.copy(),
+          "project_id":project.project_id,"band":image["band"],
+          "dataset_source":image["source"],
+          "draft_digest":editor.draft.digest,
+          "anchor_icrs":editor._project_target,
+          "catalog_sha256":"a"*64,
+          "sga_prior_id":p.sga_id,
+          "sga_prior_sha256":p.source_sha256,
+          "stats":{"masked_catalog_sources":0,
+                   "skipped_target_overlap":0,
+                   "possible_sga_shreds":0,
+                   "excluded_pixels":0,"native_hard_pixels":1},
+          "flags":("SGA_CORE_ONLY_NOT_OUTER_LSB_BOUNDARY",)}
+    monkeypatch.setattr(module,"prepare_scene_neighbour_masks",fake_prep)
+    editor.sga_use_prior.setChecked(True)
+    assert editor._contamination is None
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._contamination is not None,
+        timeout=5000)
+    assert len(calls)==1 and calls[0][-1] is p
+    assert not editor._contamination["mask"].any()
+    editor.sga_candidates.setCurrentIndex(2)
+    assert editor._sga_candidate is second
+    assert not editor.sga_use_prior.isChecked()
+    assert editor._contamination is None
+    editor.set_band("r")
+    editor._accept_dataset(_data(project.project_id,band="r",
+                                 wcs=_native_wcs(flipped=True)))
+    assert editor._sga_item is not None
+    assert editor._sga_candidate is second
+    assert not editor.sga_use_prior.isChecked()
+    assert editor.draft.edits==()
+
+
+def test_no_sga_matches_does_not_autocreate_protect_regions(
+        qtbot,tmp_path,monkeypatch):
+    from lsbpipe.photometry.sga_priors import SGAPriorLookup
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    editor._accept_sga_lookup(
+        SGAPriorLookup("SGA2020","local","e"*64,()))
+    assert editor.sga_candidates.count()==1
+    assert editor._sga_candidate is None
+    assert not editor.sga_use_prior.isEnabled()
+    assert editor.draft.edits==()
+    assert "No SGA match" in editor.sga_status.text()
