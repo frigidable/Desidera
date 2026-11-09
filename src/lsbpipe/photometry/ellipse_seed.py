@@ -209,6 +209,9 @@ class LocalIsophotalProposal:
     threshold_contrast: float
     smoothing_pix: float
     flags: tuple[str, ...]
+    # Sorted flat indices on the *native* pixel grid for reproducible
+    # multi-threshold intersection-over-union. Not a science segmentation.
+    component_indices: np.ndarray | None = None
     state: str = "LOCAL_ISOPHOTE_PROPOSAL_NOT_ADOPTED"
 
 
@@ -431,12 +434,16 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
         flags.append("PA_UNDEFINED_NEAR_CIRCULAR")
     if (x1 == 0 or y1 == 0 or x2 == nx or y2 == ny):
         flags.append("SEARCH_APERTURE_NEAR_FITS_EDGE")
+    component_indices = np.sort(
+        (pixel_y.astype(np.int64)+y1)*nx+(pixel_x.astype(np.int64)+x1))
+    component_indices.setflags(write=False)
     return LocalIsophotalProposal(
         seed=seed, contour_xy=contour, local_sky=sky,
         raw_sky_rms=raw_rms, smoothed_sky_rms=smooth_rms,
         sky_pixels=int(np.count_nonzero(sky_mask)),
         threshold_contrast=threshold_contrast,
-        smoothing_pix=smooth_sigma_pix, flags=tuple(flags))
+        smoothing_pix=smooth_sigma_pix, flags=tuple(flags),
+        component_indices=component_indices)
 
 
 def assess_local_isophote_sensitivity(
@@ -461,9 +468,12 @@ def assess_local_isophote_sensitivity(
         "connected_pixels": reference.seed.component_pixels,
         "q": reference.seed.q,
         "centroid_offset_pix": reference.seed.centroid_offset_pix,
+        "overlap_to_reference": 1.,
         "state": "DETECTED",
     }]
     failed = 0
+    overlaps = []
+    reference_pixels = reference.component_indices
     for contrast, smooth in variants:
         try:
             model = propose_local_isophote(
@@ -471,12 +481,23 @@ def assess_local_isophote_sensitivity(
                 threshold_contrast=contrast,
                 smooth_sigma_pix=smooth,
                 bridge_guard_pix=bridge_guard_pix)
+            overlap = None
+            if (reference_pixels is not None and
+                    model.component_indices is not None):
+                shared = np.intersect1d(
+                    reference_pixels, model.component_indices,
+                    assume_unique=True).size
+                union = (reference_pixels.size
+                         + model.component_indices.size-shared)
+                overlap = float(shared/union) if union > 0 else 0.
+                overlaps.append(overlap)
             trials.append({
                 "threshold": float(contrast),
                 "smooth_pix": float(smooth),
                 "connected_pixels": model.seed.component_pixels,
                 "q": model.seed.q,
                 "centroid_offset_pix": model.seed.centroid_offset_pix,
+                "overlap_to_reference": overlap,
                 "state": "DETECTED",
             })
         except ValueError as exc:
@@ -501,6 +522,8 @@ def assess_local_isophote_sensitivity(
         flags.append("CONTOUR_AREA_UNSTABLE")
     if q_span > .25:
         flags.append("ELLIPTICITY_UNSTABLE")
+    if overlaps and min(overlaps) < .50:
+        flags.append("LOW_SPATIAL_OVERLAP_BETWEEN_ISOPHOTES")
     if max_offset > max(16., .25*reference.seed.sma_pix):
         flags.append("UNANCHORED_CENTROID_DRIFT")
     # No unreviewed automatic adoption even in the best case; this only
@@ -514,6 +537,7 @@ def assess_local_isophote_sensitivity(
         "failed_trials": failed,
         "area_ratio": area_ratio,
         "q_spread": q_span,
+        "minimum_spatial_iou": min(overlaps) if overlaps else None,
         "max_centroid_offset_pix": max_offset,
         "trials": tuple(trials),
         "sensitivity_status": "MULTISCALE_DIAGNOSTIC_NOT_SCIENCE_VALIDATED",
