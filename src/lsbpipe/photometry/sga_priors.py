@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import math
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit
+from urllib.request import urlopen
 
 import numpy as np
 
@@ -226,3 +229,125 @@ def read_local_sga_priors(path, target_icrs, *, radius_arcmin=3.):
     return SGAPriorLookup(
         release=release, source_path=canonical,
         source_sha256=source_hash, matches=matches)
+
+
+# Based on actual public DESI Legacy Surveys Viewer source,
+# legacysurvey/imagine map/urls.py and map/cats.py cat_sga2025_*
+# (the small catalog response is *not* the merged SGA2025 science FITS).
+VIEWER_SGA2025_ENDPOINTS = {
+    "south": "https://www.legacysurvey.org/viewer/sga2025-south/1/cat.json",
+    "north": "https://www.legacysurvey.org/viewer/sga2025-north/1/cat.json",
+}
+MAX_VIEWER_JSON_BYTES = 2_000_000
+
+
+def fetch_viewer_sga2025_priors(
+        target_icrs, *, region="south", radius_arcmin=3.):
+    """Explicit, bounded, on-demand SGA2025 Viewer sky-box lookup.
+
+    Viewer 'radiusArcsec' is the catalog overlay ellipse semi-major axis.
+    Its 'pgc' field is populated from Viewer T.ref_id, NOT necessarily
+    final SGA2025 SGAID or PGC. No final-science D26, D26_REF, fit
+    quality flags or complete SGA2025 photometry is supplied by this
+    endpoint. Label this provisional *overlay* geometry accordingly.
+    """
+    try:
+        ra, dec = (float(v) for v in target_icrs)
+        radius = float(radius_arcmin)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Invalid target coordinate or search radius") from exc
+    if (region not in VIEWER_SGA2025_ENDPOINTS or
+            not all(math.isfinite(v) for v in (ra, dec, radius)) or
+            not 0 <= ra < 360 or not -86 <= dec <= 86 or
+            not .1 <= radius <= 10.):
+        raise ValueError("SGA2025 Viewer sky-box search outside safe limits")
+    delta_dec = radius/60.
+    delta_ra = min(10., delta_dec/math.cos(math.radians(
+        min(86., abs(dec)+delta_dec))))
+    query = urlencode({
+        "ralo": f"{(ra-delta_ra)%360.:.9f}",
+        "rahi": f"{(ra+delta_ra)%360.:.9f}",
+        "declo": f"{max(-90.,dec-delta_dec):.9f}",
+        "dechi": f"{min(90.,dec+delta_dec):.9f}",
+    })
+    url = VIEWER_SGA2025_ENDPOINTS[region]+"?"+query
+    # Only the fixed official HTTPS endpoint may return bytes. HTTP
+    # errors, timeout, malformed JSON and unexpectedly large replies
+    # fail closed; there is no fallback to fabricated catalog priors.
+    with urlopen(url, timeout=18.) as stream:
+        effective = urlsplit(stream.geturl())
+        if (effective.scheme != "https" or
+                effective.hostname != "www.legacysurvey.org" or
+                effective.path != urlsplit(VIEWER_SGA2025_ENDPOINTS[region]).path):
+            raise ValueError("Untrusted SGA2025 Viewer redirect")
+        payload = stream.read(MAX_VIEWER_JSON_BYTES+1)
+    if len(payload) > MAX_VIEWER_JSON_BYTES:
+        raise ValueError("SGA2025 Viewer returned an oversized response")
+    try:
+        doc = json.loads(payload)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("SGA2025 Viewer returned invalid JSON") from exc
+    fields = ("rd", "name", "radiusArcsec", "abRatio", "posAngle",
+              "pgc", "groupname")
+    if (not isinstance(doc, dict) or
+            not all(isinstance(doc.get(key), list) for key in fields)):
+        raise ValueError("SGA2025 Viewer geometry schema mismatch")
+    count = len(doc["rd"])
+    if count > 2048 or any(len(doc[key]) != count for key in fields):
+        raise ValueError("SGA2025 Viewer arrays are inconsistent")
+    digest = hashlib.sha256(payload).hexdigest()
+    priors = []
+    for index in range(count):
+        pair = doc["rd"][index]
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError("Invalid SGA2025 coordinate pair")
+        try:
+            r, d = (float(x) for x in pair)
+            semi = float(doc["radiusArcsec"][index])
+            q = float(doc["abRatio"][index])
+            pa = float(doc["posAngle"][index])
+            reference = int(doc["pgc"][index])
+        except (ValueError, TypeError, OverflowError) as exc:
+            raise ValueError("Invalid SGA2025 Viewer source properties") from exc
+        if not all(math.isfinite(x) for x in (r,d,semi,q,pa)):
+            continue
+        if not (0 <= r < 360 and -90 <= d <= 90):
+            continue
+        sep = float(_distance_arcsec(r,d,ra,dec))
+        if sep > radius*60.:
+            continue
+        flags = [
+            "SGA2025_VIEWER_OVERLAY_NOT_MERGED_CATALOG",
+            "VIEWER_REF_ID_NOT_VERIFIED_SGAID",
+            "NO_SGA2025_D26_REF_OR_FIT_QUALITY",
+            "VIEWER_LATEST_CATALOG_CAN_CHANGE",
+        ]
+        # Do not replace invalid radii, q or PA by defaults even though
+        # the Viewer itself normalizes some bad entries to unity or zero.
+        d26 = 2.*semi/60. if 0 < semi <= 1800 else None
+        minor = q if 0 < q <= 1 else None
+        angle = pa % 180. if 0 <= pa <= 360 else None
+        if d26 is None or minor is None or angle is None:
+            flags.append("VIEWER_GEOMETRY_INCOMPLETE")
+        if reference < 0:
+            flags.append("NO_STABLE_VIEWER_REF_ID")
+        label = str(doc["name"][index]).strip()
+        if not label:
+            label = str(doc["groupname"][index]).strip() or (
+                f"Viewer entry {index+1}")
+        # A transient negative row key is only a UI disambiguator;
+        # never claim that it is a persistent SGA2025 object identifier.
+        priors.append(SGAGeometryPrior(
+            release="SGA2025", sga_id=reference if reference >= 0
+            else -1-index, name=label,
+            ra_deg=r, dec_deg=d, offset_arcsec=sep,
+            d26_arcmin=d26, d26_ref="VIEWER_RADIUS_ARCSEC",
+            ba=minor, pa_deg=angle, ellipsebit=0, ellipsemode=0,
+            flags=tuple(flags), source_sha256=digest,
+            source_path=url))
+    if len(priors) > 32:
+        raise ValueError("Ambiguous SGA2025 Viewer region (>32 sources)")
+    priors.sort(key=lambda row:row.offset_arcsec)
+    return SGAPriorLookup(
+        release="SGA2025", source_path=url, source_sha256=digest,
+        matches=tuple(priors))
