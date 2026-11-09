@@ -40,6 +40,94 @@ def _quadrant(xy, shape):
     return int(xy[0] >= shape[1]/2.) + 2*int(xy[1] >= shape[0]/2.)
 
 
+
+def _blank_pixel_lag_covariance(pixels, usable):
+    """Robust local plane-detrended native coadd pixel-lag diagnostic.
+
+    Estimates sample co-moments of neighboring original pixels after
+    catalog masking and fixed 5-MAD clipping. Spatial sky structure,
+    residual sources, resampling and pixel noise can all contribute:
+    this is NOT yet a calibrated noise-only coadd covariance matrix.
+    """
+    arr=np.asarray(pixels,dtype=float)
+    valid=np.asarray(usable,dtype=bool)&np.isfinite(arr)
+    h,w=arr.shape
+    if int(valid.sum())<500:
+        return {"status":"INSUFFICIENT_MASKED_BLANK_PIXELS"}
+    yy,xx=np.indices(arr.shape,dtype=float)
+    dx=(xx-(w-1)/2.)/max(w,1)
+    dy=(yy-(h-1)/2.)/max(h,1)
+    center=float(np.median(arr[valid]))
+    mad=float(np.median(np.abs(arr[valid]-center)))
+    # Avoid declaring a perfectly flat deterministic synthetic image noisy.
+    sigma=1.4826*mad
+    if sigma>0:
+        valid &= np.abs(arr-center) <= 5.*sigma
+    if int(valid.sum())<500:
+        return {"status":"INSUFFICIENT_CLIPPED_BLANK_PIXELS"}
+    design=np.stack((np.ones(int(valid.sum())),dx[valid],
+                     dy[valid]),axis=1)
+    coeff=np.linalg.lstsq(design,arr[valid],rcond=None)[0]
+    if not np.isfinite(coeff).all():
+        return {"status":"DEGENERATE_BLANK_PLANE"}
+    residual=arr-(coeff[0]+coeff[1]*dx+coeff[2]*dy)
+    # Remove the clipped residual mean as usual for sample covariance;
+    # include the zero-lag reference for a dimensionless correlation.
+    residual=residual-float(np.mean(residual[valid]))
+    v0=float(np.mean(residual[valid]**2))
+    lags=[]
+    for lx,ly in ((0,0),(1,0),(0,1),(2,0),(0,2),(1,1)):
+        lhs=residual[:h-ly,:w-lx]
+        rhs=residual[ly:,lx:]
+        pairs=valid[:h-ly,:w-lx]&valid[ly:,lx:]
+        n=int(pairs.sum())
+        cov=float(np.mean(lhs[pairs]*rhs[pairs])) if n>=100 else None
+        lags.append({
+            "dx_native_pixels":lx,"dy_native_pixels":ly,
+            "n_masked_native_pixel_pairs":n,
+            "sample_lag_covariance_nMgy2_per_pixel2":cov,
+            "lag_correlation_relative_to_zero":(
+                float(cov/v0) if cov is not None and v0>0 else None),
+        })
+    return {
+        "status":"PLANE_DETRENDED_NATIVE_LAG_SENSITIVITY_ONLY",
+        "n_native_pixels_used":int(valid.sum()),
+        "clip_fixed_mad_multiplier":5.,
+        "zero_lag_sample_variance_nMgy2_per_pixel2":v0,
+        "lag_samples":lags,
+        "sky_structure_and_uncatalogued_sources_not_separated":True,
+        "is_calibrated_noise_only_covariance":False,
+    }
+
+
+def _blank_annular_covariance(controls):
+    """Paired six-bin false-wing scatter over fixed disjoint sky patches.
+
+    Sample covariance of annular *median estimators* across locations,
+    not per-native-pixel covariance and not an independent-exposure
+    estimate. Require at least eight complete six-ring control patches.
+    """
+    profiles=[row["radial_residual_nMgy_per_pixel"]
+              for row in controls if row.get("status") ==
+              "BLANK_CONDITIONAL_PROFILE_ONLY" and all(
+                  v is not None for v in row["radial_residual_nMgy_per_pixel"])]
+    if len(profiles)<8:
+        return {
+            "status":"TOO_FEW_COMPLETE_BLANK_PATCHES_FOR_COVARIANCE",
+            "n_complete_six_ring_controls":len(profiles),
+            "matrix_nMgy2_per_pixel2":None,
+            "not_calibrated_noise_only_covariance":True,
+        }
+    matrix=np.cov(np.asarray(profiles,dtype=float),rowvar=False,ddof=1)
+    return {
+        "status":"BLANK_ANNULAR_MEDIAN_SPATIAL_SAMPLE_COVARIANCE_ONLY",
+        "n_complete_six_ring_controls":len(profiles),
+        "matrix_nMgy2_per_pixel2":matrix.tolist(),
+        "same_coadd_environment_residuals_included":True,
+        "not_calibrated_noise_only_covariance":True,
+    }
+
+
 def _within_brick_blank_controls(frame, matcher, stars, fwhm,
                                  protected_mask):
     """Choose *only by catalog geometry* on a fixed, nonoverlap grid.
@@ -149,20 +237,57 @@ def _within_brick_blank_controls(frame, matcher, stars, fwhm,
             entry["radial_residual_nMgy_per_pixel"] = residuals
             entry["n_radial_unmasked_native_pixels"] = counts
             entry["radial_unmasked_fraction"] = fractions
+            entry["native_pixel_lag_diagnostic"] = _blank_pixel_lag_covariance(
+                pixels, usable)
             entry["status"] = "BLANK_CONDITIONAL_PROFILE_ONLY"
             controls.append(entry)
     return {
         "grid_step_native_pix": step,
         "n_grid_centers_visited": candidates,
-        "n_catalog_geometry_eligible_before_quota": eligible,
+        "n_selected_catalog_geometry_eligible": eligible,
         "n_catalog_fixed_blank_controls": len(controls),
         "n_measured_blank_controls": sum(
             x["status"]=="BLANK_CONDITIONAL_PROFILE_ONLY" for x in controls),
+        "annular_median_estimator_blank_sample_covariance": (
+            _blank_annular_covariance(controls)
+        ),
         "n_selected_by_quadrant": quotas,
         "reference_flux_nMgy_is_bright_catalog_median": reference_flux,
         "centers_chosen_before_any_pixel_or_residual_tests": True,
         "blank_controls_retain_unknown_uncatalogued_objects": True,
         "controls_same_coadd_not_statistically_independent": True,
+        "pixel_lag_diagnostics": {
+            "method":"FIXED_MASKED_5MAD_PLANE_DETRENDED_NATIVE_PAIRS",
+            "n_controls_with_lag_measurements":sum(
+                x.get("native_pixel_lag_diagnostic",{}).get("status") ==
+                "PLANE_DETRENDED_NATIVE_LAG_SENSITIVITY_ONLY"
+                for x in controls),
+            "per_lag": [
+                {
+                    "dx_native_pixels":lx,"dy_native_pixels":ly,
+                    "n_controls":len(values),
+                    "median_sample_lag_covariance_nMgy2_per_pixel2":
+                        _med(values),
+                    "median_sample_lag_correlation":
+                        _med(corr),
+                }
+                for i,(lx,ly) in enumerate(
+                    ((0,0),(1,0),(0,1),(2,0),(1,1)))
+                for values,corr in [(
+                    [x["native_pixel_lag_diagnostic"]["lag_samples"][i][
+                        "sample_lag_covariance_nMgy2_per_pixel2"]
+                     for x in controls if x.get(
+                         "native_pixel_lag_diagnostic",{}).get("status") ==
+                         "PLANE_DETRENDED_NATIVE_LAG_SENSITIVITY_ONLY"],
+                    [x["native_pixel_lag_diagnostic"]["lag_samples"][i][
+                        "lag_correlation_relative_to_zero"]
+                     for x in controls if x.get(
+                         "native_pixel_lag_diagnostic",{}).get("status") ==
+                         "PLANE_DETRENDED_NATIVE_LAG_SENSITIVITY_ONLY"],
+                )]
+            ],
+            "not_noise_only_covariance_calibration":True,
+        },
         "per_control": controls,
         "per_ring": [
             {
