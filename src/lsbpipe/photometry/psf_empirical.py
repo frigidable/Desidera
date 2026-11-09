@@ -594,7 +594,7 @@ def build_empirical_coadd_psf(
     target_protection_arcsec: float,
     config: PSF0Config | None = None,
     catalog_matcher=None,
-    extended_research_qa: bool = True,
+    extended_research_qa: bool = False,
 ) -> PSF0Result:
     """Build an exploratory native-grid ePSF from independent local star cutouts.
 
@@ -1548,8 +1548,8 @@ def build_empirical_coadd_psf(
     # signed diagnostics, source fingerprints and science HOLD are always
     # executed. Historical P15–P20 read-only controls may be lengthy on
     # the full native brick; the ordinary GUI requests them only by explicit
-    # researcher opt-in. Existing direct Python calls retain full QA by
-    # default for backward-compatible research reproduction.
+    # researcher opt-in. Existing research can be reproduced by passing
+    # extended_research_qa=True explicitly; routine Python calls are fast.
     # The finder FWHM remains a GUESS for candidate selection and older
     # fixed-annulus holdout tests; this measured kernel-core FWHM is a
     # separate QA result and never changes the original star selection.
