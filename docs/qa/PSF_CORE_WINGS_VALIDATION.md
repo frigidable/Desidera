@@ -710,3 +710,100 @@ morphology-aware contamination and recovery tests
 before implementing them; do not assume a model-subtracted
 neighbor is correctly decontaminated from a coadd
 without injection/recovery validation.
+
+
+## P18: native Tractor-shape neighbor footprint and azimuthal sky sensitivity (2026-11-09)
+
+**Purpose:** P17 confirmed that uniform 6 measured-FWHM masks and
+the first flux-tiered masks erase too much Leo P annular area,
+while a 3-FWHM circular mask has not been shown to remove
+extended galaxies or bright stellar halos. P18 introduces ONE
+additional *predeclared* catalog-shape exclusion hypothesis,
+without reselecting stars or adopting a preferred P17 method
+based on the observed residuals.
+
+Input lineage: exactly the same fixed 48 native Gaia/Tractor star
+identities, brightness rank and 16/24/8 legacy/exploratory/new
+identity-heldout roles as P17; exact native FITS catalog hash.
+The same native original image, inverse variance, masked-pixel
+geometry, measured ePSF core FWHM, target mask and sky rings.
+P18 fails closed when WCS is missing/degenerate, a star's Gaia
+REF_ID/Tractor OBJID/native coordinate is inconsistent with its
+P17 identity or the P17 cohort cannot be confirmed. There is
+NO adaptive cherry-picking, replacement or refitting of stars.
+
+**Catalog-only source footprint:**
+
+- For Tractor TYPE=PSF the circular exclusion radius is 3,
+  3.5 or 4.5 measured FWHM, according as native Tractor
+  neighbor/target flux ratio is <0.1, [0.1,1), or >=1.
+  These fixed *hypotheses* are neither encircled-energy
+  measurements nor physical-scattering guarantees.
+- For TYPE=REX, EXP, DEV, SER, use the original release/brick
+  Tractor \`SHAPE_R\` in arcsec, \`SHAPE_E1\`, \`SHAPE_E2\`
+  with \(\epsilon=(a-b)/(a+b)\). The sky tangent major
+  axis is \(\theta = \tfrac12\operatorname{atan2}(e_2,e_1)\)
+  measured from local east toward north. The ellipse's
+  semi-axes in arcsec are \(a^2=r_{\rm core}^2+(4r_e)^2\)
+  and \(b^2=r_{\rm core}^2+(4qr_e)^2\) for
+  \(q=(1-|\epsilon|)/(1+|\epsilon|)\).
+  For REX, \(\epsilon=0\). A local WCS Jacobian
+  converts these oriented tangent-plane ellipses into
+  native pixel masks; no hardcoded DECam plate scale.
+- Missing/invalid non-PSF radius or ellipticity, unknown
+  morphological type or missing/negative band flux triggers
+  an explicit **6-FWHM circular fallback** for that
+  source, rather than guessing an ellipticity or
+  claiming an unmasked clean region. A very large
+  galaxy model may obscure an entire radial ring.
+  Full fallback reason counts are recorded per star.
+- The factor four, core radii and fallback are intentionally
+  provisional, catalogue-derived stress geometry.
+  These analytic elliptical footprints are NOT
+  exact Tractor source rendering or convolved profiles;
+  real galaxy tails and stellar scattering may remain.
+  A footprint does not establish absence of
+  light beyond its boundary.
+
+**Sky diagnostics:** Preserve constant-sky medians in *two disjoint*
+22–26 and 26–30 measured FWHM rings plus a pooled conditional
+planar fit. Within the outer 26–30 ring, separately delete each
+of eight fixed angular octants and recompute the masked native
+median, recording all eight replacements and their maximum
+absolute change divided by the *unchanged original 3×3
+native stellar peak*. These eight estimates share most pixels;
+they ARE NOT independent jackknife replicates, calibrated
+standard deviations, error bars or a coadd covariance model.
+Keep the same six 4–22 FWHM radial bins with coverage,
+at least-25-pixel octant count and constant/planar residuals.
+The stronger background requirement cannot create false
+"sky-free" PSF wings.
+
+Output:
+\`diagnostic_metrics.catalog_shape_neighbor_sky_qa\`, schema
+\`desidera.psf0-catalog-shape-neighbor-sector-sky/1\`.
+Compare geometry, normalized residuals and sky sensitivity
+with P17 3-FWHM baseline by the SAME fixed star identities.
+The readout must separately report 16 previously inspected
+legacy stars, 24 new exploratory stars and eight predeclared
+identity-heldout stars. Preserve all missing-profile outcomes;
+do not use a post-hoc residual criterion to promote a star,
+mask or PSF model. In particular do not turn the eight
+intra-coadd identity holdouts into fictitious independent
+exposure/sky validation.
+
+**Independent field preflight:** Another DESI DR11 South field
+should be selected in a separate *catalog-only* procedure
+using its complete native Tractor source inventory, before
+measuring any star's outer coadd pixels. The predeclared
+comparison should prioritize absolute native-band flux,
+spatial isolation and target-free wide cutouts; a large
+count of faint stars alone is insufficient. P18 itself
+does not claim to have searched or qualified that field.
+Meaningful photometric PSF adoption additionally
+requires separate background/noise-covariance constraints,
+morphology-matched neighbor injection/recovery, and
+cross-field or per-exposure validation.
+
+No new branch or directory, no changes to legacy P16B–P17
+QA, no PSF kernel change, and \`science_adopted=false\`.
