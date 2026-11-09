@@ -660,3 +660,56 @@ def test_no_sga_matches_does_not_autocreate_protect_regions(
     assert not editor.sga_use_prior.isEnabled()
     assert editor.draft.edits==()
     assert "No SGA match" in editor.sga_status.text()
+
+
+def test_on_demand_desi_sga2025_never_needs_local_full_catalogue(
+        qtbot,tmp_path,monkeypatch):
+    from lsbpipe.photometry.sga_priors import (
+        SGAGeometryPrior, SGAPriorLookup,
+    )
+    from lsbpipe.surveys.object_projects import save_object_project
+    import lsbpipe.gui.scene_editor as module
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    project.selected_dataset=("dr11","south","1554p600","g")
+    save_object_project(project)
+    # The public Viewer returns a provisional ellipse: neither verified
+    # final SGAID nor the full SGA2025 D26 photometry/fitting flags.
+    prior=SGAGeometryPrior(
+        release="SGA2025",sga_id=731,name="SGA-731",
+        ra_deg=359.999,dec_deg=60.,offset_arcsec=0.,
+        d26_arcmin=.30,d26_ref="VIEWER_RADIUS_ARCSEC",
+        ba=.7,pa_deg=55.,ellipsebit=0,ellipsemode=0,
+        flags=("SGA2025_VIEWER_OVERLAY_NOT_MERGED_CATALOG",),
+        source_sha256="d"*64,
+        source_path="https://www.legacysurvey.org/viewer/"
+                    "sga2025-south/1/cat.json?test=1")
+    lookup=SGAPriorLookup(
+        "SGA2025",prior.source_path,prior.source_sha256,(prior,))
+    calls=[]
+    def fake_fetch(coords,*,region,radius_arcmin):
+        calls.append((coords,region,radius_arcmin))
+        return lookup
+    monkeypatch.setattr(module,"fetch_viewer_sga2025_priors",
+                        fake_fetch)
+    assert editor.sga_find.isEnabled()
+    editor.sga_find.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._sga_lookup is not None,
+        timeout=5000)
+    assert calls==[((359.999,60.),"south",3.)]
+    assert editor.sga_candidates.count()==2
+    assert editor._sga_candidate is None
+    assert editor.draft.edits==()
+    editor.sga_candidates.setCurrentIndex(1)
+    assert editor._sga_candidate is prior
+    assert editor._sga_item is not None
+    assert "Viewer overlay diameter" in editor.sga_status.text()
+    assert "Viewer ref" in editor.sga_status.text()
+    assert "D26" not in editor.sga_status.text().split("q=")[0]
+    assert not editor.sga_use_prior.isChecked()
+    assert editor._contamination is None
+    editor.set_band("r")
+    editor._accept_dataset(_data(project.project_id,band="r",
+                                 wcs=_native_wcs(flipped=True)))
+    assert editor._sga_item is not None
+    assert editor.draft.edits==()
