@@ -823,6 +823,9 @@ class SurveyExplorer(QMainWindow):
                 star_catalog_policy=str(
                     request.get("star_catalog_policy", "dao_diagnostic")))
             manual_confirmed = request.get("manual_review_confirmed") is True
+            extended_qa = request.get("extended_research_qa", False)
+            if type(extended_qa) is not bool:
+                raise ValueError("Full research QA option must be boolean")
             band = str(request["band"])
             radius = float(request["target_protection_arcsec"])
             root = str(self._object_project.root)
@@ -833,7 +836,8 @@ class SurveyExplorer(QMainWindow):
         def run(progress):
             payload = run_gui_psf0(
                 root, band=band, config=config,
-                protection_arcsec=radius, progress=progress)
+                protection_arcsec=radius, progress=progress,
+                extended_research_qa=extended_qa)
             if manual_confirmed:
                 payload["manual_review_receipt"] = commit_psf0_manual_review(
                     payload, explicitly_confirmed=True)
