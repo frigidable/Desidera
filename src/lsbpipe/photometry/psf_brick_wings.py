@@ -156,12 +156,16 @@ def _within_brick_blank_controls(frame, matcher, stars, fwhm,
         if s["catalog_rank"] <= 16]))
     image = np.asarray(frame.image_nMgy)
     ivar = np.asarray(frame.invvar_nMgy2)
+    # The original row-first quota overfilled the first grid row
+    # in each quadrant: 16 controls could sample only seven of the
+    # brick's 16 spatial tiles. Select ONE predeclared catalog-clean
+    # grid center per 4x4 tile, nearest its geometric center,
+    # with deterministic coordinate tie-breaking. No pixel readout
+    # or outcome-driven replacement enters this selection.
+    best_by_tile = {}
     for y in y_grid:
         for x in x_grid:
             candidates += 1
-            q = _quadrant((x,y), frame.shape)
-            if quotas[q] >= BLANK_MAX_PER_QUADRANT:
-                continue
             if np.any(np.sum((positions-(x,y))**2, axis=1) <
                       (BLANK_MIN_CENTRAL_CATALOG_SEPARATION_FWHM*fwhm)**2):
                 continue
@@ -170,81 +174,98 @@ def _within_brick_blank_controls(frame, matcher, stars, fwhm,
                 continue
             if protected_mask is not None and protected_mask[y,x]:
                 continue
-            # Do not use pixels, SKY medians, or faint residual amplitudes
-            # to choose or backfill a site.
             eligible += 1
-            quotas[q] += 1
-            entry = {
-                "center_native_xy_pix": [int(x),int(y)],
-                "brick_quadrant": q,
-                "status": "NOT_MEASURABLE",
-                "radial_residual_nMgy_per_pixel": [None]*6,
-                "n_radial_unmasked_native_pixels": [0]*6,
-                "radial_unmasked_fraction": [None]*6,
-            }
-            x0,y0 = x-half,y-half
-            sx,sy = slice(x0,x+half+1), slice(y0,y+half+1)
-            tangent = _p18_sky_to_pixel_matrix(frame, x, y)
-            if tangent is None:
-                entry["status"] = "WCS_INVALID"
-                controls.append(entry)
-                continue
-            pixels = image[sy,sx]
-            inverse = ivar[sy,sx]
-            usable = (
-                np.asarray(frame.valid[sy,sx],dtype=bool).copy()
-                & np.isfinite(pixels) & np.isfinite(inverse)
-                & (inverse>0))
-            for key in (f"SATUR_{frame.band.upper()}",
-                        f"ALLMASK_{frame.band.upper()}"):
-                if key in frame.mask_reasons:
-                    usable &= ~np.asarray(frame.mask_reasons[key][sy,sx],
-                                          dtype=bool)
-            if protected_mask is not None:
-                usable &= ~protected_mask[sy,sx]
-            neighbor_mask, reasons, _n = _p18_shape_mask(
-                pixels.shape, x0, y0, positions, rows, -1,
-                reference_flux, fwhm, tangent)
-            usable &= neighbor_mask
-            yy,xx = np.indices(pixels.shape,dtype=float)
-            radius = np.hypot(xx+x0-x,yy+y0-y)
-            sky_a = usable & (radius>=SKY_RING_A[0]*fwhm) & (
-                radius<SKY_RING_A[1]*fwhm)
-            sky_b = usable & (radius>=SKY_RING_B[0]*fwhm) & (
-                radius<SKY_RING_B[1]*fwhm)
-            na,nb = int(sky_a.sum()),int(sky_b.sum())
-            entry["sky_n_unmasked_native_pixels"] = [na,nb]
-            entry["catalog_mask_reasons"] = reasons
-            if na<P16D_MIN_SKY_PIXELS or nb<P16D_MIN_SKY_PIXELS:
-                entry["status"] = "NO_BOTH_NATIVE_SKY_RINGS"
-                controls.append(entry)
-                continue
-            sa,sb = float(np.median(pixels[sky_a])),float(np.median(pixels[sky_b]))
-            entry["sky_a_minus_sky_b_nMgy_per_pixel"] = sa-sb
-            # One blank control has no central star by definition.
-            # Its false "wing" is the same radial-minus-outer-sky
-            # measurement in physical image units as at bright stars.
-            residuals,counts,fractions = [],[],[]
-            for low,high in P16D_PROFILE_RINGS_FWHM:
-                full = (radius>=low*fwhm)&(radius<high*fwhm)
-                selected = full & usable
-                n = int(selected.sum())
-                counts.append(n)
-                fractions.append(float(n/full.sum()) if full.any() else None)
-                residuals.append(
-                    float(np.median(pixels[selected])-sb)
-                    if n>=MIN_RADIAL_PIXELS else None)
-            entry["radial_residual_nMgy_per_pixel"] = residuals
-            entry["n_radial_unmasked_native_pixels"] = counts
-            entry["radial_unmasked_fraction"] = fractions
-            entry["native_pixel_lag_diagnostic"] = _blank_pixel_lag_covariance(
-                pixels, usable)
-            entry["status"] = "BLANK_CONDITIONAL_PROFILE_ONLY"
+            tile_x = min(3, int(4*x/width))
+            tile_y = min(3, int(4*y/height))
+            center_x = (tile_x+.5)*width/4.
+            center_y = (tile_y+.5)*height/4.
+            key = (tile_y,tile_x)
+            candidate = ((x-center_x)**2+(y-center_y)**2, y, x)
+            if key not in best_by_tile or candidate < best_by_tile[key]:
+                best_by_tile[key] = candidate
+    chosen = [(key[1],key[0],item[2],item[1])
+              for key,item in sorted(best_by_tile.items())]
+    for tile_x,tile_y,x,y in chosen:
+        q = int(tile_x>=2)+2*int(tile_y>=2)
+        quotas[q] += 1
+        entry = {
+            "center_native_xy_pix": [int(x),int(y)],
+            "brick_quadrant": q,
+            "status": "NOT_MEASURABLE",
+            "radial_residual_nMgy_per_pixel": [None]*6,
+            "n_radial_unmasked_native_pixels": [0]*6,
+            "radial_unmasked_fraction": [None]*6,
+        }
+        x0,y0 = x-half,y-half
+        sx,sy = slice(x0,x+half+1), slice(y0,y+half+1)
+        tangent = _p18_sky_to_pixel_matrix(frame, x, y)
+        if tangent is None:
+            entry["status"] = "WCS_INVALID"
             controls.append(entry)
+            continue
+        pixels = image[sy,sx]
+        inverse = ivar[sy,sx]
+        usable = (
+            np.asarray(frame.valid[sy,sx],dtype=bool).copy()
+            & np.isfinite(pixels) & np.isfinite(inverse)
+            & (inverse>0))
+        for key in (f"SATUR_{frame.band.upper()}",
+                    f"ALLMASK_{frame.band.upper()}"):
+            if key in frame.mask_reasons:
+                usable &= ~np.asarray(frame.mask_reasons[key][sy,sx],
+                                      dtype=bool)
+        if protected_mask is not None:
+            usable &= ~protected_mask[sy,sx]
+        neighbor_mask, reasons, _n = _p18_shape_mask(
+            pixels.shape, x0, y0, positions, rows, -1,
+            reference_flux, fwhm, tangent)
+        usable &= neighbor_mask
+        yy,xx = np.indices(pixels.shape,dtype=float)
+        radius = np.hypot(xx+x0-x,yy+y0-y)
+        sky_a = usable & (radius>=SKY_RING_A[0]*fwhm) & (
+            radius<SKY_RING_A[1]*fwhm)
+        sky_b = usable & (radius>=SKY_RING_B[0]*fwhm) & (
+            radius<SKY_RING_B[1]*fwhm)
+        na,nb = int(sky_a.sum()),int(sky_b.sum())
+        entry["sky_n_unmasked_native_pixels"] = [na,nb]
+        entry["catalog_mask_reasons"] = reasons
+        if na<P16D_MIN_SKY_PIXELS or nb<P16D_MIN_SKY_PIXELS:
+            entry["status"] = "NO_BOTH_NATIVE_SKY_RINGS"
+            controls.append(entry)
+            continue
+        sa,sb = float(np.median(pixels[sky_a])),float(np.median(pixels[sky_b]))
+        entry["sky_a_minus_sky_b_nMgy_per_pixel"] = sa-sb
+        # One blank control has no central star by definition.
+        # Its false "wing" is the same radial-minus-outer-sky
+        # measurement in physical image units as at bright stars.
+        residuals,counts,fractions = [],[],[]
+        for low,high in P16D_PROFILE_RINGS_FWHM:
+            full = (radius>=low*fwhm)&(radius<high*fwhm)
+            selected = full & usable
+            n = int(selected.sum())
+            counts.append(n)
+            fractions.append(float(n/full.sum()) if full.any() else None)
+            residuals.append(
+                float(np.median(pixels[selected])-sb)
+                if n>=MIN_RADIAL_PIXELS else None)
+        entry["radial_residual_nMgy_per_pixel"] = residuals
+        entry["n_radial_unmasked_native_pixels"] = counts
+        entry["radial_unmasked_fraction"] = fractions
+        entry["native_pixel_lag_diagnostic"] = _blank_pixel_lag_covariance(
+            pixels, usable)
+        entry["status"] = "BLANK_CONDITIONAL_PROFILE_ONLY"
+        controls.append(entry)
     return {
         "grid_step_native_pix": step,
         "n_grid_centers_visited": candidates,
-        "n_selected_catalog_geometry_eligible": eligible,
+        "n_catalog_geometry_eligible_before_tile_selection": eligible,
+        "n_selected_catalog_geometry_eligible": len(chosen),
+        "catalog_only_stratified_selection": "NEAREST_GEOMETRIC_CENTER_OF_EACH_4X4_BRICK_TILE_V2",
+        "n_16_spatial_tiles_with_eligible_controls": len(chosen),
+        "selected_native_pixel_tiles": [
+            {"tile_x":tx,"tile_y":ty,"center_native_xy_pix":[x,y]}
+            for tx,ty,x,y in chosen
+        ],
         "n_catalog_fixed_blank_controls": len(controls),
         "n_measured_blank_controls": sum(
             x["status"]=="BLANK_CONDITIONAL_PROFILE_ONLY" for x in controls),
