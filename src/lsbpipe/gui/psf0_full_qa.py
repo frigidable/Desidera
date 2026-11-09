@@ -73,8 +73,13 @@ def detailed_band_report(panel):
         "postfit_qa_current_user_selection": (
             "full_research" if panel.extended_qa.isChecked() else
             "standard_core"),
-        "postfit_qa_executed_for_result": (
+        "postfit_qa_requested_for_result": (
             payload.get("postfit_qa_scope_requested") if payload else None),
+        "postfit_qa_executed_for_result": (
+            payload["result"].metrics.get("postfit_qa_execution", {}).get(
+                "mode")
+            if payload and hasattr(payload.get("result"), "metrics")
+            else None),
         "star_catalog_policy": panel.catalog_policy.currentData(),
         "detection_fwhm_guess_pix_not_measured": panel.fwhm.value(),
         "fwhm_strategy": ("manual" if panel._fwhm_manually_edited
