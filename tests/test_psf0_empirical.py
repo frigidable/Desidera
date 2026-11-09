@@ -66,7 +66,8 @@ def built():
         fake_frame(), target_icrs_deg=LEO_P,
         target_protection_arcsec=13.,
         config=PSF0Config(min_neighbor_separation_pix=32., min_train_stars=6,
-                          min_holdout_stars=2, max_training_stars=30))
+                          min_holdout_stars=2, max_training_stars=30),
+        extended_research_qa=True)
 
 
 def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
