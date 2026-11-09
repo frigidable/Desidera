@@ -1026,9 +1026,14 @@ class ProjectHub(QMainWindow):
         try:
             row = next((
                 row for row in recent_projects()
-                if row.get("available") and not row.get("legacy")
+                if not row.get("legacy")
                 and isinstance(row.get("root"), str)), None)
             if row is None:
+                return
+            if not row.get("available"):
+                self.hint.setText(
+                    "Last galaxy is missing from disk. Relink it in "
+                    "Galaxy Projects rather than opening a different galaxy.")
                 return
             project = read_object_project(row["root"])
         except (OSError, ValueError, KeyError, TypeError) as exc:
