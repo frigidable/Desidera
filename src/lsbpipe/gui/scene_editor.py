@@ -330,12 +330,17 @@ class SceneEditor(QWidget):
         self.display_mode.currentIndexChanged.connect(self._rerender_image)
         self.display_mode.setToolTip(
             "Display-only stretch on original IMAGE values; no science data changed.")
-        toolbar.addWidget(self.display_mode)
         self.fit_btn = QPushButton("Fit")
         self.fit_btn.clicked.connect(lambda: self.view.fit_image())
         toolbar.addWidget(self.fit_btn)
         toolbar.addStretch(1)
         root.addLayout(toolbar)
+        # Keep the narrow-screen minimum width independent of display options.
+        display_row = QHBoxLayout()
+        display_row.addWidget(QLabel("Display stretch"))
+        display_row.addWidget(self.display_mode)
+        display_row.addStretch(1)
+        root.addLayout(display_row)
 
         splitter = QSplitter(Qt.Horizontal, self)
         self.graphics = QGraphicsScene(self)
@@ -498,7 +503,8 @@ class SceneEditor(QWidget):
         controls_scroll.setObjectName("scene_controls_scroll")
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setWidget(controls)
-        controls_scroll.setMinimumWidth(315)
+        controls_scroll.setMinimumWidth(220)
+        self.view.setMinimumWidth(0)
         splitter.addWidget(controls_scroll)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
