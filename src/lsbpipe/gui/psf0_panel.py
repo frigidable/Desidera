@@ -1187,6 +1187,24 @@ class PSF0Panel(QGroupBox):
                     "FIXED_P17_COHORT_MORPHOLOGY_SKY_DIAGNOSTIC_ONLY"):
                 notes.append(
                     f"  P18 blocked: {p18.get('status', 'UNKNOWN')}.")
+        closed = metrics.get("single_brick_empirical_psf_closure_qa")
+        if isinstance(closed, dict):
+            if closed.get("engineering_stage_finished"):
+                notes.append(
+                    "Empirical PSF single-brick characterization CLOSED: "
+                    f"{closed.get('n_frozen_stars', 0)} original matched "
+                    "catalog stars, finite native empirical core plus "
+                    "conditional 4–22 measured-FWHM wing diagnostics. "
+                    f"Core FWHM {closed.get('finite_core_measured_fwhm_native_pix', 0):.3f} "
+                    "native pixels. NO validated outer-wing kernel, "
+                    "NO calibrated total stellar flux or astrophysical "
+                    "science PSF adoption. All evidence is from THIS "
+                    "native brick; see Copy QA.")
+            else:
+                notes.append(
+                    "Empirical PSF single-brick characterization "
+                    f"NOT complete: {closed.get('status', 'UNKNOWN')}; "
+                    "original core and science gates unchanged.")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
