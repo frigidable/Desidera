@@ -1113,3 +1113,384 @@ def audit_extended_bright_gaia_mask_experiment(
         no_outcome_driven_refilling=True,
         per_star=result_stars,
     )
+
+
+
+# P18 is a new, predeclared single *diagnostic* morphology hypothesis.
+# It does not retroactively select the most favorable P17 mask or modify
+# the already frozen PSF training / 16-star P16C or 48-star P17 cohorts.
+P18_SCHEMA = "desidera.psf0-catalog-shape-neighbor-sector-sky/1"
+P18_POINT_CORE_FWHM = (3., 3.5, 4.5)   # ratio <0.1; 0.1..1; >=1
+P18_EXTENDED_HALF_LIGHT_FACTOR = 4.
+P18_MISSING_EXTENDED_SHAPE_FWHM = 6.
+P18_SKY_SECTOR_MIN_PIXELS = 100
+
+
+def _p18_neighbor_footprint(row, center_flux, fwhm, arcsec_per_pix):
+    """Build a catalog-only bounded *hypothetical* ellipse in sky arcsec.
+
+    The uniform PSF-sized core is combined in quadrature with four
+    Tractor half-light radii of an extended model. This is NOT a
+    direct PSF-convolved source model or a guarantee of zero flux
+    beyond the exclusion ellipse.
+    """
+    flux = row.get("flux")
+    typ = row.get("type")
+    if (not isinstance(flux, (int, float)) or
+            not math.isfinite(flux) or flux <= 0):
+        return (P18_MISSING_EXTENDED_SHAPE_FWHM * fwhm *
+                arcsec_per_pix,) * 2 + (0., "MISSING_FLUX_FALLBACK")
+    ratio = flux / center_flux
+    base = (P18_POINT_CORE_FWHM[2] if ratio >= 1.
+            else P18_POINT_CORE_FWHM[1] if ratio >= .1
+            else P18_POINT_CORE_FWHM[0])
+    core = base * fwhm * arcsec_per_pix
+    if typ == "PSF":
+        return core, core, 0., "CATALOG_PSF"
+    if typ not in ("REX", "EXP", "DEV", "SER"):
+        radius = P18_MISSING_EXTENDED_SHAPE_FWHM * fwhm * arcsec_per_pix
+        return radius, radius, 0., "UNKNOWN_MORPHOLOGY_FALLBACK"
+    radius = row.get("shape_r_arcsec")
+    e1 = row.get("shape_e1")
+    e2 = row.get("shape_e2")
+    if (not isinstance(radius, (int, float)) or
+            not math.isfinite(radius) or radius <= 0):
+        fallback = P18_MISSING_EXTENDED_SHAPE_FWHM*fwhm*arcsec_per_pix
+        return fallback, fallback, 0., "MISSING_SHAPE_FALLBACK"
+    if typ == "REX":
+        e1, e2 = 0., 0.
+    if (not isinstance(e1, (int, float)) or
+            not isinstance(e2, (int, float)) or
+            not math.isfinite(e1) or not math.isfinite(e2)):
+        fallback = P18_MISSING_EXTENDED_SHAPE_FWHM*fwhm*arcsec_per_pix
+        return fallback, fallback, 0., "INVALID_ELLIPTICITY_FALLBACK"
+    eps = math.hypot(e1, e2)
+    if eps >= 1.:
+        fallback = P18_MISSING_EXTENDED_SHAPE_FWHM*fwhm*arcsec_per_pix
+        return fallback, fallback, 0., "INVALID_ELLIPTICITY_FALLBACK"
+    q = (1. - eps) / (1. + eps)
+    theta = .5*math.atan2(e2, e1)
+    wing = P18_EXTENDED_HALF_LIGHT_FACTOR*radius
+    return (math.hypot(core, wing), math.hypot(core, q*wing),
+            theta, "EXTENDED_SHAPE_ELLIPSE")
+
+
+def _p18_sky_to_pixel_matrix(frame, x, y):
+    """Local WCS Jacobian: native pixel offsets to east/north arcsec.
+
+    A CD-derived local tangent approximation is valid only for small
+    (<~arcminute) stamps. No assumed 0.262-arcsec/pixel fallback.
+    """
+    if not hasattr(frame, "wcs"):
+        return None
+    try:
+        mat = np.asarray(frame.wcs.pixel_scale_matrix, dtype=float)
+        _ra, dec = frame.wcs.all_pix2world(float(x), float(y), 0)
+        mat = mat*3600.
+        mat[0] *= math.cos(math.radians(float(dec)))
+    except (AttributeError, TypeError, ValueError, IndexError):
+        return None
+    if (mat.shape != (2, 2) or not np.isfinite(mat).all() or
+            np.linalg.det(mat) == 0):
+        return None
+    sig = np.linalg.svd(mat, compute_uv=False)
+    if sig[-1] <= 0 or sig[0]/sig[-1] > 2:
+        return None
+    return mat
+
+
+def _p18_shape_mask(shape, x0, y0, positions, rows, center_index,
+                    center_flux, fwhm, tangent_matrix):
+    """Compute local shape+brightness masks without star-pixel decisions."""
+    usable = np.ones(shape, dtype=bool)
+    height, width = shape
+    singular = np.linalg.svd(tangent_matrix, compute_uv=False)
+    min_scale = float(singular[-1])
+    scale = float(np.sqrt(abs(np.linalg.det(tangent_matrix))))
+    counts = {}
+    n_intersecting = 0
+    for j, (row, xy) in enumerate(zip(rows, positions)):
+        if j == center_index:
+            continue
+        cx, cy = map(float, xy)
+        a, b, theta, reason = _p18_neighbor_footprint(
+            row, center_flux, fwhm, scale)
+        margin = a/min_scale
+        left = max(0, int(math.floor(cx-margin))-x0)
+        right = min(width, int(math.ceil(cx+margin))-x0+1)
+        bottom = max(0, int(math.floor(cy-margin))-y0)
+        top = min(height, int(math.ceil(cy+margin))-y0+1)
+        if left >= right or bottom >= top:
+            continue
+        n_intersecting += 1
+        counts[reason] = counts.get(reason, 0) + 1
+        yy, xx = np.ogrid[y0+bottom:y0+top, x0+left:x0+right]
+        east = tangent_matrix[0,0]*(xx-cx)+tangent_matrix[0,1]*(yy-cy)
+        north = tangent_matrix[1,0]*(xx-cx)+tangent_matrix[1,1]*(yy-cy)
+        cc, ss = math.cos(theta), math.sin(theta)
+        major = cc*east + ss*north
+        minor = -ss*east + cc*north
+        usable[bottom:top, left:right] &= (
+            (major/a)**2 + (minor/b)**2 > 1.)
+    return usable, counts, n_intersecting
+
+
+def _p18_sky_sector_deletion(pixels, usable, radius, octants, fwhm,
+                             peak):
+    """Eight leave-one-octant-out sky-B medians: correlated sensitivity."""
+    ring_b = usable & (radius >= SKY_RING_B[0]*fwhm) & (
+        radius < SKY_RING_B[1]*fwhm)
+    full = (float(np.median(pixels[ring_b]))
+            if np.count_nonzero(ring_b) >= P16D_MIN_SKY_PIXELS
+            else None)
+    deletion = []
+    for s in range(8):
+        remaining = ring_b & (octants != s)
+        value = (float(np.median(pixels[remaining]))
+                 if np.count_nonzero(remaining) >= P16D_MIN_SKY_PIXELS
+                 else None)
+        deletion.append(value)
+    if full is None or any(v is None for v in deletion):
+        worst = None
+    else:
+        worst = float(max(abs(v-full) for v in deletion)/peak)
+    return full, deletion, worst
+
+
+def audit_catalog_shape_neighbor_and_sky_sensitivity(
+    frame, catalog_matcher, core_geometry, p17_qa, *,
+    protected_mask=None
+):
+    """P18: no re-ranking, no PSF fit, no sky error bars.
+
+    Uses exact P17 fixed 48 star IDs and the native Tractor morphology
+    already read from that same DR11 brick. Records an additional
+    conditional mask profile plus disjoint sky and leave-one-octant-out
+    diagnostics; selection and mask geometry never use wing residuals.
+    """
+    report = {
+        "schema": P18_SCHEMA,
+        "status": "NOT_RUN",
+        "science_adopted": False,
+        "cohort_fixed_from_p17": True,
+        "geometry_uses_original_catalog_only": True,
+        "center_fwhm_uses_frozen_measured_core": True,
+        "point_core_fwhm_by_flux_ratio": list(P18_POINT_CORE_FWHM),
+        "point_flux_ratio_edges": [0.1, 1.],
+        "extended_shape_half_light_radius_multiplier":
+            P18_EXTENDED_HALF_LIGHT_FACTOR,
+        "missing_or_uninterpretable_shape_fallback_fwhm":
+            P18_MISSING_EXTENDED_SHAPE_FWHM,
+        "ellipticity_convention": "(1-q)/(1+q), angle in tangent east/north",
+        "sky_sector_deletions_correlated_not_error_bars": True,
+        "sky_model_not_validated": True,
+        "coadd_noise_covariance_not_calibrated": True,
+        "extended_model_not_psf_convolved_or_flux_free_outside_mask": True,
+        "no_posthoc_mask_selection_no_psf_or_science_adoption": True,
+        "per_star": [],
+    }
+    if (not isinstance(p17_qa, dict) or
+            p17_qa.get("schema") != P17_SCHEMA or
+            p17_qa.get("status") !=
+            "FIXED_EXPANDED_COHORT_MASK_FEASIBILITY_ONLY" or
+            len(p17_qa.get("per_star", [])) != P17_COHORT_LIMIT):
+        return dict(report, status="NO_VALID_FIXED_P17_COHORT")
+    if (catalog_matcher is None or
+            getattr(catalog_matcher, "source_sha256", None) !=
+            p17_qa.get("native_catalog_sha256") or
+            not hasattr(catalog_matcher, "rows") or
+            not hasattr(catalog_matcher, "pixel_positions")):
+        return dict(report, status="CATALOG_LINEAGE_MISMATCH")
+    positions = np.asarray(catalog_matcher.pixel_positions, dtype=float)
+    rows = catalog_matcher.rows
+    if (positions.shape != (len(rows), 2) or
+            not np.isfinite(positions).all()):
+        return dict(report, status="INVALID_NATIVE_CATALOG_POSITIONS")
+    fwhm = (core_geometry.get(
+        "measured_core_fwhm_axis_geometric_mean_native_pix")
+        if isinstance(core_geometry, dict) and core_geometry.get("status") ==
+        "FINITE_NATIVE_CORE_GEOMETRY_MEASURED" else None)
+    if (not isinstance(fwhm, (int, float)) or
+            not math.isfinite(fwhm) or fwhm <= 0):
+        return dict(report, status="NO_FROZEN_MEASURED_FWHM")
+    if protected_mask is not None:
+        protected_mask = np.asarray(protected_mask, dtype=bool)
+        if protected_mask.shape != frame.shape:
+            return dict(report, status="INVALID_TARGET_PROTECTION_MASK")
+    original = np.asarray(frame.image_nMgy, dtype=float)
+    inverse = np.asarray(frame.invvar_nMgy2, dtype=float)
+    half = int(math.ceil(SKY_RING_B[1]*fwhm))+1
+    output = []
+    n_native_sky = 0
+    for star in p17_qa["per_star"]:
+        item = {
+            "source_id": star.get("source_id"),
+            "gaia_source_id": star.get("gaia_source_id"),
+            "catalog_rank": star.get("catalog_rank"),
+            "cohort_role": star.get("cohort_role"),
+            "status": "NOT_MEASURABLE",
+            "science_adopted": False,
+        }
+        # A P17 error MUST remain an error; no sample refilling.
+        if star.get("status") != "MULTIMASK_DESCRIPTIVE_ONLY":
+            item["status"] = "P17_ORIGINAL_PROFILE_NOT_MEASURABLE"
+            output.append(item)
+            continue
+        x, y = map(float, star["native_xy_pix"])
+        ix, iy = int(np.rint(x)), int(np.rint(y))
+        x0, y0 = ix-half, iy-half
+        if (x0 < 0 or y0 < 0 or ix+half >= frame.shape[1] or
+                iy+half >= frame.shape[0]):
+            item["status"] = "FULL_NATIVE_STAMP_OUTSIDE_IMAGE"
+            output.append(item)
+            continue
+        tangent = _p18_sky_to_pixel_matrix(frame, x, y)
+        if tangent is None:
+            item["status"] = "MISSING_OR_UNSAFE_WCS_TANGENT_MATRIX"
+            output.append(item)
+            continue
+        matching = [
+            j for j, row in enumerate(rows)
+            if row.get("ref_cat") == "G3" and
+            row.get("ref_id") == star["gaia_source_id"] and
+            row.get("objid") == star["tractor_objid"]]
+        if len(matching) != 1 or np.linalg.norm(
+                positions[matching[0]]-np.array([x,y])) > 1.e-6:
+            item["status"] = "P17_CATALOG_STAR_IDENTITY_MISMATCH"
+            output.append(item)
+            continue
+        sl_y, sl_x = slice(y0, iy+half+1), slice(x0, ix+half+1)
+        pixels = original[sl_y, sl_x]
+        inverse_cut = inverse[sl_y, sl_x]
+        usable = (np.asarray(frame.valid[sl_y,sl_x], dtype=bool).copy()
+                  & np.isfinite(pixels) & np.isfinite(inverse_cut)
+                  & (inverse_cut > 0))
+        for key in (f"SATUR_{frame.band.upper()}",
+                    f"ALLMASK_{frame.band.upper()}"):
+            if key in frame.mask_reasons:
+                usable &= ~np.asarray(frame.mask_reasons[key][
+                    sl_y,sl_x], dtype=bool)
+        if protected_mask is not None:
+            usable &= ~protected_mask[sl_y,sl_x]
+        catalog_mask, reasons, n_neighbors = _p18_shape_mask(
+            pixels.shape, x0, y0, positions, rows, matching[0],
+            float(star["native_tractor_flux_nMgy"]), float(fwhm), tangent)
+        usable &= catalog_mask
+        yy, xx = np.indices(pixels.shape, dtype=float)
+        xx += x0
+        yy += y0
+        dx, dy = (xx-x)/fwhm, (yy-y)/fwhm
+        radius = np.hypot(xx-x, yy-y)
+        octants = np.minimum(np.floor(
+            (np.arctan2(dy,dx)%(2*np.pi))*8/(2*np.pi)
+        ).astype(int), 7)
+        sky_masks = [
+            usable & (radius >= a*fwhm) & (radius < b*fwhm)
+            for a,b in (SKY_RING_A, SKY_RING_B)
+        ]
+        sky_counts = [int(np.count_nonzero(v)) for v in sky_masks]
+        skies = [
+            float(np.median(pixels[v]))
+            if np.count_nonzero(v) >= P16D_MIN_SKY_PIXELS else None
+            for v in sky_masks
+        ]
+        plane = _p16d_conditional_sky_plane(
+            pixels, dx, dy, sky_masks[0] | sky_masks[1])
+        plane_field = (plane[0]+plane[1]*dx+plane[2]*dy
+                       if plane is not None else None)
+        # P17's center is defined by exactly the same unchanged core
+        # and 3x3 native peak, not a newly optimized amplitude.
+        peak = float(star["native_tractor_flux_nMgy"])
+        # The P17 residual denominators use native peak, not Tractor
+        # integrated flux. Derive it from the *unchanged* original 3x3.
+        center = original[iy-1:iy+2,ix-1:ix+2]
+        center_valid = (
+            np.asarray(frame.valid[iy-1:iy+2,ix-1:ix+2], dtype=bool)
+            & np.isfinite(center)
+            & np.isfinite(inverse[iy-1:iy+2,ix-1:ix+2])
+            & (inverse[iy-1:iy+2,ix-1:ix+2] > 0))
+        for key in (f"SATUR_{frame.band.upper()}",
+                    f"ALLMASK_{frame.band.upper()}"):
+            if key in frame.mask_reasons:
+                center_valid &= ~np.asarray(frame.mask_reasons[key][
+                    iy-1:iy+2,ix-1:ix+2], dtype=bool)
+        if protected_mask is not None:
+            center_valid &= ~protected_mask[iy-1:iy+2,ix-1:ix+2]
+        if not np.any(center_valid):
+            item["status"] = "INVALID_ORIGINAL_NATIVE_PEAK"
+            output.append(item)
+            continue
+        peak = float(np.max(center[center_valid]))
+        if not math.isfinite(peak) or peak <= 0:
+            item["status"] = "INVALID_ORIGINAL_NATIVE_PEAK"
+            output.append(item)
+            continue
+        sky_b, deletion, maximum = _p18_sky_sector_deletion(
+            pixels, usable, radius, octants, fwhm, peak)
+        item.update({
+            "n_neighbor_footprints_intersecting_stamp": n_neighbors,
+            "catalog_footprint_class_counts": reasons,
+            "native_peak_nMgy_per_pixel": peak,
+            "sky_ring_n_unmasked": sky_counts,
+            "sky_ring_medians_nMgy_per_pixel": skies,
+            "sky_plane_coefficients_nMgy_per_pixel": (
+                list(plane) if plane is not None else None),
+            "sky_b_leave_one_octant_out_medians_nMgy": deletion,
+            "sky_b_max_abs_leave_one_octant_change_over_peak": maximum,
+            "sky_a_minus_sky_b_over_peak": (
+                (skies[0]-skies[1])/peak if skies[0] is not None and
+                skies[1] is not None else None),
+            "radial_profile": [],
+        })
+        for a,b in P16D_PROFILE_RINGS_FWHM:
+            full = (radius >= a*fwhm)&(radius < b*fwhm)
+            usable_ring = full & usable
+            n = int(np.count_nonzero(usable_ring))
+            total = int(np.count_nonzero(full))
+            raw = float(np.median(pixels[usable_ring])) if n else None
+            octant_values = []
+            for k in range(8):
+                sel = usable_ring & (octants == k)
+                octant_values.append(
+                    float(np.median((pixels-skies[1])[sel])/peak)
+                    if skies[1] is not None and
+                    np.count_nonzero(sel) >= P16D_MIN_OCTANT_PIXELS
+                    else None)
+            item["radial_profile"].append({
+                "radius_inner_in_measured_fwhm": a,
+                "radius_outer_in_measured_fwhm": b,
+                "n_unmasked_native_pixels": n,
+                "unmasked_fraction": n/total if total else None,
+                "n_octants_with_at_least_25_pixels": sum(
+                    v is not None for v in octant_values),
+                "sky_b_subtracted_median_over_peak": (
+                    (raw-skies[1])/peak
+                    if raw is not None and skies[1] is not None else None),
+                "sky_a_subtracted_median_over_peak": (
+                    (raw-skies[0])/peak
+                    if raw is not None and skies[0] is not None else None),
+                "conditional_plane_subtracted_median_over_peak": (
+                    float(np.median((pixels-plane_field)[usable_ring])/peak)
+                    if plane_field is not None and n else None),
+                "sky_b_subtracted_octant_medians_over_peak": octant_values,
+            })
+        if (sky_counts[0] < P16D_MIN_SKY_PIXELS or
+                sky_counts[1] < P16D_MIN_SKY_PIXELS or
+                plane is None):
+            item["status"] = "INSUFFICIENT_OR_UNSAFE_CONDITIONAL_SKY"
+        else:
+            item["status"] = "MORPHOLOGY_MASK_AND_SKY_DESCRIPTIVE_ONLY"
+            n_native_sky += 1
+        output.append(item)
+    return dict(
+        report,
+        status="FIXED_P17_COHORT_MORPHOLOGY_SKY_DIAGNOSTIC_ONLY",
+        native_catalog_sha256=p17_qa["native_catalog_sha256"],
+        n_fixed_star_identities=len(output),
+        n_new_identity_holdout=sum(
+            v["cohort_role"] == "NEW_CATALOG_HOLDOUT" for v in output),
+        n_profiles_with_both_sky_and_plane=n_native_sky,
+        n_profiles_not_qualifying_sky_or_geometry=len(output)-n_native_sky,
+        no_star_replacement_or_psf_adoption=True,
+        per_star=output,
+    )
