@@ -541,7 +541,7 @@ class SceneEditor(QWidget):
         self.iso_shape.currentIndexChanged.connect(self._show_isophote_preview)
         iso_layout.addWidget(self.iso_shape)
         self.iso_share_bands = QCheckBox(
-            "Apply this band-derived shape to all bands (explicit)")
+            "Share across g/r/i/z (explicit)")
         self.iso_share_bands.setObjectName("scene_isophote_share_bands")
         self.iso_share_bands.setChecked(False)
         self.iso_share_bands.setToolTip(
@@ -549,7 +549,7 @@ class SceneEditor(QWidget):
             "deliberate confirmation and independent per-band QA.")
         iso_layout.addWidget(self.iso_share_bands)
         self.iso_low_conf_override = QCheckBox(
-            "Allow low-confidence DRAFT after manual review")
+            "Allow low-confidence draft after review")
         self.iso_low_conf_override.setObjectName(
             "scene_isophote_review_override")
         self.iso_low_conf_override.setChecked(False)
