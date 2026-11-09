@@ -397,6 +397,10 @@ class SceneEditor(QWidget):
         self._switch_source(key, None)
         self._project_root = Path(project.root)
         self._project_id = project.project_id
+        if project.field is not None:
+            max_width = min(9., max(.5, project.field.width_arcmin))
+            self.width.setMaximum(max_width)
+            self.width.setValue(min(6., max_width))
         if key in self._work_cache:
             self._draft, self._saved_digest, self._undo, self._redo = (
                 self._work_cache[key])
@@ -432,7 +436,11 @@ class SceneEditor(QWidget):
         self._image = None
         self._native_overlay = None
         self._paths.clear()
-        self._poll_timer.stop()
+        # Preserve a running stale worker until it finishes, then drop
+        # its result by generation. Otherwise a band/project switch could
+        # stop polling forever and leave the Load button blocked.
+        if self._future is None or self._future.done():
+            self._poll_timer.stop()
 
     def set_band(self, band: str):
         if band not in "griz" or len(band) != 1:
