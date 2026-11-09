@@ -1,4 +1,5 @@
 """P16B wide-radius native source data are not a calibrated wide PSF."""
+from copy import deepcopy
 from types import SimpleNamespace
 
 import numpy as np
@@ -15,6 +16,9 @@ from lsbpipe.photometry.psf_wing_profile import (
     P18_SCHEMA, audit_catalog_shape_neighbor_and_sky_sensitivity,
     _p18_neighbor_footprint, _p18_shape_mask,
     _p18_sky_sector_deletion,
+)
+from lsbpipe.photometry.psf_core_wings_validation import (
+    finalize_single_brick_empirical_psf, SINGLE_BRICK_CLOSURE_SCHEMA,
 )
 
 FWHM=5.136902957677135
@@ -791,3 +795,145 @@ def test_p18_gui_displays_only_descriptive_status():
     assert "P18 catalog morphology / sky sensitivity" in text
     assert "48 fixed P17 identities" in text
     assert "NO calibrated sky uncertainty" in text
+
+
+
+def _single_brick_closure_synthetic_evidence():
+    from astropy.wcs import WCS
+    frame, matcher = _p17_synthetic_field()
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [440.,420.]
+    wcs.wcs.crval = [155.,18.]
+    wcs.wcs.cdelt = [-.262/3600., .262/3600.]
+    wcs.wcs.ctype = ["RA---TAN","DEC--TAN"]
+    frame.wcs = wcs
+    p16c = audit_disjoint_bright_gaia_wing_probes(
+        frame, [], matcher, _geometry())
+    p17 = audit_extended_bright_gaia_mask_experiment(
+        frame, [], matcher, _geometry(), p16c)
+    p18 = audit_catalog_shape_neighbor_and_sky_sensitivity(
+        frame, matcher, _geometry(), p17)
+    core = {
+        "status": "SCIENCE_GATE_HOLD",
+        "n_train_stars": 10,
+        "n_fixed_holdout_stars": 3,
+        "core_geometry": dict(
+            _geometry(), fully_contained_radial_radius_limit_native_pix=40.),
+    }
+    return frame, p17, p18, core
+
+
+def test_single_brick_closure_uses_only_frozen_matched_qa_and_keeps_hold():
+    frame, p17, p18, core = _single_brick_closure_synthetic_evidence()
+    snapshot = frame.image_nMgy.copy()
+    args = dict(
+        dataset_id="dr11/south/1554p180/g",
+        image_shape=frame.shape,
+        core_validation=core,
+        p17_qa=p17, p18_qa=p18,
+        verified_native_sources=True,
+    )
+    finished = finalize_single_brick_empirical_psf(**args)
+    assert finished["schema"] == SINGLE_BRICK_CLOSURE_SCHEMA
+    assert finished["status"] == (
+        "BRICK_ONLY_EMPIRICAL_CORE_AND_WING_CONSTRAINTS_COMPLETE")
+    assert finished["engineering_stage_finished"]
+    assert not finished["science_adopted"]
+    assert not finished["scientifically_validated_extended_wings"]
+    assert not finished["wide_wing_photometric_correction_permitted"]
+    assert finished["no_other_brick_required_or_used"]
+    assert finished["n_frozen_stars"] == 48
+    assert finished["n_original_kernel_training_stars"] == 10
+    assert finished["n_original_kernel_holdout_stars"] == 3
+    assert finished["outer_diagnostic_radii_fwhm"] == [4., 22.]
+    assert finished["finite_core_kernel_full_radial_support_native_pix"] == 40.
+    for label, expected in zip((
+            "P16C_LEGACY_EXPLORATORY", "NEW_CATALOG_EXPLORATORY",
+            "NEW_CATALOG_HOLDOUT"), (16, 24, 8)):
+        assert finished["cohorts"][label]["n_stars"] == expected
+        assert len(finished["cohorts"][label]["radial_profiles"]) == 6
+        assert finished["cohorts"][label][
+            "sky_sensitivity"]["eight_deletions_not_independent_error_estimates"]
+    assert sum(x["n_fixed_stars"] for x in
+               finished["same_brick_catalog_pixel_quadrants"]) == 48
+    assert sum(x["n_legacy_bright_stars"] for x in
+               finished["same_brick_catalog_pixel_quadrants"]) == 16
+    np.testing.assert_array_equal(snapshot, frame.image_nMgy)
+    # The diagnostic must follow IDs, never ordering of a JSON list.
+    reverse = dict(args, p18_qa=dict(p18, per_star=p18["per_star"][::-1]))
+    shuffled = finalize_single_brick_empirical_psf(**reverse)
+    assert shuffled["cohorts"] == finished["cohorts"]
+    assert shuffled["same_brick_catalog_pixel_quadrants"] == (
+        finished["same_brick_catalog_pixel_quadrants"])
+
+
+def test_single_brick_closure_fails_closed_on_provenance_and_identity():
+    frame, p17, p18, core = _single_brick_closure_synthetic_evidence()
+    args = dict(
+        dataset_id="dr11/south/1554p180/g",
+        image_shape=frame.shape,
+        core_validation=core,
+        p17_qa=p17, p18_qa=p18,
+        verified_native_sources=True,
+    )
+    assert finalize_single_brick_empirical_psf(**dict(
+        args, verified_native_sources=False))["status"] == (
+            "ORIGINAL_NATIVE_SOURCE_HASHES_UNVERIFIED")
+    bad_core = dict(core, core_geometry={"status":"UNMEASURED"})
+    assert finalize_single_brick_empirical_psf(**dict(
+        args, core_validation=bad_core))["status"] == (
+            "NO_MEASURED_FINITE_CORE")
+    altered = dict(p18, native_catalog_sha256="different")
+    assert finalize_single_brick_empirical_psf(**dict(
+        args, p18_qa=altered))["status"] == (
+            "NATIVE_TRACTOR_CATALOG_HASH_MISMATCH")
+    missing = dict(p18, per_star=p18["per_star"][:-1])
+    assert finalize_single_brick_empirical_psf(**dict(
+        args, p18_qa=missing))["status"] == "INCOMPLETE_48_STAR_COHORT"
+    altered_id = deepcopy(p18)
+    altered_id["per_star"][4]["gaia_source_id"] = -8
+    assert finalize_single_brick_empirical_psf(**dict(
+        args, p18_qa=altered_id))["status"] == (
+            "P18_P17_STAR_IDENTITY_MISMATCH")
+    assert not finalize_single_brick_empirical_psf(**dict(
+        args, p18_qa=altered_id))["engineering_stage_finished"]
+
+
+def test_single_brick_closure_sky_available_does_not_hide_empty_ring():
+    frame, p17, p18, core = _single_brick_closure_synthetic_evidence()
+    # Preserve 48 successful sky solutions, but one mask destroys an
+    # internal stellar annulus. No fake zero-valued measurement.
+    altered = deepcopy(p18)
+    ring = altered["per_star"][19]["radial_profile"][0]
+    ring["sky_b_subtracted_median_over_peak"] = None
+    ring["unmasked_fraction"] = 0.
+    ring["n_octants_with_at_least_25_pixels"] = 0
+    result = finalize_single_brick_empirical_psf(
+        dataset_id="dr11/south/1554p180/g",
+        image_shape=frame.shape,
+        core_validation=core,
+        p17_qa=p17, p18_qa=altered,
+        verified_native_sources=True)
+    assert result["engineering_stage_finished"]
+    assert result["n_p18_radial_annuli_with_no_pixels"] == 1
+    row = result["cohorts"]["all_48"]["radial_profiles"][0]
+    assert row["n_nonnull_p18_radial_residuals"] == 47
+    assert row["n_stars"] == 48
+    assert not result["scientifically_validated_extended_wings"]
+
+
+def test_single_brick_closure_gui_never_implies_science_adoption():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    summary = PSF0Panel._calibration_diagnostic_summary({
+        "single_brick_empirical_psf_closure_qa": {
+            "schema": SINGLE_BRICK_CLOSURE_SCHEMA,
+            "status": "BRICK_ONLY_EMPIRICAL_CORE_AND_WING_CONSTRAINTS_COMPLETE",
+            "engineering_stage_finished": True,
+            "n_frozen_stars": 48,
+            "finite_core_measured_fwhm_native_pix": 5.13690,
+        },
+    })
+    assert "single-brick characterization CLOSED" in summary
+    assert "NO validated outer-wing kernel" in summary
+    assert "THIS native brick" in summary
