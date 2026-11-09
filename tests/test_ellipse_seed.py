@@ -120,3 +120,53 @@ def test_local_isophote_fails_closed_on_blank_or_unanchored_light():
     with pytest.raises(ValueError, match="outside"):
         propose_local_isophote(
             image, np.ones_like(image,bool), (500.,120.))
+
+
+def test_multiscale_sensitivity_reports_nearby_thresholds_and_low_confidence():
+    from dataclasses import replace
+    from lsbpipe.photometry.ellipse_seed import (
+        propose_local_isophote, assess_local_isophote_sensitivity,
+    )
+    rng=np.random.default_rng(106)
+    yy,xx=np.indices((241,241))
+    image=(2.+rng.normal(0.,.4,(241,241))
+           + 4.*np.exp(-.5*(((xx-120.)/24.)**2+
+                            ((yy-120.)/13.)**2)))
+    good=np.ones_like(image,bool)
+    model=propose_local_isophote(
+        image,good,(120.,120.),threshold_contrast=2.2,
+        smooth_sigma_pix=3.,bridge_guard_pix=2)
+    assert "THIN_BRIDGE_OPENING_2PX" in model.flags
+    qa=assess_local_isophote_sensitivity(
+        image,good,(120.,120.),model,
+        threshold_contrast=2.2,smooth_sigma_pix=3.,bridge_guard_pix=2)
+    assert qa["trial_count"]==4
+    assert qa["sensitivity_status"]=="MULTISCALE_DIAGNOSTIC_NOT_SCIENCE_VALIDATED"
+    assert all("state" in trial for trial in qa["trials"])
+    # Force a known displaced reference to confirm the safety gate does
+    # not silently accept large offsets even when other trials succeed.
+    displaced=replace(model,seed=replace(
+        model.seed,centroid_offset_pix=65.))
+    warning=assess_local_isophote_sensitivity(
+        image,good,(120.,120.),displaced,
+        threshold_contrast=2.2,smooth_sigma_pix=3.,bridge_guard_pix=2)
+    assert "UNANCHORED_CENTROID_DRIFT" in warning["flags"]
+    assert warning["confidence"]=="LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE"
+
+
+def test_bridge_guard_is_bounded_and_does_not_mutate_native_pixels():
+    from lsbpipe.photometry.ellipse_seed import propose_local_isophote
+    rng=np.random.default_rng(114)
+    yy,xx=np.indices((241,241))
+    image=(3.+rng.normal(0.,.3,(241,241))
+           +2.*np.exp(-.5*(((xx-120.)/20.)**2+
+                            ((yy-120.)/13.)**2)))
+    raw=image.copy()
+    good=np.ones_like(image,bool)
+    model=propose_local_isophote(
+        image,good,(120.,120.),bridge_guard_pix=2)
+    assert model.seed.component_pixels>100
+    assert np.array_equal(raw,image)
+    with pytest.raises(ValueError,match="bridge settings"):
+        propose_local_isophote(
+            image,good,(120.,120.),bridge_guard_pix=9)
