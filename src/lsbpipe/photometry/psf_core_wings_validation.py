@@ -287,6 +287,7 @@ def finalize_single_brick_empirical_psf(
         "wide_wing_photometric_correction_permitted": False,
         "no_other_brick_required_or_used": True,
         "outer_profiles_sky_conditional_not_physical_ee_fraction": True,
+        "observed_coadd_psf_not_raw_optical_instrument_psf": True,
         "finite_epsf_normalization_not_true_total_stellar_flux": True,
         "stellar_identities_not_reranked_or_replaced": True,
         "statistics_correlated_within_the_same_coadd": True,
@@ -391,6 +392,7 @@ def finalize_single_brick_empirical_psf(
         ]
     population = {}
     radial_nulls = 0
+    radial_no_pixels = 0
     for label, rows in subsets.items():
         radial = []
         for index,(lo,hi) in enumerate(SINGLE_BRICK_RINGS):
@@ -413,6 +415,8 @@ def finalize_single_brick_empirical_psf(
             )
             if label == "all_48":
                 radial_nulls += len(rows)-n_available
+                radial_no_pixels += sum(
+                    r.get("n_unmasked_native_pixels") == 0 for r in new_r)
             qualified = sum(
                 r.get("unmasked_fraction") is not None and
                 r["unmasked_fraction"] >= .5 and
@@ -507,7 +511,8 @@ def finalize_single_brick_empirical_psf(
         physical_core_flux_normalization_known=False,
         outer_diagnostic_radii_fwhm=[4.,22.],
         outer_conditioning_sky_radii_fwhm=[22.,30.],
-        n_p18_radial_annuli_with_no_pixels=radial_nulls,
+        n_p18_radial_annuli_missing_residual=radial_nulls,
+        n_p18_radial_annuli_with_no_pixels=radial_no_pixels,
         cohorts=population,
         same_brick_catalog_pixel_quadrants=quadrants,
         scientifically_validated_extended_wings=False,
