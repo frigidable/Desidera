@@ -25,10 +25,17 @@ The main source tree remains `src/lsbpipe/` for compatibility with existing rese
 | **Survey navigation** | Explicit DR9/DR10/DR11 search/brick selection, candidate source URLs and download management |
 | **Original FITS** | IMAGE, INVVAR, NEXP and MASKBITS dataset inspection, WCS-aware views, pixel-level coverage and diagnostic masks |
 | **Prototype photometry** | Local fixed-ellipse integration, signed flux/valid-area accounting and `measure-fits` output |
+| **Empirical PSF (Leo P pilot)** | Original DR11 South native coadd, Gaia/Tractor star selection, finite 81×81 g-band ePSF, held-out-star and native blank-sky QA; wide wings and science use **remain HOLD** |
 | **Research QA** | Diagnostic scenes, residual-background candidates, sensitivity checks, run/lineage evidence and immutable configurations |
 | **Catalogues / previews** | Opt-in SIMBAD/NED searches with user-confirmed identities, local FITS thumbnails and display-only Legacy RGB previews |
 
 These capabilities have different levels of validation. Read their code and tests before treating a particular mode or science quantity as accepted. The formal research backlog and adoption gates are tracked in [issue #44](https://github.com/frigidable/Desidera/issues/44) and its work packages; [unmerged PRs](https://github.com/frigidable/Desidera/pulls) may contain additional prototypes.
+
+### Current integration checkpoint
+
+The complete scientific/UI implementation from PRs #39–#43 is now in `main`. The user-facing photometry workspace displays the real PSF workflow rather than eight non-executable planning cards, and keeps historical PSF recipes inside advanced diagnostics. The registered PSF-0 experiment remains **Leo P only**, with a real archived **g-band brick 1554p180** pilot; the existence of g/r/i/z tabs is not evidence of per-band science validation. **No empirical wing PSF or scattered-light correction is science-adopted.**
+
+For exact merge SHAs, QA scope, CI evidence and classification of historical remote branches, read the [2026-11-09 integration checkpoint](docs/validation/REPOSITORY_CHECKPOINT_2026-11-09.md). The detailed [PSF core/wings audit](docs/qa/PSF_CORE_WINGS_VALIDATION.md) remains the scientific source of truth.
 
 ### Network and data safety
 

@@ -12,6 +12,11 @@ For current capabilities and runnable entry points, use the [top-level README](.
 - [UX design system](ux/DESIGN_SYSTEM.md), [screen states](ux/SCREEN_STATES.md) and [quality gates](ux/QUALITY_GATES.md): design objectives and acceptance criteria; screenshot outcomes require actual evidence.
 - [Project roadmap #44](https://github.com/frigidable/Desidera/issues/44): current work packages and release/science gates. [PRs](https://github.com/frigidable/Desidera/pulls) show work that has not entered the default branch.
 
+## Current integration checkpoint
+
+- [Repository checkpoint, 2026-11-09](validation/REPOSITORY_CHECKPOINT_2026-11-09.md): merged PRs #39–#43, CI and science statuses, user-workflow simplification, and historical branch triage.
+- [Empirical PSF core and broad-wing audit](qa/PSF_CORE_WINGS_VALIDATION.md): the preserved Leo P DR11 South g-band P16–P20 analysis, measured radius limitations and unresolved wide-angle wings.
+
 ## Scientific and implementation contracts
 
 These explain constraints and intended behavior; re-check details against current source before relying on an old phase note.
