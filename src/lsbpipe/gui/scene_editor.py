@@ -38,7 +38,9 @@ from lsbpipe.photometry.ellipse_seed import (
     assess_local_isophote_sensitivity,
 )
 from lsbpipe.photometry.scene_contaminants import prepare_scene_contamination
-from lsbpipe.photometry.sga_priors import read_local_sga_priors
+from lsbpipe.photometry.sga_priors import (
+    read_local_sga_priors, fetch_viewer_sga2025_priors,
+)
 from lsbpipe.survey import legacy_validity
 from lsbpipe.surveys.legacy import SkyField, BrickHit
 from lsbpipe.surveys.object_projects import read_object_project
@@ -440,7 +442,16 @@ class SceneEditor(QWidget):
         sga_box = QGroupBox("SGA · initial geometry prior (optional)")
         sga_box.setObjectName("scene_sga_prior_group")
         sga_layout = QVBoxLayout(sga_box)
-        self.sga_load = QPushButton("Choose local SGA FITS…")
+        self.sga_find = QPushButton("Find SGA-2025 · DESI Viewer")
+        self.sga_find.setObjectName("scene_sga_find_desi")
+        self.sga_find.setToolTip(
+            "Query the official DESI Legacy Surveys SGA-2025 overlay "
+            "in a 3-arcmin sky region: one small JSON request, no 1.4-GB "
+            "catalogue download. Viewer ellipses are provisional geometry "
+            "and may differ from the merged SGA2025 scientific catalogue.")
+        self.sga_find.clicked.connect(self._find_desi_sga2025)
+        sga_layout.addWidget(self.sga_find)
+        self.sga_load = QPushButton("Or choose local SGA FITS…")
         self.sga_load.setObjectName("scene_sga_open_local")
         self.sga_load.setToolTip(
             "Explicit local SGA-2020 or SGA-2025 catalogue. "
@@ -461,12 +472,15 @@ class SceneEditor(QWidget):
         self.sga_use_prior.setChecked(False)
         self.sga_use_prior.toggled.connect(self._sga_protection_changed)
         self.sga_use_prior.setToolTip(
-            "Opt-in: protects the SGA D26 ellipse during preliminary "
-            "source screening only. It never defines the LSB outer radius.")
+            "Opt-in: protects the selected SGA central ellipse during "
+            "preliminary source screening only. DESI Viewer geometry is "
+            "an overlay prior, not necessarily catalogue D26 and never "
+            "the full LSB radius.")
         sga_layout.addWidget(self.sga_use_prior)
         self.sga_status = QLabel(
-            "No SGA geometry loaded. SGA-2020 published; SGA-2025 draft. "
-            "This prior never clips the outer galaxy search.")
+            "Use Find SGA-2025 to query the DESI Viewer by current target "
+            "coordinates. It returns a provisional central overlay ellipse, "
+            "not a calibrated outer LSB boundary. Source selection is manual.")
         self.sga_status.setObjectName("scene_sga_status")
         self.sga_status.setWordWrap(True)
         sga_layout.addWidget(self.sga_status)
@@ -962,6 +976,40 @@ class SceneEditor(QWidget):
             "source, band, target centre and scene-draft revision.")
         self._refresh_controls()
 
+    def _find_desi_sga2025(self):
+        """On-demand official Viewer SGA2025 overlay; explicit network click."""
+        if (self._project_root is None or self._project_target is None
+                or self._future is not None):
+            return
+        project = read_object_project(self._project_root)
+        if (project.selected_dataset is None or
+                project.selected_dataset[0] != "dr11" or
+                project.selected_dataset[1] not in ("north", "south")):
+            self.sga_status.setText(
+                "Select a DR11 North/South source in the object project "
+                "before querying the matching SGA2025 Viewer region.")
+            return
+        region = project.selected_dataset[1]
+        self._sga_lookup = None
+        self._sga_candidate = None
+        self.sga_candidates.blockSignals(True)
+        self.sga_candidates.clear()
+        self.sga_candidates.blockSignals(False)
+        self.sga_use_prior.setChecked(False)
+        self._redraw_sga_prior()
+        self._discard_prepared_masks()
+        self._future = self._executor.submit(
+            fetch_viewer_sga2025_priors, self._project_target,
+            region=region, radius_arcmin=3.)
+        self._work_kind = "sga"
+        self._active_generation = self._load_generation
+        self.sga_status.setText(
+            f"Querying official DESI Viewer SGA2025-{region} overlay "
+            "by coordinates. The JSON is provisional and version-mutable; "
+            "no FITS catalogue is being downloaded or changed.")
+        self._poll_timer.start()
+        self._refresh_controls()
+
     def _open_sga_file(self):
         """Select an existing SGA catalog: no downloads, no extra folders."""
         if (self._project_root is None or self._project_target is None
@@ -1002,18 +1050,26 @@ class SceneEditor(QWidget):
         self.sga_candidates.addItem(
             f"Select matched galaxy ({len(lookup.matches)} candidates)", None)
         for row in lookup.matches:
+            identifier = (
+                f"Viewer ref {row.sga_id}"
+                if row.d26_ref == "VIEWER_RADIUS_ARCSEC" else
+                f"SGAID {row.sga_id}")
             label = (
-                f"{row.name} · {row.release} #{row.sga_id} · "
+                f"{row.name} · {row.release} · {identifier} · "
                 f"{row.offset_arcsec:.1f} arcsec")
             self.sga_candidates.addItem(label, row)
         self.sga_candidates.setCurrentIndex(0)
         self.sga_candidates.blockSignals(False)
         if lookup.matches:
+            origin = ("DESI Viewer overlay" if
+                      lookup.source_path.startswith("https://")
+                      else "Local FITS")
             self.sga_status.setText(
-                f"Local {lookup.release} catalogue: "
+                f"{origin} {lookup.release}: "
                 f"{len(lookup.matches)} positional candidate(s). "
-                "Choose the correct galaxy explicitly; D26 may cover "
-                "only its bright central region.")
+                "Select a galaxy explicitly; viewer ellipse is NOT "
+                "validated catalogue D26, and even catalogue D26 may "
+                "cover only the bright central region.")
         else:
             self.sga_status.setText(
                 "No SGA match within 3 arcmin of saved object centre. "
@@ -1038,12 +1094,19 @@ class SceneEditor(QWidget):
             return
         d26 = (f"{prior.d26_arcmin:.3f} arcmin"
                if prior.d26_arcmin is not None else "unavailable")
+        radius_label = ("Viewer overlay diameter"
+                        if prior.d26_ref == "VIEWER_RADIUS_ARCSEC"
+                        else "D26")
+        identifier = ("Viewer ref" if
+                      prior.d26_ref == "VIEWER_RADIUS_ARCSEC"
+                      else "SGAID")
         pa = (f"{prior.pa_deg:.1f} deg"
               if prior.pa_deg is not None else "unavailable")
         q = (f"{prior.ba:.3f}"
              if prior.ba is not None else "unavailable")
         self.sga_status.setText(
-            f"{prior.release} #{prior.sga_id} · D26={d26} "
+            f"{prior.release} {identifier} {prior.sga_id} · "
+            f"{radius_label}={d26} "
             f"(ref={prior.d26_ref or 'unknown'}); "
             f"q={q}, PA={pa}; "
             f"offset={prior.offset_arcsec:.1f} arcsec. "
@@ -1744,6 +1807,8 @@ class SceneEditor(QWidget):
         self.edit_btn.setEnabled(
             active and 0 <= self.edits.currentRow() < len(self._draft.edits))
         worker_idle = self._future is None or self._future.done()
+        self.sga_find.setEnabled(
+            ready and worker_idle and self._project_target is not None)
         self.sga_load.setEnabled(ready and worker_idle
                                  and self._project_target is not None)
         self.sga_candidates.setEnabled(
