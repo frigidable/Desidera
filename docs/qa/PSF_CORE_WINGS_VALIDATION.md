@@ -473,8 +473,8 @@ Its original ePSF SHA256 remains
   4–6 FWHM residual of \`wing-cat-0015\` must not be interpreted
   as wing evidence.
 
-**Scientific decision:** STOP wide-angle PSF estimation from the
-16-star Leo P cohort with the available coadd alone. The stress test
+**Scientific decision at P16D:** STOP wide-angle PSF estimation from the
+16-star Leo P cohort under the 6-FWHM *stress mask* with the available coadd alone. The stress test
 demonstrates that the nominal profiles cannot reliably constrain
 the **outer** wings with conservative neighbor masking; the two
 background hypotheses and the plane remain degenerate with possible
@@ -485,7 +485,7 @@ Keep \`science_adopted=false\`, \`SCIENCE_GATE_HOLD\`; preserve the
 unchanged original P16C cohort and the P16D report as a documented
 negative feasibility pilot.
 
-**Next scientific experiment:** independently choose a sufficiently
+**Next independent field if P17 remains inconclusive:** choose a sufficiently
 star-rich, less crowded DESI Legacy coadd field via *catalog-only*
 preregistered criteria for brightness, unsaturated core, complete
 outer stamps, neighbor separation and azimuthal coverage, before
@@ -501,3 +501,90 @@ cut into a target's own intermediate radial annulus when another
 Tractor source lies within 6 FWHM of the target; its severity is
 a feature of this deliberately conservative stress test, not a
 physically calibrated optimal masking policy.
+
+
+## P17: one preregistered 48-star Leo P mask sensitivity experiment
+
+P16D's 6-FWHM mask is a deliberately pessimistic geometric test.
+Its severe annular area loss **does not** establish that a
+3-FWHM exclusion fails or that Leo P contains too few stars.
+The original P16C catalog screening found 100 Gaia/Tractor candidates
+before the 16-star *quota*. Therefore, repeat this one **bounded**
+feasibility experiment in Leo P before requesting a new DR11 field.
+This does not undo P16D's refusal to adopt or extrapolate PSF wings.
+
+The immutable catalog-only ranking remains the exact P16C sequence:
+Gaia G3, Tractor PSF, valid native-band flux and diagonal-only
+nominal SNR >= 20, clean mask/fit/duplicated-source flags, complete
+30-FWHM native cutout, unambiguous catalog core, at least 3 measured
+FWHM from the nearest OTHER Tractor centroid, outside the protected
+target, and excluding the original 10 training + 3 holdout identities.
+No profile signal, image peak, annular completeness, or sky-model fit
+can change eligibility or the original flux ordering.
+
+The fixed cap is **48 catalog identities**. Identity roles are
+assigned strictly by this rank, before reading new native profiles:
+
+- Ranks 1–16: **legacy P16C** (previously inspected, never validation).
+- Ranks 17–48 not divisible by four: **24 new exploratory stars**.
+- Ranks 20,24,28,32,36,40,44,48: **8 new identity-heldout stars**.
+
+A missing/invalid profile stays in the rank list and is *never*
+replaced. All 16 legacy Gaia IDs, Tractor IDs, native coordinates
+and original ranking must match the P16C report exactly. P17 must
+also reproduce the legacy 3-FWHM sky and radial medians at absolute
+1e-10 tolerance; mismatch is marked, never fit away. A new
+identity-heldout star is **not** independent of the coadd, its sky,
+exposure-level PSF, or neighboring sources. All four masks are
+evaluated on all stars for descriptive comparison; there is no
+outcome-driven best-mask selection.
+
+Four fixed hypotheses based on **measured** core FWHM:
+
+1. Catalog-neighbor circular mask of 3 FWHM.
+2. Same centroids with mask radius 4.5 FWHM.
+3. **Catalog-flux-tiered** mask only: relative Tractor native-band
+   neighbor/target flux below 0.01 -> 3 FWHM; in [0.01, 0.1)
+   -> 4.5 FWHM; at least 0.1 -> 6 FWHM. A non-PSF neighbor,
+   unknown, negative or nonfinite catalog flux receives 6 FWHM.
+   This is a *hypothesis* rather than a validated PSF-based
+   contamination calculation; extended morphology may exceed
+   any selected mask radius.
+4. Uniform 6-FWHM mask, retained as an intentionally conservative
+   stress condition, not an automatic quality gate.
+
+Output:
+\`diagnostic_metrics.extended_bright_gaia_mask_experiment_qa\`,
+schema \`desidera.psf0-fixed-48-gaia-catalog-neighbor-masks/1\`.
+For every strategy record both conditional sky-ring medians
+(22–26 and 26–30 measured FWHM), outer 22–30 FWHM planar
+background, radial medians in the six fixed 4–22 FWHM bins,
+unmasked area, and eight fixed-sector medians requiring at least
+25 original pixels in an octant. The original coadd/variance/masks,
+the 81×81 native ePSF, training/holdout and all science gates
+are unchanged.
+
+**Predeclared interpretation for this feasibility pilot:**
+Compare the 24 new exploratory stars to the 8 new identity-heldout
+stars *without tuning masks on either split*. Report sky-model and
+neighbor-mask induced scatter against the actual residual amplitude,
+as well as available annular coverage and populated octants. Use
+the 16 old P16C stars for continuity, not for confirming a new
+scientific detection. Do not infer a significance without estimating
+the image/noise covariance and background controls. Neither residual
+sign consistency nor a large population size substitutes for
+morphological/brightness-matched independent PSF validation.
+
+**Decision discipline:** P17 can demonstrate *feasibility* or
+*infeasibility* for selected mask hypotheses, not validate or
+authorize a wide-angle PSF model. If no hypothesis yields
+stable profiles with adequate spatial coverage across both
+new exploratory and holdout stars, select another field
+by predeclared catalog criteria. If promising, the NEXT
+separately declared phase must independently constrain
+background/noise covariance, neighbors and spatial PSF
+variation, and perform blind galaxy-injection recovery
+before adopting any core+wing PSF.
+
+This adds no new branch, data directory, alternative PSF
+product, empirical wing fit, or automatic science gate.
