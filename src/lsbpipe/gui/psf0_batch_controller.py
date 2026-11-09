@@ -59,9 +59,13 @@ def launch(window, batch):
                     star_catalog_policy=req["star_catalog_policy"],
                     excluded_training_star_ids=tuple(
                         req.get("excluded_training_star_ids", ())))
+                extended_qa = req.get("extended_research_qa", False)
+                if type(extended_qa) is not bool:
+                    raise ValueError("Full research QA option must be boolean")
                 payload = run_gui_psf0(
                     root, band=band, config=cfg,
-                    protection_arcsec=float(req["target_protection_arcsec"]))
+                    protection_arcsec=float(req["target_protection_arcsec"]),
+                    extended_research_qa=extended_qa)
                 outcomes.append({"band":band, "payload":payload, "seeing":seeing})
             except Exception as exc:
                 outcomes.append({
