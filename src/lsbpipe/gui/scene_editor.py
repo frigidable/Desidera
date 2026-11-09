@@ -1028,19 +1028,41 @@ class SceneEditor(QWidget):
                 or self._contamination["draft_digest"] != result["draft_digest"]):
             raise ValueError("Neighbour masks changed during detection")
         self._isophote_proposal = result
+        self.iso_low_conf_override.setChecked(False)
         model = result["proposal"]
-        self.iso_details.setText(
-            f"PROVISIONAL {self._band.upper()} isophote: "
-            f"{model.seed.component_pixels} connected px, "
-            f"sky {model.local_sky:.4g} nMgy/pix, "
-            f"smoothed RMS {model.smoothed_sky_rms:.3g}, "
-            f"contrast ≥{model.threshold_contrast:g}, "
-            f"q={model.seed.q:.2f}, "
+        sensitivity = result["sensitivity"]
+        low = sensitivity["confidence"].startswith("LOW_CONFIDENCE")
+        label = ("LOW CONFIDENCE · manual review required" if low
+                 else "PRELIMINARY · stable enough to inspect")
+        self.iso_summary.setText(
+            f"{label}. {self._band.upper()} connected area "
+            f"{model.seed.component_pixels:,} px; q={model.seed.q:.2f}; "
             f"centroid offset {model.seed.centroid_offset_pix:.1f} px. "
-            f"Catalogue masked {result['contamination']['masked_catalog_sources']} "
-            "neighbours. NOT a calibrated outer isophote; PSF wings, "
-            "spatial sky gradients and correlated-noise significance "
-            "require review. Flags: " + ", ".join(model.flags))
+            f"Sensitivity area ratio {sensitivity['area_ratio']:.2f} "
+            f"across four trials. "
+            + ("Review flags; acceptance blocked until checkbox confirmed."
+               if low else "Review before adding to draft."))
+        trial_text = "; ".join(
+            f"{trial['threshold']:.2g} / {trial['smooth_pix']:.2g}px: "
+            + (f"{trial['connected_pixels']}px, "
+               f"q={trial['q']:.2f}, "
+               f"drift={trial['centroid_offset_pix']:.1f}px"
+               if trial["state"]=="DETECTED"
+               else "NO COMPONENT")
+            for trial in sensitivity["trials"])
+        self.iso_details.setText(
+            f"PROVISIONAL {self._band.upper()} band-specific: "
+            f"local sky {model.local_sky:.4g} nMgy/pixel; "
+            f"smoothed RMS {model.smoothed_sky_rms:.4g} nMgy/pixel; "
+            f"masked neighbours "
+            f"{result['contamination']['masked_catalog_sources']}. "
+            f"Bridge opening {result['bridge_guard_pix']} native px. "
+            f"Sensitivity trials: {trial_text}. "
+            f"QA warnings: {', '.join(sensitivity['flags']) or 'none'}; "
+            f"{', '.join(model.flags)}. NOT a validated surface-brightness "
+            "isophote; PSF wings, bright neighbors, variable sky, "
+            "incomplete contamination and correlated-noise significance "
+            "must be independently reviewed.")
         self._show_isophote_preview()
 
     def _show_isophote_preview(self, *_):
@@ -1061,7 +1083,10 @@ class SceneEditor(QWidget):
             self._refresh_controls()
             return
         item = QGraphicsPathItem(path)
-        pen = QPen(QColor("#63e0ef"), 2.5, Qt.DashLine)
+        low = self._isophote_proposal["sensitivity"][
+            "confidence"].startswith("LOW_CONFIDENCE")
+        pen = QPen(QColor("#ffa767" if low else "#63e0ef"),
+                   2.5, Qt.DashLine)
         pen.setCosmetic(True)
         item.setPen(pen)
         item.setZValue(4.)
@@ -1078,19 +1103,35 @@ class SceneEditor(QWidget):
         proposed = self._isophote_proposal
         if (proposed["band"] != self._band or
                 proposed["project_id"] != self._project_id or
-                proposed["source"] != self._loaded["source"]):
+                proposed["source"] != self._loaded["source"] or
+                self._contamination is None or
+                proposed["catalog_sha256"] !=
+                self._contamination["catalog_sha256"] or
+                proposed["draft_digest"] != self._draft.digest):
             self._clear_isophote_preview()
             self.iso_details.setText("Stale isophote: recalculate on current FITS.")
             return
+        sensitivity = proposed["sensitivity"]
+        if (sensitivity["confidence"].startswith("LOW_CONFIDENCE")
+                and not self.iso_low_conf_override.isChecked()):
+            self.iso_summary.setText(
+                "LOW CONFIDENCE: contour cannot be added until "
+                "explicit manual-review override is checked.")
+            return
         kind = self.iso_shape.currentData()
         model = proposed["proposal"]
+        scope = None if self.iso_share_bands.isChecked() else self._band
         provenance = (
-            f"AUTO_ISOPHOTE_PRELIMINARY band={self._band} "
-            f"kind={kind} contrast={model.threshold_contrast:g} "
+            f"AUTO_ISOPHOTE_PRELIMINARY from_band={self._band} "
+            f"scope={'all_optical_EXPLICIT' if scope is None else self._band} "
+            f"confidence={sensitivity['confidence']} "
+            f"manual_override={int(self.iso_low_conf_override.isChecked())} "
+            f"kind={kind} threshold={model.threshold_contrast:g} "
             f"smooth_pix={model.smoothing_pix:g} "
-            f"local_sky={model.local_sky:.7g} "
-            f"smoothed_rms={model.smoothed_sky_rms:.7g} "
-            f"tractor_sha256={proposed['catalog_sha256']} "
+            f"bridge_pix={proposed['bridge_guard_pix']} "
+            f"sky={model.local_sky:.7g} "
+            f"rms={model.smoothed_sky_rms:.7g} "
+            f"TractorSHA256={proposed['catalog_sha256']} "
             f"source={proposed['source']}")
         comment = (self.comment.text().strip() + " | " + provenance).strip(" |")
         try:
@@ -1098,13 +1139,18 @@ class SceneEditor(QWidget):
                 "sc1_iso_" + uuid4().hex,
                 "protect_target",
                 proposed[kind],
-                band=(None if self.scope.currentData() == "all" else self._band),
+                band=scope,
                 comment=comment[:512])
             self._push_edits(self._draft.edits + (edit,))
         except (ValueError, TypeError) as exc:
             self.iso_details.setText("Proposed region rejected: " + str(exc))
             return
         self._clear_isophote_preview()
+        self.iso_summary.setText(
+            "Added provisional " + kind + " as "
+            + ("explicit shared ICRS geometry" if scope is None
+               else f"{self._band.upper()}-only geometry")
+            + ". No science is adopted.")
         self.iso_details.setText(
             "Provisional " + kind + " added to the scene DRAFT. "
             "Undo/Remove or Redraw selected can revise it; it will be "
@@ -1404,8 +1450,13 @@ class SceneEditor(QWidget):
             and self._draft.digest == self._contamination["draft_digest"])
         self.iso_pick_center.setEnabled(active and worker_idle)
         self.iso_reset_center.setEnabled(active and worker_idle)
+        confidence_ok = (
+            self._isophote_proposal is not None
+            and (not self._isophote_proposal["sensitivity"][
+                "confidence"].startswith("LOW_CONFIDENCE")
+                or self.iso_low_conf_override.isChecked()))
         self.iso_accept.setEnabled(
-            active and worker_idle and self._isophote_proposal is not None
+            active and worker_idle and confidence_ok
             and self._isophote_preview is not None)
         self.iso_discard.setEnabled(self._isophote_proposal is not None)
         self.iso_shape.setEnabled(self._isophote_proposal is not None)
