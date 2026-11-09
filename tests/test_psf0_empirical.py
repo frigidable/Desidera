@@ -813,8 +813,7 @@ def test_core_only_qa_bypasses_p15_p20_without_modifying_epsf_or_lineage(
 
     fast = module.build_empirical_coadd_psf(
         fake_frame(), target_icrs_deg=LEO_P,
-        target_protection_arcsec=13., config=built.recipe,
-        extended_research_qa=False)
+        target_protection_arcsec=13., config=built.recipe)
     a, b = fast.report(), built.report()
     assert a["kernel_sha256"] == b["kernel_sha256"]
     np.testing.assert_array_equal(fast.kernel, built.kernel)
