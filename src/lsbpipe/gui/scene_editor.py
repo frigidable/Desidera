@@ -962,6 +962,126 @@ class SceneEditor(QWidget):
             "source, band, target centre and scene-draft revision.")
         self._refresh_controls()
 
+    def _open_sga_file(self):
+        """Select an existing SGA catalog: no downloads, no extra folders."""
+        if (self._project_root is None or self._project_target is None
+                or self._future is not None):
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select local SGA-2020 or SGA-2025 FITS",
+            "", "FITS catalog (*.fits *.fit *.fits.gz);;All files (*)")
+        if not path:
+            return
+        self._sga_lookup = None
+        self._sga_candidate = None
+        self.sga_candidates.blockSignals(True)
+        self.sga_candidates.clear()
+        self.sga_candidates.blockSignals(False)
+        self.sga_use_prior.setChecked(False)
+        self._redraw_sga_prior()
+        self._discard_prepared_masks()
+        self._future = self._executor.submit(
+            read_local_sga_priors, path, self._project_target)
+        self._work_kind = "sga"
+        self._active_generation = self._load_generation
+        self.sga_status.setText(
+            "Reading and hashing selected local SGA FITS in background. "
+            "No galaxy automatically matched or adopted.")
+        self._poll_timer.start()
+        self._refresh_controls()
+
+    def _accept_sga_lookup(self, lookup):
+        if self._project_id is None or self._project_target is None:
+            raise ValueError("SGA result belongs to an inactive project")
+        if lookup.status != "SGA_LOCAL_MATCHES_REQUIRE_RESEARCHER_SELECTION":
+            raise ValueError("SGA geometry result has unexpected status")
+        self._sga_lookup = lookup
+        self._sga_candidate = None
+        self.sga_candidates.blockSignals(True)
+        self.sga_candidates.clear()
+        self.sga_candidates.addItem(
+            f"Select matched galaxy ({len(lookup.matches)} candidates)", None)
+        for row in lookup.matches:
+            label = (
+                f"{row.name} · {row.release} #{row.sga_id} · "
+                f"{row.offset_arcsec:.1f} arcsec")
+            self.sga_candidates.addItem(label, row)
+        self.sga_candidates.setCurrentIndex(0)
+        self.sga_candidates.blockSignals(False)
+        if lookup.matches:
+            self.sga_status.setText(
+                f"Local {lookup.release} catalogue: "
+                f"{len(lookup.matches)} positional candidate(s). "
+                "Choose the correct galaxy explicitly; D26 may cover "
+                "only its bright central region.")
+        else:
+            self.sga_status.setText(
+                "No SGA match within 3 arcmin of saved object centre. "
+                "Continue without SGA; native Tractor still available.")
+        self._redraw_sga_prior()
+        self._refresh_controls()
+
+    def _sga_candidate_changed(self, *_):
+        prior = self.sga_candidates.currentData()
+        if (prior is not None and (
+                self._sga_lookup is None or
+                prior.source_sha256 != self._sga_lookup.source_sha256
+                or prior not in self._sga_lookup.matches)):
+            prior = None
+        self._sga_candidate = prior
+        # Always require an explicit opt-in for USING the core prior
+        # in neighbour masking, even if there is only one catalogue row.
+        self.sga_use_prior.setChecked(False)
+        self._discard_prepared_masks()
+        self._redraw_sga_prior()
+        if prior is None:
+            return
+        d26 = (f"{prior.d26_arcmin:.3f} arcmin"
+               if prior.d26_arcmin is not None else "unavailable")
+        pa = (f"{prior.pa_deg:.1f} deg"
+              if prior.pa_deg is not None else "unavailable")
+        q = (f"{prior.ba:.3f}"
+             if prior.ba is not None else "unavailable")
+        self.sga_status.setText(
+            f"{prior.release} #{prior.sga_id} · D26={d26} "
+            f"(ref={prior.d26_ref or 'unknown'}); "
+            f"q={q}, PA={pa}; "
+            f"offset={prior.offset_arcsec:.1f} arcsec. "
+            "Gold dashed ellipse = CENTRAL PRIOR only. "
+            "May miss LSB outskirts. SGA/Tractor not independent. "
+            + ("Flags: " + ", ".join(prior.flags)
+               if prior.flags else "Published geometry still needs QA."))
+        self._refresh_controls()
+
+    def _sga_protection_changed(self, *_):
+        self._discard_prepared_masks()
+
+    def _redraw_sga_prior(self):
+        if self._sga_item is not None:
+            if self._sga_item.scene() is self.graphics:
+                self.graphics.removeItem(self._sga_item)
+            self._sga_item = None
+        prior = self._sga_candidate
+        if prior is None or self._loaded is None:
+            return
+        shape = prior.core_shape()
+        if shape is None:
+            return
+        try:
+            path = scene_shape_outline(
+                shape, self._loaded["wcs"], self._loaded["pixel_shape"][0])
+        except (TypeError, ValueError) as exc:
+            self.sga_status.setText(
+                "SGA prior cannot be projected on this WCS: " + str(exc))
+            return
+        item = QGraphicsPathItem(path)
+        pen = QPen(QColor("#e2bf62"), 2.25, Qt.DashLine)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        item.setZValue(3.3)
+        self.graphics.addItem(item)
+        self._sga_item = item
+
     def _prepare_neighbour_masks(self):
         if (self._loaded is None or self._future is not None or
                 self._project_root is None or self._draft is None or
@@ -971,9 +1091,14 @@ class SceneEditor(QWidget):
         centre = (self._isophote_center_icrs
                   if self._isophote_center_icrs is not None
                   else self._project_target)
+        prior = (self._sga_candidate
+                 if self.sga_use_prior.isChecked() else None)
+        arguments = (
+            self._loaded, str(self._project_root), self._draft, centre)
+        # Keep existing non-SGA work flow and its test contracts intact.
         self._future = self._executor.submit(
-            prepare_scene_neighbour_masks, self._loaded,
-            str(self._project_root), self._draft, centre)
+            prepare_scene_neighbour_masks, *arguments,
+            *((prior,) if prior is not None else ()))
         self._work_kind = "contamination"
         self._active_generation = self._load_generation
         self.iso_mask_status.setText(
@@ -990,6 +1115,10 @@ class SceneEditor(QWidget):
                 result["dataset_source"] != self._loaded["source"] or
                 result["band"] != self._band or
                 result["draft_digest"] != self._draft.digest or
+                result.get("sga_prior_id") != (
+                    self._sga_candidate.sga_id
+                    if self.sga_use_prior.isChecked()
+                    and self._sga_candidate is not None else None) or
                 result["anchor_icrs"] !=
                 (self._isophote_center_icrs
                  if self._isophote_center_icrs is not None
@@ -1032,13 +1161,18 @@ class SceneEditor(QWidget):
             f"PRELIMINARY {self._band.upper()} · "
             f"{counts['masked_catalog_sources']} masked neighbours "
             f"({counts.get('elliptical_catalog_sources', 0)} morphology-based), "
-            f"{counts['skipped_target_overlap']} unresolved overlaps. "
-            "Purple = candidate excludes; enable amber rings "
+            f"{counts['skipped_target_overlap']} unresolved overlaps"
+            + (f"; {counts.get('possible_sga_shreds', 0)} inside "
+               "chosen SGA central ellipse" if result.get("sga_prior_id")
+               is not None else "")
+            + ". Purple = candidate excludes; enable amber rings "
             "to inspect the nearest 20.")
         self.iso_mask_details.setText(
             f"{counts['excluded_pixels']} proposed excluded pixels; "
             f"{counts['native_hard_pixels']} hard-invalid original pixels. "
             f"Catalogue SHA-256 {result['catalog_sha256']}; "
+            f"SGA {result.get('sga_prior_id') or 'none'} "
+            f"SHA-256 {result.get('sga_prior_sha256') or 'none'}; "
             f"{counts.get('missing_shape_fallbacks', 0)} shape fallbacks. "
             "Original FITS unchanged. NOT an exact Tractor pixel model, "
             "PSF-wing subtraction or a calibrated science mask. Flags: "
