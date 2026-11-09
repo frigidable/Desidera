@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainterPath, QPen, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPathItem,
-    QGraphicsPixmapItem, QGraphicsScene, QHBoxLayout, QLabel,
+    QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -179,7 +179,8 @@ class SceneDrawingView(FITSGraphicsView):
     def set_drawing(self, drawing: bool):
         self.drawing = bool(drawing)
         self.setDragMode(
-            self.NoDrag if self.drawing else self.ScrollHandDrag)
+            QGraphicsView.NoDrag if self.drawing
+            else QGraphicsView.ScrollHandDrag)
 
     def mousePressEvent(self, event):
         if self.drawing and event.button() == Qt.LeftButton:
