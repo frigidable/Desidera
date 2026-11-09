@@ -1170,6 +1170,23 @@ class PSF0Panel(QGroupBox):
                     f"  P17 native mask calculations completed for "
                     f"{p17.get('n_multimask_stars_measured', 0)} "
                     "preselected stars. No star replacement or PSF adoption.")
+        p18 = metrics.get("catalog_shape_neighbor_sky_qa")
+        if isinstance(p18, dict):
+            notes.append(
+                "P18 catalog morphology / sky sensitivity: "
+                f"{p18.get('n_fixed_star_identities', 0)} fixed P17 "
+                "identities; "
+                f"{p18.get('n_profiles_with_both_sky_and_plane', 0)} "
+                "conditional shape-mask profiles with both sky rings "
+                "and a plane. Uses native Tractor SHAPE_R/E1/E2, WCS "
+                "east/north ellipse, flux-relative core and eight "
+                "correlated leave-one-octant sky tests. "
+                "NO calibrated sky uncertainty, covariance, PSF wing "
+                "detection or science adoption. Full per-star QA in Copy QA.")
+            if p18.get("status") != (
+                    "FIXED_P17_COHORT_MORPHOLOGY_SKY_DIAGNOSTIC_ONLY"):
+                notes.append(
+                    f"  P18 blocked: {p18.get('status', 'UNKNOWN')}.")
         if metrics.get("parameter_provenance_qa"):
             notes.append(
                 "PSF-0 numerical choices retain uncalibrated priors and "
