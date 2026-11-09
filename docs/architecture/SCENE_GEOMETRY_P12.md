@@ -1,5 +1,11 @@
 # P1.2a — Scene & Geometry: sky-coordinate mask editing and initial ellipse seeds
 
+> **P1.3 clarification:** the provisional Scene_v0/user-mask draft is
+> permissible before PSF reconstruction, but final PSF-aware Scene_v1
+> masks follow a validated per-band PSF and preliminary star-cutout sky.
+> See `PSF_SCENE_SKY_ORDER_P13.md`. An initial ellipse seed is not a
+> scientifically accepted background or isophote fit.
+
 Date: 2026-11-03. Parent: P1.1 Photometry Workspace (draft PR #39).
 **Status:** first scientific primitives + synthetic tests. **Not yet** an
 interactive image editor, calibrated source segmentation, final sky model,

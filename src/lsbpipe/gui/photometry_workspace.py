@@ -16,14 +16,14 @@ from PySide6.QtWidgets import (
 from lsbpipe.photometry.readiness import inspect_photometry_inputs
 
 _STAGES = (
-    ("01", "Observations", "Native quartet and observational provenance"),
-    ("02", "Scene & masks", "Target protection, contaminants and valid pixels"),
-    ("03", "Background", "Residual sky models and identifiability"),
-    ("04", "PSF & noise", "Wings, resampling and covariance"),
-    ("05", "Isophotes", "Fixed/free geometry, radial profiles and growth"),
-    ("06", "Structural models", "Forward-modelled Sérsic and alternatives"),
-    ("07", "Validation", "Uncertainties and injection-recovery"),
-    ("08", "Results", "Immutable measurements, figures and QA"),
+    ("01", "Data preparation", "Original FITS, WCS, native masks and calibration"),
+    ("02", "Scene initialization", "Tentative sources, PSF star candidates and target protection"),
+    ("03", "Preliminary sky", "Detection background and local star-cutout sky"),
+    ("04", "PSF reconstruction", "Empirical per-band PSF, spatial QA and extended wings"),
+    ("05", "Scene & smart masks", "PSF-aware contaminants and reviewed manual masks"),
+    ("06", "Sky reconstruction", "Galaxy residual sky, holdouts and diffuse-light degeneracy"),
+    ("07", "Refinement & QA", "Conditionally revisit PSF, masks, sky and uncertainty"),
+    ("08", "Galaxy photometry", "Isophotes, structural models, colors and science results"),
 )
 
 
@@ -65,7 +65,7 @@ class PhotometryWorkspace(QWidget):
         self.title.setStyleSheet("font-size: 21px; font-weight: 600;")
         root.addWidget(self.title)
         self.subtitle = QLabel(
-            "Scientific preparation · no photometric measurements have been made")
+            "Planned PSF-first scientific workflow · no PSF, sky or photometry has been measured")
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
@@ -139,21 +139,21 @@ class PhotometryWorkspace(QWidget):
         method_box = QGroupBox("Measurement design")
         method_layout = QVBoxLayout(method_box)
         for heading, detail in (
-            ("Coadd preparation",
-             "Original pixels, mask semantics, WCS and units; no implicit "
-             "background subtraction, interpolation or mosaic."),
-            ("Non-parametric branch",
-             "Masked elliptical aperture sums, free/fixed isophotes, "
-             "growth curves and multi-band profiles."),
-            ("Parametric branch",
-             "PSF-convolved scene model with galaxy, neighbor and sky "
-             "parameters; distinguish measured from extrapolated flux."),
-            ("Hybrid extension",
-             "Use coadd for initialization and then jointly fit distinct "
-             "CCD exposures with explicit calibration and lineage."),
-            ("Result gate",
-             "Covariance-aware uncertainty, sky-model sensitivity, recovery "
-             "tests and run provenance before adoption."),
+            ("Preparatory scene",
+             "Identify preliminary sources and target-protected regions; "
+             "pre-PSF user mask drafts are provisional and never science-adopted."),
+            ("Star-cutout sky",
+             "Estimate local residual backgrounds before building an empirical PSF. "
+             "Keep this distinct from the final galaxy sky solution."),
+            ("PSF before final masks",
+             "Compare global, local and spatial models per filter with held-out "
+             "stars; evaluate extended wings and survey-specific halo subtraction."),
+            ("Final scene and sky",
+             "Review PSF-aware contaminant masks, refine residual galaxy sky, "
+             "and conditionally revisit upstream models when QA demands."),
+            ("Photometry & final evidence",
+             "Measure fixed/free isophotes and PSF-convolved models; propagate "
+             "mask, sky and PSF uncertainty with immutable run provenance."),
         ):
             line = QLabel(f"<b>{heading}</b> — {detail}")
             line.setTextFormat(Qt.RichText)
