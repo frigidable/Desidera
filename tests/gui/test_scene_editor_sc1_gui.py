@@ -399,6 +399,15 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
     assert editor._isophote_preview is not None
     assert editor.iso_summary.text()
     assert "area ratio" in editor.iso_summary.text()
+    assert editor.iso_candidate.count() >= 2
+    assert editor.iso_candidate.currentData() == 0
+    reference = editor._selected_isophote()["contour"]
+    editor.iso_candidate.setCurrentIndex(1)
+    alternative = editor._selected_isophote()["contour"]
+    assert alternative != reference
+    assert editor._isophote_preview is not None
+    assert editor.draft.edits == ()
+    editor.iso_candidate.setCurrentIndex(0)
     if not editor.iso_accept.isEnabled():
         assert editor._isophote_proposal["sensitivity"][
             "confidence"].startswith("LOW_CONFIDENCE")
@@ -547,6 +556,10 @@ def test_mask_opacity_and_conflict_review_markers(qtbot,tmp_path,monkeypatch):
     editor._accept_contamination_result(result)
     assert len(editor._conflict_paths)==1
     assert editor._contamination_overlay.isVisible()
+    assert not editor.iso_show_conflicts.isChecked()
+    assert not editor._conflict_paths[0].isVisible()
+    editor.iso_show_conflicts.setChecked(True)
+    assert editor._conflict_paths[0].isVisible()
     editor.iso_opacity.setValue(20)
     assert editor._contamination_overlay.opacity()==pytest.approx(.2)
     editor.iso_mask_toggle.setChecked(False)
