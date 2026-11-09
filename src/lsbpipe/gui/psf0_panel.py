@@ -571,6 +571,9 @@ class PSF0Panel(QGroupBox):
         # The GUI worker blocks all four panels while ONE run executes.
         # Do not label untouched filters as "Running" merely because
         # their controls are temporarily disabled.
+        if (self._preview is not None and
+                self._preview.get("auto_saved_path")):
+            return "Saved QA"
         if self.status.text().startswith("Diagnostic ePSF + QA saved"):
             return "Saved QA"
         if self._preview is not None:
@@ -823,8 +826,10 @@ class PSF0Panel(QGroupBox):
                     "gaia_strict", "tractor_psf_validated")
                 or bool(self._snapshot.get("gaia_tractor_present_unverified"))))
         self.run_btn.setEnabled(eligible and catalog_ready and not self._busy)
-        self.save_btn.setEnabled(self._preview is not None and not self._busy
-                                 and self._preview["result"].lineage_id is not None)
+        self.save_btn.setEnabled(
+            self._preview is not None and not self._busy
+            and self._preview["result"].lineage_id is not None
+            and not self._preview.get("auto_saved_path"))
         self.band.setEnabled(not self._busy and self.fixed_band is None)
         self.fwhm.setEnabled(not self._busy)
         self.protection.setEnabled(not self._busy)
@@ -2007,6 +2012,60 @@ class PSF0Panel(QGroupBox):
             sort_keys=True, allow_nan=False))
         self.qa.appendPlainText("\nQA report copied to clipboard (no FITS written).")
 
+    def show_restored_result(self, preview: dict):
+        """Display only a SHA-verified saved non-adopted PSF, without a fit.
+
+        Restore the actual saved recipe into controls so the visual QA does
+        not incorrectly attribute a historical ePSF to current defaults.
+        """
+        from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+        from dataclasses import replace
+        if not preview.get("restored_from_disk") or not preview.get("auto_saved_path"):
+            raise ValueError("Only a verified saved PSF may be restored")
+        result = preview["result"]
+        cfg = result.recipe
+        for widget in (self.fwhm, self.protection, self.catalog_policy,
+                       self.experiment, self.extended_qa):
+            widget.blockSignals(True)
+        try:
+            self.fwhm.setValue(cfg.guessed_fwhm_pix)
+            self.protection.setValue(result.target_protection_arcsec)
+            idx = self.catalog_policy.findData(cfg.star_catalog_policy)
+            if idx >= 0:
+                self.catalog_policy.setCurrentIndex(idx)
+            self.extended_qa.setChecked(
+                result.metrics.get("postfit_qa_execution", {}).get("mode")
+                == "full_research")
+            actual = replace(cfg, excluded_training_star_ids=())
+            for recipe_idx in range(self.experiment.count()):
+                key = self.experiment.itemData(recipe_idx)
+                if key is None:
+                    continue
+                candidate = replace(
+                    psf0_experiment_recipe(cfg.guessed_fwhm_pix, key),
+                    star_catalog_policy=cfg.star_catalog_policy)
+                if candidate == actual:
+                    self.experiment.setCurrentIndex(recipe_idx)
+                    break
+            self._active_exclusions = tuple(cfg.excluded_training_star_ids)
+        finally:
+            for widget in (self.fwhm, self.protection, self.catalog_policy,
+                           self.experiment, self.extended_qa):
+                widget.blockSignals(False)
+        self._show_recipe_geometry()
+        self.show_result(preview)
+        self.status.setText(
+            f"Restored saved {result.dataset_id} empirical PSF and QA; "
+            "original IMAGE/INVVAR/NEXP/MASKBITS and catalog SHA verified. "
+            "Experimental, NOT SCIENCE ADOPTED.")
+        self.qa.appendPlainText(
+            "\nRestored immutable PSF checkpoint: "
+            + preview["auto_saved_path"]
+            + "\nNative per-star cutouts were not part of the saved "
+              "FITS/QA export; only the recorded star inventory, "
+              "finite kernel and scientific metrics are restored.")
+        self._update_buttons()
+
     def show_result(self, preview: dict):
         if not self._result_matches_band_source(preview):
             self.show_failure(
@@ -2020,7 +2079,10 @@ class PSF0Panel(QGroupBox):
         report = result.report()
         self._qa_payload = report
         self.status.setText(
-            f"{result.dataset_id} · EXPERIMENTAL_PSF_NOT_ADOPTED")
+            f"{result.dataset_id} · "
+            + ("SAVED EXPERIMENTAL PSF / QA (NOT ADOPTED)"
+               if preview.get("auto_saved_path") else
+               "EXPERIMENTAL_PSF_NOT_ADOPTED"))
         catalog_qa = result.metrics.get("catalog_selection_qa", {})
         tractor_training = catalog_qa.get("n_train_tractor_only", 0)
         self.summary.setText(
