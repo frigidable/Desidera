@@ -19,7 +19,7 @@ from lsbpipe.photometry.psf_wing_profile import (
     _p18_shape_mask, _p18_sky_to_pixel_matrix,
 )
 
-SCHEMA = "desidera.psf0-same-brick-joint-wing-sky-spatial/1"
+SCHEMA = "desidera.psf0-same-brick-joint-wing-sky-spatial/2"
 BRIGHT_TRAIN_RANKS = tuple(x for x in range(1, 17) if x % 4)
 BRIGHT_RANK_HOLDOUT = (4, 8, 12, 16)
 BLANK_SPACING_FACTOR = 2.
