@@ -807,3 +807,138 @@ cross-field or per-exposure validation.
 
 No new branch or directory, no changes to legacy P16B–P17
 QA, no PSF kernel change, and \`science_adopted=false\`.
+
+
+## P18 real Leo P g result — 2026-11-09
+
+Source: two identical user-provided full native DR11 QA exports
+(\`Вставленный текст(20261109-101744).txt\`,
+\`Вставленный текст(20261109-101827).txt\`),
+each 5,074,178 bytes, bytewise SHA256
+\`4fa0482c10200e20d09dfdf08fda482cf4346b9be5d2224f0fe2b84b57bcbbf5\`.
+Exact dataset \`dr11/south/1554p180/g\`; native
+PSF kernel SHA256
+\`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`.
+P18 implementation-method SHA256
+\`bfc0343deb5b316ab9f34f6d7354a60ecdaa6deb67fb2b51aec6db2dd3078085\`.
+Source catalog hash matches P17:
+\`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c\`.
+Original core training=10, holdout=3, with
+\`science_adopted=false\`, \`psf_wings_validated=false\`
+and uncalibrated coadd-noise covariance.
+
+**Execution and frozen identities PASS:** all fixed 48 P17 identities
+(16 legacy, 24 new exploratory, 8 new identity-heldout) are preserved.
+P18 reports 48/48 with BOTH conditional sky rings and conditional
+plane; this count **does not imply** all annular measurements are
+geometrically complete. Heldout rank 20 has exactly zero usable
+native pixels in the 4–6 and 6–8 FWHM bins under P18 despite
+both 22–30-FWHM sky rings being measurable. No star was replaced.
+
+**Coverage comparison:** medians across the same 48 stars. The
+"coverage criterion" is POST-RESULT descriptive: >=50% unmasked
+annular area and >=6 azimuthal octants each containing >=25 pixels.
+
+| Native annulus | P17 3FWHM area / qualifying N | P18 shape area / qualifying N | P17 4.5FWHM area / qualifying N | P17 tiered area / qualifying N | P17 6FWHM area / qualifying N |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 4–6 FWHM | 72.3% / 43 | 67.0% / 36 | 50.3% / 20 | 37.8% / 14 | 28.0% / 9 |
+| 6–8 FWHM | 72.9% / 40 | 64.0% / 36 | 46.1% / 20 | 34.7% / 10 | 25.3% / 6 |
+| 8–12 FWHM | 71.0% / 44 | 63.4% / 37 | 49.2% / 23 | 37.5% / 8 | 26.0% / 3 |
+| 12–16 FWHM | 73.9% / 47 | 68.2% / 42 | 48.0% / 21 | 36.0% / 6 | 24.9% / 0 |
+| 16–20 FWHM | 72.5% / 46 | 65.5% / 38 | 47.9% / 21 | 38.0% / 9 | 25.6% / 2 |
+| 20–22 FWHM | 72.3% / 47 | 64.5% / 40 | 47.8% / 23 | 38.2% / 8 | 27.1% / 2 |
+
+At 8–12 FWHM by the identical star identities, P18 vs P17
+3-FWHM geometrically qualifies **13 vs 15 /16 legacy**,
+**18 vs 22 /24 newly exploratory**, and
+**6 vs 7 /8 newly identity-heldout**. P18 conserves
+more useful area than the old blanket 4.5- or 6-FWHM
+assumptions but less than the P17 3-FWHM circles.
+Mask footprints alone cannot establish the purity of
+the remaining pixels or that the narrower strategy is superior.
+
+**8–12 FWHM normalized stellar residuals:** across 48 stars
+the P18 median signed Sky-B-subtracted residual is
+\`+2.12e-6\` of native stellar peak, while the median
+*absolute* residual is \`4.45e-5\`. Under P17 fixed
+3-FWHM the corresponding values are \`+5.22e-6\`
+and \`5.42e-5\`. For the same stars, the median
+absolute P18-versus-P17 residual shift is \`2.43e-5\`;
+39/48 preserve the residual sign. These values show
+a *mask-model-dependent weak signal*, NOT a wing
+detection or measured PSF profile. Comparing
+absolute-residual medians is not a quality metric:
+a smaller residual may reflect extra sky absorption.
+
+**Correlated background diagnostics:** median absolute
+P18 Sky-A versus Sky-B background difference, and
+median maximum absolute leave-one-octant Sky-B
+change, each normalized by native stellar peak:
+
+| Predefined fixed identity cohort | Sky-A vs Sky-B | Sky-B sector deletion maximum | Median absolute 8–12FWHM P18 residual |
+| --- | ---: | ---: | ---: |
+| 16 legacy | 8.39e-6 | 4.46e-6 | 6.78e-6 |
+| 24 new exploratory | 8.81e-5 | 6.54e-5 | 7.80e-5 |
+| 8 new identity-heldout | 1.21e-4 | 7.00e-5 | 2.33e-4 |
+| All 48 | 2.49e-5 | 4.49e-5 | 4.45e-5 |
+
+The eight leave-one-octant medians overlap strongly:
+their maximum deviation is **not** a calibrated standard
+error, variance, jackknife covariance, or independent
+statistical test. The Sky-A/Sky-B discrepancy is
+also a *systematic-sensitivity* comparison rather
+than a unique sky truth. For the NEW 24 exploratory
+stars, the median sky-sensitivity is of the
+same order as the median absolute measured residual.
+For the eight new intra-coadd identity holdouts,
+median angular max-minus-min sector variation at
+8–12 FWHM is \`1.77e-3\` of peak, versus the median
+signed radial signal \`+1.43e-4\`, so there is no
+brightness-matched spatially robust outer wing detection.
+
+**Bright legacy inner annulus:** P18's 4–6-FWHM
+Sky-B residual is positive for 16/16 legacy stars
+(median \`+8.81e-5\` of native peak), versus 15/16
+under P17 fixed 3-FWHM (median \`+9.24e-5\`).
+However the median P18 legacy angular sector spread
+there is \`1.60e-4\`, exceeding the median radial
+signal, and the old legacy cohort has already been
+inspected. A positive median or 16/16 signs is
+**not a blind validation**, given unresolved
+foreground/background and neighbor contamination.
+
+**Source-footprint and reproducibility check:** P18 evaluated
+the Tractor neighbor \`PSF\` and extended
+\`REX/EXP/DEV/SER\` shapes from the exact native DR11 brick,
+without altering the core PSF. The DR11 catalog documentation
+defines \`shape_e1/e2\` as
+\(\epsilon=(a-b)/(a+b)\exp(2i\phi)\) and
+\(q=(1-|\epsilon|)/(1+|\epsilon|)\), agreeing
+with the scalar conversion implemented here.
+This does not verify the complete WCS orientation,
+per-source 4-half-light-radius masking hypothesis,
+or the contamination outside each mask.
+
+**Decision:** P18 was executed and its catalog-only
+morphological mask is a geometrically viable diagnostic
+alternative. It is NOT proven to outperform P17
+3-FWHM on neighbor-cleanliness. Neither strategy
+resolves the dominant sky/outer-profile degeneracy,
+and the extra faint 32 stars have not supplied
+cross-field or exposure-independent validation.
+Maintain \`SCIENCE_GATE_HOLD\` and all PSF wings,
+noise covariance, neighbor-model and spatial
+representativity science gates as unvalidated.
+Do not tune the footprint multiplier/flux tiers
+using this same Leo P outcome and then claim
+confirmation from the eight same-coadd stars.
+
+**Next controlled work:** preregister an independent
+DR11 catalog-only bright-star field selection (using
+total native-band flux, coverage and neighbor geometry);
+then validate the proposed ellipse mask against
+known-shape/flux injected neighbors with recovery on
+native images. Explicit sky noise/covariance controls,
+multiple sky patches/individual exposures and
+blind field-holdout comparisons are required before
+constructing/adopting any broad PSF.
