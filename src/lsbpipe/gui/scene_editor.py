@@ -853,6 +853,9 @@ class SceneEditor(QWidget):
                 self.graphics.removeItem(self._isophote_preview)
             self._isophote_preview = None
         self._isophote_proposal = None
+        self.iso_summary.setText(
+            "No current proposal. Run masked detection to compare contours.")
+        self.iso_low_conf_override.setChecked(False)
         self._refresh_controls()
 
     def _discard_prepared_masks(self):
@@ -862,7 +865,12 @@ class SceneEditor(QWidget):
             if self._contamination_overlay.scene() is self.graphics:
                 self.graphics.removeItem(self._contamination_overlay)
             self._contamination_overlay = None
+        for item in self._conflict_paths:
+            if item.scene() is self.graphics:
+                self.graphics.removeItem(item)
+        self._conflict_paths.clear()
         self._contamination = None
+        self.iso_mask_details.setText("")
         self.iso_mask_status.setText(
             "Neighbour masks need preparation for the current "
             "source, band, target centre and scene-draft revision.")
@@ -906,29 +914,53 @@ class SceneEditor(QWidget):
         self._contamination = result
         ny, nx = self._loaded["pixel_shape"]
         layer = np.zeros((ny, nx, 4), dtype=np.uint8)
-        layer[result["auto_mask"]] = (175, 106, 238, 104)
+        layer[result["auto_mask"]] = (175, 106, 238, 180)
         self._contamination_overlay = QGraphicsPixmapItem(
             FITSExplorer._pixmap(layer, alpha=True))
         self._contamination_overlay.setZValue(2.5)
         self.graphics.addItem(self._contamination_overlay)
+        # Amber review rings are source identities whose provisional
+        # footprint touches protected target light. They are NOT masked.
+        self._conflict_paths.clear()
+        for candidate in counts_candidates := result["stats"].get(
+                "near_target_sources", ())[:64]:
+            radius = min(15., max(5., candidate["radius_pix"]*.35))
+            cx, cy = candidate["x"]+.5, ny-candidate["y"]-.5
+            ring = QPainterPath()
+            ring.addEllipse(cx-radius, cy-radius, 2.*radius, 2.*radius)
+            item = QGraphicsPathItem(ring)
+            pen = QPen(QColor("#ffba65"), 2., Qt.DashLine)
+            pen.setCosmetic(True)
+            item.setPen(pen)
+            item.setZValue(3.5)
+            self.graphics.addItem(item)
+            self._conflict_paths.append(item)
         self._update_contamination_overlay()
         counts = result["stats"]
         self.iso_mask_status.setText(
-            f"PRELIMINARY per-band mask · "
-            f"{counts['masked_catalog_sources']} Tractor neighbours masked, "
-            f"{counts['skipped_target_overlap']} overlapping galaxy "
-            f"protection (review manually), "
-            f"{counts['excluded_pixels']} proposed excluded pixels, "
+            f"PRELIMINARY {self._band.upper()} · "
+            f"{counts['masked_catalog_sources']} masked neighbours "
+            f"({counts.get('elliptical_catalog_sources', 0)} morphology-based), "
+            f"{counts['skipped_target_overlap']} unresolved overlaps. "
+            "Purple = candidate excludes; amber rings = review.")
+        self.iso_mask_details.setText(
+            f"{counts['excluded_pixels']} proposed excluded pixels; "
             f"{counts['native_hard_pixels']} hard-invalid original pixels. "
-            f"Local catalogue SHA-256 {result['catalog_sha256'][:12]}…; "
-            "NOT a Tractor image/model subtraction or validated PSF wings. "
-            "Flags: " + ", ".join(result["flags"]))
+            f"Catalogue SHA-256 {result['catalog_sha256']}; "
+            f"{counts.get('missing_shape_fallbacks', 0)} shape fallbacks. "
+            "Original FITS unchanged. NOT an exact Tractor pixel model, "
+            "PSF-wing subtraction or a calibrated science mask. Flags: "
+            + ", ".join(result["flags"]))
         self._refresh_controls()
 
     def _update_contamination_overlay(self, *_):
         if self._contamination_overlay is not None:
             self._contamination_overlay.setVisible(
                 self.iso_mask_toggle.isChecked())
+            self._contamination_overlay.setOpacity(
+                self.iso_opacity.value()/100.)
+        for item in self._conflict_paths:
+            item.setVisible(self.iso_show_conflicts.isChecked())
 
     def _pick_isophote_center(self):
         if self._loaded is None:
@@ -968,12 +1000,15 @@ class SceneEditor(QWidget):
         self._future = self._executor.submit(
             propose_scene_isophote, self._loaded, center,
             float(self.iso_threshold.value()),
-            float(self.iso_smooth.value()), self._contamination)
+            float(self.iso_smooth.value()), self._contamination,
+            2 if self.iso_bridge_guard.isChecked() else 0)
         self._work_kind = "isophote"
         self._active_generation = self._load_generation
+        self.iso_summary.setText("Analysing four nearby thresholds/scales…")
         self.iso_details.setText(
-            "Finding connected diffuse emission around selected ICRS "
-            "position; estimating provisional local sky in a worker…")
+            "Finding target-anchored emission and comparing three nearby "
+            "threshold/smoothing variants on the same masked native FITS. "
+            "All results are preliminary.")
         self._poll_timer.start()
         self._refresh_controls()
 
