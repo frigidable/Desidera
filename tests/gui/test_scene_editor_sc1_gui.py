@@ -308,3 +308,29 @@ def test_redraw_selected_region_preview_and_identity_undo(
     reopened,sha=read_active_mask_draft(project.root)
     assert reopened.edits==(edited,)
     assert sha==editor._saved_digest
+
+
+
+def test_scene_circle_outline_uses_true_spherical_bearing_and_arcsec_radius():
+    """First circular outline vertex is at north, not at a misread PA."""
+    from astropy import units as u
+    from astropy.coordinates import SkyCoord
+
+    w=_native_wcs(flipped=True)
+    center=(359.999,60.)
+    radius=8.
+    shape=SkyMaskShape("circle",center,radius_arcsec=radius)
+    path=scene_shape_outline(shape,w,96)
+    north=SkyCoord(center[0]*u.deg,center[1]*u.deg).spherical_offsets_by(
+        0*u.deg,radius*u.arcsec)
+    expected_x,expected_y=w.all_world2pix(north.ra.deg,north.dec.deg,0)
+    first=path.elementAt(0)
+    assert first.x==pytest.approx(expected_x+.5,abs=1e-5)
+    assert first.y==pytest.approx(96.-expected_y-.5,abs=1e-5)
+    center_x,center_y=w.all_world2pix(*center,0)
+    assert path.boundingRect().center().x()==pytest.approx(
+        center_x+.5,abs=.1)
+    assert path.boundingRect().center().y()==pytest.approx(
+        96.-center_y-.5,abs=.1)
+    assert path.boundingRect().width()>40.
+    assert path.boundingRect().height()>40.
