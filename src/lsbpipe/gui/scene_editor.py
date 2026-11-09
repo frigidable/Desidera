@@ -209,6 +209,9 @@ class SceneEditor(QWidget):
         self._undo = []
         self._redo = []
         self._pending_world = []
+        self._pending_scene = []
+        self._preview_path = None
+        self._replace_index = None
         self._loaded = None
         self._future = None
         self._load_generation = 0
@@ -322,6 +325,7 @@ class SceneEditor(QWidget):
         control_layout.addWidget(QLabel("Unadopted edits (click one to remove)"))
         self.edits = QListWidget()
         self.edits.setObjectName("scene_edits_list")
+        self.edits.currentRowChanged.connect(self._refresh_controls)
         control_layout.addWidget(self.edits, 1)
         history = QHBoxLayout()
         self.undo_btn = QPushButton("Undo")
@@ -332,6 +336,13 @@ class SceneEditor(QWidget):
         self.redo_btn.setObjectName("scene_redo")
         self.redo_btn.clicked.connect(self.redo)
         history.addWidget(self.redo_btn)
+        self.edit_btn = QPushButton("Redraw selected")
+        self.edit_btn.setObjectName("scene_edit_selected")
+        self.edit_btn.setToolTip(
+            "Replace the selected outline by drawing it again on the "
+            "original image; keeps source/edit identity and undo history.")
+        self.edit_btn.clicked.connect(self.edit_selected)
+        history.addWidget(self.edit_btn)
         self.remove_btn = QPushButton("Remove selected")
         self.remove_btn.setObjectName("scene_remove")
         self.remove_btn.clicked.connect(self.remove_selected)
@@ -432,6 +443,9 @@ class SceneEditor(QWidget):
         self._source_key = key
         self._loaded = dataset
         self._pending_world = []
+        self._pending_scene = []
+        self._preview_path = None
+        self._replace_index = None
         self.graphics.clear()
         self._image = None
         self._native_overlay = None
@@ -541,6 +555,30 @@ class SceneEditor(QWidget):
 
     def _cancel_pending(self):
         self._pending_world.clear()
+        self._pending_scene.clear()
+        self._replace_index = None
+        if self._preview_path is not None:
+            self.graphics.removeItem(self._preview_path)
+            self._preview_path = None
+
+    def _update_pending_path(self):
+        if self._preview_path is not None:
+            self.graphics.removeItem(self._preview_path)
+            self._preview_path = None
+        if not self._pending_scene:
+            return
+        path = QPainterPath()
+        for j, (x, y) in enumerate(self._pending_scene):
+            if j == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+        self._preview_path = QGraphicsPathItem(path)
+        pen = QPen(QColor("#f6dc78"), 2.1, Qt.DashLine)
+        pen.setCosmetic(True)
+        self._preview_path.setPen(pen)
+        self._preview_path.setZValue(5.)
+        self.graphics.addItem(self._preview_path)
 
     def _on_click(self, x_scene, y_scene):
         if self._loaded is None or self._draft is None:
@@ -559,6 +597,8 @@ class SceneEditor(QWidget):
             self.status.setText("Invalid WCS position; shape not added.")
             return
         self._pending_world.append((float(ra)%360., float(dec)))
+        self._pending_scene.append((float(x_scene),float(y_scene)))
+        self._update_pending_path()
         if primitive != "polygon" and len(self._pending_world) == 2:
             self._finish_shape(primitive)
         elif primitive == "polygon":
@@ -584,17 +624,24 @@ class SceneEditor(QWidget):
             if self._loaded is not None:
                 scene_shape_outline(
                     shape, self._loaded["wcs"], self._loaded["pixel_shape"][0])
+            index = self._replace_index
+            edits = list(self._draft.edits)
             edit = SkyMaskEdit(
-                edit_id="sc1_" + uuid4().hex,
+                edit_id=(edits[index].edit_id if index is not None
+                         else "sc1_" + uuid4().hex),
                 purpose=self.purpose.currentData(),
                 shape=shape,
                 band=None if self.scope.currentData() == "all" else self._band,
                 comment=self.comment.text()[:512])
-            self._push_edits(self._draft.edits + (edit,))
+            if index is None:
+                edits.append(edit)
+            else:
+                edits[index] = edit
+            self._push_edits(edits)
         except (ValueError, TypeError, IndexError) as exc:
             self.status.setText(f"Region rejected: {exc}")
         finally:
-            self._pending_world.clear()
+            self._cancel_pending()
 
     def _push_edits(self, edits):
         if self._draft is None:
@@ -612,6 +659,7 @@ class SceneEditor(QWidget):
     def undo(self):
         if self._draft is None or not self._undo:
             return
+        self._cancel_pending()
         previous = self._undo.pop()
         self._redo.append(self._draft.edits)
         self._draft = SkyMaskDraft(
@@ -622,12 +670,39 @@ class SceneEditor(QWidget):
     def redo(self):
         if self._draft is None or not self._redo:
             return
+        self._cancel_pending()
         upcoming = self._redo.pop()
         self._undo.append(self._draft.edits)
         self._draft = SkyMaskDraft(
             self._draft.project_id, upcoming, self._draft.revision + 1)
         self._redraw_outlines()
         self._refresh_controls()
+
+    def edit_selected(self):
+        if self._draft is None or self._loaded is None:
+            return
+        index = self.edits.currentRow()
+        if not 0 <= index < len(self._draft.edits):
+            return
+        edit = self._draft.edits[index]
+        if not edit.applies_to(self._band):
+            self.status.setText(
+                "Selected region is local to another band. "
+                "Switch to that band to redraw its native geometry.")
+            return
+        self.mode.setCurrentIndex(self.mode.findData(edit.shape.kind))
+        self._cancel_pending()
+        self._replace_index = index
+        self.purpose.setCurrentIndex(self.purpose.findData(edit.purpose))
+        self.scope.setCurrentIndex(
+            self.scope.findData("all" if edit.band is None else "band"))
+        self.comment.setText(edit.comment)
+        if edit.shape.kind == "ellipse":
+            self.axis_ratio.setValue(edit.shape.q)
+        self.status.setText(
+            f"Redraw selected {edit.shape.kind} on original FITS "
+            "using two clicks or polygon vertices. Edit identity "
+            "is preserved; Cancel shape aborts without changing draft.")
 
     def remove_selected(self):
         if self._draft is None:
@@ -712,7 +787,10 @@ class SceneEditor(QWidget):
             self._saved_digest is None or self._draft.digest != self._saved_digest))
         self.undo_btn.setEnabled(ready and bool(self._undo))
         self.redo_btn.setEnabled(ready and bool(self._redo))
-        self.remove_btn.setEnabled(ready and bool(self._draft.edits))
+        self.remove_btn.setEnabled(
+            ready and 0 <= self.edits.currentRow() < len(self._draft.edits))
+        self.edit_btn.setEnabled(
+            active and 0 <= self.edits.currentRow() < len(self._draft.edits))
         self._update_hard_overlay()
 
     def shutdown(self):
