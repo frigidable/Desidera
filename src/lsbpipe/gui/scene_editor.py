@@ -974,7 +974,7 @@ class SceneEditor(QWidget):
             f"({counts.get('elliptical_catalog_sources', 0)} morphology-based), "
             f"{counts['skipped_target_overlap']} unresolved overlaps. "
             "Purple = candidate excludes; enable amber rings "
-            "to inspect the nearest 20."
+            "to inspect the nearest 20.")
         self.iso_mask_details.setText(
             f"{counts['excluded_pixels']} proposed excluded pixels; "
             f"{counts['native_hard_pixels']} hard-invalid original pixels. "
