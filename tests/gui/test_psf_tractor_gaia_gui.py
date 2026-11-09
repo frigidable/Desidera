@@ -29,8 +29,11 @@ def test_missing_native_gaia_requires_user_action_and_never_silent_fallback(
     panel=PSF0Panel()
     qtbot.addWidget(panel)
     panel.bind_project("C:/test/Leo_P")
-    assert panel.catalog_policy.currentData()=="dao_diagnostic"
-    assert panel.run_btn.isEnabled()
+    assert panel.catalog_policy.currentData()=="gaia_strict"
+    assert not panel.run_btn.isEnabled()
+    assert panel.make_run_request() is None
+    # DAO-only cannot silently replace Gaia selection in Standard mode.
+    assert panel.experiment.currentData()=="outer_sky_isolation_footprint"
     requests=[]
     panel.tractorRequested.connect(requests.append)
     panel.get_tractor_btn.click()
