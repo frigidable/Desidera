@@ -195,3 +195,233 @@ def seed_as_sky_geometry(seed: EllipseSeed, wcs) -> dict:
         "source": "LOCAL_WCS_ISOPHOTE_MOMENT_SEED",
         "flags": seed.flags + ("LOCAL_AFFINE_WCS_APPROXIMATION",),
     }
+
+
+@dataclass(frozen=True)
+class LocalIsophotalProposal:
+    """Display-only connected contour and moment ellipse, not science isophotes."""
+    seed: EllipseSeed
+    contour_xy: tuple[tuple[float, float], ...]
+    local_sky: float
+    raw_sky_rms: float
+    smoothed_sky_rms: float
+    sky_pixels: int
+    threshold_contrast: float
+    smoothing_pix: float
+    flags: tuple[str, ...]
+    state: str = "LOCAL_ISOPHOTE_PROPOSAL_NOT_ADOPTED"
+
+
+def _clipped_location(values):
+    """Robust location and scale on finite data, no astrophysical sky model."""
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size < 200:
+        raise ValueError("Insufficient valid local background samples")
+    for _ in range(4):
+        med = float(np.median(values))
+        mad = 1.4826 * float(np.median(np.abs(values - med)))
+        if mad <= 0 or not math.isfinite(mad):
+            raise ValueError("Cannot estimate positive local background dispersion")
+        kept = values[np.abs(values - med) <= 3.5 * mad]
+        if kept.size < 200:
+            raise ValueError("Local background has too few uncontaminated pixels")
+        if kept.size == values.size:
+            break
+        values = kept
+    return float(np.median(values)), max(
+        1.4826 * float(np.median(np.abs(values - np.median(values)))), 1e-12)
+
+
+def _outer_boundary(region, xoff, yoff, *, max_vertices=192):
+    """Trace the exterior grid-edge ring of a 4-connected pixel component.
+
+    No skimage/matplotlib dependency. Inner holes are deliberately ignored:
+    hard-invalid FITS pixels remain invalid independently of region geometry.
+    Coordinates are FITS pixel centres, not row-inverted Qt coordinates.
+    """
+    pixels = np.argwhere(region)
+    if len(pixels) < 6:
+        raise ValueError("Isophotal component is too small for a contour")
+    ny, nx = region.shape
+    edges = {}
+    for y, x in pixels:
+        y, x = int(y), int(x)
+        if y == 0 or not region[y-1, x]:
+            edges[(x, y)] = (x+1, y)
+        if x == nx-1 or not region[y, x+1]:
+            edges[(x+1, y)] = (x+1, y+1)
+        if y == ny-1 or not region[y+1, x]:
+            edges[(x+1, y+1)] = (x, y+1)
+        if x == 0 or not region[y, x-1]:
+            edges[(x, y+1)] = (x, y)
+    rings = []
+    while edges:
+        first = next(iter(edges))
+        cursor = first
+        ring = [first]
+        for _ in range(len(edges)+1):
+            successor = edges.pop(cursor, None)
+            if successor is None:
+                raise ValueError("Disconnected isophotal pixel boundary")
+            if successor == first:
+                break
+            ring.append(successor)
+            cursor = successor
+        else:
+            raise ValueError("Isophotal boundary could not be closed")
+        if len(ring) >= 8:
+            vertices = np.asarray(ring, dtype=float)
+            area = abs(float(np.dot(vertices[:, 0], np.roll(vertices[:, 1], 1))
+                             - np.dot(vertices[:, 1], np.roll(vertices[:, 0], 1))))/2
+            rings.append((area, vertices))
+    if not rings:
+        raise ValueError("No closed isophotal outline")
+    exterior = max(rings, key=lambda row: row[0])[1]
+    # Reduce stair-step noise and bound immutable sky-mask snapshots to 256
+    # vertices. Equal arc-length spacing preserves the contour's spatial
+    # character better than taking every Nth grid edge.
+    from scipy.ndimage import gaussian_filter1d
+    exterior = gaussian_filter1d(exterior, 1.5, axis=0, mode="wrap")
+    closed = np.vstack([exterior, exterior[0]])
+    distances = np.hypot(np.diff(closed[:, 0]), np.diff(closed[:, 1]))
+    perimeter = float(np.sum(distances))
+    if perimeter < 8.:
+        raise ValueError("Isophotal contour has insufficient perimeter")
+    count = min(max_vertices, max(24, int(math.ceil(perimeter / 2.5))))
+    lengths = np.concatenate([[0.], np.cumsum(distances)])
+    target = np.linspace(0., perimeter, count, endpoint=False)
+    xs = np.interp(target, lengths, closed[:, 0]) + xoff - .5
+    ys = np.interp(target, lengths, closed[:, 1]) + yoff - .5
+    return tuple((float(x), float(y)) for x, y in zip(xs, ys))
+
+
+def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
+                           center_xy: tuple[float, float], *,
+                           threshold_contrast: float = 2.2,
+                           smooth_sigma_pix: float = 4.,
+                           max_radius_pix: float = 380.) -> LocalIsophotalProposal:
+    """Propose a TARGET-ANCHORED local threshold isophote, never an adopted one.
+
+    Estimates a constant provisional sky from a distant annulus of the
+    original band, measures correlated *smoothed* background fluctuations
+    empirically in that same annulus, then finds a 4-connected region near
+    the selected ICRS target. This is an exploratory morphological contour,
+    NOT a calibrated surface-brightness isophote or reliable noise sigma.
+    No source FITS are written and no photometric sums are produced.
+    """
+    from scipy.ndimage import binary_dilation, gaussian_filter, label
+
+    data = np.asarray(image, dtype=float)
+    accepted = np.asarray(valid)
+    if (data.ndim != 2 or data.size == 0 or
+            accepted.shape != data.shape or accepted.dtype.kind != "b"):
+        raise ValueError("Require native 2D IMAGE and same-grid Boolean validity")
+    if len(center_xy) != 2 or not all(math.isfinite(float(p)) for p in center_xy):
+        raise ValueError("Invalid proposed galaxy center")
+    x0, y0 = map(float, center_xy)
+    ny, nx = data.shape
+    if not (0 <= x0 < nx and 0 <= y0 < ny):
+        raise ValueError("Galaxy centre outside this native FITS cutout")
+    if (not 1. <= threshold_contrast <= 8. or
+            not 1. <= smooth_sigma_pix <= 12. or
+            not 60. <= max_radius_pix <= 750.):
+        raise ValueError("Isophote contrast/smoothing/search settings out of range")
+    good = accepted & np.isfinite(data)
+    yy, xx = np.ogrid[:ny, :nx]
+    distance_sq = (xx-x0)**2+(yy-y0)**2
+    radius = float(min(nx, ny))
+    outer = .47*radius
+    inner = .32*radius
+    sky_mask = good & (distance_sq >= inner**2) & (distance_sq <= outer**2)
+    sky, raw_rms = _clipped_location(data[sky_mask])
+    numerator = gaussian_filter(np.where(good, data-sky, 0.), smooth_sigma_pix)
+    coverage = gaussian_filter(good.astype(float), smooth_sigma_pix)
+    smoothed = np.divide(numerator, coverage,
+                         out=np.zeros_like(numerator), where=coverage > .8)
+    supported = good & (coverage > .8)
+    _, smooth_rms = _clipped_location(smoothed[sky_mask & supported])
+    if smooth_rms < raw_rms * .015:
+        raise ValueError("Smoothed background is degenerate; no reliable outline")
+
+    # Bounded connected-component discovery avoids scanning millions of
+    # isolated stellar speckles. The aperture is centred on the target,
+    # not the brightest source in the image.
+    box = min(float(max_radius_pix), .42*radius)
+    x1, x2 = max(0, int(x0-box)), min(nx, int(x0+box)+2)
+    y1, y2 = max(0, int(y0-box)), min(ny, int(y0+box)+2)
+    strength = smoothed[y1:y2, x1:x2] / smooth_rms
+    positive = supported[y1:y2, x1:x2] & (strength >= threshold_contrast)
+    connected, count = label(positive)  # 4-connected: diagonal specks do not bridge
+    if not count:
+        raise ValueError(
+            "No connected galaxy-like emission above local contrast. "
+            "Lower the contrast threshold or select the diffuse light centre.")
+    cy, cx = np.ogrid[y1:y2, x1:x2]
+    close = (cx-x0)**2+(cy-y0)**2 <= max(15.,3.*smooth_sigma_pix)**2
+    nearby = connected[close]
+    nearby = nearby[nearby > 0]
+    if nearby.size == 0:
+        raise ValueError(
+            "No connected emission near selected galaxy centre. "
+            "Pick the diffuse component manually.")
+    labels, counts = np.unique(nearby, return_counts=True)
+    sizes = np.bincount(connected.ravel())
+    ranked = sorted(
+        (int(i) for i in labels if sizes[i] >= 60),
+        key=lambda i: (-int(counts[np.where(labels == i)[0][0]]),
+                       -int(sizes[i])))
+    if not ranked:
+        raise ValueError("No extended galaxy-like component near the target")
+    region = connected == ranked[0]
+    if (region[0].any() or region[-1].any() or
+            region[:, 0].any() or region[:, -1].any()):
+        raise ValueError(
+            "Proposed region reaches search boundary: enlarge the view "
+            "or raise contrast; no clipped contour is offered.")
+    pixel_y, pixel_x = np.nonzero(region)
+    extent = len(pixel_x)
+    signal = np.maximum(strength[region] - threshold_contrast, 0.)
+    # Bound bright knots/stellar peaks so they cannot dominate all moments.
+    weights = np.minimum(signal, max(float(np.quantile(signal, .85)), 1e-6))
+    if not np.isfinite(weights).all() or weights.sum() <= 0:
+        raise ValueError("Insufficient diffuse contrast for ellipse moments")
+    bary_x = float(np.average(pixel_x+x1, weights=weights))
+    bary_y = float(np.average(pixel_y+y1, weights=weights))
+    dx, dy = pixel_x+x1-bary_x, pixel_y+y1-bary_y
+    covariance = np.cov(np.vstack((dx, dy)), aweights=weights, bias=True)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    if eigenvalues[0] <= 0 or not np.isfinite(eigenvalues).all():
+        raise ValueError("Detected region has degenerate geometry")
+    q = float(np.sqrt(eigenvalues[0]/eigenvalues[1]))
+    if q < .08:
+        raise ValueError("Detected region is too thin for a trustworthy ellipse")
+    theta = float(np.degrees(np.arctan2(
+        eigenvectors[1, 1], eigenvectors[0, 1])) % 180.)
+    centroid_offset = float(math.hypot(bary_x-x0,bary_y-y0))
+    seed = EllipseSeed(
+        x_pix=x0, y_pix=y0, sma_pix=float(math.sqrt(extent/(math.pi*q))),
+        q=q, theta_native_deg=theta, component_pixels=extent,
+        centroid_offset_pix=centroid_offset,
+        flags=("PROVISIONAL_LOCAL_SKY", "SMOOTHED_NOISE_IS_EMPIRICAL_NOT_SIGNIFICANCE"))
+    # A small outward display margin is explicitly part of the proposal.
+    padded = binary_dilation(region, iterations=2)
+    if (padded[0].any() or padded[-1].any() or
+            padded[:,0].any() or padded[:,-1].any()):
+        raise ValueError("Padded contour reaches search boundary")
+    contour = _outer_boundary(padded, x1, y1)
+    flags = ["BACKGROUND_CONSTANT_NOT_VALIDATED",
+             "NO_PSFSKY_OR_STELLAR_CONTAMINANT_CORRECTION",
+             "CONTOUR_PADDING_2_NATIVE_PIXELS"]
+    if centroid_offset > max(12., seed.sma_pix*.30):
+        flags.append("CENTROID_OFFSET_REVIEW")
+    if q > .94:
+        flags.append("PA_UNDEFINED_NEAR_CIRCULAR")
+    if (x1 == 0 or y1 == 0 or x2 == nx or y2 == ny):
+        flags.append("SEARCH_APERTURE_NEAR_FITS_EDGE")
+    return LocalIsophotalProposal(
+        seed=seed, contour_xy=contour, local_sky=sky,
+        raw_sky_rms=raw_rms, smoothed_sky_rms=smooth_rms,
+        sky_pixels=int(np.count_nonzero(sky_mask)),
+        threshold_contrast=threshold_contrast,
+        smoothing_pix=smooth_sigma_pix, flags=tuple(flags))
