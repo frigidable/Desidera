@@ -491,3 +491,46 @@ per-component Tractor rendering, empirical PSF wing subtraction,
 spatially variable residual sky estimation, or a validated new
 outer-isophote prior. All of these need scientific research/benchmark
 gates rather than silent interpolation or adopted measurements.
+
+
+## 2026-11-09 · Direct SGA-2025 in DESI Viewer (preferred single-object path)
+
+The Legacy Surveys Viewer already publishes SGA-2025 North and South
+as explicit catalogue overlays. The actual public Viewer source in
+`legacysurvey/imagine`, `map/urls.py` and `map/cats.py`, defines:
+
+- `/viewer/sga2025-north/1/cat.json?ralo=...&rahi=...&declo=...&dechi=...`
+- `/viewer/sga2025-south/1/cat.json?ralo=...&rahi=...&declo=...&dechi=...`
+
+These query the Viewer's indexed nearby-object database, *not* the
+complete 1.4-GB SGA-2025 merged scientific FITS. On-demand
+`Find SGA-2025 · DESI Viewer` sends one **explicit** HTTPS request
+in the background for a bounded 3-arcmin box around the saved project
+target, using the source's selected DR11 north/south region. It
+requires no full catalogue download and produces no local files.
+The local SGA FITS picker remains available as an optional route to
+the actual versioned science catalog. Network, HTTP, JSON size/schema,
+sky-coordinate and source-identity failures fail closed. Multiple
+candidate galaxies require explicit selection; changing the selected
+prior invalidates prepared scene screening.
+
+**Important schema distinction**: `_cat_sga` returns coordinate
+pairs `rd`, `radiusArcsec` (the **semi-major axis** of the
+*Viewer overlay ellipse*), `abRatio`, `posAngle`, `name`,
+`pgc` (populated by `T.ref_id` for the SGA2025 overlay, NOT
+verified as `SGAID` or as a true PGC), and `groupname`.
+Desidera records the exact queried source URL, payload SHA-256 and
+a clearly flagged provisional `Viewer ref`. Its displayed
+`Viewer overlay diameter = 2 × radiusArcsec` **MUST NOT be
+mislabelled** as science-catalog `D26` or assigned non-existent
+`D26_REF`/fit-quality flags. The server's `latest` KD-tree
+overlay may change over time, so payload hashes are for
+provenance, not permanent catalogue release IDs.
+
+A SGA-2025 Viewer ellipse may correspond to the small bright
+central part of Leo P, not its full LSB extent. Both this external
+central prior and every possible Tractor shred still require
+independent band-specific image review. One cannot validate the
+full SGA-2025 `SGA2025` and `ELLIPSEPHOT` records from the
+Viewer's small JSON overlay: use the local versioned science FITS
+reader or a separately verified source for those extra fields.
