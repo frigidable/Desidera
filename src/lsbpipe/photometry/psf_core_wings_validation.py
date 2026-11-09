@@ -176,27 +176,27 @@ def evaluate_core_wings_readiness(
         "core_accuracy": row(
             "HOLD",
             "Core geometry/holdout residuals are descriptive; no prospective bias tolerance",
-            "Externally justified core flux/shape error budget, stable across brightness, position and independent stars"),
+            "Predeclared error budget tested with fixed brightness/position-stratified withheld stars and injections from this brick"),
         "wide_angle_wing_measurement": row(
             "HOLD",
             "Only a finite 81px-class coadd kernel; measured EEF denominator is truncated",
-            "Independent bright-star large-radius measurements and calibrated outer-wing model with sky separation"),
+            "Disjoint bright stars within the SAME native brick, wide-radius coadd profiles with conditional sky separation and explicit wing-flux uncertainty or unresolved bound"),
         "sky_versus_psf_wing_identifiability": row(
             "HOLD",
             "Stellar annulus and coadd sky can absorb outer-wing flux",
-            "Independent sky/PSF-wing degeneracy stress and bias bounds"),
+            "Within-brick blank-sky and neighbor-control tests, using original pixels; quantify sky/wing degeneracy and photometric bias without changing brick"),
         "spatial_representativity": row(
             "HOLD",
-            "Single native brick global PSF not checked at independent positions",
-            "Independent brightness- and position-matched stars plus survey PSF-map comparison"),
+            "The original training/holdout split is too small for brightness-matched within-brick spatial representativity",
+            "Position-separated and brightness-matched withheld stars within the SAME native brick; map spatial residual variation without requiring other bricks"),
         "resampled_coadd_noise_covariance": row(
             "HOLD",
             "Diagonal invvar alone cannot validate correlated noise",
-            "Measured/propagated covariance or empirically validated correlated-noise uncertainty model"),
+            "Native-brick blank-sky empirical covariance or a demonstrably calibrated correlated-noise uncertainty model"),
         "galaxy_injection_recovery": row(
             "HOLD",
             "No independent known-input LSB-galaxy bias budget",
-            "Predeclared surface-brightness, radius, ellipticity and total-flux bias tolerances tested on injections"),
+            "Predeclared surface-brightness, radius, ellipticity and total-flux bias tolerances tested on injections into this native brick"),
     }
     return {
         "schema": SCHEMA,
@@ -231,3 +231,288 @@ def evaluate_core_wings_readiness(
         "no_psf_kernel_change":True,
         "no_science_adoption_without_photometric_bias_calibration":True,
     }
+
+
+
+# The engineering stage can be finalized without promoting an unmeasured
+# outer halo to a physical point-spread kernel or demanding data from
+# another brick. This is a read-only terminal characterization of the
+# *same* brick, not a new wing-fit experiment or a science gate override.
+SINGLE_BRICK_CLOSURE_SCHEMA = "desidera.psf0-single-brick-empirical-closure/1"
+SINGLE_BRICK_RINGS = (
+    (4., 6.), (6., 8.), (8., 12.), (12., 16.),
+    (16., 20.), (20., 22.),
+)
+SINGLE_BRICK_COHORT_ROLES = (
+    "P16C_LEGACY_EXPLORATORY",
+    "NEW_CATALOG_EXPLORATORY",
+    "NEW_CATALOG_HOLDOUT",
+)
+SINGLE_BRICK_EXPECTED_COHORT = (16, 24, 8)
+
+
+def _brick_finite_median(values, *, absolute=False):
+    """Return a finite descriptive median; missing values never become zero."""
+    finite = [
+        abs(float(v)) if absolute else float(v)
+        for v in values if isinstance(v, (int, float, np.number))
+        and not isinstance(v, (bool, np.bool_))
+        and math.isfinite(float(v))
+    ]
+    return float(np.median(finite)) if finite else None
+
+
+def finalize_single_brick_empirical_psf(
+    *, dataset_id, image_shape, core_validation,
+    p17_qa, p18_qa, verified_native_sources,
+):
+    """Close PSF-0 engineering for a single native brick without adoption.
+
+    Combines already measured P17 and P18 *matched identities* only.
+    The returned radial medians are contaminated sky-conditional
+    diagnostics, NOT a normalized physical wing PSF or flux upper limits.
+    Completeness of this inventory differs from photometric science
+    accuracy; independent bricks, new datasets and selected ring
+    thresholds are never requested or invoked.
+    """
+    result = {
+        "schema": SINGLE_BRICK_CLOSURE_SCHEMA,
+        "status": "INCOMPLETE",
+        "dataset_id": dataset_id,
+        "fixed_native_brick_only": True,
+        "engineering_stage_finished": False,
+        "science_adopted": False,
+        "wide_wing_psf_kernel_constructed": False,
+        "wide_wing_detection_significance_claimed": False,
+        "wide_wing_photometric_correction_permitted": False,
+        "no_other_brick_required_or_used": True,
+        "outer_profiles_sky_conditional_not_physical_ee_fraction": True,
+        "finite_epsf_normalization_not_true_total_stellar_flux": True,
+        "stellar_identities_not_reranked_or_replaced": True,
+        "statistics_correlated_within_the_same_coadd": True,
+        "coverage_thresholds_are_descriptive_not_science_gates": True,
+    }
+    if not isinstance(dataset_id, str) or dataset_id.count("/") != 3:
+        return dict(result, status="INVALID_SINGLE_BRICK_DATASET_ID")
+    if (not isinstance(image_shape, (tuple, list))
+            or len(image_shape) != 2
+            or any(type(x) is not int or x <= 0 for x in image_shape)):
+        return dict(result, status="INVALID_ORIGINAL_BRICK_SHAPE")
+    if not verified_native_sources:
+        return dict(result, status="ORIGINAL_NATIVE_SOURCE_HASHES_UNVERIFIED")
+    if (not isinstance(core_validation, dict)
+            or core_validation.get("status") != "SCIENCE_GATE_HOLD"):
+        return dict(result, status="MISSING_FROZEN_CORE_SCIENCE_GATE")
+    geom = core_validation.get("core_geometry", {})
+    if geom.get("status") != "FINITE_NATIVE_CORE_GEOMETRY_MEASURED":
+        return dict(result, status="NO_MEASURED_FINITE_CORE")
+    fwhm = geom.get("measured_core_fwhm_axis_geometric_mean_native_pix")
+    full_radius = geom.get("fully_contained_radial_radius_limit_native_pix")
+    if (not isinstance(fwhm, (int, float))
+            or not math.isfinite(fwhm) or fwhm <= 0
+            or not isinstance(full_radius, (int, float))
+            or not math.isfinite(full_radius) or full_radius <= 0):
+        return dict(result, status="INVALID_FROZEN_CORE_GEOMETRY")
+    if (not isinstance(p17_qa, dict)
+            or p17_qa.get("status") !=
+            "FIXED_EXPANDED_COHORT_MASK_FEASIBILITY_ONLY"
+            or not isinstance(p18_qa, dict)
+            or p18_qa.get("status") !=
+            "FIXED_P17_COHORT_MORPHOLOGY_SKY_DIAGNOSTIC_ONLY"):
+        return dict(result, status="FIXED_P17_P18_EVIDENCE_MISSING")
+    if (not isinstance(p17_qa.get("native_catalog_sha256"), str)
+            or p17_qa["native_catalog_sha256"] !=
+            p18_qa.get("native_catalog_sha256")):
+        return dict(result, status="NATIVE_TRACTOR_CATALOG_HASH_MISMATCH")
+    p17 = p17_qa.get("per_star", [])
+    p18 = p18_qa.get("per_star", [])
+    if not isinstance(p17, list) or not isinstance(p18, list):
+        return dict(result, status="INVALID_FROZEN_STAR_LISTS")
+    if len(p17) != 48 or len(p18) != 48:
+        return dict(result, status="INCOMPLETE_48_STAR_COHORT")
+    by_rank = {}
+    for old in p17:
+        rank = old.get("catalog_rank")
+        if (type(rank) is not int or rank < 1 or rank > 48
+                or rank in by_rank):
+            return dict(result, status="DUPLICATE_OR_INVALID_P17_RANK")
+        by_rank[rank] = old
+    if set(by_rank) != set(range(1, 49)):
+        return dict(result, status="INCOMPLETE_OR_NONCONTIGUOUS_RANKS")
+    matched = []
+    encountered = set()
+    for new in p18:
+        rank = new.get("catalog_rank")
+        if type(rank) is not int or rank not in by_rank or rank in encountered:
+            return dict(result, status="DUPLICATE_OR_UNKNOWN_P18_RANK")
+        encountered.add(rank)
+        old = by_rank[rank]
+        if any(new.get(k) != old.get(k) for k in (
+                "gaia_source_id", "source_id", "cohort_role")):
+            return dict(result, status="P18_P17_STAR_IDENTITY_MISMATCH")
+        if len(old.get("mask_variants", [])) != 4:
+            return dict(result, status="P17_NOT_ALL_FOUR_MASKS")
+        if (len(new.get("radial_profile", [])) != len(SINGLE_BRICK_RINGS)
+                or len(old["mask_variants"][0].get("radial_profile", []))
+                != len(SINGLE_BRICK_RINGS)):
+            return dict(result, status="MISSING_FIXED_RADIAL_BINS")
+        for index, ring in enumerate(SINGLE_BRICK_RINGS):
+            for entry in (new["radial_profile"][index],
+                          old["mask_variants"][0]["radial_profile"][index]):
+                if (entry.get("radius_inner_in_measured_fwhm"),
+                        entry.get("radius_outer_in_measured_fwhm")) != ring:
+                    return dict(result, status="RADIAL_RING_BOUNDARIES_CHANGED")
+        xy = old.get("native_xy_pix")
+        if (not isinstance(xy, (tuple, list)) or len(xy) != 2
+                or not all(isinstance(x, (int, float)) and
+                           math.isfinite(x) for x in xy)
+                or not (0 <= xy[0] < image_shape[1]
+                        and 0 <= xy[1] < image_shape[0])):
+            return dict(result, status="INVALID_NATIVE_STAR_LOCATION")
+        matched.append((old,new))
+    if len({old["gaia_source_id"] for old, _ in matched}) != 48:
+        return dict(result, status="DUPLICATE_GAIA_IDENTITIES")
+    if tuple(sum(old["cohort_role"] == role for old,_ in matched)
+             for role in SINGLE_BRICK_COHORT_ROLES) != (
+             SINGLE_BRICK_EXPECTED_COHORT):
+        return dict(result, status="FROZEN_COHORT_ROLES_CHANGED")
+    if (p17_qa.get("n_legacy_baseline_reproduced") != 16
+            or p17_qa.get("n_multimask_stars_measured") != 48):
+        return dict(result, status="P16C_BASELINE_OR_P17_RUN_INCOMPLETE")
+    if any(old.get("status") != "MULTIMASK_DESCRIPTIVE_ONLY"
+           for old, _ in matched):
+        return dict(result, status="P17_FIXED_STAR_NOT_MEASURED")
+
+    subsets = {"all_48": matched}
+    for label in SINGLE_BRICK_COHORT_ROLES:
+        subsets[label] = [
+            (old, new) for old,new in matched
+            if old["cohort_role"] == label
+        ]
+    population = {}
+    radial_nulls = 0
+    for label, rows in subsets.items():
+        radial = []
+        for index,(lo,hi) in enumerate(SINGLE_BRICK_RINGS):
+            old_r = [old["mask_variants"][0]["radial_profile"][index]
+                     for old,new in rows]
+            new_r = [new["radial_profile"][index] for old,new in rows]
+            old_signal = [r.get("sky_b_subtracted_median_over_peak")
+                          for r in old_r]
+            new_signal = [r.get("sky_b_subtracted_median_over_peak")
+                          for r in new_r]
+            paired = [
+                abs(float(a)-float(b))
+                for a,b in zip(old_signal, new_signal)
+                if a is not None and b is not None
+                and math.isfinite(float(a)) and math.isfinite(float(b))
+            ]
+            n_available = sum(
+                isinstance(x, (int, float)) and math.isfinite(x)
+                for x in new_signal
+            )
+            if label == "all_48":
+                radial_nulls += len(rows)-n_available
+            qualified = sum(
+                r.get("unmasked_fraction") is not None and
+                r["unmasked_fraction"] >= .5 and
+                r.get("n_octants_with_at_least_25_pixels",0) >= 6
+                for r in new_r
+            )
+            spread = []
+            for r in new_r:
+                octants = [
+                    float(v) for v in
+                    r.get("sky_b_subtracted_octant_medians_over_peak", [])
+                    if isinstance(v, (int,float)) and math.isfinite(v)
+                ]
+                spread.append(
+                    max(octants)-min(octants) if len(octants) >= 4 else None
+                )
+            radial.append({
+                "radius_range_in_measured_fwhm": [lo,hi],
+                "n_stars": len(rows),
+                "n_nonnull_p18_radial_residuals": n_available,
+                "n_geometric_coverage_illustration_only": qualified,
+                "p18_median_unmasked_annular_fraction": _brick_finite_median(
+                    [r.get("unmasked_fraction") for r in new_r]),
+                "p18_median_signed_residual_over_native_peak":
+                    _brick_finite_median(new_signal),
+                "p18_median_abs_residual_over_native_peak":
+                    _brick_finite_median(new_signal, absolute=True),
+                "p17_3fwhm_median_signed_residual_over_native_peak":
+                    _brick_finite_median(old_signal),
+                "median_abs_p18_vs_p17_3fwhm_shift_over_native_peak":
+                    _brick_finite_median(paired),
+                "median_p18_max_minus_min_octant_over_native_peak":
+                    _brick_finite_median(spread),
+                "no_significance_or_true_psf_flux_inferred": True,
+            })
+        sky = {
+            "median_abs_sky_a_minus_sky_b_over_native_peak":
+                _brick_finite_median(
+                    [new.get("sky_a_minus_sky_b_over_peak")
+                     for _,new in rows], absolute=True),
+            "median_max_abs_sky_b_octant_deletion_over_native_peak":
+                _brick_finite_median(
+                    [new.get(
+                        "sky_b_max_abs_leave_one_octant_change_over_peak")
+                     for _,new in rows]),
+            "eight_deletions_not_independent_error_estimates": True,
+        }
+        population[label] = {
+            "n_stars": len(rows),
+            "radial_profiles": radial,
+            "sky_sensitivity": sky,
+        }
+    # Fixed x/y half-brick geometry is catalog-only. Sparse quadrants are
+    # reported rather than pooled into fictitious location-independent QA.
+    quadrants = []
+    for east in (False, True):
+        for north in (False, True):
+            rows = [(old,new) for old,new in matched
+                    if (old["native_xy_pix"][0] >= image_shape[1]/2.) == east
+                    and (old["native_xy_pix"][1] >= image_shape[0]/2.)
+                    == north]
+            bright = [(old,new) for old,new in rows
+                      if old["cohort_role"] ==
+                      "P16C_LEGACY_EXPLORATORY"]
+            quadrants.append({
+                "brick_pixel_x_upper_half": east,
+                "brick_pixel_y_upper_half": north,
+                "n_fixed_stars": len(rows),
+                "n_legacy_bright_stars": len(bright),
+                "median_bright_p18_4to6_fwhm_residual_over_native_peak":
+                    _brick_finite_median([
+                        new["radial_profile"][0].get(
+                            "sky_b_subtracted_median_over_peak")
+                        for _,new in bright]),
+                "brightness_matched_spatial_qa_validated": False,
+            })
+
+    # Explicitly bound what the result does and does not mean. A PSF
+    # "engineering stage done" is not a science-adopted physical halo.
+    return dict(
+        result,
+        status="BRICK_ONLY_EMPIRICAL_CORE_AND_WING_CONSTRAINTS_COMPLETE",
+        engineering_stage_finished=True,
+        native_catalog_sha256=p17_qa["native_catalog_sha256"],
+        n_frozen_stars=len(matched),
+        n_original_kernel_training_stars=core_validation.get(
+            "n_train_stars"),
+        n_original_kernel_holdout_stars=core_validation.get(
+            "n_fixed_holdout_stars"),
+        finite_core_measured_fwhm_native_pix=float(fwhm),
+        finite_core_kernel_full_radial_support_native_pix=float(full_radius),
+        physical_core_flux_normalization_known=False,
+        outer_diagnostic_radii_fwhm=[4.,22.],
+        outer_conditioning_sky_radii_fwhm=[22.,30.],
+        n_p18_radial_annuli_with_no_pixels=radial_nulls,
+        cohorts=population,
+        same_brick_catalog_pixel_quadrants=quadrants,
+        scientifically_validated_extended_wings=False,
+        final_outcome=(
+            "Finite native 2D empirical core + sky-conditional stellar "
+            "profiles and masking sensitivity. No wide-angle physical "
+            "PSF inferred and no science photometric correction."),
+    )
