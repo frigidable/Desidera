@@ -138,7 +138,7 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
         dec = np.array([p[1] for p in shape.vertices])
     else:
         angle = np.linspace(0, 2*np.pi, 97)[:-1]
-         if shape.kind == "circle":
+        if shape.kind == "circle":
             east = shape.radius_arcsec*np.sin(angle)
             north = shape.radius_arcsec*np.cos(angle)
         else:
