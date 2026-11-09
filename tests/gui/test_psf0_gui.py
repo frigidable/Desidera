@@ -41,7 +41,8 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
 
     configurations = []
 
-    def fake_backend(root, *, band, config, protection_arcsec, progress=None):
+    def fake_backend(root, *, band, config, protection_arcsec, progress=None, extended_research_qa=False):
+        assert extended_research_qa is False  # standard GUI, no P15–P20
         configurations.append(config)
         if progress is not None:
             progress((0, 1, "Synthetic QA-rejected star sample"))
@@ -685,3 +686,45 @@ def test_griz_selector_remains_visible_when_science_workspace_scrolls(qtbot):
     assert workspace.band_tabs.currentIndex() == 2
     workspace.band_tabs.setCurrentIndex(3)
     assert workspace.band_selector.currentIndex() == 3
+
+
+
+def test_standard_psf_gui_offers_opt_in_full_p15_p20_qa_only_in_advanced(qtbot):
+    panel = PSF0Panel()
+    qtbot.addWidget(panel)
+    panel.show()
+    panel.band.addItem("g", "g")
+    panel._project_root = "C:/project/Leo_P"
+    panel._snapshot = {
+        "bands": [{"band": "g", "paths_present_unverified": True}],
+        "gaia_tractor_present_unverified": True,
+    }
+    panel._update_buttons()
+    assert not panel.extended_qa.isChecked()
+    assert not panel.extended_qa.isVisible()
+    normal = panel.make_run_request()
+    assert normal["extended_research_qa"] is False
+    assert "Core + holdout QA only" in panel.mode_context.text()
+    panel.set_research_mode(True)
+    panel.advanced_toggle.click()
+    assert panel.extended_qa.isVisible()
+    panel._active_exclusions = ("star-0002",)
+    panel.extended_qa.setChecked(True)
+    assert panel._active_exclusions == ("star-0002",)
+    research = panel.make_run_request()
+    assert research["excluded_training_star_ids"] == ("star-0002",)
+    assert research["extended_research_qa"] is True
+    assert research["experiment"] == normal["experiment"]
+    assert research["fwhm_pix"] == normal["fwhm_pix"]
+    assert research["target_protection_arcsec"] == normal[
+        "target_protection_arcsec"]
+    assert "Full P15–P20 research audit SELECTED" in panel.mode_context.text()
+    # Switching back to Standard view does not silently turn off the
+    # selected expensive job: it is disclosed prominently in the context.
+    panel.set_research_mode(False)
+    assert not panel.extended_qa.isVisible()
+    assert "Full P15–P20 research audit ENABLED" in panel.mode_context.text()
+    assert panel.make_run_request()["extended_research_qa"] is True
+    panel.extended_qa.setChecked(False)
+    assert panel._active_exclusions == ("star-0002",)
+    assert panel.make_run_request()["extended_research_qa"] is False

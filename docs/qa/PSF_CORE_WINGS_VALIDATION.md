@@ -1584,3 +1584,47 @@ Desidera pipeline development using the
 frozen core only in diagnostics with explicit
 science-HOLD flags, and preserve the
 reproducible PSF0 evidence package.
+
+
+## Post-checkpoint PSF0 execution depth: routine core versus opt-in research QA
+
+The P16–P20 measurements and scientific conclusions above are **historical
+full-research results** derived from one original native Leo P brick. The
+scientific methods and their original control identities remain available.
+
+To avoid redoing large pilot analyses every time a user merely builds an
+empirical stellar PSF, the GUI now runs only the core/holdout stage by
+default. This still performs original FITS validation, source/catalogue
+SHA checks, the original frozen star selection and exclusions, numerical
+ePSF fitting, signed pre-clip checks, independent holdout coverage and
+core-growth/finite-kernel science-gate diagnostics. It **never** relaxes
+the original rejection thresholds. Original FITS are untouched.
+
+The explicitly selected **Advanced diagnostics → Run full historical
+P15–P20 research QA (slow)** also runs the *original* read-only scene
+fits, broad native star profiles, the 16+24+8 star cohorts, alternative
+masks, same-brick sky/nuisance and blank-control analyses. All tests
+remain confined to the same native brick; galaxy injections are NOT
+part of this stage. The ordinary GUI run does not silently execute any
+of those eight heavyweight post-fit modules.
+
+The new machine-readable field
+`diagnostic_metrics.postfit_qa_execution`
+(`desidera.psf0-postfit-qa-execution/1`) distinguishes
+`standard_core` from `full_research` and lists exact modules
+`research_metrics_completed` versus `research_metrics_not_run`.
+Skipped modules are **absent**, not faked as numerical zero, empty
+measurements, or successful science validation. Core failure/rejection
+before post-fit work is unaffected. `science_adopted`,
+`psf_wings_validated` and extended scattered-light correction
+remain FALSE for both modes.
+
+The QA-depth switch is an **execution/reporting selection**, not an
+astronomical PSF recipe parameter. It is intentionally *not* included
+in the historical `PSF0Config.digest` or method fingerprint, so it
+cannot change ePSF numerical values, selected source identities or
+scientific lineage. The report separately records the requested
+and actual execution depth; the fixed kernel/selection/checks must
+be bitwise unchanged between matched inputs and recipes. Switching
+the GUI QA scope invalidates the currently displayed report to avoid
+mixing an old result with newly selected options. All Python and GUI entrypoints default to `extended_research_qa=False`. To reproduce the historical full-brick research analysis, pass `extended_research_qa=True` in direct API calls, select the GUI Advanced checkbox, or use `scripts/psf0_leo_p.py --full-research-qa`. The default changes executed diagnostics only; it does not change the ePSF kernel, star selection, fitting method, recipe digest or scientific lineage.

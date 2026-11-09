@@ -90,7 +90,9 @@ def test_four_band_batch_preserves_independent_results_and_reports(
             },
         }
 
-    def fake_run(root, *, band, config, protection_arcsec):
+    def fake_run(root, *, band, config, protection_arcsec,
+                 extended_research_qa=False):
+        assert extended_research_qa is False
         seen.append((band, config.guessed_fwhm_pix, config.cutout_size_pix))
         if band == "r":
             raise ValueError("synthetic bad r image WCS")
@@ -160,7 +162,9 @@ def test_manual_band_fwhm_override_is_preserved_in_batch(
             },
         }
 
-    def fake_run(root, *, band, config, protection_arcsec):
+    def fake_run(root, *, band, config, protection_arcsec,
+                 extended_research_qa=False):
+        assert extended_research_qa is False
         measurements.append((band,config.guessed_fwhm_pix,
                              config.training_outlier_passes))
         return _rejected(project.root,band)
@@ -259,7 +263,9 @@ def test_batch_refuses_stale_reviewed_star_ids_after_psfsize_shift(
             },
         }
 
-    def fake_run(root, *, band, config, protection_arcsec):
+    def fake_run(root, *, band, config, protection_arcsec,
+                 extended_research_qa=False):
+        assert extended_research_qa is False
         calls.append((band,tuple(config.excluded_training_star_ids)))
         return _rejected(project.root,band)
 

@@ -251,8 +251,11 @@ def run_gui_psf0(
     project_root: str | Path, *,
     band: str, config: PSF0Config,
     protection_arcsec: float, progress: Callable | None = None,
+    extended_research_qa: bool = False,
 ) -> dict:
-    """Read, validate and build in background, return result without saving."""
+    """Build core PSF by default; P15–P20 full-brick QA is opt-in only."""
+    if type(extended_research_qa) is not bool:
+        raise TypeError("extended_research_qa must be bool")
     snapshot = inspect_psf0_bands(project_root)
     chosen = next((x for x in snapshot["bands"] if x["band"] == band), None)
     if chosen is None or not chosen["paths_present_unverified"]:
@@ -278,17 +281,21 @@ def run_gui_psf0(
         release=release, region=region, brick=brick, band=band,
         config=config, radius=float(protection_arcsec),
         catalog_sha256=(catalogue.source_sha256 if catalogue else None))
-    _progress(progress, f"Building provisional {band} PSF · star selection, sky, holdout")
+    depth = "full research QA" if extended_research_qa else "core and holdout QA"
+    _progress(progress, f"Building provisional {band} PSF · {depth}")
     try:
         result = build_empirical_coadd_psf(
             frame, target_icrs_deg=LEO_P_CENTER,
             target_protection_arcsec=float(protection_arcsec), config=config,
-            catalog_matcher=catalogue)
+            catalog_matcher=catalogue,
+            extended_research_qa=extended_research_qa)
     except PSF0QualityError as exc:
         # This is a *normal scientific rejection* with useful candidate-star
         # evidence, not an exception that should lose context in a GUI popup.
         return {
             "status": "PSF0_QUALITY_REJECTED_NOT_ADOPTED",
+            "postfit_qa_scope_requested": (
+                "full_research" if extended_research_qa else "standard_core"),
             "review_band": band,
             "effective_recipe": asdict(config),
             "recipe_sha256": config.digest,
@@ -305,6 +312,8 @@ def run_gui_psf0(
     _progress(progress, f"Completed provisional {band} PSF · not science-adopted")
     return {
         "status": "EXPERIMENTAL_PSF_NOT_ADOPTED",
+        "postfit_qa_scope_requested": result.metrics[
+            "postfit_qa_execution"]["mode"],
         "review_band": band,
         "effective_recipe": asdict(config),
         "recipe_sha256": config.digest,

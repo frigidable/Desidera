@@ -371,3 +371,22 @@ def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fi
                    diagnostic["n_accepted_stars"])
     assert all(path.read_bytes() == originals[kind]
                for kind, path in paths.items())
+
+
+
+def test_leo_p_cli_qa_profile_requires_explicit_full_opt_in(tmp_path, monkeypatch):
+    """The explicit pilot script also defaults to lightweight core QA."""
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    p = _project(tmp_path)
+    from scripts.psf0_leo_p import run_leo_p_pilot
+    standard = run_leo_p_pilot(p.root, bands=("g",))
+    full = run_leo_p_pilot(
+        p.root, bands=("g",), extended_research_qa=True)
+    assert standard["postfit_qa_scope_requested"] == "standard_core"
+    assert full["postfit_qa_scope_requested"] == "full_research"
+    assert standard["scientific_status"] == full["scientific_status"]
+    assert full["band_results"][0]["status"] == (
+        "SKIPPED_MISSING_NATIVE_QUARTET")
+    with pytest.raises(TypeError, match="extended_research_qa"):
+        run_leo_p_pilot(p.root, extended_research_qa="true")
+    assert not (p.root / "analyses").exists()

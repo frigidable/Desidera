@@ -66,7 +66,8 @@ def built():
         fake_frame(), target_icrs_deg=LEO_P,
         target_protection_arcsec=13.,
         config=PSF0Config(min_neighbor_separation_pix=32., min_train_stars=6,
-                          min_holdout_stars=2, max_training_stars=30))
+                          min_holdout_stars=2, max_training_stars=30),
+        extended_research_qa=True)
 
 
 def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
@@ -782,3 +783,71 @@ def test_nonconverged_solver_cannot_be_returned_as_successful_preview(
     assert qa["n_holdout"] >= 2
     assert failure.value.review_snapshot is not None
     assert qa["status"] == "PSF0_QUALITY_REJECTED_NOT_ADOPTED"
+
+
+
+def test_core_only_qa_bypasses_p15_p20_without_modifying_epsf_or_lineage(
+        monkeypatch, built):
+    """A fast GUI result preserves identical scientific core/holdout gates.
+
+    P15–P20 are read-only supplementary work: their absence means
+    NOT RUN, never validated, and may not alter a kernel's SHA/lineage.
+    """
+    import lsbpipe.photometry.psf_empirical as module
+    p15_p20_calls = (
+        "audit_fixed_psf_joint_scenes",
+        "audit_native_broad_radius_star_profiles",
+        "audit_disjoint_bright_gaia_wing_probes",
+        "audit_fixed_bright_gaia_neighbor_sky_stress",
+        "audit_extended_bright_gaia_mask_experiment",
+        "audit_catalog_shape_neighbor_and_sky_sensitivity",
+        "finalize_single_brick_empirical_psf",
+        "audit_brick_joint_wings_sky_spatial",
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unexpected heavy native-brick research QA")
+
+    for name in p15_p20_calls:
+        monkeypatch.setattr(module, name, forbidden)
+
+    fast = module.build_empirical_coadd_psf(
+        fake_frame(), target_icrs_deg=LEO_P,
+        target_protection_arcsec=13., config=built.recipe)
+    a, b = fast.report(), built.report()
+    assert a["kernel_sha256"] == b["kernel_sha256"]
+    np.testing.assert_array_equal(fast.kernel, built.kernel)
+    assert a["recipe_digest"] == b["recipe_digest"]
+    assert a["implementation_method_sha256"] == (
+        b["implementation_method_sha256"])
+    assert [s.star_id for s in fast.training] == [
+        s.star_id for s in built.training]
+    assert [s.star_id for s in fast.holdout] == [
+        s.star_id for s in built.holdout]
+    assert fast.metrics["core_wings_validation_qa"] == (
+        built.metrics["core_wings_validation_qa"])
+    assert fast.metrics["signed_holdout_summary"] == (
+        built.metrics["signed_holdout_summary"])
+    assert fast.metrics["final_holdout_coverage_after_clipping"] == (
+        built.metrics["final_holdout_coverage_after_clipping"])
+    execution = fast.metrics["postfit_qa_execution"]
+    assert execution["mode"] == "standard_core"
+    assert execution["research_metrics_completed"] == []
+    assert len(execution["research_metrics_not_run"]) == len(p15_p20_calls)
+    for key in execution["research_metrics_not_run"]:
+        assert key not in fast.metrics
+        assert key in built.metrics
+    assert built.metrics["postfit_qa_execution"]["mode"] == "full_research"
+    assert built.metrics["postfit_qa_execution"]["research_metrics_not_run"] == []
+    for flag in ("science_adopted", "psf_wings_validated",
+                 "noise_covariance_validated"):
+        assert a[flag] is False and b[flag] is False
+    assert "SYNTHETIC_TEST_INPUT" in fast.flags
+    assert not a["lineage_id"]
+
+
+def test_psf_qa_depth_requires_exact_boolean_and_cannot_enable_adoption():
+    with pytest.raises(TypeError, match="explicit bool"):
+        build_empirical_coadd_psf(
+            fake_frame(), target_icrs_deg=LEO_P,
+            target_protection_arcsec=13., extended_research_qa="yes")

@@ -594,6 +594,7 @@ def build_empirical_coadd_psf(
     target_protection_arcsec: float,
     config: PSF0Config | None = None,
     catalog_matcher=None,
+    extended_research_qa: bool = False,
 ) -> PSF0Result:
     """Build an exploratory native-grid ePSF from independent local star cutouts.
 
@@ -606,6 +607,8 @@ def build_empirical_coadd_psf(
     cfg = config if config is not None else PSF0Config()
     if not isinstance(cfg, PSF0Config):
         raise TypeError("Expected PSF0Config")
+    if type(extended_research_qa) is not bool:
+        raise TypeError("extended_research_qa must be an explicit bool")
     if cfg.star_catalog_policy in ("gaia_strict", "tractor_psf_validated"):
         from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
         if not isinstance(catalog_matcher, TractorGaiaMatcher):
@@ -1541,15 +1544,12 @@ def build_empirical_coadd_psf(
     instrument = ("BASS_90PRIME" if frame.region == "north" and frame.band in ("g","r")
                   else "MZLS_MOSAIC3" if frame.region == "north" and frame.band == "z"
                   else "DECAM")
-    # Fixed-kernel joint native scene diagnostics: fit each SAME selected
-    # star and its original Tractor PSF neighbors with an unconstrained
-    # planar sky on a larger ORIGINAL coadd patch. These nuisance fits
-    # NEVER alter the already constructed and heldout-tested ePSF.
-    # This is not extended-wing recovery and is not noise-covariance QA.
-    joint_native_scene_qa = audit_fixed_psf_joint_scenes(
-        frame, kernel, train+holdout, catalog_matcher,
-        protected_mask=protected,
-        guessed_fwhm_pix=cfg.guessed_fwhm_pix)
+    # The finite core measurement, original star/heldout quality gates,
+    # signed diagnostics, source fingerprints and science HOLD are always
+    # executed. Historical P15–P20 read-only controls may be lengthy on
+    # the full native brick; the ordinary GUI requests them only by explicit
+    # researcher opt-in. Existing research can be reproduced by passing
+    # extended_research_qa=True explicitly; routine Python calls are fast.
     # The finder FWHM remains a GUESS for candidate selection and older
     # fixed-annulus holdout tests; this measured kernel-core FWHM is a
     # separate QA result and never changes the original star selection.
@@ -1563,46 +1563,80 @@ def build_empirical_coadd_psf(
         preclip_negative_mass_fraction=negative_fraction,
         verified_native_source_hashes=bool(source_hashes)
             and lineage is not None)
-    # P16B is an independent read-only *post-fit* view of original
-    # larger coadd cutouts; it cannot redefine the frozen core ePSF,
-    # holdouts, selected stars, the local sky, or any fit parameters.
-    broad_wing_profile_qa = audit_native_broad_radius_star_profiles(
-        frame, train+holdout, catalog_matcher, measured_core_geometry,
-        protected_mask=protected)
-    disjoint_bright_gaia_qa = audit_disjoint_bright_gaia_wing_probes(
-        frame, train+holdout, catalog_matcher, measured_core_geometry,
-        protected_mask=protected)
-    fixed_bright_gaia_sky_stress_qa = audit_fixed_bright_gaia_neighbor_sky_stress(
-        frame, catalog_matcher, disjoint_bright_gaia_qa,
-        measured_core_geometry, protected_mask=protected)
-    extended_bright_gaia_mask_qa = audit_extended_bright_gaia_mask_experiment(
-        frame, train+holdout, catalog_matcher, measured_core_geometry,
-        disjoint_bright_gaia_qa, protected_mask=protected)
-    shape_neighbor_sky_qa = audit_catalog_shape_neighbor_and_sky_sensitivity(
-        frame, catalog_matcher, measured_core_geometry,
-        extended_bright_gaia_mask_qa, protected_mask=protected)
-    single_brick_closure_qa = finalize_single_brick_empirical_psf(
-        dataset_id=frame.dataset_id,
-        image_shape=tuple(frame.shape),
-        core_validation=core_wings_validation_qa,
-        p17_qa=extended_bright_gaia_mask_qa,
-        p18_qa=shape_neighbor_sky_qa,
-        verified_native_sources=bool(source_hashes) and lineage is not None,
+
+    research_metric_keys = (
+        "fixed_psf_joint_native_scene_qa",
+        "original_native_outer_stellar_profile_qa",
+        "disjoint_bright_gaia_outer_profile_qa",
+        "fixed_bright_gaia_neighbor_sky_stress_qa",
+        "extended_bright_gaia_mask_experiment_qa",
+        "catalog_shape_neighbor_sky_qa",
+        "single_brick_empirical_psf_closure_qa",
+        "same_brick_joint_wing_sky_spatial_qa",
     )
-    same_brick_wing_sky_spatial_qa = audit_brick_joint_wings_sky_spatial(
-        frame, catalog_matcher, measured_core_geometry,
-        extended_bright_gaia_mask_qa, shape_neighbor_sky_qa,
-        protected_mask=protected)
+    extended_metrics = {}
+    if extended_research_qa:
+        # All original P15–P20 implementations and the order of their
+        # dependencies remain unchanged for reproducibility.
+        joint_native_scene_qa = audit_fixed_psf_joint_scenes(
+            frame, kernel, train+holdout, catalog_matcher,
+            protected_mask=protected,
+            guessed_fwhm_pix=cfg.guessed_fwhm_pix)
+        broad_wing_profile_qa = audit_native_broad_radius_star_profiles(
+            frame, train+holdout, catalog_matcher, measured_core_geometry,
+            protected_mask=protected)
+        disjoint_bright_gaia_qa = audit_disjoint_bright_gaia_wing_probes(
+            frame, train+holdout, catalog_matcher, measured_core_geometry,
+            protected_mask=protected)
+        fixed_bright_gaia_sky_stress_qa = audit_fixed_bright_gaia_neighbor_sky_stress(
+            frame, catalog_matcher, disjoint_bright_gaia_qa,
+            measured_core_geometry, protected_mask=protected)
+        extended_bright_gaia_mask_qa = audit_extended_bright_gaia_mask_experiment(
+            frame, train+holdout, catalog_matcher, measured_core_geometry,
+            disjoint_bright_gaia_qa, protected_mask=protected)
+        shape_neighbor_sky_qa = audit_catalog_shape_neighbor_and_sky_sensitivity(
+            frame, catalog_matcher, measured_core_geometry,
+            extended_bright_gaia_mask_qa, protected_mask=protected)
+        single_brick_closure_qa = finalize_single_brick_empirical_psf(
+            dataset_id=frame.dataset_id,
+            image_shape=tuple(frame.shape),
+            core_validation=core_wings_validation_qa,
+            p17_qa=extended_bright_gaia_mask_qa,
+            p18_qa=shape_neighbor_sky_qa,
+            verified_native_sources=bool(source_hashes) and lineage is not None,
+        )
+        same_brick_wing_sky_spatial_qa = audit_brick_joint_wings_sky_spatial(
+            frame, catalog_matcher, measured_core_geometry,
+            extended_bright_gaia_mask_qa, shape_neighbor_sky_qa,
+            protected_mask=protected)
+        extended_metrics = {
+            "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
+            "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
+            "disjoint_bright_gaia_outer_profile_qa": disjoint_bright_gaia_qa,
+            "fixed_bright_gaia_neighbor_sky_stress_qa": fixed_bright_gaia_sky_stress_qa,
+            "extended_bright_gaia_mask_experiment_qa": extended_bright_gaia_mask_qa,
+            "catalog_shape_neighbor_sky_qa": shape_neighbor_sky_qa,
+            "single_brick_empirical_psf_closure_qa": single_brick_closure_qa,
+            "same_brick_joint_wing_sky_spatial_qa": same_brick_wing_sky_spatial_qa,
+        }
+    qa_execution = {
+        "schema": "desidera.psf0-postfit-qa-execution/1",
+        "mode": ("full_research" if extended_research_qa else "standard_core"),
+        "full_research_requested": extended_research_qa,
+        "core_and_holdout_quality_gates_executed": True,
+        "research_metrics_completed": (
+            list(research_metric_keys) if extended_research_qa else []),
+        "research_metrics_not_run": (
+            [] if extended_research_qa else list(research_metric_keys)),
+        "skipped_not_equivalent_to_passed": True,
+        "kernel_and_recipe_provenance_independent_of_qa_depth": True,
+        "psf_wings_validated": False,
+        "science_adopted": False,
+    }
     metrics = {
         "core_wings_validation_qa": core_wings_validation_qa,
-        "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
-        "disjoint_bright_gaia_outer_profile_qa": disjoint_bright_gaia_qa,
-        "fixed_bright_gaia_neighbor_sky_stress_qa": fixed_bright_gaia_sky_stress_qa,
-        "extended_bright_gaia_mask_experiment_qa": extended_bright_gaia_mask_qa,
-        "catalog_shape_neighbor_sky_qa": shape_neighbor_sky_qa,
-        "single_brick_empirical_psf_closure_qa": single_brick_closure_qa,
-        "same_brick_joint_wing_sky_spatial_qa": same_brick_wing_sky_spatial_qa,
-        "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
+        "postfit_qa_execution": qa_execution,
+        **extended_metrics,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
         "parameter_provenance_qa": parameter_provenance_qa,
