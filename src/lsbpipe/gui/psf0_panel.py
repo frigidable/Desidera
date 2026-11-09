@@ -13,7 +13,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QBoxLayout, QComboBox, QDoubleSpinBox,
+    QAbstractItemView, QApplication, QBoxLayout, QCheckBox, QComboBox, QDoubleSpinBox,
     QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QPlainTextEdit, QPushButton, QSizePolicy,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -283,6 +283,19 @@ class PSF0Panel(QGroupBox):
         experiment_label.setWordWrap(True)
         advanced_layout.addWidget(experiment_label)
         advanced_layout.addWidget(self.experiment)
+        self.extended_qa = QCheckBox(
+            "Run full historical P15–P20 research QA (slow)")
+        self.extended_qa.setObjectName("psf0_extended_research_qa")
+        self.extended_qa.setChecked(False)
+        self.extended_qa.setToolTip(
+            "Default: build the empirical PSF and run signed-kernel, "
+            "holdout and finite-core quality gates only. Enable this to "
+            "also recompute the original native-brick star/neighbor/sky "
+            "P15–P20 experiments. Full QA does NOT validate wide wings "
+            "or authorize science-adopted scattered-light corrections. "
+            "All analyses remain in the same existing brick.")
+        self.extended_qa.toggled.connect(self._parameters_changed)
+        advanced_layout.addWidget(self.extended_qa)
         advanced_layout.addWidget(self.recipe_geometry)
         advanced_layout.addWidget(self.prior_source)
         advanced_layout.addWidget(self.gaia_source)
@@ -533,7 +546,10 @@ class PSF0Panel(QGroupBox):
         if self._research_mode:
             self.mode_context.setText(
                 "Advanced methods available. The full original-FITS and "
-                "star QA is preserved; science status: NOT ADOPTED.")
+                "star QA is preserved; science status: NOT ADOPTED. "
+                + ("Full P15–P20 research audit SELECTED."
+                   if self.extended_qa.isChecked()
+                   else "Standard core + holdout QA SELECTED."))
         else:
             policy = self.catalog_policy.currentData()
             experiment = self.experiment.currentData()
@@ -541,8 +557,11 @@ class PSF0Panel(QGroupBox):
                        experiment != "outer_sky_isolation_footprint")
             method = ("Non-default experimental configuration is active. "
                       if altered else "Gaia/Tractor stars · FWHM-scaled sky. ")
+            qa_scope = ("Full P15–P20 research audit ENABLED. "
+                        if self.extended_qa.isChecked() else
+                        "Core + holdout QA only. ")
             self.mode_context.setText(
-                method +
+                method + qa_scope +
                 f"Target protected within {self.protection.value():.1f} arcsec. "
                 "Empirical PSF is a diagnostic until validated; original FITS "
                 "remain unchanged.")
@@ -789,6 +808,7 @@ class PSF0Panel(QGroupBox):
         self.fwhm.setEnabled(not self._busy)
         self.protection.setEnabled(not self._busy)
         self.experiment.setEnabled(not self._busy)
+        self.extended_qa.setEnabled(not self._busy)
         self.catalog_policy.setEnabled(not self._busy)
         self.get_tractor_btn.setEnabled(
             not self._busy and bool(self._snapshot)
@@ -822,6 +842,7 @@ class PSF0Panel(QGroupBox):
             "fwhm_strategy": (
                 "manual" if self._fwhm_manually_edited else "local_psfsize"),
             "experiment": self.experiment.currentData(),
+            "extended_research_qa": self.extended_qa.isChecked(),
             "star_catalog_policy": self.catalog_policy.currentData(),
             "excluded_training_star_ids": tuple(self._active_exclusions),
             "manual_review_confirmed": review_confirmed,
