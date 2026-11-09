@@ -1176,6 +1176,26 @@ class SceneEditor(QWidget):
                 f"{summary.get('minimum_spatial_iou') if summary.get('minimum_spatial_iou') is not None else float('nan'):.2f}. "
                 + ("Manual-review override required." if low
                    else "No science adoption."))
+            original_qa = self._isophote_proposal["sensitivity"]
+            trial_text = "; ".join(
+                f"{trial['threshold']:.2f}/{trial['smooth_pix']:.1f}px:"
+                + (f"{trial['connected_pixels']}px, "
+                   f"IoU={trial.get('overlap_to_reference')}"
+                   if trial["state"] == "DETECTED"
+                   else "FAILED")
+                for trial in original_qa["trials"])
+            self.iso_details.setText(
+                f"Selected trial {self.iso_candidate.currentData()} "
+                f"in {self._band.upper()}: contrast "
+                f"{model.threshold_contrast:.2f}, "
+                f"Gaussian smoothing {model.smoothing_pix:.1f}px, "
+                f"local sky {model.local_sky:.4g} nMgy/pixel, "
+                f"smoothed RMS {model.smoothed_sky_rms:.4g}. "
+                f"All trials: {trial_text}. "
+                f"QA flags: {', '.join(original_qa['flags']) or 'none'}. "
+                "NOT a calibrated outer isophote: nearby stars, "
+                "PSF wings, spatial sky structure and unmeasured "
+                "correlated noise may still bias the boundary.")
         self._refresh_controls()
 
     def _accept_isophote(self):
