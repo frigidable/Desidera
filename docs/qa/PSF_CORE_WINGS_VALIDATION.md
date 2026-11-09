@@ -1398,7 +1398,7 @@ first-run blank values above are
 **pilot evidence only**, retained
 with its original QA SHA256.
 
-**Corrective P20 control-selection method /3:** use
+**Corrective P20 control-selection (post-pilot method revision):** use
 the SAME fixed nonoverlapping native
 grid, original catalog, exclusions
 and per-site sky profile measurements,
@@ -1445,3 +1445,142 @@ revised same-brick spatial-null QA
 and subsequent science audit.
 Galaxy injections remain outside
 this PSF development stage.
+
+
+## P20 /2 second real Leo P run — final same-brick PSF0 engineering disposition (2026-11-09)
+
+Source: complete native QA JSON supplied by user,
+`Вставленный текст(20261109-114608).txt` (5,192,950 bytes),
+SHA256
+`05b3b6ca5b345a28ab4ea8c0c05ff1fba58a27dcceee9676070c69756afa7a1d`.
+This supersedes the *background-control and joint-model estimates*
+of the original P20 /1 pilot, while retaining the original pilot
+as an explicitly documented posthoc design diagnostic.
+QA schema `desidera.psf0-same-brick-joint-wing-sky-spatial/2`,
+method SHA256
+`a56ace07db9b9ea76f01c09772f73c79f1d1c9db54410fcb9c64ec7f2fe3868b`.
+Only dataset `dr11/south/1554p180/g` was used.
+Identical image/invvar/maskbits/nexp source hashes, native catalog SHA256,
+original 81×81 kernel SHA256
+`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a`,
+10+3 ePSF training/holdout identities and fixed 48 P17/P18 star IDs
+reproduce exactly. P18 /2, core QA, P19 closure and the
+unchanged original recipe have identical diagnostic content
+relative to the first P20 /1 pilot. The method and lineage
+hashes differ as expected because the blank-control sampling changed.
+
+**Corrected within-brick background geometry:** fixed original grid
+step 315 native pixels; 121 grid centers visited; 79 centers pass
+catalog-based geometry checks; select deterministic nearest-center
+candidate in each of the 4×4 spatial tiles, with no post-measurement
+replacement. All **16/16 spatial tiles** are represented by
+**16/16 measured null controls** and four controls per half-brick
+quadrant. **15/16** controls produce complete six-annulus null
+vectors: one fixed center at native (2362,3307) has zero usable
+pixels in the first two annuli but still has the remaining four
+measurements. Therefore `n_measured_blank_controls=16`
+must not be misreported as `16 complete six-ring profiles`.
+The selection revision is openly post-pilot, not independent
+blind confirmation.
+
+**Sky-B robust 12-bright-star common component vs stratified
+blank-control median absolute null** (six annuli in measured FWHM;
+normalization of the *stellar* component is the peak of each
+source; blank residuals are initially physical nMgy/native-pixel):
+
+| FWHM ring | Joint common star / native peak | Absolute blank-null nMgy/native-pix | Illustrative blank-null / median bright peak |
+|---|---:|---:|---:|
+| 4–6 | +1.116094e-4 | 1.196578e-4 | 1.631593e-5 |
+| 6–8 | +5.478708e-6 | 1.092638e-4 | 1.489865e-5 |
+| 8–12 | +4.250868e-6 | 5.742598e-5 | 7.830315e-6 |
+| 12–16 | +1.707169e-6 | 4.453168e-5 | 6.072113e-6 |
+| 16–20 | -6.678396e-7 | 2.218994e-5 | 3.025707e-6 |
+| 20–22 | +6.967215e-7 | 3.994878e-5 | 5.447212e-6 |
+
+The illustrative last column divides a median of
+physical blank residual absolute amplitudes by the separate
+median native peak `7.333801984786987 nMgy/native-pixel`
+of 16 original bright stars. This is **NOT** a paired
+sample, a confidence interval or a calibrated sigma, and
+must not be called a detection significance. At 8–12 FWHM
+the ratio of this blank sensitivity to the joint candidate
+magnitude is approximately 1.84, and 12–16 approximately
+3.56. Thus noise/background/contamination sensitivity
+is comparable to or exceeds the inferred common component
+in the strictly beyond-core annuli.
+
+For sky A, sky B and planar sky hypotheses respectively,
+the candidate at 8–12 FWHM ranges
+`+3.279037e-6` to `+4.250868e-6`, while
+at 16–20 FWHM all three candidates are NEGATIVE,
+ranging `-1.294809e-6` to `-6.678396e-7`.
+The 4–6 FWHM component remains positive and
+approximately stable (`1.108806e-4` to
+`1.116094e-4`), but lies entirely INSIDE
+the 40-native-pixel/7.787-FWHM fully covered
+radial support of the existing frozen ePSF.
+It cannot be added as a separate outer tail.
+
+The robust 12-bright-star model uses 70 finite annular
+observations across 12 stars under each sky hypothesis;
+the four fixed retrospective bright-star holdouts
+have a median of per-star absolute prediction residuals
+`1.589761e-5` of native peak (first pilot:
+`1.588012e-5`). Four leave-one-quadrant-out
+medians are `4.605e-6`, `1.2005e-5`,
+`2.4918e-5`, `5.107e-6`, respectively.
+The geographical bright-star coverage is unequal
+(2,7,4,3 original bright stars by quadrant)
+and all stars and controls share one coadd.
+These retrospective predictions are not
+independent-exposure spatial-PSF validation.
+
+The blank-annulus estimator covariance is computed from
+15 complete spatial control vectors and contains
+background structure and potential unmodeled objects.
+Median native-pixel lag correlations are
+`rho(1,0)=+0.125883`, `rho(0,1)=+0.122371`,
+`rho(2,0)=-0.074165`, and
+`rho(0,2)=-0.069392`. No noise-only covariance
+or independent-sky separation is established.
+Absolute sky/wing levels in the joint robust model
+remain anchored by a nuisance regularization prior
+and are not physically identifiable.
+
+**Final same-brick PSF0 disposition:** Engineering discovery,
+catalog/mask geometry, finite empirical ePSF reconstruction,
+original holdout diagnostics, 48-star conditional outer profiles,
+same-brick null and spatial sensitivity and their audit trail
+are **COMPLETE FOR THIS BRICK**. The existing
+P19 `engineering_stage_finished=true` is retained
+as a technical-stage closure, not a scientific wing
+validation. Freeze the current finite 81×81 kernel
+and all analyzed QA artefacts; do not manufacture
+a positive, normalized wide-angle PSF from
+the outer conditional residuals.
+The following distinct scientific statements remain
+**FALSE**:
+`psf_wings_validated`,
+`psf_spatial_representativity_validated`,
+`noise_covariance_validated`,
+`stellar_contamination_model_validated`,
+`science_adopted`.
+`wide_angle_kernel_constructed=false` and
+scattered-light correction with empirical wings
+remains disallowed for this pilot. These
+are explicit *measurement limitations*,
+not an engineering bug to be bypassed.
+No other brick is used or required
+to document the limitations of this single-brick
+pilot. Galaxy injections are deferred to the
+separate subsequent photometric-bias-validation
+stage; they must not be claimed to have occurred.
+
+No further posthoc blank-site, star-subset,
+mask or sky hypothesis tuning should be done
+for the same evidence and then presented as
+independent confirmation. Continue general
+Desidera pipeline development using the
+frozen core only in diagnostics with explicit
+science-HOLD flags, and preserve the
+reproducible PSF0 evidence package.
