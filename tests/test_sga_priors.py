@@ -109,3 +109,112 @@ def test_sga_malformed_geometry_does_not_become_protection(tmp_path):
         (12,"invalid q",155.01,18.,.5,"SB26",-1.,40.,0)])
     result=read_local_sga_priors(path,(155.,18.))
     assert all(match.core_shape() is None for match in result.matches)
+
+
+def test_official_viewer_sga2025_small_json_lookup_and_not_d26(monkeypatch):
+    """Viewer geometry != merged scientific SGA2025 catalogue."""
+    import json
+    import io
+    from urllib.parse import urlsplit, parse_qs
+    import lsbpipe.photometry.sga_priors as module
+
+    calls=[]
+    reply=json.dumps({
+        "rd":[[155.438,18.088],[155.441,18.089],[155.8,18.8]],
+        "name":["SGA-731","SGA-732","SGA-900"],
+        "radiusArcsec":[19.0,12.0,13.0],
+        "abRatio":[.65,.9,.3],"posAngle":[70.,110.,10.],
+        "pgc":[731,732,900],
+        "groupname":["alpha","beta","far"],
+        "type":["","",""],"redshift":[-1,-1,-1],
+        "color":["#377eb8"]*3,
+    }).encode()
+    class Response(io.BytesIO):
+        def __init__(self, url):
+            super().__init__(reply)
+            self.url=url
+        def geturl(self):
+            return self.url
+
+    def fake_open(url,timeout):
+        calls.append((url,timeout))
+        return Response(url)
+    monkeypatch.setattr(module,"urlopen",fake_open)
+    result=module.fetch_viewer_sga2025_priors(
+        (155.438,18.088),region="south",radius_arcmin=3.)
+    assert len(calls)==1
+    assert calls[0][0].startswith(
+        "https://www.legacysurvey.org/viewer/sga2025-south/1/cat.json?")
+    query=parse_qs(urlsplit(calls[0][0]).query)
+    assert set(query)=={"ralo","rahi","declo","dechi"}
+    assert len(result.matches)==2
+    first=result.matches[0]
+    assert first.sga_id==731
+    assert first.source_path==calls[0][0]
+    assert first.source_sha256==result.source_sha256
+    assert first.d26_ref=="VIEWER_RADIUS_ARCSEC"
+    assert "VIEWER_REF_ID_NOT_VERIFIED_SGAID" in first.flags
+    assert "NO_SGA2025_D26_REF_OR_FIT_QUALITY" in first.flags
+    assert first.core_shape().a_arcsec==pytest.approx(19.)
+    assert first.ba==pytest.approx(.65)
+    assert first.pa_deg==pytest.approx(70.)
+
+
+def test_official_viewer_no_entries_and_ra_wrap(monkeypatch):
+    import json
+    import io
+    from urllib.parse import urlsplit,parse_qs
+    import lsbpipe.photometry.sga_priors as module
+
+    empty=json.dumps({
+       "rd":[],"name":[],"radiusArcsec":[],"abRatio":[],
+       "posAngle":[],"pgc":[],"type":[],"redshift":[],
+    }).encode()
+    class Response(io.BytesIO):
+        def __init__(self,payload,url):
+            super().__init__(payload)
+            self.url=url
+        def geturl(self):return self.url
+
+    captured=[]
+    def fake_open(url,timeout):
+        captured.append(url)
+        return Response(empty,url)
+    monkeypatch.setattr(module,"urlopen",fake_open)
+    result=module.fetch_viewer_sga2025_priors(
+        (359.999,60.),region="north")
+    assert result.matches==()
+    assert result.release=="SGA2025"
+    assert "/sga2025-north/" in result.source_path
+    q=parse_qs(urlsplit(captured[0]).query)
+    assert float(q["ralo"][0]) > float(q["rahi"][0])
+
+
+def test_official_viewer_fails_closed_on_redirect_or_malformed_catalog(monkeypatch):
+    import io
+    import json
+    import lsbpipe.photometry.sga_priors as module
+    class Response(io.BytesIO):
+        def __init__(self,data,url):
+            super().__init__(data)
+            self.url=url
+        def geturl(self):return self.url
+
+    monkeypatch.setattr(module,"urlopen",
+        lambda url,timeout:Response(b'{}',url))
+    with pytest.raises(ValueError,match="schema mismatch"):
+        module.fetch_viewer_sga2025_priors((155.,18.))
+    monkeypatch.setattr(module,"urlopen",
+        lambda url,timeout:Response(b'{}',"https://example.org/evil"))
+    with pytest.raises(ValueError,match="Untrusted"):
+        module.fetch_viewer_sga2025_priors((155.,18.))
+    data=json.dumps({
+        "rd":[[155.,18.]],"name":[],"radiusArcsec":[20.],
+        "abRatio":[.8],"posAngle":[20.],"pgc":[123],
+    }).encode()
+    monkeypatch.setattr(module,"urlopen",
+        lambda url,timeout:Response(data,url))
+    with pytest.raises(ValueError,match="inconsistent"):
+        module.fetch_viewer_sga2025_priors((155.,18.))
+    with pytest.raises(ValueError,match="safe limits"):
+        module.fetch_viewer_sga2025_priors((155.,89.))
