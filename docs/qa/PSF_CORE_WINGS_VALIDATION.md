@@ -1046,3 +1046,165 @@ this terminal QA in its complete report; status in
 the PSF0 GUI reads "single-brick characterization
 CLOSED" while uncalibrated wing science remains
 explicitly withheld. No other brick is required.
+
+
+## P20 same-brick joint sky/wing and retrospective spatial validation
+
+Scope remains the original native \`dr11/south/1554p180/g\` brick.
+This stage is NOT a galaxy-injection/recovery experiment; galaxy
+injections, synthetic-galaxy structural parameter tests and
+photometric correction bias thresholds belong to the later
+photometry stage. P20 cannot silently satisfy them or switch
+\`science_adopted\` to \`true\`.
+
+**Reason to add P20:** the 48-star P18 pilot demonstrated
+that the median absolute residual at 8–12 measured FWHM
+is comparable to sky-ring and sector-deletion differences.
+A median positive profile or a good nominal mask does not
+suffice to identify the absolute wide-angle PSF. P20
+separates three predeclared questions: (a) what radial
+profile is compatible with a shared star component plus
+each star's unknown local constant sky offset, (b) do
+catalog-selected blank positions in the SAME brick
+produce similar spurious "wings", and (c) is the
+conditional profile predictive across independent
+positions/identities within that brick?
+
+**Input and controls:**
+
+- Verify P17 and P18 exact Tractor native catalog SHA256,
+  all 48 fixed star ranks and Gaia IDs, frozen measured
+  ePSF-core FWHM, exact same-coadd native original
+  \`image\`/\`invvar\`/\`valid\`/\`mask_reasons\` and target
+  protection. Retain any unmeasurable ring and all
+  historical selection decisions. No refilling.
+- Predeclared brighter 16-star cohort:
+  **12 model-building identities** at ranks
+  \`[1,2,3,5,6,7,9,10,11,13,14,15]\`,
+  and **4 retained identity holdouts** at catalog
+  ranks \`[4,8,12,16]\`. They were included in past
+  Leo P diagnostic exploration: despite withholding
+  them in the P20 fit, these are RETROSPECTIVE
+  controls, not previously uninspected blind
+  independent observations. The eight fainter new
+  identity holdouts from P17 remain recorded and
+  cannot be promoted into a brightness-matched
+  bright-star validation set.
+- Fixed regular nonoverlap grid across this same
+  native brick, spacing
+  \`2*ceil(30*measured FWHM)+5\` native pixels
+  (implemented with a bounded grid-stamp margin).
+  Candidate blanks require >=3 FWHM distance
+  from every native Tractor centroid and >=40
+  FWHM from each fixed original bright star;
+  target mask and full 30-FWHM original cutout
+  must be available. At most four catalog-eligible
+  sites are selected in EACH of four brick
+  pixel-coordinate quadrants; catalog-only
+  and geometric decisions are made BEFORE
+  measuring blank-patch image residuals.
+  A blank candidate that later fails a native sky
+  or mask check is recorded as failed; not replaced.
+  Entire blank original patch is subject to the
+  same existing P18 catalog shape/flux mask,
+  two outer sky rings and six profile bins,
+  except it has no central PSF source.
+  Coadd-adjacent controls are NOT independent
+  exposures, and the Tractor catalog can miss
+  diffuse sources, artifacts or large PSF halos.
+- For each blank radial bin record raw physical
+  \`median(original_pixels)-sky_B\` in nMgy/native
+  pixel, coverage and missingness; report
+  median, median absolute and maximum absolute
+  spurious ring residual across all fixed blank
+  sites. No normalization to a nonexistent
+  blank-star peak.
+
+**Joint nuisance-profile model:**
+
+- Use the unchanged P18 **shape-mask** star
+  profiles and three fixed alternative sky
+  treatments: outer constant sky B (26–30 FWHM),
+  inner constant sky A (22–26 FWHM), and
+  pooled sky plane. The model in each of six
+  broad 4–22-FWHM bins is
+  \[
+  y_{ik}=w_k+b_i+\varepsilon_{ik},
+  \]
+  where \`y_ik\` is the observed native stellar
+  median residual divided by the original native
+  stellar peak, \`w_k\` the shared conditional
+  wing candidate, and \`b_i\` a separate constant
+  background-nuisance term for each bright star.
+  A bin enters only if it retains at least
+  100 native valid pixels and four populated
+  25-pixel azimuthal sectors (both criteria are
+  fixed pre-observation).
+- Fit with robust \`soft_l1\` least squares
+  using the previously observed star-specific
+  sky A/B difference, maximum leave-one-sector-out
+  sky sensitivity, and independently chosen
+  same-brick blank median absolute residual
+  normalized by that star's peak as *nuisance
+  scaling*. The \`b_i\` sky offsets use a
+  zero-centered soft penalty of the same
+  *diagnostic* magnitude. **This penalty
+  anchors the otherwise nonidentifiable common
+  additive wing/sky zero point.** The fitted
+  absolute wing offset depends on that prior.
+  No diagonal inverse-variance assumption, no
+  Gaussian error bar, no covariance-based
+  significance and no physically normalized
+  PSF halo is claimed.
+- Compare the six \`w_k\` estimates across
+  the THREE background hypotheses; a smaller
+  residual alone is not a positive quality gate.
+  A physically nonnegative wide-wing PSF is
+  NOT enforced, stitched to the finite
+  normalized core, saved as a science kernel,
+  or used to correct galaxies.
+
+**Spatial and holdout QA:** predict each of
+four fixed bright rank holdouts using the joint
+profile trained on the 12 bright training IDs.
+Report signed/absolute prediction differences
+and per-star sky sensitivity, without refitting
+the withheld star. Additionally run four
+same-brick *leave-one-pixel-quadrant-out*
+fits; omit every bright star in that
+quadrant from the corresponding training
+and evaluate the fixed profile at those
+positions. A quadrant with too few
+bright training stars or missing coverage
+retains a blocked outcome; there is no
+substitution with another brick or cohort.
+
+**Output:** \`diagnostic_metrics.same_brick_joint_wing_sky_spatial_qa\`,
+schema \`desidera.psf0-same-brick-joint-wing-sky-spatial/1\`,
+including every blank control, ring
+and withheld-star prediction. The status
+\`SAME_BRICK_WING_SKY_AND_SPATIAL_FEASIBILITY_ONLY\`
+signifies that the analysis was executed,
+not that all data support a unique wide
+PSF model. \`psf_wings_validated=false\`,
+\`science_adopted=false\`, and
+\`wide_angle_kernel_constructed=false\` remain
+immutable for this diagnostic.
+
+**Scientific decision:** Within this brick
+one may ultimately report a restricted,
+radius-bounded coadd PSF model if actual
+stars, blank nulls, sky-model variations
+and separated spatial positions support it,
+with quantitative uncertainty. P20 supplies
+those controls and measures identifiability;
+its result must be reviewed before a
+separate explicit science-validation decision.
+If the null controls are empty/inadequate
+or the sky-conditional profiles disagree,
+the correct result is an unresolved outer
+wing—not a false calibrated detection.
+No galaxy injections are required *for P20*
+or performed here; they remain necessary
+for scientific validation of later
+galaxy photometry.
