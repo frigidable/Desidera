@@ -948,9 +948,14 @@ class SceneEditor(QWidget):
         # Amber review rings are source identities whose provisional
         # footprint touches protected target light. They are NOT masked.
         self._conflict_paths.clear()
-        for candidate in result["stats"].get(
-                "near_target_sources", ())[:64]:
-            radius = min(15., max(5., candidate["radius_pix"]*.35))
+        anchor_x, anchor_y = self._loaded["wcs"].all_world2pix(
+            *result["anchor_icrs"], 0)
+        nearest = sorted(
+            result["stats"].get("near_target_sources", ()),
+            key=lambda item:
+                (item["x"]-anchor_x)**2+(item["y"]-anchor_y)**2)
+        for candidate in nearest[:20]:
+            radius = min(12., max(4., candidate["radius_pix"]*.30))
             cx, cy = candidate["x"]+.5, ny-candidate["y"]-.5
             ring = QPainterPath()
             ring.addEllipse(cx-radius, cy-radius, 2.*radius, 2.*radius)
@@ -968,7 +973,8 @@ class SceneEditor(QWidget):
             f"{counts['masked_catalog_sources']} masked neighbours "
             f"({counts.get('elliptical_catalog_sources', 0)} morphology-based), "
             f"{counts['skipped_target_overlap']} unresolved overlaps. "
-            "Purple = candidate excludes; amber rings = review.")
+            "Purple = candidate excludes; enable amber rings "
+            "to inspect the nearest 20."
         self.iso_mask_details.setText(
             f"{counts['excluded_pixels']} proposed excluded pixels; "
             f"{counts['native_hard_pixels']} hard-invalid original pixels. "
