@@ -380,3 +380,40 @@ residual sky spatial structure and independent sky holdouts;
 cross-band detection consistency with different morphology;
 robust physical surface-brightness isophotal fitting and injected
 recovery tests. No test in this stage establishes those claims.
+
+
+## 2026-11-09 · Leo P live-review iteration: show actual trial boundaries
+
+The observed `i`-band connected areas are **47,336 native pixels
+with 2-pixel morphological opening** and **47,414 pixels without**.
+Their fractional difference is approximately **0.16%**; both report a
+centroid offset of about **59.4 pixels** from the nominal target anchor
+and `q≈0.60`. A thin-bridge opening at this scale demonstrably does
+not remove the conspicuous northern extension. This does NOT establish
+whether that extension is intrinsic light from Leo P or an unresolved
+foreground/background contaminant.
+
+The researcher can now directly **switch among the actual four
+threshold/smoothing trial contours**, not only read scalar QA:
+`Reference` and up to three `Alternative` entries. Each is
+projected to sky ICRS using its own native-pixel boundary/moment
+ellipse. A failed trial remains clearly recorded in the sensitivity
+report and is not offered as a geometry to adopt. Accepting an
+alternative writes its own shape/threshold/smoothing and trial index,
+not the baseline shape mislabeled as an alternate trial. The overall
+multi-trial `LOW_CONFIDENCE` gate remains in effect regardless of
+which geometry is being viewed. No new FITS or source catalogues are
+downloaded or modified.
+
+The 125 unresolved Tractor neighbours near protected Leo P light
+were previously shown with many amber circles, obscuring the native
+image. **Conflict review is now opt-in**, showing at most 20 nearest
+catalogued conflicts while preserving the full unresolved count
+and warnings. Source exclusion is not silently expanded, since
+Tractor may split genuine galaxy knots into catalogue components.
+
+Scientific next-stage boundary: robust source decomposition and
+spatial sky estimation, followed by multi-band and masked-isophotal
+profile fitting, injection/recovery QA, and real-FITS comparison.
+No one-shot connected threshold, bridge suppression or chosen
+trial is a defensible calibrated outer isophote by itself.
