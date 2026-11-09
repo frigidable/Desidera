@@ -432,12 +432,18 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
         lambda: editor._future is None
         and editor._isophote_proposal is not None, timeout=10000)
     editor.iso_shape.setCurrentIndex(editor.iso_shape.findData("contour"))
+    assert editor.iso_candidate.count() >= 2
+    editor.iso_candidate.setCurrentIndex(1)
+    chosen = editor._selected_isophote()["contour"]
+    chosen_trial = editor.iso_candidate.currentData()
     if not editor.iso_accept.isEnabled():
         editor.iso_low_conf_override.setChecked(True)
     editor.iso_accept.click()
     assert len(editor.draft.edits) == 1
     edit = editor.draft.edits[0]
     assert edit.shape.kind == "polygon"
+    assert edit.shape == chosen
+    assert f"trial={chosen_trial}" in edit.comment
     assert edit.purpose == "protect_target"
     assert edit.band == "g"  # native-band default for source-derived contours
     assert "AUTO_ISOPHOTE_PRELIMINARY" in edit.comment
