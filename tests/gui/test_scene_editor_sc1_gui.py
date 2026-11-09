@@ -271,3 +271,40 @@ def test_explicit_asynchronous_load_drops_stale_band_result(
     qtbot.waitUntil(lambda: w._loaded is not None, timeout=4000)
     assert w._loaded["band"]=="r"
     w.shutdown()
+
+
+
+def test_redraw_selected_region_preview_and_identity_undo(
+        qtbot,tmp_path,monkeypatch):
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    editor.mode.setCurrentIndex(editor.mode.findData("polygon"))
+    for px,py in [(20,20),(38,20),(38,39),(20,39)]:
+        _click_at_native(editor,px,py)
+        assert len(editor._pending_scene)>0
+        assert editor._preview_path is not None
+        assert editor._preview_path.scene() is editor.graphics
+    editor.finish_polygon()
+    assert editor._preview_path is None
+    assert editor._pending_world==[]
+    original=editor.draft.edits[0]
+    original_geometry=original.shape.vertices
+    editor.edits.setCurrentRow(0)
+    assert editor.edit_btn.isEnabled()
+    editor.edit_btn.click()
+    assert editor._replace_index==0
+    for px,py in [(26,28),(54,28),(54,53),(26,53)]:
+        _click_at_native(editor,px,py)
+    editor.finish_polygon()
+    assert len(editor.draft.edits)==1
+    edited=editor.draft.edits[0]
+    assert edited.edit_id==original.edit_id
+    assert edited.shape.vertices!=original_geometry
+    assert editor._preview_path is None
+    editor.undo()
+    assert editor.draft.edits==(original,)
+    editor.redo()
+    assert editor.draft.edits==(edited,)
+    editor.save_draft()
+    reopened,sha=read_active_mask_draft(project.root)
+    assert reopened.edits==(edited,)
+    assert sha==editor._saved_digest
