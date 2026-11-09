@@ -411,7 +411,7 @@ def propose_local_isophote(image: np.ndarray, valid: np.ndarray,
         raise ValueError("Padded contour reaches search boundary")
     contour = _outer_boundary(padded, x1, y1)
     flags = ["BACKGROUND_CONSTANT_NOT_VALIDATED",
-             "NO_PSFSKY_OR_STELLAR_CONTAMINANT_CORRECTION",
+             "NO_VALIDATED_PSFWINGS_OR_MODEL_SUBTRACTION",
              "CONTOUR_PADDING_2_NATIVE_PIXELS"]
     if centroid_offset > max(12., seed.sma_pix*.30):
         flags.append("CENTROID_OFFSET_REVIEW")
