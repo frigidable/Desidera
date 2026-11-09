@@ -840,7 +840,7 @@ class SurveyExplorer(QMainWindow):
         from dataclasses import replace
         from lsbpipe.photometry.psf_gui_backend import (
             run_gui_psf0, psf0_experiment_recipe,
-            commit_psf0_manual_review,
+            commit_psf0_manual_review, checkpoint_gui_psf0,
         )
 
         panel = self.photometry_workspace.psf0_panels.get(
@@ -879,6 +879,16 @@ class SurveyExplorer(QMainWindow):
             if manual_confirmed:
                 payload["manual_review_receipt"] = commit_psf0_manual_review(
                     payload, explicitly_confirmed=True)
+            # A completed diagnostic is a recoverable project product, not
+            # merely an in-memory preview. Keep a result visible even when
+            # the immutable checkpoint cannot be published.
+            if payload.get("status") == "EXPERIMENTAL_PSF_NOT_ADOPTED":
+                try:
+                    payload["auto_saved_path"] = checkpoint_gui_psf0(
+                        payload, progress=progress)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    payload["checkpoint_error"] = (
+                        type(exc).__name__ + ": " + str(exc))
             return payload
 
         def finished(payload):
@@ -889,9 +899,17 @@ class SurveyExplorer(QMainWindow):
                     "Inspect negative ringing and candidate stars in Photometry.")
             else:
                 panel.show_result(payload)
-                self.message.setText(
-                    f"PSF-0 {band} completed as EXPERIMENTAL_NOT_ADOPTED. "
-                    "Review holdout stars and QA before saving a diagnostic.")
+                if payload.get("checkpoint_error"):
+                    panel.status.setText(
+                        "PSF-0 preview completed but automatic checkpoint "
+                        "FAILED: " + payload["checkpoint_error"]
+                        + ". The model remains in memory; save it before exit.")
+                    self.message.setText(
+                        f"PSF-0 {band}: checkpoint failed; see Photometry.")
+                else:
+                    self.message.setText(
+                        f"PSF-0 {band} saved as experimental PSF and QA "
+                        "for session recovery; NOT science adopted.")
             if payload.get("manual_review_receipt"):
                 panel.show_review_saved(payload["manual_review_receipt"])
 
