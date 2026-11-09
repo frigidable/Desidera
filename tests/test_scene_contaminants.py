@@ -167,3 +167,74 @@ def test_catalogue_target_overlap_records_source_for_manual_review():
     assert stats["skipped_target_overlap"]==1
     assert not mask.any()
     assert stats["near_target_sources"][0]["objid"]==418
+
+
+def test_explicit_sga_core_preserves_candidate_shreds_outside_old_circle(
+        monkeypatch, tmp_path):
+    """SGA central size is protection evidence, NOT the LSB outer limit."""
+    import lsbpipe.photometry.scene_contaminants as module
+    from lsbpipe.photometry.sky_masks import SkyMaskDraft
+    from lsbpipe.photometry.sga_priors import SGAGeometryPrior
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR",str(tmp_path/"session"))
+    project=create_object_project(
+        "Leo P",tmp_path/"LeoP_SGA",field=SkyField(155.,18.,4.))
+    project.data_root=project.root/"data"
+    project.data_root.mkdir()
+    project.selected_dataset=("dr11","south","1554p180","i")
+    project.target_radius_arcsec=16.
+    save_object_project(project)
+    image=np.zeros((241,241))
+    dataset={"project_id":project.project_id,"band":"i",
+             "source":"immutable-original","wcs":_wcs(),
+             "pixel_shape":image.shape,
+             "native_hard":np.zeros_like(image,bool),
+             "data":{"image":image,
+                     "maskbits":np.zeros_like(image,dtype=np.uint32)}}
+    catalog=SimpleNamespace(
+        source_path="native-tractor",source_sha256="a"*64,
+        pixel_positions=np.array([[160.,120.],[209.,120.]]),
+        rows=({**_row("PSF",flux=100.),"objid":31},
+              {**_row("PSF",flux=100.),"objid":32}))
+    monkeypatch.setattr(module,"read_native_tractor_gaia",
+                        lambda *args,**kwargs:catalog)
+    prior=SGAGeometryPrior(
+        release="SGA2020",sga_id=71,name="Leo P",
+        ra_deg=155.,dec_deg=18.,offset_arcsec=0.,
+        d26_arcmin=2.,d26_ref="SB26",ba=.7,pa_deg=0.,
+        ellipsebit=0,ellipsemode=0,flags=(),
+        source_sha256="b"*64,source_path="SGA2020.fits")
+    draft=SkyMaskDraft(project.project_id)
+    plain=module.prepare_scene_contamination(
+        dataset,project,draft,(155.,18.))
+    assert plain["stats"]["masked_catalog_sources"]==2
+    protected=module.prepare_scene_contamination(
+        dataset,project,draft,(155.,18.),sga_prior=prior)
+    assert protected["stats"]["masked_catalog_sources"]==1
+    assert protected["stats"]["possible_sga_shreds"]==1
+    assert protected["stats"]["skipped_target_overlap"]==1
+    row=protected["stats"]["near_target_sources"][0]
+    assert row["classification"]=="POSSIBLE_GALAXY_SHRED"
+    assert row["objid"]==31
+    assert not protected["mask"][120,160]
+    assert protected["mask"][120,209]
+    assert protected["sga_prior_id"]==71
+    assert protected["sga_prior_sha256"]=="b"*64
+    assert "SGA_CORE_ONLY_NOT_OUTER_LSB_BOUNDARY" in protected["flags"]
+    assert np.array_equal(image,dataset["data"]["image"])
+    assert not protected["mask"].flags.writeable
+
+
+def test_sga_neighbour_with_gaia_counterpart_stays_unresolved_not_auto_removed():
+    protected=np.zeros((241,241),bool)
+    sga_core=np.zeros_like(protected)
+    sga_core[100:140,100:140]=True
+    protected |= sga_core
+    rows=[{**_row("PSF",flux=30.), "objid":37,
+           "gaia_g_mag":17.4,"ref_cat":"G2","ref_id":456}]
+    mask,stats=conservative_catalogue_mask(
+        (241,241),np.array([[125.,120.]]),rows,
+        protected=protected,arcsec_per_pixel=1.,sga_core=sga_core)
+    assert not mask.any()
+    assert stats["possible_sga_shreds"]==0
+    assert stats["near_target_sources"][0]["classification"]==(
+        "GAIA_COUNTERPART_REVIEW")
