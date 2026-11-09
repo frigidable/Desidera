@@ -1059,8 +1059,8 @@ class SceneEditor(QWidget):
             f"Bridge opening {result['bridge_guard_pix']} native px. "
             f"Sensitivity trials: {trial_text}. "
             f"QA warnings: {', '.join(sensitivity['flags']) or 'none'}; "
-            f"{', '.join(model.flags)}. NOT a validated surface-brightness "
-            "isophote; PSF wings, bright neighbors, variable sky, "
+            f"{', '.join(model.flags)}. NOT a calibrated outer isophote; "
+            "PSF wings, bright neighbors, variable sky, "
             "incomplete contamination and correlated-noise significance "
             "must be independently reviewed.")
         self._show_isophote_preview()
