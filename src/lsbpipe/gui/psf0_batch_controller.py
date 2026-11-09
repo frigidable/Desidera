@@ -1,9 +1,10 @@
-"""Sequential griz PSF-0 previews on the existing worker; no file writes."""
+"""Sequential griz PSF-0 diagnostics with immutable project checkpoints."""
 from dataclasses import replace
 import traceback
 
 from lsbpipe.photometry.psf_gui_backend import (
     psf0_experiment_recipe, run_gui_psf0, suggest_gui_psf0_fwhm,
+    checkpoint_gui_psf0,
 )
 
 
@@ -66,6 +67,12 @@ def launch(window, batch):
                     root, band=band, config=cfg,
                     protection_arcsec=float(req["target_protection_arcsec"]),
                     extended_research_qa=extended_qa)
+                if payload.get("status") == "EXPERIMENTAL_PSF_NOT_ADOPTED":
+                    try:
+                        payload["auto_saved_path"] = checkpoint_gui_psf0(payload)
+                    except (OSError, ValueError, KeyError, TypeError) as exc:
+                        payload["checkpoint_error"] = (
+                            type(exc).__name__ + ": " + str(exc))
                 outcomes.append({"band":band, "payload":payload, "seeing":seeing})
             except Exception as exc:
                 outcomes.append({
@@ -92,14 +99,20 @@ def launch(window, batch):
                 notes.append(band+": QUALITY REJECTED")
             else:
                 panel.show_result(payload)
-                notes.append(band+": EXPERIMENTAL")
+                if payload.get("checkpoint_error"):
+                    panel.status.setText(
+                        "PSF-0 checkpoint FAILED: " + payload["checkpoint_error"]
+                        + ". The preview remains in memory; save before exit.")
+                    notes.append(band+": CHECKPOINT FAILED")
+                else:
+                    notes.append(band+": SAVED EXPERIMENTAL QA")
         for skipped in batch.get("skipped_bands", ()):
             notes.append(str(skipped["band"])+": SKIPPED ("+
                          str(skipped["reason"])+")")
         workspace.batch_status.setText(
             "griz batch completed · "+" | ".join(notes)
-            + ". All PSFs remain NOT ADOPTED. No FITS written. "
-              "Use Copy full griz debug report for evidence.")
+            + ". All PSFs remain NOT ADOPTED. Original FITS unchanged. "
+              "Successful checkpoints are immutable derivatives.")
         window.message.setText(
             "Sequential griz PSF-0 diagnostics finished · no PSF adopted.")
 
