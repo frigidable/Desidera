@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPathItem,
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
-    QGroupBox, QScrollArea,
+    QGroupBox, QScrollArea, QSlider, QToolButton,
 )
 
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
@@ -35,6 +35,7 @@ from lsbpipe.photometry.sky_masks import (
 )
 from lsbpipe.photometry.ellipse_seed import (
     propose_local_isophote, seed_as_sky_geometry,
+    assess_local_isophote_sensitivity,
 )
 from lsbpipe.photometry.scene_contaminants import prepare_scene_contamination
 from lsbpipe.survey import legacy_validity
@@ -190,7 +191,7 @@ def prepare_scene_neighbour_masks(dataset, project_root, draft, center_icrs):
 
 
 def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
-                           contamination):
+                           contamination, bridge_guard_pix=0):
     """Require the prepared source-bound mask before extracting an isophote."""
     if (contamination is None or
             contamination.get("status") !=
@@ -207,11 +208,17 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
         raise ValueError("Selected ICRS galaxy center cannot be projected")
     if np.shape(contamination["mask"]) != tuple(dataset["pixel_shape"]):
         raise ValueError("Neighbour mask not on native pixel grid")
+    valid = ~(dataset["native_hard"] | contamination["mask"])
     model = propose_local_isophote(
-        dataset["data"]["image"],
-        ~(dataset["native_hard"] | contamination["mask"]),
+        dataset["data"]["image"], valid,
         (float(x), float(y)),
-        threshold_contrast=float(threshold), smooth_sigma_pix=float(smoothing))
+        threshold_contrast=float(threshold), smooth_sigma_pix=float(smoothing),
+        bridge_guard_pix=int(bridge_guard_pix))
+    sensitivity = assess_local_isophote_sensitivity(
+        dataset["data"]["image"], valid, (float(x), float(y)), model,
+        threshold_contrast=float(threshold),
+        smooth_sigma_pix=float(smoothing),
+        bridge_guard_pix=int(bridge_guard_pix))
     geometry = seed_as_sky_geometry(model.seed, wcs)
     ellipse = SkyMaskShape(
         "ellipse",
@@ -232,7 +239,9 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
             "source":dataset["source"],
             "catalog_sha256":contamination["catalog_sha256"],
             "draft_digest":contamination["draft_digest"],
-            "contamination":contamination["stats"]}
+            "contamination":contamination["stats"],
+            "sensitivity":sensitivity,
+            "bridge_guard_pix":int(bridge_guard_pix)}
 
 
 class SceneDrawingView(FITSGraphicsView):
@@ -285,6 +294,7 @@ class SceneEditor(QWidget):
         self._isophote_preview = None
         self._contamination = None
         self._contamination_overlay = None
+        self._conflict_paths = []
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
         self._project_target = None
@@ -640,6 +650,7 @@ class SceneEditor(QWidget):
         self._isophote_preview = None
         self._contamination = None
         self._contamination_overlay = None
+        self._conflict_paths = []
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
         self.graphics.clear()
