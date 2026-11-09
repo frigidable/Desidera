@@ -223,7 +223,7 @@ PROSPECTIVE_MIN_DIAGONAL_TRACTOR_SNR = 20.
 
 def audit_disjoint_bright_gaia_wing_probes(
     frame, stars, catalog_matcher, core_geometry, *, protected_mask=None,
-    max_catalog_probes=PROSPECTIVE_LIMIT
+    max_catalog_probes=None
 ):
     """Catalog-preregistered bright-star wing *feasibility* sample.
 
@@ -233,6 +233,8 @@ def audit_disjoint_bright_gaia_wing_probes(
     coverage or perceived scientific merit. A selected star with bad original
     pixels stays selected but is returned as failed, never replaced.
     """
+    if max_catalog_probes is None:
+        max_catalog_probes = PROSPECTIVE_LIMIT
     if type(max_catalog_probes) is not int or not 1 <= max_catalog_probes <= 48:
         raise ValueError("Catalog-only fixed probe quota must be 1..48")
     from collections import Counter
