@@ -36,6 +36,7 @@ from lsbpipe.photometry.sky_masks import (
 from lsbpipe.photometry.ellipse_seed import (
     propose_local_isophote, seed_as_sky_geometry,
 )
+from lsbpipe.photometry.scene_contaminants import prepare_scene_contamination
 from lsbpipe.survey import legacy_validity
 from lsbpipe.surveys.legacy import SkyField, BrickHit
 from lsbpipe.surveys.object_projects import read_object_project
@@ -182,15 +183,33 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
     return path
 
 
-def propose_scene_isophote(dataset, center_icrs, threshold, smoothing):
-    """Only numeric FITS/WCS work in background; Qt object creation in GUI."""
+def prepare_scene_neighbour_masks(dataset, project_root, draft, center_icrs):
+    """Validate the local Tractor catalogue and build preliminary native masks."""
+    project = read_object_project(project_root)
+    return prepare_scene_contamination(dataset, project, draft, center_icrs)
+
+
+def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
+                           contamination):
+    """Require the prepared source-bound mask before extracting an isophote."""
+    if (contamination is None or
+            contamination.get("status") !=
+            "CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED" or
+            contamination["project_id"] != dataset["project_id"] or
+            contamination["band"] != dataset["band"] or
+            contamination["dataset_source"] != dataset["source"] or
+            tuple(contamination["anchor_icrs"]) != tuple(center_icrs)):
+        raise ValueError("Current-band Tractor neighbour mask required")
     wcs = dataset["wcs"]
     x, y = wcs.all_world2pix(
         float(center_icrs[0]), float(center_icrs[1]), 0)
     if not (math.isfinite(float(x)) and math.isfinite(float(y))):
         raise ValueError("Selected ICRS galaxy center cannot be projected")
+    if np.shape(contamination["mask"]) != tuple(dataset["pixel_shape"]):
+        raise ValueError("Neighbour mask not on native pixel grid")
     model = propose_local_isophote(
-        dataset["data"]["image"], ~dataset["native_hard"],
+        dataset["data"]["image"],
+        ~(dataset["native_hard"] | contamination["mask"]),
         (float(x), float(y)),
         threshold_contrast=float(threshold), smooth_sigma_pix=float(smoothing))
     geometry = seed_as_sky_geometry(model.seed, wcs)
@@ -210,7 +229,10 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing):
     return {"status":model.state, "ellipse":ellipse, "contour":contour,
             "proposal":model, "band":dataset["band"],
             "project_id":dataset["project_id"],
-            "source":dataset["source"]}
+            "source":dataset["source"],
+            "catalog_sha256":contamination["catalog_sha256"],
+            "draft_digest":contamination["draft_digest"],
+            "contamination":contamination["stats"]}
 
 
 class SceneDrawingView(FITSGraphicsView):
@@ -261,6 +283,8 @@ class SceneEditor(QWidget):
         self._loaded = None
         self._isophote_proposal = None
         self._isophote_preview = None
+        self._contamination = None
+        self._contamination_overlay = None
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
         self._project_target = None
@@ -420,7 +444,26 @@ class SceneEditor(QWidget):
         self.iso_reset_center.clicked.connect(self._reset_isophote_center)
         center_row.addWidget(self.iso_reset_center)
         iso_layout.addLayout(center_row)
-        self.iso_generate = QPushButton("Find connected isophote")
+        self.iso_prepare = QPushButton("1 · Prepare neighbour masks")
+        self.iso_prepare.setObjectName("scene_prepare_neighbour_masks")
+        self.iso_prepare.setToolTip(
+            "Read same-brick local DR11 South Tractor catalogue; "
+            "make provisional source envelopes and inspect MASKBITS. "
+            "No model subtraction, PSF wing validation or downloads.")
+        self.iso_prepare.clicked.connect(self._prepare_neighbour_masks)
+        iso_layout.addWidget(self.iso_prepare)
+        self.iso_mask_toggle = QCheckBox("Show proposed contaminant mask")
+        self.iso_mask_toggle.setObjectName("scene_show_neighbor_mask")
+        self.iso_mask_toggle.setChecked(True)
+        self.iso_mask_toggle.toggled.connect(self._update_contamination_overlay)
+        iso_layout.addWidget(self.iso_mask_toggle)
+        self.iso_mask_status = QLabel(
+            "Neighbour mask not prepared. Local DR11 South Tractor "
+            "catalogue required; obtain it through PSF-0 if absent.")
+        self.iso_mask_status.setObjectName("scene_neighbor_mask_status")
+        self.iso_mask_status.setWordWrap(True)
+        iso_layout.addWidget(self.iso_mask_status)
+        self.iso_generate = QPushButton("2 · Find masked isophote")
         self.iso_generate.setObjectName("scene_isophote_generate")
         self.iso_generate.clicked.connect(self._generate_isophote)
         iso_layout.addWidget(self.iso_generate)
@@ -595,6 +638,8 @@ class SceneEditor(QWidget):
         self._replace_index = None
         self._isophote_proposal = None
         self._isophote_preview = None
+        self._contamination = None
+        self._contamination_overlay = None
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
         self.graphics.clear()
@@ -660,6 +705,8 @@ class SceneEditor(QWidget):
             result = future.result()
             if kind == "isophote":
                 self._accept_isophote_result(result)
+            elif kind == "contamination":
+                self._accept_contamination_result(result)
             else:
                 self._accept_dataset(result)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError,
@@ -669,6 +716,12 @@ class SceneEditor(QWidget):
                     "No proposal: " + str(exc)
                     + ". Try adjusting contrast/smoothing or pick the "
                       "diffuse component centre. Nothing was saved.")
+            elif kind == "contamination":
+                self.iso_mask_status.setText(
+                    "Mask preparation FAILED: " + str(exc)
+                    + ". No unmasked isophote will be offered. "
+                      "For DR11 South obtain the local Tractor catalogue "
+                      "in PSF-0; no automatic download occurred.")
             else:
                 self.status.setText(
                     f"Original FITS scene could not be displayed: {exc}")
@@ -782,6 +835,10 @@ class SceneEditor(QWidget):
             scene_shape_outline(
                 result[kind], self._loaded["wcs"],
                 self._loaded["pixel_shape"][0])
+        if (self._contamination is None or
+                self._contamination["catalog_sha256"] != result["catalog_sha256"]
+                or self._contamination["draft_digest"] != result["draft_digest"]):
+            raise ValueError("Neighbour masks changed during detection")
         self._isophote_proposal = result
         model = result["proposal"]
         self.iso_details.setText(
@@ -792,7 +849,8 @@ class SceneEditor(QWidget):
             f"contrast ≥{model.threshold_contrast:g}, "
             f"q={model.seed.q:.2f}, "
             f"centroid offset {model.seed.centroid_offset_pix:.1f} px. "
-            "NOT a calibrated outer isophote; PSF wings, contaminants, "
+            f"Catalogue masked {result['contamination']['masked_catalog_sources']} "
+            "neighbours. NOT a calibrated outer isophote; PSF wings, "
             "spatial sky gradients and correlated-noise significance "
             "require review. Flags: " + ", ".join(model.flags))
         self._show_isophote_preview()
@@ -844,6 +902,7 @@ class SceneEditor(QWidget):
             f"smooth_pix={model.smoothing_pix:g} "
             f"local_sky={model.local_sky:.7g} "
             f"smoothed_rms={model.smoothed_sky_rms:.7g} "
+            f"tractor_sha256={proposed['catalog_sha256']} "
             f"source={proposed['source']}")
         comment = (self.comment.text().strip() + " | " + provenance).strip(" |")
         try:
