@@ -294,7 +294,7 @@ class PSF0Panel(QGroupBox):
             "P15–P20 experiments. Full QA does NOT validate wide wings "
             "or authorize science-adopted scattered-light corrections. "
             "All analyses remain in the same existing brick.")
-        self.extended_qa.toggled.connect(self._parameters_changed)
+        self.extended_qa.toggled.connect(self._qa_depth_changed)
         advanced_layout.addWidget(self.extended_qa)
         advanced_layout.addWidget(self.recipe_geometry)
         advanced_layout.addWidget(self.prior_source)
@@ -736,6 +736,27 @@ class PSF0Panel(QGroupBox):
             "Derived from the CURRENT visible FWHM guess for preview. "
             "The actual full-griz batch separately resolves each original "
             "band PSFSIZE before selecting its final recipe.")
+
+    def _qa_depth_changed(self, *_):
+        """Invalidate only the old report, not the numerical star recipe.
+
+        Post-fit QA depth does not change FITS, Gaia membership, FWHM or
+        the user's explicitly reviewed training-star exclusions.
+        """
+        self._last_reported_payload = None
+        self._preview = None
+        self._qa_payload = None
+        self.save_btn.setEnabled(False)
+        self.stars.setRowCount(0)
+        self.kernel_view.setPixmap(QPixmap())
+        self.kernel_view.setText("No empirical PSF image")
+        self.kernel_view.show()
+        self._clear_science_visuals(
+            "QA scope changed; rebuild preview before export.")
+        self.summary.setText("QA scope changed. Rebuild the same PSF recipe.")
+        self.qa.clear()
+        self._update_mode_context()
+        self._update_buttons()
 
     def _parameters_changed(self, *_):
         if self.sender() is self.fwhm:
