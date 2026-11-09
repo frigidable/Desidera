@@ -66,3 +66,57 @@ def test_local_celestial_pa_conversion_on_inverted_ra_axis():
     assert geometry["pa_north_through_east_deg"] == pytest.approx(
         0., abs=10.) or geometry["pa_north_through_east_deg"] == pytest.approx(180., abs=10.)
     assert geometry["sma_arcsec"] > 10.
+
+
+def test_local_isophote_returns_connected_contour_and_equivalent_ellipse():
+    from lsbpipe.photometry.ellipse_seed import propose_local_isophote
+    rng = np.random.default_rng(65)
+    ny = nx = 241
+    yy, xx = np.indices((ny, nx))
+    ang = np.deg2rad(34.)
+    dx, dy = xx-120., yy-120.
+    u = np.cos(ang)*dx + np.sin(ang)*dy
+    v = -np.sin(ang)*dx + np.cos(ang)*dy
+    image = (3.7 + rng.normal(0.,1.,(ny,nx))
+             + 2.2*np.exp(-.5*((u/28.)**2+(v/14.)**2)))
+    original = image.copy()
+    # A much brighter unrelated object away from ICRS target must not
+    # attract the connected region's centre.
+    image[19:27, 210:218] += 1000.
+    invalid = np.zeros_like(image, bool)
+    invalid[125,125] = True
+    output = propose_local_isophote(
+        image, ~invalid, (120.,120.),
+        threshold_contrast=2.2, smooth_sigma_pix=4.)
+    assert output.state == "LOCAL_ISOPHOTE_PROPOSAL_NOT_ADOPTED"
+    assert output.seed.x_pix == 120. and output.seed.y_pix == 120.
+    assert output.seed.component_pixels > 100
+    assert .30 < output.seed.q < .8
+    assert 0. < output.raw_sky_rms < 2.
+    assert output.smoothed_sky_rms < output.raw_sky_rms
+    assert len(output.contour_xy) <= 192
+    assert len(output.contour_xy) >= 24
+    x, y = np.asarray(output.contour_xy).T
+    assert np.isfinite(x).all() and np.isfinite(y).all()
+    assert max(abs(x-120.)) < 110. and max(abs(y-120.)) < 110.
+    assert np.array_equal(original[:18,:18], image[:18,:18])
+    assert "BACKGROUND_CONSTANT_NOT_VALIDATED" in output.flags
+
+
+def test_local_isophote_fails_closed_on_blank_or_unanchored_light():
+    from lsbpipe.photometry.ellipse_seed import propose_local_isophote
+    blank = np.zeros((241,241))
+    with pytest.raises(ValueError, match="background dispersion"):
+        propose_local_isophote(
+            blank, np.ones_like(blank, bool), (120.,120.))
+    rng = np.random.default_rng(19)
+    image = rng.normal(0.,1.,(241,241))
+    yy, xx = np.indices(image.shape)
+    image += 50*np.exp(-.5*(((xx-208.)/6.)**2+((yy-40.)/6.)**2))
+    with pytest.raises(ValueError, match="No connected"):
+        propose_local_isophote(
+            image, np.ones_like(image,bool), (120.,120.),
+            threshold_contrast=7., smooth_sigma_pix=3.)
+    with pytest.raises(ValueError, match="outside"):
+        propose_local_isophote(
+            image, np.ones_like(image,bool), (500.,120.))
