@@ -14,13 +14,15 @@ from lsbpipe.surveys.object_projects import read_object_project
 
 SCHEMA = "desidera.photometry-workspace-state/1"
 FILENAME = "photometry-workspace-state.json"
-STAGES = frozenset(("survey", "psf0", "scene"))
+STAGES = frozenset(("psf0", "scene"))
+LOCATIONS = frozenset(("survey", "photometry"))
 BANDS = frozenset(("g", "r", "i", "z"))
 
 
 def _default(project):
     return {
-        "stage": "survey",
+        "location": "survey",
+        "stage": "psf0",
         "band": (project.selected_dataset[3]
                  if project.selected_dataset is not None else "g"),
         "source_matches": True,
@@ -41,6 +43,7 @@ def read_project_resume(root: str | Path) -> dict:
         raise ValueError("Invalid project resume pointer") from exc
     if (not isinstance(record, dict) or record.get("schema") != SCHEMA
             or record.get("project_id") != project.project_id
+            or record.get("location") not in LOCATIONS
             or record.get("stage") not in STAGES
             or record.get("band") not in BANDS
             or not isinstance(record.get("source"), list)
@@ -56,16 +59,18 @@ def read_project_resume(root: str | Path) -> dict:
             and record["band"] == "i"):
         return {**_default(project), "source_matches": False}
     return {
+        "location": record["location"],
         "stage": record["stage"],
         "band": record["band"],
         "source_matches": True,
     }
 
 
-def save_project_resume(root: str | Path, *, stage: str, band: str) -> None:
+def save_project_resume(root: str | Path, *, stage: str, band: str,
+                        location: str = "photometry") -> None:
     """Write one small atomic UI pointer, without mutating science/project."""
     project = read_object_project(root)
-    if stage not in STAGES or band not in BANDS:
+    if stage not in STAGES or band not in BANDS or location not in LOCATIONS:
         raise ValueError("Unsupported stage or optical band")
     if (project.selected_dataset is not None
             and project.selected_dataset[1] == "north" and band == "i"):
@@ -79,6 +84,7 @@ def save_project_resume(root: str | Path, *, stage: str, band: str) -> None:
         "schema": SCHEMA,
         "project_id": project.project_id,
         "source": source,
+        "location": location,
         "stage": stage,
         "band": band,
     }
