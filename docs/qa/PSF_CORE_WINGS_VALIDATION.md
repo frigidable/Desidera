@@ -94,10 +94,10 @@ scientific adoption.
 | Original native input provenance | Local image/invvar/nexp/maskbit SHA256 quartet, with provenance | PASS/HOLD on availability only |
 | Finite kernel numerical geometry | Nonnegative unit-normalized kernel and bracketed half maxima on both native axes | PASS/HOLD on numerical measurability only |
 | Predeclared holdout coverage | All **original** holdouts with all original zones scored | PASS/HOLD on coverage only |
-| Core accuracy | External, predeclared, unbiased error budget and prospective stars | HOLD |
+| Core accuracy | Predeclared core error budget with within-brick heldout stars and injections | HOLD |
 | Wide-angle stellar wings | Real large-radius empirical measurements with quantified truncation | HOLD |
 | Sky/wing identifiability | Constrained sky–wing degeneracy and outer background | HOLD |
-| Spatial representativity | Independent field- and brightness-matched sources, survey PSF comparison | HOLD |
+| Spatial representativity | Position-separated, brightness-matched same-brick source controls; global PSF scope limited to this brick | HOLD |
 | Resampled coadd covariance | Measured or validated correlated-noise model | HOLD |
 | LSB galaxy injection-recovery | Predeclared bounds on profile, structure and integrated flux bias | HOLD |
 
@@ -343,9 +343,9 @@ neighbor-rich fields remain background/contamination limited.
 Compare its observed native outer radial profiles and
 two **conditional** sky solutions before any PSF core+wing
 stitching. If these brighter sources are contaminated or
-insufficient, STOP: obtaining a separate adequately
-isolated optical field or independent bright-star
-calibration will be required. No new empirical PSF can
+insufficient, STOP the physical wing inference and preserve
+the measurable conditional profile bounds for THIS brick.
+An external field is not an input to this brick-specific PSF. No new empirical PSF can
 be scientifically adopted without subsequent independent
 validation and quantitative LSB injection/recovery.
 
@@ -353,8 +353,8 @@ validation and quantitative LSB injection/recovery.
 ## P16D: one bounded, preregistered neighbor and sky stress test
 
 **Purpose:** decide whether the same fixed 16 P16C Gaia sources support
-a stable outer profile in this one DR11 coadd, or whether the Leo P
-field must be set aside in favor of an independently chosen field.
+a stable outer profile in this one DR11 coadd, or whether the
+outer-wing model must remain unresolved within this brick.
 This is the intended one bounded P16D experiment, NOT a sequence of
 retuned deblending or selection attempts.
 
@@ -485,11 +485,11 @@ Keep \`science_adopted=false\`, \`SCIENCE_GATE_HOLD\`; preserve the
 unchanged original P16C cohort and the P16D report as a documented
 negative feasibility pilot.
 
-**Next independent field if P17 remains inconclusive:** choose a sufficiently
-star-rich, less crowded DESI Legacy coadd field via *catalog-only*
-preregistered criteria for brightness, unsaturated core, complete
-outer stamps, neighbor separation and azimuthal coverage, before
-inspecting candidate wing residuals. Define galaxy-aperture-dependent
+**Superseded planning note — fixed Leo P brick only:** use the
+existing catalog-qualified stars, native coadd pixels and same-brick
+blank-sky controls. If the stellar population cannot support calibrated
+wings, report an unresolved wing component; do not silently source
+stars or background from a different brick. Define galaxy-aperture-dependent
 outer radial extent and quantitative predeclared stability/uncertainty
 requirements; compare field-wise wing profile measurements to the
 existing Leo P data only after the new selection is fixed. Do not
@@ -579,8 +579,9 @@ morphological/brightness-matched independent PSF validation.
 *infeasibility* for selected mask hypotheses, not validate or
 authorize a wide-angle PSF model. If no hypothesis yields
 stable profiles with adequate spatial coverage across both
-new exploratory and holdout stars, select another field
-by predeclared catalog criteria. If promising, the NEXT
+new exploratory and holdout stars, retain the residual
+limits as an explicit unresolved component for this brick.
+If promising, the NEXT
 separately declared phase must independently constrain
 background/noise covariance, neighbors and spatial PSF
 variation, and perform blind galaxy-injection recovery
@@ -792,18 +793,15 @@ mask or PSF model. In particular do not turn the eight
 intra-coadd identity holdouts into fictitious independent
 exposure/sky validation.
 
-**Independent field preflight:** Another DESI DR11 South field
-should be selected in a separate *catalog-only* procedure
-using its complete native Tractor source inventory, before
-measuring any star's outer coadd pixels. The predeclared
-comparison should prioritize absolute native-band flux,
-spatial isolation and target-free wide cutouts; a large
-count of faint stars alone is insufficient. P18 itself
-does not claim to have searched or qualified that field.
-Meaningful photometric PSF adoption additionally
-requires separate background/noise-covariance constraints,
-morphology-matched neighbor injection/recovery, and
-cross-field or per-exposure validation.
+**Fixed-brick scientific scope:** Do not select another field.
+Within `1554p180`, the measured bright-star census,
+original coadd, Tractor morphology, same-brick blank sky,
+spatially separated stars and within-brick injections are
+all admissible sources of evidence. A high number of faint
+stars alone is insufficient for wings. A calibrated wing
+correction requires explicit background/noise-covariance
+bounds and morphology-matched injection/recovery in this
+same brick, and remains on HOLD if these are not obtained.
 
 No new branch or directory, no changes to legacy P16B–P17
 QA, no PSF kernel change, and \`science_adopted=false\`.
@@ -925,7 +923,7 @@ alternative. It is NOT proven to outperform P17
 3-FWHM on neighbor-cleanliness. Neither strategy
 resolves the dominant sky/outer-profile degeneracy,
 and the extra faint 32 stars have not supplied
-cross-field or exposure-independent validation.
+independent-of-star-identity but same-coadd spatial/sky calibration.
 Maintain \`SCIENCE_GATE_HOLD\` and all PSF wings,
 noise covariance, neighbor-model and spatial
 representativity science gates as unvalidated.
@@ -933,12 +931,118 @@ Do not tune the footprint multiplier/flux tiers
 using this same Leo P outcome and then claim
 confirmation from the eight same-coadd stars.
 
-**Next controlled work:** preregister an independent
-DR11 catalog-only bright-star field selection (using
-total native-band flux, coverage and neighbor geometry);
-then validate the proposed ellipse mask against
-known-shape/flux injected neighbors with recovery on
-native images. Explicit sky noise/covariance controls,
-multiple sky patches/individual exposures and
-blind field-holdout comparisons are required before
-constructing/adopting any broad PSF.
+**Brick-only closure:** no further field selection is allowed.
+Validate all reachable native-coadd PSF evidence and report
+unknown wide-angle wings and remaining sky/contamination
+uncertainty instead of constructing an ungrounded model.
+Any subsequent source-injection or covariance work must
+be strictly within this original native brick.
+
+
+## Final single-brick empirical PSF closure — scoped decision, 2026-11-09
+
+**Scope frozen:** \`dr11/south/1554p180/g\` only, using the original
+locally verified \`image\`, \`invvar\`, \`nexp\`, \`maskbits\` FITS and
+same native-brick Tractor/Gaia catalog. No additional brick, synthetic
+sky from an adjacent brick, fabricated independent control field,
+changes in source identities or refits of the original kernel.
+The P16–P18 reports remain an archived exhaustive feasibility history;
+their earlier suggestions to select another field are superseded.
+
+### What the brick actually constrains
+
+1. **Empirical coadd PSF core, numerical product:** 81×81 native pixels,
+   frozen kernel SHA256
+   \`8d976b91b4760fc8c51f607ccaf1cc59d4cac622c4c9992e5df11044bed2852a\`.
+   From 10 train and 3 untouched core holdouts. Axial mean
+   FWHM = 5.136902957677135 native pixels = about 1.346 arcsec
+   at the original 0.262 arcsec/native-pixel scale. Full
+   circular support of this finite kernel is 40 native
+   pixels (about 10.48 arcsec); its central finite-kernel
+   encircled fractions at 1/2/3/4 FWHM are approx
+   0.80357, 0.94040, 0.97201 and 0.98319.
+   These fractions **refer to a kernel normalized over its
+   81×81 grid**, and may NOT be cited as fractions of
+   all physical stellar flux. The native coadd core is
+   reconstructed, but its science photometric bias and
+   spatial representativity have not passed quantitative gates.
+2. **Outer original-pixel constraints, descriptive product:** 48
+   catalog-only selected Gaia stars (16 previously inspected
+   bright + 24 new exploratory + 8 new same-coadd heldout
+   identities), with six 4–22 measured-FWHM native
+   profile bins, sky comparisons at 22–26 and 26–30
+   FWHM, four P17 neighbor masks and one P18
+   morphology+flux ellipse mask. P18 8-sector deletion
+   is a correlated sky sensitivity test, NOT a covariance
+   estimate or statistical significance. The 16 original
+   P16C profiles reproduce and all star identities match.
+3. **Limits on what the brick can tell us:** P18 4–6 FWHM
+   medians are positive for all 16 bright stars with median
+   +8.81e-5 of star peak, yet a typical azimuthal
+   spread exceeds this level and the profile is
+   environment/sky-dependent. At 8–12 FWHM the
+   48-star median signed residual is +2.12e-6;
+   median absolute residual 4.45e-5, median absolute
+   P18-vs-P17(3 FWHM) change 2.43e-5. Sky-B
+   maximum sector-deletion sensitivity across the 48
+   has median 4.49e-5: comparable to the
+   absolute residual. These figures cannot be
+   fitted into a unique nonnegative, total-flux-normalized
+   physical PSF. In particular, 48/48 successful P18
+   sky estimates mask the fact that heldout rank 20
+   has **zero** valid pixels in both 4–6 and
+   6–8 FWHM stellar annuli. This is explicitly
+   counted separately by the terminal QA.
+4. **Single brick defines effective coadd PSF, not
+   raw-telescope scattering.** Official DR11 processing
+   documentation states that per-CCD PSFEx functions
+   vary spatially, and since DR9 a modified extended
+   PSF model is used for subtraction of bright-star
+   wings from DECam images. An outer residual in
+   DR11 coadd is therefore not automatically the
+   untouched instrumental PSF. Sources:
+   https://www.legacysurvey.org/dr11/description/
+   and https://www.legacysurvey.org/dr11/catalogs/.
+
+### Machine-readable terminal QA
+
+\`diagnostic_metrics.single_brick_empirical_psf_closure_qa\`
+with schema \`desidera.psf0-single-brick-empirical-closure/1\`
+is derived **only from existing matched P17/P18 reports**
+and the frozen finite core. It includes six ring-by-ring
+medians (signed/absolute), P17-to-P18 mask shifts,
+area/octant counts, 16/24/8 brightness cohorts,
+sky A/B and azimuthal sensitivity, and a catalog-only
+four-quadrant (same brick) spatial summary.
+A strict provenance gate requires verified original
+input hashes, matching native Tractor hash, all
+48 immutable ranks and Gaia identities, exact radial
+bins and the preexisting science-gate result. Missing
+profiles are counted rather than set to zero.
+No weighting or best-mask choice is tuned from Leo P,
+and no raw pixels or kernel values are changed.
+
+**Separate completion states:**
+\`engineering_stage_finished=true\` means the single
+brick's empirical core and all available native
+outer-profile evidence have been reconstructed,
+quantified and archived. This is a legitimate stopping
+point for the *empirical PSF development stage*.
+It does **not** imply \`science_adopted=true\`.
+The existing \`SCIENCE_GATE_HOLD\` remains because
+total physical PSF wing flux, sky/wing separation,
+coadd covariance and quantified LSB photometry bias
+remain unknown. Publish the finite diagnostic ePSF
+with explicit radius/norm limits and retain the
+non-adopted wing-constraint table. Never fabricate
+PSF flux outside the measured region, force positive
+wing tails from background-subtracted medians,
+or apply a wide-wing scattering correction in
+scientific photometry.
+
+**Deliverable:** the existing "Save diagnostic FITS + report"
+action preserves the frozen 81×81 kernel and embeds
+this terminal QA in its complete report; status in
+the PSF0 GUI reads "single-brick characterization
+CLOSED" while uncalibrated wing science remains
+explicitly withheld. No other brick is required.
