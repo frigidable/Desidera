@@ -40,6 +40,7 @@ from lsbpipe.photometry.psf_parameter_audit import (
 from lsbpipe.photometry.psf_joint_scene import audit_fixed_psf_joint_scenes
 from lsbpipe.photometry.psf_core_wings_validation import (
     measure_finite_native_psf_core, evaluate_core_wings_readiness,
+    finalize_single_brick_empirical_psf,
 )
 from lsbpipe.photometry.psf_wing_profile import (
     audit_native_broad_radius_star_profiles,
@@ -284,6 +285,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
         "fixed_bright_gaia_neighbor_sky_stress_qa": "FIXED_P16C_IDENTITIES_3V6_FWHM_NEIGHBOR_MASKS_OCTANTS_AND_22TO30_SKY_PLANE_V1_QA_ONLY",
         "extended_bright_gaia_mask_experiment_qa": "FIRST_48_CATALOG_FLUX_RANKED_16_LEGACY_24_NEW_EXPLORATORY_8_NEW_IDENTITY_HOLDOUT_WITH_3_4P5_FLUX_TIERED_6_NEIGHBOR_MASKS_V1_NO_SCIENCE_ADOPTION",
         "catalog_shape_neighbor_sky_qa": "P18_FIXED_P17_48_TRACTOR_SHAPE_R_E1_E2_WCS_TANGENT_4RE_PLUS_PSF_CORE_AND_OCTANT_SKY_DELETIONS_NO_ADOPTION_V1",
+        "single_brick_empirical_psf_closure_qa": "P19_BRICK_ONLY_P17_P18_FROZEN_48_MATCHED_BRIGHTNESS_COHORT_6_RING_SKY_MASK_SPATIAL_QUADRANT_NO_SCIENCE_ADOPTION_V1",
     }
     return {
         "sha256": sha256(json.dumps(
@@ -1577,6 +1579,14 @@ def build_empirical_coadd_psf(
     shape_neighbor_sky_qa = audit_catalog_shape_neighbor_and_sky_sensitivity(
         frame, catalog_matcher, measured_core_geometry,
         extended_bright_gaia_mask_qa, protected_mask=protected)
+    single_brick_closure_qa = finalize_single_brick_empirical_psf(
+        dataset_id=frame.dataset_id,
+        image_shape=tuple(frame.shape),
+        core_validation=core_wings_validation_qa,
+        p17_qa=extended_bright_gaia_mask_qa,
+        p18_qa=shape_neighbor_sky_qa,
+        verified_native_sources=bool(source_hashes) and lineage is not None,
+    )
     metrics = {
         "core_wings_validation_qa": core_wings_validation_qa,
         "original_native_outer_stellar_profile_qa": broad_wing_profile_qa,
@@ -1584,6 +1594,7 @@ def build_empirical_coadd_psf(
         "fixed_bright_gaia_neighbor_sky_stress_qa": fixed_bright_gaia_sky_stress_qa,
         "extended_bright_gaia_mask_experiment_qa": extended_bright_gaia_mask_qa,
         "catalog_shape_neighbor_sky_qa": shape_neighbor_sky_qa,
+        "single_brick_empirical_psf_closure_qa": single_brick_closure_qa,
         "fixed_psf_joint_native_scene_qa": joint_native_scene_qa,
         "catalog_selection_qa": selection_catalog_qa,
         "sky_sample_qa": sky_sample_qa,
