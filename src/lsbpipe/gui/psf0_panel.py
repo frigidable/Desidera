@@ -117,7 +117,7 @@ class PSF0Panel(QGroupBox):
         model_layout = QVBoxLayout(self._model_card)
         model_layout.setContentsMargins(10, 12, 10, 10)
         self._profile_card = QGroupBox(
-            "Radial profile & residuals", self)
+            "Radial profile and residuals", self)
         self._profile_card.setObjectName("psf0_visual_profile_card")
         profile_layout = QVBoxLayout(self._profile_card)
         profile_layout.setContentsMargins(10, 12, 10, 10)
@@ -427,7 +427,7 @@ class PSF0Panel(QGroupBox):
         self.qa.setPlaceholderText(
             "PSF quality flags and source limitations appear here.")
         self.inspection_toggle = QPushButton(
-            "Star selection, comparisons and scientific QA  ▸")
+            "Show star selection and QA")
         self.inspection_toggle.setObjectName("psf0_inspection_toggle")
         self.inspection_toggle.setCheckable(True)
         self.inspection_toggle.setMaximumWidth(430)
@@ -444,9 +444,9 @@ class PSF0Panel(QGroupBox):
             self.inspection_details.setVisible)
         self.inspection_toggle.toggled.connect(
             lambda checked: self.inspection_toggle.setText(
-                "Star selection, comparisons and scientific QA  ▾"
+                "Hide star selection and QA"
                 if checked else
-                "Star selection, comparisons and scientific QA  ▸"))
+                "Show star selection and QA"))
         layout.addWidget(self.inspection_details)
         # Any excess vertical space belongs below the scientific work,
         # never between the always-visible plots and their settings.
