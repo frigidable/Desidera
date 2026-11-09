@@ -264,9 +264,7 @@ class ProjectHub(QMainWindow):
         self.auto_resume.setChecked(
             self._startup_settings.value(
                 "startup/auto_resume_last", False, type=bool))
-        self.auto_resume.toggled.connect(
-            lambda enabled: self._startup_settings.setValue(
-                "startup/auto_resume_last", bool(enabled)))
+        self.auto_resume.toggled.connect(self._save_auto_resume_setting)
         actions.addWidget(self.auto_resume)
         outer.addLayout(actions)
 
@@ -1015,6 +1013,11 @@ class ProjectHub(QMainWindow):
             self.refresh()
         except (OSError, ValueError, TypeError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open Galaxy Knowledge", str(exc))
+
+    def _save_auto_resume_setting(self, enabled):
+        self._startup_settings.setValue(
+            "startup/auto_resume_last", bool(enabled))
+        self._startup_settings.sync()
 
     def _auto_resume_last_project(self):
         """Opt-in fast entry; never guess a missing or legacy project."""
