@@ -77,7 +77,8 @@ def test_review_btn_only_enabled_after_snapshot_and_emits_apply_rebuild(qtbot,
     assert not panel.review_btn.isEnabled()
     # Simulate an existing valid band/model; no need to write pretend FITS.
     panel._project_root = "C:/test/Leo_P"
-    panel._snapshot = {"bands":[{"band":"g","paths_present_unverified":True}]}
+    panel._snapshot = {"bands":[{"band":"g","paths_present_unverified":True}],
+                       "gaia_tractor_present_unverified":True}
     panel.band.addItem("g · verified fixture", "g")
     panel._history_band = "g"
     panel._star_review_data = _snapshot()
