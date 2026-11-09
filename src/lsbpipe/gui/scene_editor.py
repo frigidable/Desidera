@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPathItem,
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
-    QGroupBox, QScrollArea, QSlider, QToolButton,
+    QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
 )
 
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
@@ -38,6 +38,7 @@ from lsbpipe.photometry.ellipse_seed import (
     assess_local_isophote_sensitivity,
 )
 from lsbpipe.photometry.scene_contaminants import prepare_scene_contamination
+from lsbpipe.photometry.sga_priors import read_local_sga_priors
 from lsbpipe.survey import legacy_validity
 from lsbpipe.surveys.legacy import SkyField, BrickHit
 from lsbpipe.surveys.object_projects import read_object_project
@@ -184,10 +185,12 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
     return path
 
 
-def prepare_scene_neighbour_masks(dataset, project_root, draft, center_icrs):
-    """Validate the local Tractor catalogue and build preliminary native masks."""
+def prepare_scene_neighbour_masks(dataset, project_root, draft, center_icrs,
+                                  sga_prior=None):
+    """Prepare native Tractor masks, optionally protecting an explicit SGA core."""
     project = read_object_project(project_root)
-    return prepare_scene_contamination(dataset, project, draft, center_icrs)
+    return prepare_scene_contamination(
+        dataset, project, draft, center_icrs, sga_prior=sga_prior)
 
 
 def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
@@ -307,6 +310,9 @@ class SceneEditor(QWidget):
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
         self._project_target = None
+        self._sga_lookup = None
+        self._sga_candidate = None
+        self._sga_item = None
         self._future = None
         self._work_kind = None
         self._load_generation = 0
@@ -428,6 +434,43 @@ class SceneEditor(QWidget):
         self.comment.setObjectName("scene_edit_comment")
         self.comment.setPlaceholderText("Optional reason / source identity")
         control_layout.addWidget(self.comment)
+
+        # A SGA ellipse is an externally fitted central-scale PRIOR.
+        # It never replaces a native FITS result or an outer LSB contour.
+        sga_box = QGroupBox("SGA · initial geometry prior (optional)")
+        sga_box.setObjectName("scene_sga_prior_group")
+        sga_layout = QVBoxLayout(sga_box)
+        self.sga_load = QPushButton("Choose local SGA FITS…")
+        self.sga_load.setObjectName("scene_sga_open_local")
+        self.sga_load.setToolTip(
+            "Explicit local SGA-2020 or SGA-2025 catalogue. "
+            "Read-only, no network or file copy; large file hashed in worker.")
+        self.sga_load.clicked.connect(self._open_sga_file)
+        sga_layout.addWidget(self.sga_load)
+        self.sga_candidates = QComboBox()
+        self.sga_candidates.setObjectName("scene_sga_candidates")
+        self.sga_candidates.setToolTip(
+            "Choose the right galaxy among positional matches; matching "
+            "catalogues and Tractor sources are NOT independent evidence.")
+        self.sga_candidates.currentIndexChanged.connect(
+            self._sga_candidate_changed)
+        sga_layout.addWidget(self.sga_candidates)
+        self.sga_use_prior = QCheckBox(
+            "Protect selected SGA core against Tractor shredding")
+        self.sga_use_prior.setObjectName("scene_sga_use_protection")
+        self.sga_use_prior.setChecked(False)
+        self.sga_use_prior.toggled.connect(self._sga_protection_changed)
+        self.sga_use_prior.setToolTip(
+            "Opt-in: protects the SGA D26 ellipse during preliminary "
+            "source screening only. It never defines the LSB outer radius.")
+        sga_layout.addWidget(self.sga_use_prior)
+        self.sga_status = QLabel(
+            "No SGA geometry loaded. SGA-2020 published; SGA-2025 draft. "
+            "This prior never clips the outer galaxy search.")
+        self.sga_status.setObjectName("scene_sga_status")
+        self.sga_status.setWordWrap(True)
+        sga_layout.addWidget(self.sga_status)
+        control_layout.addWidget(sga_box)
 
         # A threshold contour and a moment-ellipse are offered separately.
         # The researcher must inspect and explicitly accept either one.
@@ -686,6 +729,15 @@ class SceneEditor(QWidget):
         if key == self._source_key:
             return
         self.flush_autosave()
+        self._sga_lookup = None
+        self._sga_candidate = None
+        self.sga_candidates.blockSignals(True)
+        self.sga_candidates.clear()
+        self.sga_candidates.blockSignals(False)
+        self.sga_use_prior.setChecked(False)
+        self.sga_status.setText(
+            "No SGA prior selected for this galaxy; local FITS only. "
+            "SGA D26 is a central scale, never an outer LSB boundary.")
         # Keep unsaved revisions in memory if researcher navigates to a
         # different project and later comes back in the same GUI session.
         if self._draft is not None and self._project_root is not None:
@@ -738,6 +790,7 @@ class SceneEditor(QWidget):
         self._contamination = None
         self._contamination_overlay = None
         self._conflict_paths = []
+        self._sga_item = None
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
         self.graphics.clear()
@@ -803,6 +856,8 @@ class SceneEditor(QWidget):
             result = future.result()
             if kind == "isophote":
                 self._accept_isophote_result(result)
+            elif kind == "sga":
+                self._accept_sga_lookup(result)
             elif kind == "contamination":
                 self._accept_contamination_result(result)
             else:
@@ -814,6 +869,10 @@ class SceneEditor(QWidget):
                     "No proposal: " + str(exc)
                     + ". Try adjusting contrast/smoothing or pick the "
                       "diffuse component centre. Nothing was saved.")
+            elif kind == "sga":
+                self.sga_status.setText(
+                    "SGA lookup failed: " + str(exc)
+                    + ". No SGA region adopted; original FITS untouched.")
             elif kind == "contamination":
                 self.iso_mask_status.setText(
                     "Mask preparation FAILED: " + str(exc)
@@ -846,6 +905,7 @@ class SceneEditor(QWidget):
         self._native_overlay.setZValue(2.)
         self.graphics.addItem(self._native_overlay)
         self._loaded = data
+        self._redraw_sga_prior()
         self._update_hard_overlay()
         self._redraw_outlines()
         self.view.fit_image()
@@ -1550,6 +1610,13 @@ class SceneEditor(QWidget):
         self.edit_btn.setEnabled(
             active and 0 <= self.edits.currentRow() < len(self._draft.edits))
         worker_idle = self._future is None or self._future.done()
+        self.sga_load.setEnabled(ready and worker_idle
+                                 and self._project_target is not None)
+        self.sga_candidates.setEnabled(
+            ready and worker_idle and self.sga_candidates.count() > 0)
+        self.sga_use_prior.setEnabled(
+            ready and worker_idle and self._sga_candidate is not None
+            and self._sga_candidate.core_shape() is not None)
         self.iso_prepare.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_mask_toggle.setEnabled(self._contamination is not None)
