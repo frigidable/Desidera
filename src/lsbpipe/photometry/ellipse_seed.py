@@ -473,6 +473,9 @@ def assess_local_isophote_sensitivity(
     }]
     failed = 0
     overlaps = []
+    # Keep the same fitted trial geometries for interactive comparison in
+    # Scene & Masks; missing variants remain explicit None entries.
+    trial_models = [reference]
     reference_pixels = reference.component_indices
     for contrast, smooth in variants:
         try:
@@ -491,6 +494,7 @@ def assess_local_isophote_sensitivity(
                          + model.component_indices.size-shared)
                 overlap = float(shared/union) if union > 0 else 0.
                 overlaps.append(overlap)
+            trial_models.append(model)
             trials.append({
                 "threshold": float(contrast),
                 "smooth_pix": float(smooth),
@@ -502,6 +506,7 @@ def assess_local_isophote_sensitivity(
             })
         except ValueError as exc:
             failed += 1
+            trial_models.append(None)
             trials.append({
                 "threshold": float(contrast),
                 "smooth_pix": float(smooth),
@@ -540,5 +545,7 @@ def assess_local_isophote_sensitivity(
         "minimum_spatial_iou": min(overlaps) if overlaps else None,
         "max_centroid_offset_pix": max_offset,
         "trials": tuple(trials),
+        # In-memory, read-only diagnostic products; not serialized/adopted.
+        "trial_models": tuple(trial_models),
         "sensitivity_status": "MULTISCALE_DIAGNOSTIC_NOT_SCIENCE_VALIDATED",
     }
