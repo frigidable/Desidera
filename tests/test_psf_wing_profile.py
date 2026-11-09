@@ -20,6 +20,10 @@ from lsbpipe.photometry.psf_wing_profile import (
 from lsbpipe.photometry.psf_core_wings_validation import (
     finalize_single_brick_empirical_psf, SINGLE_BRICK_CLOSURE_SCHEMA,
 )
+from lsbpipe.photometry.psf_brick_wings import (
+    audit_brick_joint_wings_sky_spatial, _joint_nuisance_fit,
+    _within_brick_blank_controls, SCHEMA as P20_SCHEMA,
+)
 
 FWHM=5.136902957677135
 
@@ -938,3 +942,124 @@ def test_single_brick_closure_gui_never_implies_science_adoption():
     assert "single-brick characterization CLOSED" in summary
     assert "NO validated outer-wing kernel" in summary
     assert "THIS native brick" in summary
+
+
+
+def test_p20_robust_joint_common_profile_with_star_sky_nuisances():
+    expected = np.array([3e-3,2e-3,1e-3,5e-4,2e-4,1e-4])
+    stars = []
+    for i in range(12):
+        offset = (i-5.5)*1e-5
+        stars.append({
+            "native_peak_nMgy_per_pixel": 10.,
+            "sky_a_minus_sky_b_over_peak": 2e-4,
+            "sky_b_max_abs_leave_one_octant_change_over_peak":1e-4,
+            "radial_profile": [{
+                "sky_b_subtracted_median_over_peak": float(v+offset),
+                "n_unmasked_native_pixels": 300,
+                "n_octants_with_at_least_25_pixels": 8,
+            } for v in expected],
+        })
+    result = _joint_nuisance_fit(
+        stars, [1e-4]*6, "sky_b_subtracted_median_over_peak")
+    assert result["status"] == (
+        "ROBUST_COMMON_PROFILE_PLUS_SKY_NUISANCE_DESCRIPTIVE_ONLY")
+    assert result["n_input_stars"] == 12
+    np.testing.assert_allclose(
+        result["radial_common_wing_candidate_over_native_peak"],
+        expected, atol=5e-6)
+    assert result["nuisance_penalty_anchors_nonidentifiable_absolute_level"]
+    assert result["weight_scales_are_systematic_sensitivities_not_sigmas"]
+
+
+def test_p20_fixed_bright_identity_joint_wings_and_spatial_holdouts():
+    frame, p17, p18, core = _single_brick_closure_synthetic_evidence()
+    _, matcher = _p17_synthetic_field()
+    before = frame.image_nMgy.copy()
+    result = audit_brick_joint_wings_sky_spatial(
+        frame, matcher, core["core_geometry"], p17, p18)
+    assert result["schema"] == P20_SCHEMA
+    assert result["status"] == (
+        "SAME_BRICK_WING_SKY_AND_SPATIAL_FEASIBILITY_ONLY")
+    assert result["n_frozen_stars"] == 48
+    assert result["predeclared_legacy_training_ranks"] == [
+        1,2,3,5,6,7,9,10,11,13,14,15]
+    assert result["predeclared_legacy_identity_holdout_ranks"] == [
+        4,8,12,16]
+    assert result["n_bright_fixed_identity_holdout"] == 4
+    assert len(result["leave_one_brick_quadrant_out"]) == 4
+    assert len(result["radial_nuisance_and_blank_comparison"]) == 6
+    assert result["heldout_bright_star_prediction"][
+        "n_withheld_stars"] == 4
+    assert set(result["joint_profile_hypotheses"]) == {
+        "sky_a_subtracted_median_over_peak",
+        "sky_b_subtracted_median_over_peak",
+        "conditional_plane_subtracted_median_over_peak"}
+    assert result["blank_sky_controls"][
+        "centers_chosen_before_any_pixel_or_residual_tests"]
+    assert not result["psf_wings_validated"]
+    assert not result["science_adopted"]
+    assert result["bright_identity_holdout_retrospective_not_blind"]
+    np.testing.assert_array_equal(before, frame.image_nMgy)
+
+
+def test_p20_blank_controls_are_within_same_brick_and_fixed_catalog_grid():
+    frame, p17, p18, core = _single_brick_closure_synthetic_evidence()
+    _, matcher = _p17_synthetic_field()
+    # Extend test array with blank coadd regions, retaining every
+    # original star location, original pixel value and Gaia identity.
+    frame.image_nMgy = np.pad(
+        frame.image_nMgy, ((0,1000),(0,1000)),constant_values=.001)
+    frame.invvar_nMgy2 = np.pad(
+        frame.invvar_nMgy2, ((0,1000),(0,1000)),constant_values=100.)
+    frame.valid = np.pad(
+        frame.valid, ((0,1000),(0,1000)),constant_values=True)
+    frame.shape = frame.image_nMgy.shape
+    blank = _within_brick_blank_controls(
+        frame,matcher,p17["per_star"],FWHM,None)
+    assert blank["n_catalog_fixed_blank_controls"] > 0
+    assert blank["n_catalog_fixed_blank_controls"] <= 16
+    assert blank["n_measured_blank_controls"] > 0
+    assert len(blank["per_ring"]) == 6
+    for site in blank["per_control"]:
+        x,y=site["center_native_xy_pix"]
+        assert 0<x<frame.shape[1] and 0<y<frame.shape[0]
+        assert len(site["radial_residual_nMgy_per_pixel"])==6
+        assert site["status"] == "BLANK_CONDITIONAL_PROFILE_ONLY"
+    a = _within_brick_blank_controls(
+        frame,matcher,p17["per_star"],FWHM,None)
+    assert a == blank
+
+
+def test_p20_catalog_lineage_and_missing_wcs_are_fail_closed():
+    frame,p17,p18,core = _single_brick_closure_synthetic_evidence()
+    _,matcher = _p17_synthetic_field()
+    altered=SimpleNamespace(
+        source_sha256="different",rows=matcher.rows,
+        pixel_positions=matcher.pixel_positions)
+    bad = audit_brick_joint_wings_sky_spatial(
+        frame,altered,core["core_geometry"],p17,p18)
+    assert bad["status"]=="NATIVE_CATALOG_LINEAGE_MISMATCH"
+    assert not bad["psf_wings_validated"]
+    del frame.wcs
+    missing = audit_brick_joint_wings_sky_spatial(
+        frame,matcher,core["core_geometry"],p17,p18)
+    assert missing["status"]=="NATIVE_WCS_MISSING"
+
+
+def test_p20_gui_read_only_joint_sky_and_position_report():
+    pytest.importorskip("PySide6")
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    summary=PSF0Panel._calibration_diagnostic_summary({
+        "same_brick_joint_wing_sky_spatial_qa":{
+            "schema":P20_SCHEMA,
+            "status":"SAME_BRICK_WING_SKY_AND_SPATIAL_FEASIBILITY_ONLY",
+            "n_bright_joint_fit_train":12,
+            "n_bright_fixed_identity_holdout":4,
+            "blank_sky_controls":{"n_measured_blank_controls":11},
+        },
+    })
+    assert "P20 same-brick wing/sky diagnostic" in summary
+    assert "12 bright training stars" in summary
+    assert "4 historically inspected bright rank-holdouts" in summary
+    assert "NO calibrated PSF wings" in summary
