@@ -15,7 +15,7 @@ from lsbpipe.photometry.psf_wing_profile import (
     P17_SCHEMA, P17_COHORT_LIMIT, P17_MASK_CHOICES,
     P18_SCHEMA, audit_catalog_shape_neighbor_and_sky_sensitivity,
     _p18_neighbor_footprint, _p18_shape_mask,
-    _p18_sky_sector_deletion,
+    _p18_sky_sector_deletion, _p18_sky_to_pixel_matrix,
 )
 from lsbpipe.photometry.psf_core_wings_validation import (
     finalize_single_brick_empirical_psf, SINGLE_BRICK_CLOSURE_SCHEMA,
@@ -1063,3 +1063,26 @@ def test_p20_gui_read_only_joint_sky_and_position_report():
     assert "12 bright training stars" in summary
     assert "4 historically inspected bright rank-holdouts" in summary
     assert "NO calibrated PSF wings" in summary
+
+
+
+def test_p18_native_tan_wcs_jacobian_does_not_double_correct_cosdec():
+    from astropy.wcs import WCS
+    frame = SimpleNamespace()
+    wcs = WCS(naxis=2)
+    wcs.wcs.ctype = ["RA---TAN","DEC--TAN"]
+    wcs.wcs.crpix = [600.,600.]
+    wcs.wcs.crval = [155.,60.]
+    wcs.wcs.cdelt = [-.262/3600.,.262/3600.]
+    frame.wcs=wcs
+    # In TAN, CDELT is already in projection-plane degrees per
+    # native pixel. At reference pixel, the local east and north
+    # scales are both 0.262 arcsec/pixel, not 0.262*cos(60).
+    mat = _p18_sky_to_pixel_matrix(frame,599.,599.)
+    assert mat is not None
+    np.testing.assert_allclose(
+        mat, np.array([[-.262,0.],[0.,.262]]),atol=1e-6,rtol=0)
+    # RA wrap must also be handled without a 360-degree jump.
+    wcs.wcs.crval = [359.999999,60.]
+    wrapped = _p18_sky_to_pixel_matrix(frame,599.,599.)
+    np.testing.assert_allclose(wrapped,mat,atol=1e-5,rtol=0)
