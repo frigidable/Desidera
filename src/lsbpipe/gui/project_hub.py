@@ -5,10 +5,10 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
-    QMenu,
+    QMenu, QCheckBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
     QInputDialog, QSplitter,
@@ -214,6 +214,7 @@ class ProjectHub(QMainWindow):
         self.setWindowTitle("DESIDERA · Galaxy Projects")
         self.resize(1100, 720)
         self.workspace = None
+        self._startup_settings = QSettings("Desidera", "Desidera")
         self._preview_future = None
         self._preview_project_id = None
         self._preview_errors = {}
@@ -255,6 +256,18 @@ class ProjectHub(QMainWindow):
         actions.addWidget(self.new_btn)
         actions.addWidget(self.import_btn)
         actions.addStretch(1)
+        self.auto_resume = QCheckBox("Open last galaxy on startup")
+        self.auto_resume.setObjectName("hub_auto_resume_last")
+        self.auto_resume.setToolTip(
+            "Opt-in: launch the latest accessible galaxy at its saved "
+            "workspace and filter. Never downloads or reruns science.")
+        self.auto_resume.setChecked(
+            self._startup_settings.value(
+                "startup/auto_resume_last", False, type=bool))
+        self.auto_resume.toggled.connect(
+            lambda enabled: self._startup_settings.setValue(
+                "startup/auto_resume_last", bool(enabled)))
+        actions.addWidget(self.auto_resume)
         outer.addLayout(actions)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -1003,6 +1016,25 @@ class ProjectHub(QMainWindow):
         except (OSError, ValueError, TypeError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open Galaxy Knowledge", str(exc))
 
+    def _auto_resume_last_project(self):
+        """Opt-in fast entry; never guess a missing or legacy project."""
+        if self.workspace is not None or not self.auto_resume.isChecked():
+            return
+        try:
+            row = next((
+                row for row in recent_projects()
+                if row.get("available") and not row.get("legacy")
+                and isinstance(row.get("root"), str)), None)
+            if row is None:
+                return
+            project = read_object_project(row["root"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.hint.setText(
+                "Last galaxy could not be restored: " + str(exc)
+                + ". Select an existing project manually.")
+            return
+        self._enter_project(project)
+
     def _open_selected(self):
         item = self.projects.currentItem()
         if not item or item.isHidden():
@@ -1098,4 +1130,5 @@ def main():
     app = QApplication.instance() or QApplication([])
     hub = ProjectHub()
     hub.showMaximized()
+    QTimer.singleShot(0, hub._auto_resume_last_project)
     return app.exec()
