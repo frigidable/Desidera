@@ -37,7 +37,8 @@ def test_sga_2020_multiple_nearby_matches_require_explicit_selection(tmp_path):
     assert len(result.matches)==2
     assert result.matches[0].sga_id==71
     assert result.matches[1].sga_id==72
-    assert result.matches[1].flags==("D26_NOT_DIRECT_SB26",)
+    assert "D26_NOT_DIRECT_SB26" in result.matches[1].flags
+    assert "SGA2020_ELLIPSE_NOT_FITTED" in result.matches[1].flags
     shape=result.matches[0].core_shape()
     assert shape.kind=="ellipse"
     assert shape.a_arcsec==pytest.approx(.62*30.,rel=1e-5)
