@@ -19,7 +19,8 @@ from lsbpipe.survey import named_bit
 
 
 def conservative_catalogue_mask(shape, positions, rows, *,
-                                arcsec_per_pixel, protected, wcs=None):
+                                arcsec_per_pixel, protected, wcs=None,
+                                sga_core=None):
     """Source-type-aware *screening* footprints, never rendered Tractor models.
 
     Point sources get conservative round brightness-dependent envelopes.
@@ -34,10 +35,15 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             not math.isfinite(arcsec_per_pixel)
             or not .05 < arcsec_per_pixel < 10.):
         raise ValueError("Invalid native mask geometry")
+    if sga_core is not None and (
+            np.shape(sga_core) != tuple(shape) or
+            np.asarray(sga_core).dtype.kind != "b"):
+        raise ValueError("SGA core region must match native Boolean grid")
     ny, nx = shape
     output = np.zeros((ny, nx), dtype=bool)
     accepted, near, outside, ignored = 0, 0, 0, 0
     elliptical, missing_shape = 0, 0
+    possible_shreds = 0
     conflicts = []
     if np.shape(positions) != (len(rows), 2):
         raise ValueError("Tractor positions and row count differ")
@@ -127,10 +133,29 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             disk = dx*dx+dy*dy <= r_pix**2
         if np.any(disk & protected[y1:y2, x1:x2]):
             near += 1
-            if len(conflicts) < 128:
+            in_sga = (sga_core is not None and
+                      0 <= int(round(x)) < nx and
+                      0 <= int(round(y)) < ny and
+                      bool(sga_core[int(round(y)), int(round(x))]))
+            has_gaia = row.get("gaia_g_mag") is not None
+            # SGA priors and DR11 Tractor fits share input imagery; this
+            # is a CANDIDATE explanation, never probabilistic evidence.
+            # Gaia counterparts require individual stellar assessment:
+            # they are not proof of foreground contamination.
+            classification = (
+                "POSSIBLE_GALAXY_SHRED" if in_sga and not has_gaia
+                else "GAIA_COUNTERPART_REVIEW" if has_gaia
+                else "UNRESOLVED_TARGET_BLEND")
+            if classification == "POSSIBLE_GALAXY_SHRED":
+                possible_shreds += 1
+            if len(conflicts) < 256:
                 conflicts.append({
                     "x": x, "y": y, "objid": row.get("objid"),
                     "type": source_type, "radius_pix": r_pix,
+                    "classification": classification,
+                    "sga_core_overlap": bool(in_sga),
+                    "ref_cat": row.get("ref_cat"),
+                    "ref_id": row.get("ref_id"),
                 })
             continue
         output[y1:y2, x1:x2] |= disk
@@ -143,6 +168,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         "elliptical_catalog_sources": elliptical,
         "missing_shape_fallbacks": missing_shape,
         "skipped_target_overlap": near,
+        "possible_sga_shreds": possible_shreds,
         "near_target_sources": tuple(conflicts),
         "outside_cutout": outside,
         "unusable_catalog_sources": ignored,
@@ -150,7 +176,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
 
 
 
-def prepare_scene_contamination(dataset, project, draft, anchor_icrs):
+def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
+                                *, sga_prior=None):
     """Prepare source-bound candidate mask in a worker, with no network.
 
     The current stage supports verified local DR11 South native Tractor
@@ -183,10 +210,33 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs):
         raise ValueError("Invalid celestial WCS pixel scale")
     pxscale = float(math.sqrt(scales[0]*scales[1])*3600.)
     anchor = tuple(float(x) for x in anchor_icrs)
+    sga_core = None
+    if sga_prior is not None:
+        from lsbpipe.photometry.sga_priors import SGAGeometryPrior
+        if (not isinstance(sga_prior, SGAGeometryPrior) or
+                not isinstance(sga_prior.source_sha256, str) or
+                len(sga_prior.source_sha256) != 64 or
+                sga_prior.core_shape() is None):
+            raise ValueError("Valid selected SGA geometry prior required")
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+        separation = SkyCoord(*anchor, unit="deg").separation(
+            SkyCoord(sga_prior.ra_deg, sga_prior.dec_deg, unit="deg")
+        ).arcsec
+        if separation > 180.:
+            raise ValueError("SGA association exceeds 180 arcsec; review match")
+        sga_core = rasterize_sky_shape(
+            sga_prior.core_shape(), dataset["wcs"], shape).astype(bool)
+        if not np.any(sga_core):
+            raise ValueError("Chosen SGA prior outside native FITS cutout")
     protected = rasterize_sky_shape(
         SkyMaskShape("circle", center=anchor,
                      radius_arcsec=float(project.target_radius_arcsec)),
         dataset["wcs"], shape).astype(bool)
+    if sga_core is not None:
+        # Extends protection of plausible TARGET light, never substitutes
+        # SGA D26 for a final galaxy radius/outer isophote.
+        protected |= sga_core
     manual_excluded = np.zeros(shape, dtype=bool)
     restored_auto = np.zeros(shape, dtype=bool)
     for edit in draft.edits:
@@ -203,7 +253,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs):
             restored_auto |= selected
     auto, counts = conservative_catalogue_mask(
         shape, catalog.pixel_positions, catalog.rows,
-        arcsec_per_pixel=pxscale, protected=protected, wcs=dataset["wcs"])
+        arcsec_per_pixel=pxscale, protected=protected,
+        wcs=dataset["wcs"], sga_core=sga_core)
     auto = auto & ~restored_auto
     # Explicit manual exclusions are applied even if they overlap target
     # protection, whereas automated catalogue proposals never do.
@@ -221,6 +272,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs):
              "PROVISIONAL_PROTECTED_TARGET_RADIUS"]
     if counts["skipped_target_overlap"]:
         flags.append("TARGET_NEIGHBOURS_REQUIRE_MANUAL_REVIEW")
+    if sga_core is not None:
+        flags.extend(("SGA_CORE_ONLY_NOT_OUTER_LSB_BOUNDARY",
+                      "SGA_TRACTOR_EVIDENCE_NOT_STATISTICALLY_INDEPENDENT"))
     if caution["BAILOUT"]:
         flags.append("TRACTOR_BAILOUT_PIXELS_PRESENT")
     if caution["BRIGHT"]:
@@ -236,6 +290,11 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs):
         "dataset_source": dataset["source"],
         "band": band,
         "anchor_icrs": anchor,
+        "sga_prior_id": sga_prior.sga_id if sga_prior is not None else None,
+        "sga_prior_sha256": (
+            sga_prior.source_sha256 if sga_prior is not None else None),
+        "sga_core_pixels": (
+            int(np.count_nonzero(sga_core)) if sga_core is not None else 0),
         "catalog_sha256": catalog.source_sha256,
         "catalog_path": catalog.source_path,
         "stats": {**counts,
