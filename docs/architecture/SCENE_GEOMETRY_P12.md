@@ -277,3 +277,49 @@ halos. Even if a contour appears visually convincing on Leo P, it is
 an exploratory user-reviewed **mask boundary**, not a measured or
 science-adopted galaxy isophote. Do not quote its `a`, `q`, `PA` or
 footprint as calibrated morphology without independent validation.
+
+
+## 2026-11-09 · Correction: source screening PRECEDES isophotal suggestion
+
+The exploratory `Find connected isophote` operation now depends on an
+explicitly prepared **catalogue-assisted per-band neighbour-mask preview**,
+rather than running unmasked on the original image. The preparation stage
+`1 · Prepare neighbour masks`:
+
+- Loads the already-local, exact-brick DR11 South Tractor table via the
+  existing validated reader (same `release/region/brick/band`, full
+  local catalogue SHA-256); it neither downloads nor fabricates catalogue
+  entries. Other releases and missing catalogues fail CLOSED.
+- Retains immutable native hard invalidity from IMAGE/INVVAR/NEXP/MASKBITS.
+  BRIGHT, MEDIUM, GALAXY and BAILOUT are counted as **diagnostic cautions**,
+  not blindly turned into blanket hard exclusions. In particular GALAXY
+  may contain the target itself.
+- Creates conservative **circular screening envelopes** around catalogued
+  PSF and extended neighbours with usable band flux, plus explicitly drawn
+  manual `exclude` areas. Envelopes approximate a locality to omit; they
+  are NOT rendered Tractor profiles, PSF-convolved subtraction, or an
+  optimal wing mask.
+- Protects a central ICRS circle of the project's configured target radius
+  plus existing manual `protect_target` shapes. Any automatic source
+  envelope *touching* protection is skipped entirely and counted as an
+  ambiguity for manual review. Manually drawn `exclude` may override
+  protection; `restore_auto` can revoke only editable auto envelopes.
+- Shows the proposed native-pixel contamination mask as a separate
+  colored overlay, with masked, skipped-near-target and invalid-pixel
+  counts. No FITS is modified, no saved scene draft or PSF is adopted.
+
+Only after this stage does `2 · Find masked isophote` become available.
+The connected-component detector and provisional sky estimation operate
+on the native IMAGE with hard and proposed source envelopes excluded.
+Mask/source/band/anchor/draft identity is checked, and editing a region
+or changing the band/anchor invalidates the preparation. The eventual
+isophote candidate is still only a cyan preview until `Add proposed region`.
+
+The prepared mask is **pre-PSF and not scientifically accepted**. In
+particular the catalogued PSF and galaxy-model estimates have not been
+converted into per-source pixel model images, and bright-star wing
+leakage and blends overlapping target protection remain unresolved.
+A later full Tractor-model/empirical-PSF-aware source model (not the
+all-source coadd model image blindly subtracted from data) is required
+before calibrated outer-isophote extraction or scientific adoption.
+The manual drafts remain useful for resolving explicitly flagged blends.
