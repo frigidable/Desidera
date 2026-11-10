@@ -774,3 +774,102 @@ def test_leo_p_zero_radius_viewer_rejected_then_parent_requested_explicitly(
     assert "Parent PGC" in editor.sga_status.text()
     assert not editor.sga_use_prior.isChecked()
     assert editor.draft.edits == ()
+
+
+def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
+        qtbot,tmp_path,monkeypatch):
+    from lsbpipe.photometry.sga_priors import SGAGeometryPrior,SGAPriorLookup
+    import lsbpipe.gui.scene_editor as module
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    data=_data(project.project_id,band="g")
+    n=321
+    xx,yy=np.meshgrid(np.arange(n),np.arange(n))
+    rng=np.random.default_rng(140)
+    image=(1.+rng.normal(0.,.15,(n,n))
+           +2.4*np.exp(-.5*(((xx-160.)/29.)**2+
+                             ((yy-160.)/19.)**2)))
+    data["data"]["image"]=image
+    data["data"]["invvar"]=np.ones_like(image)
+    data["data"]["nexp"]=np.ones_like(image)
+    data["data"]["maskbits"]=np.zeros(image.shape,np.uint32)
+    data["pixel_shape"]=image.shape
+    data["rgb"]=np.full((*image.shape,3),128,np.uint8)
+    data["native_hard"]=np.zeros(image.shape,bool)
+    data["hard_rgba"]=np.zeros((*image.shape,4),np.uint8)
+    w=_native_wcs()
+    w.wcs.crpix=[161.,161.]
+    data["wcs"]=w
+    editor._accept_dataset(data)
+    original=image.copy()
+    prior=SGAGeometryPrior(
+        release="SGA2025-PARENT",sga_id=5065058,name="Leo P",
+        ra_deg=359.999,dec_deg=60.,offset_arcsec=0.,
+        d26_arcmin=2.*1.8/60.,
+        d26_ref="VIEWER_PARENT_DIAMETER",
+        ba=.65,pa_deg=140.,ellipsebit=0,ellipsemode=0,
+        flags=("PARENT_INITIAL_GEOMETRY_NOT_FITTED_ISOPHOTE",),
+        source_sha256="c"*64,source_path="https://www.legacysurvey.org/"
+        "viewer/sga2025-parent/1/cat.json")
+    lookup=SGAPriorLookup(
+        "SGA2025-PARENT",prior.source_path,prior.source_sha256,(prior,))
+    editor._accept_sga_lookup(lookup)
+    editor.sga_candidates.setCurrentIndex(1)
+    assert editor.sga_use_seed.isChecked()
+    assert not editor.sga_use_prior.isChecked()
+    assert editor.draft.edits==()
+
+    def fake_prepare(dataset,root,draft,center):
+        mask=np.zeros(dataset["pixel_shape"],bool)
+        mask[145:156,182:192]=True
+        return {
+            "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "project_id":project.project_id,"band":dataset["band"],
+            "dataset_source":dataset["source"],"draft_digest":draft.digest,
+            "anchor_icrs":center,"catalog_sha256":"a"*64,
+            "mask":mask,"auto_mask":mask.copy(),
+            "sga_prior_id":None,
+            "stats":{"masked_catalog_sources":1,
+                     "masked_catalog_centres":(
+                         {"x":186.,"y":150.,"objid":42,"type":"PSF",
+                          "gaia_counterpart":False},),
+                     "skipped_target_overlap":0,
+                     "excluded_pixels":int(mask.sum()),
+                     "native_hard_pixels":0},
+            "flags":("PSF_WINGS_NOT_VALIDATED",),
+        }
+
+    monkeypatch.setattr(module,"prepare_scene_neighbour_masks",fake_prepare)
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._contamination is not None,
+        timeout=10000)
+    editor.iso_smooth.setValue(3.)
+    editor.iso_generate.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None
+        and editor._isophote_proposal is not None,timeout=20000)
+    proposal=editor._isophote_proposal
+    assert proposal["sga_comparison"]["sga_ref"]==5065058
+    assert proposal["sga_comparison"]["reference_q"]==pytest.approx(.65)
+    assert proposal["sga_comparison"]["reference_pa_deg"]==pytest.approx(140.)
+    assert proposal["sga_radial"] is not None
+    assert proposal["sga_seed_shape"] is not None
+    assert proposal["sga_seed_shape"].a_arcsec>prior.core_shape().a_arcsec
+    assert "SGA-informed INITIAL ellipse" in editor.iso_sga_summary.text()
+    assert editor.iso_shape.findData("sga_seed")>=0
+    editor.iso_shape.setCurrentIndex(
+        editor.iso_shape.findData("sga_seed"))
+    assert editor._isophote_preview is not None
+    assert not editor.iso_accept.isEnabled()
+    editor._accept_isophote()
+    assert editor.draft.edits==()
+    editor.iso_low_conf_override.setChecked(True)
+    assert editor.iso_accept.isEnabled()
+    shape=proposal["sga_seed_shape"]
+    editor.iso_accept.click()
+    assert editor.draft.edits[0].shape==shape
+    assert editor.draft.edits[0].band=="g"
+    assert "kind=sga_seed" in editor.draft.edits[0].comment
+    assert "SGAref=5065058" in editor.draft.edits[0].comment
+    assert np.array_equal(data["data"]["image"],original)
+    assert editor._isophote_proposal is None
