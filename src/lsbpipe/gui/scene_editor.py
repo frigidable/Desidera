@@ -1108,7 +1108,7 @@ class SceneEditor(QWidget):
                   "layer, or continue without SGA.")
         else:
             self.sga_status.setText(
-                "No SGA2025 geometry match within 3 arcmin of the saved "
+                "No SGA match with usable geometry within 3 arcmin of the saved "
                 "object centre. Continue without SGA; native Tractor "
                 "screening still works.")
         self._redraw_sga_prior()
