@@ -924,7 +924,7 @@ class SceneEditor(QWidget):
         self.iso_prepare.clicked.connect(self._prepare_neighbour_masks)
         iso_layout.addWidget(self.iso_prepare)
         self.radius_sweep_btn = QPushButton(
-            "Compare protection radii · 40–80″")
+            "Radius sweep · 40–80″")
         self.radius_sweep_btn.setObjectName("scene_radius_sweep")
         self.radius_sweep_btn.setToolTip(
             "Read-only five-radius experiment (40/50/60/70/80 arcsec) "
@@ -1752,7 +1752,7 @@ class SceneEditor(QWidget):
         self._active_generation=self._load_generation
         self.radius_sweep_status.setText(
             "Comparing 40/50/60/70/80″ protection radii on identical "
-            "original G/R/I/Z input and catalogue, without writes…")
+            "current native band and catalogue, without writes…")
         self._poll_timer.start()
         self._refresh_controls()
 
