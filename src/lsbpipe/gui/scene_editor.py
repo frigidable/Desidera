@@ -492,8 +492,10 @@ def run_scene_protection_radius_sweep(
             "catalog_sha256":prepared["catalog_sha256"],
             "masked_catalog_sources":counts["masked_catalog_sources"],
             "protected_overlaps":counts["skipped_target_overlap"],
-            "gaia_inner_preview_sources":counts["gaia_inner_preview_sources"],
-            "gaia_inner_preview_pixels":counts["gaia_inner_preview_pixels"],
+            "gaia_inner_preview_sources":counts.get(
+                "gaia_inner_preview_sources", 0),
+            "gaia_inner_preview_pixels":counts.get(
+                "gaia_inner_preview_pixels", 0),
             "excluded_pixels":counts["excluded_pixels"],
             "protected_pixels":counts["protected_pixels"],
             "usable_pixels":counts["usable_pixels"],
