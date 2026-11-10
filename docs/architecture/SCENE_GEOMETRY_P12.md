@@ -889,3 +889,9 @@ Next gates before GUI and science adoption:
    independently vetted scenes.
 6. Keep original SC1 masks, SGA priors, target-protection areas,
    geometries and original FITS unchanged until these gates pass.
+
+Photometric estimator definitions, mandatory quality gates, missing-light
+bounds and release eligibility are specified separately in
+[Photometry Quality & Validation](PHOTOMETRY_QUALITY_VALIDATION.md).
+They are *requirements*, not evidence that SC1/SA2 or Leo P photometry
+has passed science QA.
