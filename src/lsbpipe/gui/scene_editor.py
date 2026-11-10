@@ -1327,6 +1327,11 @@ class SceneEditor(QWidget):
 
     def _switch_source(self, key, dataset):
         self._load_generation += 1
+        # QA-only inner foreground exclusions require fresh opt-in for
+        # every changed project, band or native FITS source.
+        self.iso_gaia_inner_preview.blockSignals(True)
+        self.iso_gaia_inner_preview.setChecked(False)
+        self.iso_gaia_inner_preview.blockSignals(False)
         self._source_key = key
         self._loaded = dataset
         self._pending_world = []
