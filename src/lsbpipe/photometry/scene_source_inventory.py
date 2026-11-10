@@ -94,6 +94,13 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
     par_sig = _sig(row.get("parallax_mas"), row.get("parallax_ivar"))
     pmra_sig = _sig(row.get("pmra_masyr"), row.get("pmra_ivar"))
     pmdec_sig = _sig(row.get("pmdec_masyr"), row.get("pmdec_ivar"))
+    # Gaia astrometry is evidence that warrants foreground-star review,
+    # not proof of a clean point-source PSF or reliable membership.
+    astrometric_foreground_signal = (
+        is_gaia and
+        any(v is not None and v >= 5.
+            for v in (par_sig, pmra_sig, pmdec_sig))
+    )
     evidence = []
     if is_gaia:
         evidence.append("GAIA_DR3_REFERENCE_ID")
@@ -104,10 +111,7 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         evidence.append("GAIA_MAG_ONLY_REFERENCE_NOT_VERIFIED")
     if ref_cat == "L4":
         evidence.append("SGA_REFERENCE_NOT_TARGET_MEMBERSHIP")
-    if is_gaia and (
-            (par_sig is not None and par_sig >= 5) or
-            (pmra_sig is not None and pmra_sig >= 5) or
-            (pmdec_sig is not None and pmdec_sig >= 5)):
+    if astrometric_foreground_signal:
         evidence.append("GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW")
     if row.get("gaia_duplicated_source"):
         evidence.append("GAIA_DUPLICATED_SOURCE")
@@ -153,6 +157,14 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         "screening_disposition":disposition,
         "physical_membership":"UNDETERMINED",
         "photometry_action":"NO_NEW_ACTION_READ_ONLY",
+        "foreground_evidence_assessment":(
+            "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW"
+            if astrometric_foreground_signal else "INSUFFICIENT_EVIDENCE"),
+        "proposed_source_treatment":(
+            "REVIEW_FOREGROUND_PSF_OR_MANUAL_EXCLUSION"
+            if astrometric_foreground_signal else
+            "REVIEW_TARGET_LIGHT_VS_CONTAMINANT"),
+        "proposed_treatment_is_active":False,
         "centre_in_target_protection":bool(centre_protected),
         "centre_in_sga_prior":bool(centre_sga),
         "reference_catalog":ref_cat, "reference_id":ref_id,
@@ -295,6 +307,7 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         "cautions":(
             "TRACTOR_COMPONENT_NOT_PHYSICAL_OBJECT",
             "GAIA_DR3_REFERENCE_NOT_FOREGROUND_MEMBERSHIP",
+            "GAIA_ASTROMETRIC_SIGNAL_REQUIRES_QUALITY_CHECK",
             "NO_HII_OR_YOUNG_CLUSTER_CLASSIFICATION",
             "NO_NEW_MASK_OR_PHOTOMETRY_ACTION",
             "SC1_MASKED_CENTRE_INVENTORY_MAY_BE_CAPPED",
