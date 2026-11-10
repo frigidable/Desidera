@@ -1618,6 +1618,8 @@ class SceneEditor(QWidget):
             badge = ("REVIEW" if disp == "PROTECTED_OVERLAP"
                      else "MASK?" if disp == "PROPOSED_EXCLUDE"
                      else "NO FIT?")
+            if not entry.get("centre_in_native_frame", True):
+                badge = "EDGE " + badge
             ident = entry["objid"]
             ref = (f" G3:{entry['gaia_dr3_source_id']}"
                    if entry["gaia_dr3_source_id"] is not None else "")
@@ -1627,8 +1629,10 @@ class SceneEditor(QWidget):
         self.source_registry_list.blockSignals(False)
         self.source_registry_status.setText(
             f"{len(self._source_registry_visible)} shown of "
-            f"{evidence['stored_count']} catalogued sources in "
-            f"native FITS; {evidence['total_in_native_frame']} total. "
+            f"{evidence['stored_count']} relevant Tractor sources; "
+            f"{evidence['total_in_native_frame']} centres in native FITS, "
+            f"{evidence.get('contributing_off_frame', 0)} off-frame "
+            "mask contributors. "
             f"Provisional catalogue exclusion is NOT physical "
             "source membership. "
             + (f"WARNING: {evidence['truncated']} entries omitted "
@@ -1831,7 +1835,7 @@ class SceneEditor(QWidget):
             return
         columns = (
             "source_id","objid","x","y","ra_deg","dec_deg",
-            "screening_disposition","physical_membership",
+            "centre_in_native_frame","screening_disposition","physical_membership",
             "photometry_action","tractor_type","reference_catalog",
             "reference_id","gaia_dr3_source_id",
             "parallax_mas","parallax_significance",
