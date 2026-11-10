@@ -206,5 +206,8 @@ def test_isophote_provenance_markers_ignored_without_mask_change():
         "sc1_iso_old_sga", "protect_target", ellipse,
         comment="SGA_INITIAL_GEOMETRY_DRAFT kind=sga_seed")
     assert is_legacy_isophote_protection(old_seed)
+    assert is_legacy_isophote_protection(
+        SkyMaskEdit("sc1_iso_truncated", "protect_target", ellipse,
+                    comment="x"*512))
     assert not is_legacy_isophote_protection(
         SkyMaskEdit("custom", "protect_target", ellipse))
