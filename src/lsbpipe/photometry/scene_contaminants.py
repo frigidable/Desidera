@@ -21,6 +21,24 @@ from lsbpipe.photometry.sky_masks import rasterize_sky_shape
 from lsbpipe.survey import named_bit
 
 
+def _has_gaia_catalogue_reference(row):
+    """An identified Gaia DR2/DR3 reference, not merely a placeholder mag.
+
+    Native Tractor FITS stores gaia_g_mag=0.0 for sources without Gaia
+    references. The non-None test mislabeled *every* such source as a
+    Gaia counterpart in SC1 QA. IDs denote catalogue associations,
+    not verified astrometry or foreground membership.
+    """
+    ref_cat = str(row.get("ref_cat") or "").strip().upper()
+    if ref_cat not in ("G2", "G3"):
+        return False
+    ref_id = row.get("ref_id")
+    try:
+        return ref_id is not None and int(ref_id) > 0
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def conservative_catalogue_mask(shape, positions, rows, *,
                                 arcsec_per_pixel, protected, wcs=None,
                                 sga_core=None):
@@ -142,7 +160,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                       0 <= int(round(x)) < nx and
                       0 <= int(round(y)) < ny and
                       bool(sga_core[int(round(y)), int(round(x))]))
-            has_gaia = row.get("gaia_g_mag") is not None
+            has_gaia = _has_gaia_catalogue_reference(row)
             # SGA priors and DR11 Tractor fits share input imagery; this
             # is a CANDIDATE explanation, never probabilistic evidence.
             # Gaia counterparts require individual stellar assessment:
@@ -169,7 +187,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             masked_centres.append({
                 "x":x,"y":y,"objid":row.get("objid"),
                 "type":source_type,
-                "gaia_counterpart":row.get("gaia_g_mag") is not None,
+                "gaia_counterpart":_has_gaia_catalogue_reference(row),
             })
         else:
             inventory_truncated += 1
