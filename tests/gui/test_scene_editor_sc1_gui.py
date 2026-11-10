@@ -922,23 +922,9 @@ def test_single_detected_contour_trial_does_not_falsely_claim_stability():
         2,4,"1.50","0.73")
 
 
-def test_scene_sga_radial_protection_warning_does_not_auto_save(
-        qtbot,tmp_path,monkeypatch):
+def test_sga_protected_60arcsec_radius_coincidence_is_not_claimed_as_real_edge():
     from lsbpipe.photometry.ellipse_seed import SGAInformedRadialSeed
-    from lsbpipe.photometry.sga_priors import SGAGeometryPrior,SGAPriorLookup
-    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
-    prior=SGAGeometryPrior(
-        release="SGA2025-PARENT",sga_id=5065058,name="Leo P",
-        ra_deg=359.999,dec_deg=60.,offset_arcsec=0.,
-        d26_arcmin=.476,d26_ref="VIEWER_PARENT_DIAMETER",
-        ba=.532,pa_deg=150.5,ellipsebit=0,ellipsemode=0,
-        flags=(),source_sha256="f"*64,source_path="local-parent.fits")
-    editor._accept_sga_lookup(SGAPriorLookup(
-        "SGA2025-PARENT",prior.source_path,prior.source_sha256,
-        (prior,)))
-    editor.sga_candidates.setCurrentIndex(1)
-    assert editor.sga_use_seed.isChecked()
-    # The warning rendering is tested separately from science recovery.
+    from lsbpipe.gui.scene_editor import scene_sga_mask_boundary_warning
     radial=SGAInformedRadialSeed(
         reference_a_arcsec=14.28,detected_a_arcsec=60.2,
         q_sky=.532,pa_deg=150.5,centre_icrs=(359.999,60.),
@@ -946,5 +932,13 @@ def test_scene_sga_radial_protection_warning_does_not_auto_save(
         flags=("RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS",
                "MASK_BOUNDARY_SENSITIVITY_NOT_TESTED"),
         target_protection_radius_arcsec=60.)
-    assert "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS" in radial.flags
-    assert editor.draft.edits==()
+    warning=scene_sga_mask_boundary_warning(radial,60.)
+    assert "60.0 arcsec" in warning
+    assert "MASK-DEPENDENT" in warning
+    assert "does not prove a galaxy boundary" in warning
+    assert not scene_sga_mask_boundary_warning(radial,None)
+    other=SGAInformedRadialSeed(
+        reference_a_arcsec=14.28,detected_a_arcsec=60.2,
+        q_sky=.532,pa_deg=150.5,centre_icrs=(359.999,60.),
+        bins=(),masked_fraction=0.,flags=())
+    assert not scene_sga_mask_boundary_warning(other,60.)
