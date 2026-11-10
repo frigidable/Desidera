@@ -617,9 +617,13 @@ gap without assuming a physical outer LSB isophote:
    morphology or imply a calibrated outer isophote.
 4. Prepared DR11 Tractor screening retains a bounded, immutable
    *source-centre inventory* of provisional masks. If a data-supported
-   SGA initial ellipse exists, Desidera counts masked catalogue source
-   centres within it and offers opt-in **blue review rings** for up to
-   25. These sources are `POTENTIAL_SHRED_OR_CONTAMINANT_REVIEW`,
+   SGA initial ellipse exists, Desidera counts both previously MASKED
+   source centres and separately the UNRESOLVED protected target
+   neighbours located inside that same expanded ellipse; neither count
+   establishes galaxy membership. It offers opt-in **blue review rings**
+   for up to 25 masked sources, with optional existing amber markers
+   for unresolved neighbours. These sources are
+   `POTENTIAL_SHRED_OR_CONTAMINANT_REVIEW`,
    not verified galaxy members: neither native masks nor model
    pixels are unmasked automatically. The total is a lower bound
    when the inventory is truncated; restore/remove decisions remain
