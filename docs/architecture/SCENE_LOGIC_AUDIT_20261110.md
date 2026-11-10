@@ -983,3 +983,24 @@ External MUSE control crossmatch is *held for validation* and not used by the ru
 **Why this matters:** weakening fixed color or morphology thresholds to chase individual spectroscopic known contaminants would overfit one dwarf. Instead, first quantify rejection frequencies and inspect the scatter for multiple independent dwarfs; use held-out MUSE/HST cases to evaluate source false positives and aperture/sky flux loss, before migrating any candidate tier into unattended science masks. Additional measurable native Tractor fields such as model-fit DCHISQ, RCHISQ, FRACFLUX/FRACMASKED, and pixel-level segmentation residuals should be tested in a separate, independently validated classifier; the current source registry does not yet certify their discriminating power.
 
 Regressions: new tests exercise exact red rejection trace for EXP near-miss, red target PSF, low-band-SNR unscreened source, positive red mask and GUI filters. No additional branches or source directories created.
+
+
+---
+
+## Eleventh-pass Leo P native protection-radius sweep (2026-11-11)
+
+The user's complete GUI `Copy Scene QA` generated `2026-11-10T23:51:27.622925Z` reports a **successful read-only 5/5 experiment** in native g-band DR11 South `1554p180`, with SGA parent geometry ID 5065058, contrast 2.2, Gaussian smoothing 4 px, 2-pixel bridge guard, optional inner Gaia and red-extended candidates enabled. Same native input catalog SHA-256 `8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`. All project edits remain empty and unadopted; the native FITS and project target radius were not modified.
+
+| Protection radius (arcsec) | SGA-geometry radial estimate (arcsec) | Masked source footprints | Candidate-excluded pixels | Connected component pixels | q | Component centroid shift (pixels) | Component IoU relative to 60 arcsec |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 40 | 50.4070 | 546 | 447671 | 27108 | 0.47178 | 42.87 | 0.79561 |
+| 50 | 53.6591 | 526 | 436118 | 31477 | 0.39167 | 56.03 | 0.92433 |
+| 60 | 60.1632 | 504 | 421494 | 34054 | 0.36042 | 64.08 | 1.0 |
+| 70 | 61.7893 | 490 | 410377 | 34182 | 0.36029 | 64.14 | 0.99555 |
+| 80 | 61.7893 | 473 | 397881 | 34182 | 0.36029 | 64.14 | 0.99555 |
+
+**Interpretation:** the preliminary radius increases with the *provisional protection size* for 40–60 arcsec, so those scenarios demonstrate substantial mask dependence; the plateau in the scalar radial metric at 70–80 arcsec is encouraging but **not** a validated galaxy boundary or proof of identical pixel-wise components. Compared to 60 arcsec, 40 arcsec adds 42 source candidates to the excluded class, including known spectroscopic background target OBJID 1793; the same policy also risks suppressing real resolved target stellar light. Between 60 and 70 arcsec, 14 catalogue source identities become protected overlaps, and the native connected-component IoU is 0.99555, but the contour remains unanchored and low-confidence. The empirical constant local sky level `2.1435495e-05 nMgy/pixel`, smoothed RMS `2.717869e-4 nMgy/pixel`, and 487180 training pixels were *numerically unchanged* across these five scenarios, despite the implementation refitting sky per scenario. No independent spatial sky or PSF-wing experiment was performed.
+
+All five scenarios report `LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE`, with centroid shifts from 42.9 to 64.1 px, spatial-trial minimum IoUs roughly 0.72–0.77 and contour-area sensitivity ratios 1.45–1.57. The slope of the radial result is not a surface-brightness profile and its convergence is not science adoption. Geometry in SGA parent viewer is a provisional prior, not an independently calibrated 26 mag/arcsec^2 isophote.
+
+**Instrumented follow-up:** previous-radius pairwise diagnostics were added to `run_scene_protection_radius_sweep` (next source revision), including pixel-wise component IoU, mask Jaccard, XOR pixel count, radial-endpoint delta and source-disposition transitions for each adjacent scenario. This directly tests 70-vs-80 pixel identity on the *next* actual application run; equality of summary values alone is insufficient. Regression tests include a failed contour and an unchanged contour despite differing masks, with no science or file writes. In a future physically meaningful photometric stage, compare sky models and PSF wings independently; test a fixed sky across mask scenarios and model source flux retention before choosing a protection aperture for unattended processing.
