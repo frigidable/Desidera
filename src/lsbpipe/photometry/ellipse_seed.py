@@ -629,7 +629,11 @@ def sga_informed_radial_seed(
     # distance to image edge, excluding the distant sky annulus.
     edge_pix = min(x0, y0, nx-1-x0, ny-1-y0)
     max_a = float(min(.30*min(nx,ny), .70*edge_pix)*singular[-1])
-    step = float(max(3.,1.5*smooth_sigma_pix)*pixel_scale)
+    # Keep a bounded number of annuli while still surveying the
+    # data-supported search radius rather than silently cutting it off
+    # after 48 fixed-width rings (which could miss Leo P outskirts).
+    step = float(max(max(3.,1.5*smooth_sigma_pix)*pixel_scale,
+                     max_a/64.))
     if max_a <= sga_shape.a_arcsec + 2*step:
         return SGAInformedRadialSeed(
             sga_shape.a_arcsec,None,sga_shape.q,sga_shape.pa_deg,
@@ -662,7 +666,7 @@ def sga_informed_radial_seed(
     subgood = supported[y1:y2,x1:x2]
     subsmoothed = smooth[y1:y2,x1:x2]
     bins = []
-    max_bin = min(int(max_a/step),48)
+    max_bin = min(int(max_a/step),64)
     for n in range(1,max_bin):
         ring = bin_index == n
         n_pix = int(np.count_nonzero(ring))
