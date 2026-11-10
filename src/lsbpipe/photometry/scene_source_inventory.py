@@ -441,7 +441,7 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
                   "first_failure":"CURRENT_BAND_UNFITTED_OR_BELOW_5SNR"}
             if red_audit_enabled and
                disposition == "NOT_SCREENED_OR_UNFITTED" and
-               centre_protected
+               cp
             else None),
         angular_arcsec=_separation_arcsec(
             row.get("ra_deg"),row.get("dec_deg"),anchor_icrs))
