@@ -964,3 +964,22 @@ actual pixel masks, per-band leakage, sky and contour changes.
 **Science status remains HOLD.** The red/extended classifier is
 a conservative, opt-in **non-adopted diagnostic**, not a
 calibrated unattended mass-photometry mask policy.
+
+
+---
+
+## Tenth-pass actual Leo P GUI source-rejection audit (2026-11-11)
+
+User supplied a new real GUI screenshot and **complete** `Copy Scene QA` JSON generated `2026-11-10T23:26:04.463963Z` for native DR11 South `1554p180` g-band. Catalog SHA-256 remains `8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`. Both experimental modes active. This is genuine on-device execution, not an inferred run.
+
+Confirmed: 504 candidate-masked sources (493 ordinary + 5 Gaia + 6 red extended), 103 screened protected overlaps, 204 unscreened/unfitted catalogue sources (42 within the circular target protection), 421494 masked candidate pixels, 13728 Gaia-preview pixels, 7767 red-preview pixels. Native hard-invalid 385. Native low-confidence isophote 34054 px at contrast 2.20, smoothing 4 pix; q=0.36 and centre drift 64.1 pix; SGA radial endpoint ~60.2 arcsec close to the 60-arcsec protection radius, so no scientific outer-isophote adoption.
+
+Inside the circular protection region 135 source centres remain unmasked (93 screened overlaps + 42 unscreened/unfitted); 10 more screened protected-overlap source footprints enter the protection region from outside it. Within the SGA-proposal ellipse 110 source centres remain unmasked (76 screened overlaps + 34 unscreened). **These are not 135/110 real contaminants**; the target galaxy produces many Tractor stellar/nebular components.
+
+External MUSE control crossmatch is *held for validation* and not used by the runtime mask policy. Of 17 Tractor OBJIDs associated with 19/20 published background spectra, three are selected by `red_extended_v1` (1794, 1804, 2151). Unmasked background examples: 1793 (EXP, g-r ~0.75, all other strict gates pass), 1845 (SER, blue), 1853 (PSF), 1976 (DEV shape_r ~11.4 arcsec and blue). Likely non-Gaia foreground star OBJID 1900 remains unmasked, but target carbon stars 1939 and 1991 have comparable red point-like fits; unconditional red-PSF masking would incur false positives.
+
+**Technical follow-up:** added a bounded, per-source `red_extended_v1` first-failure audit for *all current-band catalogue-screened protected overlaps*, including non-selected cases. Added separate refusal metadata for unscreened/unfitted source centres within target protection. The exported source inventory retains policy diagnostics with each source: `red_extended_rule_evidence`, `red_extended_first_failure`, `red_extended_near_miss`. GUI `Source evidence` now filters `RED_POLICY_UNMASKED` and `RED_POLICY_NEAR_MISS`, showing rejections without inventing membership. A near miss means *all preceding policy gates passed*, but g-r is between .70 and .80 and r-z is in-range; it is **not** automatically excluded. Based on the frozen Leo P JSON, OBJID 1793 is the sole near miss. Existing red/Gaia/ordinary geometric masks, project draft, original FITS and science hold remain unchanged.
+
+**Why this matters:** weakening fixed color or morphology thresholds to chase individual spectroscopic known contaminants would overfit one dwarf. Instead, first quantify rejection frequencies and inspect the scatter for multiple independent dwarfs; use held-out MUSE/HST cases to evaluate source false positives and aperture/sky flux loss, before migrating any candidate tier into unattended science masks. Additional measurable native Tractor fields such as model-fit DCHISQ, RCHISQ, FRACFLUX/FRACMASKED, and pixel-level segmentation residuals should be tested in a separate, independently validated classifier; the current source registry does not yet certify their discriminating power.
+
+Regressions: new tests exercise exact red rejection trace for EXP near-miss, red target PSF, low-band-SNR unscreened source, positive red mask and GUI filters. No additional branches or source directories created.
