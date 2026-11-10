@@ -855,7 +855,8 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert proposal["sga_radial"] is not None
     assert proposal["sga_seed_shape"] is not None
     assert proposal["sga_seed_shape"].a_arcsec>prior.core_shape().a_arcsec
-    assert "SGA-informed INITIAL ellipse" in editor.iso_sga_summary.text()
+    assert "SGA INITIAL:" in editor.iso_sga_summary.text()
+    assert "Independent moments:" in editor.iso_sga_summary.text()
     review=proposal["sga_comparison"].get("review_candidates",())
     assert len(editor._sga_shred_paths)==len(review)
     assert not editor.iso_show_sga_shreds.isChecked()
