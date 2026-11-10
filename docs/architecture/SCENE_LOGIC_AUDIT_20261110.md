@@ -838,3 +838,20 @@ source catalogue SHA-256
 
 The resulting radial change, if any, is **sensitivity to this
 particular geometric masking policy**, not validated decontamination.
+
+
+---
+
+## Seventh-pass Leo P independent MUSE contamination crossmatch (2026-11-11)
+
+Reference: Evans et al. (2019), A&A 622 A129, DOI https://doi.org/10.1051/0004-6361/201834145; Tables 1-3. User QA snapshot 2026-11-10T22:19:04Z, DR11 South 1554p180 G, Tractor SHA-256 8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c. All results READ-ONLY.
+
+- 19/20 spectroscopically confirmed MUSE background galaxy positions match within 1.5 arcsec to 17 distinct Tractor OBJIDs, all unmasked: 1793, 1794, 1799, 1804, 1827, 1839, 1841, 1845, 1853, 1888, 1976, 1978, 2010, 2084, 2110, 2139, 2151. 17/20 lie within 1 arcsec (16 distinct OBJIDs); MSB 172 has nearest model at 5.94 arcsec, not a credible association. Positional matches must be quality-reviewed before physical association.
+- MUSE galaxy pairs MSB 19/37 -> Tractor OBJID 1794 and MSB 26/30 -> OBJID 1845 are many-to-one blends, not two accurately modelled profiles.
+- Three seemingly foreground stars from MUSE Table 2 associate with OBJID 1870 (0.17 arcsec), 1876 (0.10 arcsec), 1900 (0.38 arcsec). Only the first two are covered by the opt-in Gaia preview. OBJID 1900 is a high-priority non-Gaia foreground candidate.
+- Protect known target light: 16/32 Table 1 candidate/confirmed hot-star positions match 10 distinct Tractor components at 1.5 arcsec; all 5 Table 2 cool/AGB/candidate sources match distinct protected components. Confirmed carbon stars MSB 10 -> 1939 and MSB 8 -> 1991 have model g-r approx. 1.92 and 1.95. LP26 O/HII source matches protected OBJID 2076 within 0.41 arcsec. Color or Tractor TYPE must not trigger blanket exclusion.
+- Within 60 arcsec: 144 centres = 5 Gaia-preview masks, 97 protected overlaps, 42 unfitted/unscreened; 139 unmasked. Within the current SGA-supported ellipse: 120 centres = 5 Gaia, 1 standard proposed exclusion, 78 screened protected overlaps, 36 previously omitted unfitted/unscreened; 114 unmasked. These are not all contaminants.
+- Current SC1 isophote remains LOW CONFIDENCE; selected 2.20/4px component decreased from 45,974 to 34,057 pixels after opt-in Gaia previews (-25.9 percent), so masking induces substantial sensitivity and must be validated with identical inputs, PSF/sky/residual checks.
+- Implemented in the existing Draft PR #84: read-only Source Evidence filters TARGET_PROTECTION_ALL, TARGET_UNSCREENED, and full SGA unmasked counts. Do not automatically mask non-Gaia candidates; introduce a general provenance-rich literature crossmatch and research-confirmed source-mask proposal workflow, with many-to-one blend handling and HST/MUSE validation.
+
+No new branch/directory, FITS modification, active mask promotion or SCIENCE adoption.
