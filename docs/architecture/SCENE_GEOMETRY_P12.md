@@ -534,3 +534,42 @@ independent band-specific image review. One cannot validate the
 full SGA-2025 `SGA2025` and `ELLIPSEPHOT` records from the
 Viewer's small JSON overlay: use the local versioned science FITS
 reader or a separately verified source for those extra fields.
+
+
+## 2026-11-10 · Leo P SGA-0 invalid fitted ellipse and explicit SGA-2025 Parent fallback
+
+User-visible real DR11 South DESI Viewer query for Leo P
+(`RA=155.438012°`, `Dec=+18.088025°`) produced
+`SGA-0 · Viewer ref 0`, offset 0.1 arcsec, but **no diameter**,
+`b/a=1`, `PA=0°` and `VIEWER_GEOMETRY_INCOMPLETE`.
+A good position coincidence does **not** supply measured geometry.
+The green ellipse visible on the screenshot was an existing SC1
+scene shape, not a gold SGA prior. The fitted Viewer `radiusArcsec`
+was absent/nonpositive: this row must not enter either initial-ellipse
+candidates or the optional Tractor-shred-protection mask.
+
+The on-demand parser now retains metadata for rejected nearby rows
+(`unusable_count`, bounded `unusable_examples`), but **returns only
+physically usable ellipses** (`radiusArcsec>0`, `0<q<=1`,
+finite PA). The GUI clearly reports "ZERO usable initial ellipses",
+along with the reason, and leaves SGA protection disabled. It neither
+invents a radius nor treats the SGA-0 identifier as a verified SGAID.
+
+For such objects a separate, **explicit**, still read-only action
+`Try SGA-2025 Parent · initial geometry` queries the official
+`/viewer/sga2025-parent/1/cat.json` spatial catalogue endpoint.
+The parent record may have a useful catalogue `diam`, BA and PA
+even where fitted SGA-2025 `D26` has no available ellipse.
+Its returned `radiusArcsec` is rendered only as a **parent INITIAL
+diameter**, its `pgc` is the **parent PGC**, NOT an SGAID, and its
+flags include `PARENT_INITIAL_GEOMETRY_NOT_FITTED_ISOPHOTE`.
+A parent result does not override an ellipse result or the user's
+original manual galaxy geometry: the researcher chooses the matching
+entry and independently opts in to source-screening protection.
+Parent positional matching is not proof of an exact SGA group-to-Leo P
+association. Native FITS and previously saved drafts remain unchanged.
+
+The real Leo P SGA2025 parent response and scientific merged FITS
+have **not yet been examined**, so no new galaxy radius/PA/q is
+reported as a measurement. Unit and GUI tests cover the observed
+SGA-0 anomaly and the explicit parent fallback on synthetic responses.
