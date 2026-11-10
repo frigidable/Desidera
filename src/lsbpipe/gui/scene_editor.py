@@ -1751,14 +1751,39 @@ class SceneEditor(QWidget):
             f"rms={model.smoothed_sky_rms:.7g} "
             f"TractorSHA256={proposed['catalog_sha256']} "
             f"source={proposed['source']}")
-        comment = (self.comment.text().strip() + " | " + provenance).strip(" |")
+        if kind == "sga_seed":
+            cmp = proposed["sga_comparison"]
+            # Compact origin-first metadata must survive the 512-character
+            # draft-comment bound. Keep FULL, not abbreviated, catalogue
+            # hashes for independently checkable provenance.
+            provenance = (
+                f"SGA_INITIAL_GEOMETRY_DRAFT kind=sga_seed "
+                f"from_band={self._band} "
+                f"scope={'all_EXPLICIT' if scope is None else self._band} "
+                f"SGAref={cmp['sga_ref']} "
+                f"SGAsha256={cmp['sga_source_sha256']} "
+                f"TractorSHA256={proposed['catalog_sha256']} "
+                f"a_arcsec={shape_for_edit.a_arcsec:.2f} "
+                f"q={shape_for_edit.q:.4f} "
+                f"PA_deg={shape_for_edit.pa_deg:.2f} "
+                f"masked_candidates={cmp.get('masked_catalog_centres_in_initial_ellipse',0)} "
+                f"threshold={model.threshold_contrast:g} "
+                f"smooth_pix={model.smoothing_pix:g} "
+                "MANUAL_REVIEW_NO_SCIENCE_ADOPTION")
+            comment = (provenance +
+                       (" | " + self.comment.text().strip()
+                        if self.comment.text().strip() else ""))[:512]
+        else:
+            comment = (
+                self.comment.text().strip() + " | " + provenance
+            ).strip(" |")[:512]
         try:
             edit = SkyMaskEdit(
                 "sc1_iso_" + uuid4().hex,
                 "protect_target",
                 shape_for_edit,
                 band=scope,
-                comment=comment[:512])
+                comment=comment)
             self._push_edits(self._draft.edits + (edit,))
         except (ValueError, TypeError) as exc:
             self.iso_details.setText("Proposed region rejected: " + str(exc))
