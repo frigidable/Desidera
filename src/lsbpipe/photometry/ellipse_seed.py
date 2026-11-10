@@ -568,6 +568,9 @@ class SGAInformedRadialSeed:
     bins: tuple[dict, ...]
     masked_fraction: float
     flags: tuple[str, ...]
+    # Source screening uses this circular protected radius: a coincident
+    # inferred semimajor axis is suspect, not a confirmed mask artifact.
+    target_protection_radius_arcsec: float | None = None
     status: str = "SGA_INFORMED_RADIAL_SEED_NOT_ADOPTED"
 
 
@@ -576,7 +579,9 @@ def sga_informed_radial_seed(
         *, local_sky: float, smoothed_rms: float,
         smooth_sigma_pix: float = 4.,
         median_contrast: float = .65,
-        min_positive_sectors: int = 4) -> SGAInformedRadialSeed:
+        min_positive_sectors: int = 4,
+        target_protection_radius_arcsec: float | None = None
+        ) -> SGAInformedRadialSeed:
     """Find data-supported outer radial continuity along an SGA initial ellipse.
 
     Uses normalized masked Gaussian smoothing, robust annular medians
@@ -602,6 +607,12 @@ def sga_informed_radial_seed(
             or not .2 <= median_contrast <= 4
             or not 2 <= min_positive_sectors <= 8):
         raise ValueError("SGA radial settings or empirical sky RMS invalid")
+    if target_protection_radius_arcsec is not None:
+        protected_radius = float(target_protection_radius_arcsec)
+        if not math.isfinite(protected_radius) or protected_radius <= 0:
+            raise ValueError("Target screening protection radius invalid")
+    else:
+        protected_radius = None
     if (sga_shape is None or sga_shape.kind != "ellipse" or
             not .05 < sga_shape.q <= 1 or sga_shape.a_arcsec <= 0):
         raise ValueError("A valid selected SGA ellipse is required")
@@ -638,7 +649,8 @@ def sga_informed_radial_seed(
         return SGAInformedRadialSeed(
             sga_shape.a_arcsec,None,sga_shape.q,sga_shape.pa_deg,
             (ra0,dec0),(),0.,
-            ("SGA_PRIOR_TOO_LARGE_FOR_NATIVE_SEARCH","NO_DETECTED_OUTER_RADIUS"))
+            ("SGA_PRIOR_TOO_LARGE_FOR_NATIVE_SEARCH","NO_DETECTED_OUTER_RADIUS"),
+            target_protection_radius_arcsec=protected_radius)
     good = okay & np.isfinite(arr)
     numerator = gaussian_filter(
         np.where(good,arr-local_sky,0.),smooth_sigma_pix)
@@ -728,6 +740,16 @@ def sga_informed_radial_seed(
         flags.append("NO_DETECTED_OUTER_RADIUS")
     elif bins and bins[-1]["supported"]:
         flags.append("SEARCH_RADIAL_LIMIT_REVIEW")
+    if (detected is not None and protected_radius is not None
+            and abs(detected-protected_radius) <= max(2.*step,
+                                                     .1*protected_radius)):
+        # The Tractor source-screening footprint changes near this
+        # scale. Coincidence with the proposed radial break is
+        # observationally suspicious but not proof of causation.
+        flags.extend((
+            "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS",
+            "MASK_BOUNDARY_SENSITIVITY_NOT_TESTED",
+        ))
     # Descriptive diagnostic: fraction of the central-to-proposed
     # annular area which is excluded, never a completeness correction.
     final_a = detected if detected is not None else sga_shape.a_arcsec
@@ -739,4 +761,5 @@ def sga_informed_radial_seed(
         detected_a_arcsec=detected,
         q_sky=float(sga_shape.q),pa_deg=float(sga_shape.pa_deg),
         centre_icrs=(ra0,dec0),bins=tuple(bins),
-        masked_fraction=masked_fraction,flags=tuple(flags))
+        masked_fraction=masked_fraction,flags=tuple(flags),
+        target_protection_radius_arcsec=protected_radius)
