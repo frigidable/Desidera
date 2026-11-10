@@ -1540,6 +1540,137 @@ class SceneEditor(QWidget):
             + ", ".join(result["flags"]))
         self._refresh_controls()
 
+    def _render_source_registry(self, *_):
+        """Filter all source-level evidence; nothing here edits a mask."""
+        evidence = self._source_registry
+        self._source_registry_visible = []
+        self.source_registry_list.blockSignals(True)
+        self.source_registry_list.clear()
+        if evidence is None:
+            self.source_registry_list.blockSignals(False)
+            self.source_registry_details.setPlainText(
+                "No current native Tractor catalogue evidence.")
+            self._refresh_controls()
+            return
+        selected = self.source_registry_filter.currentData()
+        term = self.source_registry_search.text().strip().casefold()
+        for entry in evidence["entries"]:
+            if (selected != "ALL" and
+                    entry["screening_disposition"] != selected):
+                continue
+            search = " ".join((
+                str(entry["source_id"]),
+                str(entry["reference_id"]),
+                str(entry["tractor_type"]),
+                str(entry["screening_disposition"]),
+                " ".join(entry["evidence_flags"]),
+                " ".join(entry["maskbits_names"]),
+                " ".join(entry["fitbits_names"]),
+            )).casefold()
+            if term and term not in search:
+                continue
+            self._source_registry_visible.append(entry)
+            disp = entry["screening_disposition"]
+            badge = ("REVIEW" if disp == "PROTECTED_OVERLAP"
+                     else "MASK?" if disp == "PROPOSED_EXCLUDE"
+                     else "NO FIT?")
+            ident = entry["objid"]
+            ref = (f" G3:{entry['gaia_dr3_source_id']}"
+                   if entry["gaia_dr3_source_id"] is not None else "")
+            self.source_registry_list.addItem(
+                f"{badge} · OBJID {ident} · "
+                f"{entry['tractor_type']}{ref}")
+        self.source_registry_list.blockSignals(False)
+        self.source_registry_status.setText(
+            f"{len(self._source_registry_visible)} shown of "
+            f"{evidence['stored_count']} catalogued sources in "
+            f"native FITS; {evidence['total_in_native_frame']} total. "
+            f"Provisional catalogue exclusion is NOT physical "
+            "source membership. "
+            + (f"WARNING: {evidence['truncated']} entries omitted "
+               "by the inventory safety cap. "
+               if evidence["truncated"] else ""))
+        if self._source_registry_visible:
+            self.source_registry_list.setCurrentRow(0)
+        else:
+            self.source_registry_details.setPlainText(
+                "No rows match this filter. No scientific decisions made.")
+        self._refresh_controls()
+
+    def _inspect_source_registry(self, index):
+        if not 0 <= index < len(self._source_registry_visible):
+            return
+        e = self._source_registry_visible[index]
+        gaia = (str(e["gaia_dr3_source_id"])
+                if e["gaia_dr3_source_id"] is not None else
+                "unverified / none")
+        pair = (f"{e['ra_deg']:.7f}, {e['dec_deg']:+.7f} deg"
+                if e["ra_deg"] is not None and
+                   e["dec_deg"] is not None else "not in catalogue row")
+        fluxes = e.get("model_fluxes_nMgy") or {}
+        model_str = ", ".join(
+            f"{band}={fluxes.get(band):.4g} nMgy"
+            if fluxes.get(band) is not None else f"{band}=unavailable"
+            for band in "griz")
+        info = (
+            f"{e['source_id']}\n"
+            f"ICRS: {pair}\n"
+            f"Native pixel: ({e['x']:.2f}, {e['y']:.2f})\n"
+            f"Tractor TYPE: {e['tractor_type']}\n"
+            f"SC1 screening: {e['screening_disposition']}\n"
+            f"Physical membership: {e['physical_membership']}\n"
+            f"Photometry action: {e['photometry_action']}\n"
+            f"Target circle centre: "
+            f"{e['centre_in_target_protection']}; "
+            f"SGA prior centre: {e['centre_in_sga_prior']}\n"
+            f"REF_CAT={e['reference_catalog']!r}; "
+            f"REF_ID={e['reference_id']}; Gaia DR3 ID={gaia}\n"
+            f"Gaia parallax={e['parallax_mas']} mas "
+            f"(|significance|={e['parallax_significance']}); "
+            f"pmRA={e['pmra_masyr']} mas/yr "
+            f"(|significance|={e['pmra_significance']}); "
+            f"pmDec={e['pmdec_masyr']} mas/yr "
+            f"(|significance|={e['pmdec_significance']})\n"
+            f"Gaia duplicate={e['gaia_duplicated_source']}\n"
+            f"Tractor model fluxes (NOT PSF-matched): {model_str}\n"
+            f"Current-band flux IVAR={e['band_model_flux_ivar']}\n"
+            f"MASKBITS={e['maskbits']}: "
+            + (", ".join(e["maskbits_names"]) or "none") +
+            f"\nFITBITS={e['fitbits']}: "
+            + (", ".join(e["fitbits_names"]) or "none") +
+            "\nEvidence cautions: " +
+            (", ".join(e["evidence_flags"]) or "none") +
+            "\nNo automatic foreground, background, HII, young-star "
+            "or Tractor-shred membership has been inferred.")
+        self.source_registry_details.setPlainText(info)
+
+    def _copy_source_registry_tsv(self):
+        """Only explicit user action can export the filtered evidence."""
+        if not self._source_registry_visible:
+            return
+        columns = (
+            "source_id","objid","x","y","ra_deg","dec_deg",
+            "screening_disposition","physical_membership",
+            "photometry_action","tractor_type","reference_catalog",
+            "reference_id","gaia_dr3_source_id",
+            "parallax_mas","parallax_significance",
+            "pmra_masyr","pmra_significance",
+            "pmdec_masyr","pmdec_significance",
+            "band_model_flux_nMgy","band_model_flux_ivar",
+            "maskbits","fitbits","evidence_flags",
+        )
+        stream = StringIO()
+        writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
+        writer.writerow(("source_catalog_sha256",
+                         self._source_registry["catalog_sha256"]))
+        writer.writerow(columns)
+        for e in self._source_registry_visible:
+            writer.writerow([
+                ";".join(e[k]) if isinstance(e.get(k), (tuple,list))
+                else e.get(k) for k in columns
+            ])
+        QApplication.clipboard().setText(stream.getvalue())
+
     def _update_contamination_overlay(self, *_):
         if self._contamination_overlay is not None:
             self._contamination_overlay.setVisible(
