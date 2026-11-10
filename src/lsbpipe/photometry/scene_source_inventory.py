@@ -51,6 +51,23 @@ def _sig(value, invvar):
         return None
 
 
+def _separation_arcsec(ra, dec, centre):
+    if centre is None or ra is None or dec is None:
+        return None
+    ra0, dec0 = map(float, centre)
+    ra, dec = float(ra), float(dec)
+    if not all(math.isfinite(v) for v in (ra0,dec0,ra,dec)):
+        return None
+    # Haversine remains stable across the RA=0 meridian and at small
+    # dwarf-galaxy angular separations.
+    da = math.radians((ra-ra0+180.)%360.-180.)
+    dd = math.radians(dec-dec0)
+    a = (math.sin(dd/2.)**2 +
+         math.cos(math.radians(dec))*math.cos(math.radians(dec0))
+         * math.sin(da/2.)**2)
+    return math.degrees(2.*math.asin(math.sqrt(min(1.,max(0.,a)))))*3600.
+
+
 def _point_key(x, y, objid):
     return (round(float(x), 4), round(float(y), 4),
             int(objid) if objid is not None else None)
@@ -74,7 +91,8 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         evidence.append("GAIA_DR3_REFERENCE_ID")
     elif ref_cat == "G3":
         evidence.append("GAIA_REF_WITHOUT_VALID_ID")
-    elif row.get("gaia_g_mag") is not None:
+    elif (row.get("gaia_g_mag") is not None and
+          0. < float(row["gaia_g_mag"]) < 35.):
         evidence.append("GAIA_MAG_ONLY_REFERENCE_NOT_VERIFIED")
     if ref_cat == "L4":
         evidence.append("SGA_REFERENCE_NOT_TARGET_MEMBERSHIP")
@@ -156,7 +174,8 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
 
 def build_scene_source_inventory(catalog, *, pixel_shape, protected,
                                  screen_stats, release, region, brick, band,
-                                 sga_core=None, max_records=12000):
+                                 sga_core=None, anchor_icrs=None,
+                                 max_records=12000):
     """Join native catalog identities with actual SC1 disposition.
 
     All sources with centres in the native cutout plus protected-border
@@ -212,23 +231,26 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
     candidates.sort(key=lambda item:(
         item[0], str(item[3].get("objid")), item[1], item[2]))
     n_total = len(candidates)
+    full_counts = {
+        name:sum(item[4] == name for item in candidates)
+        for name in ("PROTECTED_OVERLAP","PROPOSED_EXCLUDE",
+                     "NOT_SCREENED_OR_UNFITTED")
+    }
     if n_total > max_records:
         candidates = candidates[:max_records]
     entries = tuple(_described_source(
         row,x=x,y=y,disposition=disposition,
         release=release,region=region,brick=brick,band=band,
-        centre_protected=cp,centre_sga=cs,angular_arcsec=None)
+        centre_protected=cp,centre_sga=cs,
+        angular_arcsec=_separation_arcsec(
+            row.get("ra_deg"),row.get("dec_deg"),anchor_icrs))
         for _,x,y,row,disposition,cp,cs in candidates)
-    counters = {
-        name:sum(item[4] == name for item in candidates)
-        for name in ("PROTECTED_OVERLAP","PROPOSED_EXCLUDE",
-                     "NOT_SCREENED_OR_UNFITTED")
-    }
-    # Stats count all eligible rows, not merely displayed rows.
-    full_counts = {
-        name:sum(item[4] == name for item in candidates)
-        for name in counters
-    }
+    source_screening_truncated = (
+        screen_stats.get("skipped_target_overlap",0) >
+        len(screen_stats.get("near_target_sources",())) or
+        screen_stats.get("masked_catalog_sources",0) >
+        len(screen_stats.get("masked_catalog_centres",()))
+    )
     return {
         "schema":SOURCE_EVIDENCE_SCHEMA,
         "catalog_sha256":catalog.source_sha256,
@@ -238,7 +260,8 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         "total_in_native_frame":n_total,
         "stored_count":len(entries),
         "truncated":max(0,n_total-len(entries)),
-        "screening_counts_stored":full_counts,
+        "screening_counts_all_native":full_counts,
+        "screening_evidence_incomplete":bool(source_screening_truncated),
         "screening_stats_legacy":{
             "skipped_target_overlap":screen_stats.get(
                 "skipped_target_overlap",0),
@@ -255,5 +278,7 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
             "NO_HII_OR_YOUNG_CLUSTER_CLASSIFICATION",
             "NO_NEW_MASK_OR_PHOTOMETRY_ACTION",
             "SC1_MASKED_CENTRE_INVENTORY_MAY_BE_CAPPED",
-        ) + (("INVENTORY_TRUNCATED",) if n_total>len(entries) else ()),
+        ) + (("INVENTORY_TRUNCATED",) if n_total>len(entries) else ())
+          + (("UPSTREAM_SCREENING_OUTCOMES_TRUNCATED",)
+             if source_screening_truncated else ()),
     }
