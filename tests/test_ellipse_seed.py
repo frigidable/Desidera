@@ -245,3 +245,50 @@ def test_sga_guided_radial_seed_does_not_invent_extent_on_sky_noise():
     with pytest.raises(ValueError,match="valid selected SGA ellipse"):
         sga_informed_radial_seed(image,np.ones_like(image,bool),w,None,
                                  local_sky=0.,smoothed_rms=.1)
+
+
+def test_sga_radial_matches_target_protection_radius_flagged_not_confirmed():
+    """A coincident 60-arcsec screening circle cannot validate Leo P extent."""
+    from astropy.wcs import WCS
+    from lsbpipe.photometry.sky_masks import SkyMaskShape
+    from lsbpipe.photometry.ellipse_seed import sga_informed_radial_seed
+    w = WCS(naxis=2)
+    w.wcs.crpix = [201., 201.]
+    w.wcs.crval = [155., 18.]
+    w.wcs.cd = np.diag([-1., 1.])/3600.
+    w.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    y, x = np.indices((401,401))
+    q = .55
+    theta = np.deg2rad(150.)
+    east, north = 200.-x, y-200.
+    major = east*np.sin(theta)+north*np.cos(theta)
+    minor = east*np.cos(theta)-north*np.sin(theta)
+    image = (.3 + 3.*np.exp(-.5*((major/35.)**2+
+                                  (minor/(35.*q))**2))
+             + np.random.default_rng(115).normal(0.,.08,(401,401)))
+    shape = SkyMaskShape("ellipse",center=(155.,18.),
+                         a_arcsec=14.,q=q,pa_deg=150.)
+    good = np.ones_like(image,bool)
+    without = sga_informed_radial_seed(
+        image, good, w, shape,local_sky=.3,smoothed_rms=.05,
+        smooth_sigma_pix=3.)
+    assert without.detected_a_arcsec is not None
+    # The coincident radius is an INPUT SCREENING CHOICE, not a
+    # photometric measurement, so coincidence is only diagnostic QA.
+    near = sga_informed_radial_seed(
+        image,good,w,shape,local_sky=.3,smoothed_rms=.05,
+        smooth_sigma_pix=3.,
+        target_protection_radius_arcsec=without.detected_a_arcsec)
+    assert near.detected_a_arcsec == without.detected_a_arcsec
+    assert near.target_protection_radius_arcsec == pytest.approx(
+        without.detected_a_arcsec)
+    assert "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS" in near.flags
+    assert "MASK_BOUNDARY_SENSITIVITY_NOT_TESTED" in near.flags
+    far = sga_informed_radial_seed(
+        image,good,w,shape,local_sky=.3,smoothed_rms=.05,
+        smooth_sigma_pix=3.,target_protection_radius_arcsec=12.)
+    assert "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS" not in far.flags
+    with pytest.raises(ValueError,match="protection radius invalid"):
+        sga_informed_radial_seed(
+            image,good,w,shape,local_sky=.3,smoothed_rms=.05,
+            target_protection_radius_arcsec=0.)
