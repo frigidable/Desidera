@@ -1060,20 +1060,33 @@ class SceneEditor(QWidget):
             self.sga_candidates.addItem(label, row)
         self.sga_candidates.setCurrentIndex(0)
         self.sga_candidates.blockSignals(False)
+        unusable = getattr(lookup, "unusable_count", 0)
+        invalid_notes = getattr(lookup, "unusable_examples", ())
         if lookup.matches:
             origin = ("DESI Viewer overlay" if
                       lookup.source_path.startswith("https://")
                       else "Local FITS")
             self.sga_status.setText(
                 f"{origin} {lookup.release}: "
-                f"{len(lookup.matches)} positional candidate(s). "
-                "Select a galaxy explicitly; viewer ellipse is NOT "
-                "validated catalogue D26, and even catalogue D26 may "
-                "cover only the bright central region.")
+                f"{len(lookup.matches)} usable geometric candidate(s). "
+                + (f"{unusable} nearby Viewer entry/entries were rejected "
+                   "because no valid ellipse exists. " if unusable else "")
+                + "Select the correct galaxy explicitly; the overlay "
+                  "is not independently validated outer LSB geometry.")
+        elif unusable:
+            self.sga_status.setText(
+                f"SGA2025 Viewer returned {unusable} nearby record(s), "
+                "but ZERO usable initial ellipses. "
+                + ("Examples: " + "; ".join(invalid_notes) + ". "
+                   if invalid_notes else "")
+                + "Do not use these records as galaxy geometry or "
+                  "enable SGA-based Tractor protection. "
+                  "Native-FITS analysis can continue without SGA.")
         else:
             self.sga_status.setText(
-                "No SGA match within 3 arcmin of saved object centre. "
-                "Continue without SGA; native Tractor still available.")
+                "No SGA2025 geometry match within 3 arcmin of the saved "
+                "object centre. Continue without SGA; native Tractor "
+                "screening still works.")
         self._redraw_sga_prior()
         self._refresh_controls()
 
@@ -1110,8 +1123,10 @@ class SceneEditor(QWidget):
             f"(ref={prior.d26_ref or 'unknown'}); "
             f"q={q}, PA={pa}; "
             f"offset={prior.offset_arcsec:.1f} arcsec. "
-            "Gold dashed ellipse = CENTRAL PRIOR only. "
-            "May miss LSB outskirts. SGA/Tractor not independent. "
+            + ("Gold dashed ellipse = CENTRAL PRIOR only. "
+               if prior.core_shape() is not None
+               else "NO USABLE SGA ELLIPSE: nothing drawn or protected. ")
+            + "May miss LSB outskirts. SGA/Tractor not independent. "
             + ("Flags: " + ", ".join(prior.flags)
                if prior.flags else "Published geometry still needs QA."))
         self._refresh_controls()
