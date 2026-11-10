@@ -14,10 +14,12 @@ from types import SimpleNamespace
 
 import numpy as np
 from astropy.wcs.utils import proj_plane_pixel_scales
+from scipy.spatial import cKDTree
 
 from lsbpipe.photometry.psf_tractor_gaia import read_native_tractor_gaia
 from lsbpipe.photometry.scene_source_inventory import (
     build_scene_source_inventory, gaia_astrometric_foreground_review,
+    conservative_red_extended_candidate,
 )
 from lsbpipe.photometry.sky_masks import rasterize_sky_shape
 from lsbpipe.survey import named_bit
@@ -44,7 +46,9 @@ def _has_gaia_catalogue_reference(row):
 def conservative_catalogue_mask(shape, positions, rows, *,
                                 arcsec_per_pixel, protected, wcs=None,
                                 sga_core=None,
-                                gaia_inner_preview=False):
+                                gaia_inner_preview=False,
+                                red_extended_preview=False,
+                                anchor_pixel=None, target_radius_arcsec=None):
     """Source-type-aware *screening* footprints, never rendered Tractor models.
 
     Point sources get conservative round brightness-dependent envelopes.
@@ -70,11 +74,29 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     possible_shreds = 0
     inner_preview = np.zeros((ny, nx), dtype=bool)
     inner_preview_centres = []
+    red_preview = np.zeros((ny,nx), dtype=bool)
+    red_preview_centres = []
     conflicts = []
     masked_centres = []
     inventory_truncated = 0
     if np.shape(positions) != (len(rows), 2):
         raise ValueError("Tractor positions and row count differ")
+    # Nearest-neighbour isolation is an independent veto. Do not use
+    # red/extended heuristics to discard blended target light in dense
+    # galaxy cores. Only compute this layer if explicitly requested.
+    near_pix = None
+    if red_extended_preview:
+        if (anchor_pixel is None or len(anchor_pixel) != 2 or
+                not all(math.isfinite(float(v)) for v in anchor_pixel) or
+                target_radius_arcsec is None or
+                not math.isfinite(float(target_radius_arcsec)) or
+                float(target_radius_arcsec) <= 0):
+            raise ValueError("Red-extended QA needs current target geometry")
+        p = np.asarray(positions, dtype=float)
+        good = np.where(np.isfinite(p).all(axis=1))[0]
+        near_pix = np.full(len(rows), np.inf)
+        if len(good) > 1:
+            near_pix[good] = cKDTree(p[good]).query(p[good], k=2)[0][:, 1]
     # Original WCS CD/PC matrix maps *native FITS pixels* to east/north
     # arcsec at the small selected field's tangent location.
     jacobian = None
@@ -89,7 +111,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 not np.isfinite(jacobian).all() or
                 abs(float(np.linalg.det(jacobian))) < 1e-8):
             raise ValueError("Invalid local WCS for Tractor morphology")
-    for (x, y), row in zip(positions, rows):
+    for index, ((x, y), row) in enumerate(zip(positions, rows)):
         x, y = float(x), float(y)
         if not math.isfinite(x) or not math.isfinite(y):
             ignored += 1
@@ -160,6 +182,40 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         else:
             disk = dx*dx+dy*dy <= r_pix**2
         if np.any(disk & protected[y1:y2, x1:x2]):
+            # Red extended interlopers need three independent signals:
+            # genuine extended fit, multi-band red SED and isolation.
+            # Cutoffs are conservative HEURISTICS pending cross-galaxy
+            # purity/galaxy-light loss validation; never science adoption.
+            is_red_preview = False
+            red_evidence = None
+            if red_extended_preview:
+                offset = (math.hypot(x-float(anchor_pixel[0]),
+                                     y-float(anchor_pixel[1])) *
+                          arcsec_per_pixel)
+                is_red_preview, red_evidence = (
+                    conservative_red_extended_candidate(
+                        row, offset_arcsec=offset,
+                        neighbour_arcsec=near_pix[index]*arcsec_per_pixel,
+                        target_radius_arcsec=target_radius_arcsec))
+            if is_red_preview:
+                output[y1:y2, x1:x2] |= disk
+                red_preview[y1:y2, x1:x2] |= disk
+                accepted += 1
+                candidate = {
+                    "x":x, "y":y, "objid":row.get("objid"),
+                    "type":source_type, "radius_pix":r_pix,
+                    "gaia_counterpart":False,
+                    "diagnostic_only":True, "rule":"red_extended_v1",
+                    "evidence":red_evidence,
+                }
+                red_preview_centres.append(candidate)
+                if len(masked_centres) < 4096:
+                    masked_centres.append(candidate)
+                else:
+                    inventory_truncated += 1
+                if pa is not None:
+                    elliptical += 1
+                continue
             # Explicit opt-in DIAGNOSTIC only. Strong reference astrometry
             # nominates possible foreground stars, not verified PSF models.
             # Even here we require PSF-type, valid Gaia G3 ID, and no
@@ -226,11 +282,15 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             elliptical += 1
     output.setflags(write=False)
     inner_preview.setflags(write=False)
+    red_preview.setflags(write=False)
     return output, {
         "masked_catalog_sources": accepted,
         "gaia_inner_preview_mask": inner_preview,
         "gaia_inner_preview_sources": len(inner_preview_centres),
         "gaia_inner_preview_centres": tuple(inner_preview_centres),
+        "red_extended_preview_mask": red_preview,
+        "red_extended_preview_sources": len(red_preview_centres),
+        "red_extended_preview_centres": tuple(red_preview_centres),
         "elliptical_catalog_sources": elliptical,
         "missing_shape_fallbacks": missing_shape,
         "skipped_target_overlap": near,
@@ -248,7 +308,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
 
 
 def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
-                                *, sga_prior=None, gaia_inner_preview=False):
+                                *, sga_prior=None, gaia_inner_preview=False,
+                                red_extended_preview=False):
     """Prepare source-bound candidate mask in a worker, with no network.
 
     The current stage supports verified local DR11 South native Tractor
@@ -335,8 +396,14 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         shape, catalog.pixel_positions, catalog.rows,
         arcsec_per_pixel=pxscale, protected=protected,
         wcs=dataset["wcs"], sga_core=sga_core,
-        gaia_inner_preview=bool(gaia_inner_preview))
+        gaia_inner_preview=bool(gaia_inner_preview),
+        red_extended_preview=bool(red_extended_preview),
+        anchor_pixel=(dataset["wcs"].all_world2pix(*anchor, 0)
+                      if red_extended_preview else None),
+        target_radius_arcsec=(float(project.target_radius_arcsec)
+                              if red_extended_preview else None))
     inner_gaia_mask = counts.pop("gaia_inner_preview_mask")
+    red_extended_mask = counts.pop("red_extended_preview_mask")
     source_inventory = build_scene_source_inventory(
         catalog, pixel_shape=shape, protected=protected,
         screen_stats=counts, release=release, region=region,
@@ -354,6 +421,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
     # The displayed orange footprint must show EFFECTIVE proposed pixels,
     # not pixels explicitly restored by the researcher.
     inner_gaia_mask = inner_gaia_mask & ~restored_auto
+    red_extended_mask = red_extended_mask & ~restored_auto
     # Explicit manual exclusions are applied even if they overlap target
     # protection, whereas automated catalogue proposals never do.
     excluded = auto | manual_excluded
@@ -373,6 +441,12 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
     if foreground_review_ids and counts["gaia_inner_preview_sources"] < (
             len(foreground_review_ids)):
         flags.append("PROTECTED_GAIA_ASTROMETRY_STARS_NOT_REMOVED")
+    if red_extended_preview:
+        flags.extend((
+            "EXPLICIT_RED_EXTENDED_MASK_PREVIEW_ONLY",
+            "COLOR_MORPHOLOGY_CLASSIFIER_PURITY_NOT_VALIDATED",
+            "NO_AUTOMATIC_MEMBERSHIP_PROOF",
+        ))
     if gaia_inner_preview:
         flags.extend((
             "EXPLICIT_GAIA_INTERIOR_MASK_PREVIEW_ONLY",
@@ -394,6 +468,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "auto_mask": auto.copy(),
         "gaia_inner_preview_mask": inner_gaia_mask.copy(),
         "gaia_inner_preview_enabled": bool(gaia_inner_preview),
+        "red_extended_preview_mask": red_extended_mask.copy(),
+        "red_extended_preview_enabled": bool(red_extended_preview),
         "protected": protected.copy(),
         "hard": hard.copy(),
         "project_id": project.project_id,
@@ -421,6 +497,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                       len(foreground_review_ids),
                   "gaia_inner_preview_pixels":
                       int(np.count_nonzero(inner_gaia_mask)),
+                  "red_extended_preview_pixels":
+                      int(np.count_nonzero(red_extended_mask)),
                   "catalog_rows": len(catalog.rows),
                   "excluded_pixels": int(np.count_nonzero(excluded)),
                   "native_hard_pixels": int(np.count_nonzero(hard)),
@@ -433,6 +511,6 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "flags": tuple(flags),
     }
     for name in ("mask", "auto_mask", "gaia_inner_preview_mask",
-                 "protected", "hard"):
+                 "red_extended_preview_mask", "protected", "hard"):
         output[name].setflags(write=False)
     return output
