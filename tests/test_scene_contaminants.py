@@ -808,6 +808,10 @@ def test_red_extended_v1_multicue_policy_vetoes_member_like_sources():
         **extra)[0]
     assert not conservative_red_extended_candidate(
         {**candidate,"gaia_duplicated_source":True},**extra)[0]
+    assert not conservative_red_extended_candidate(
+        {**candidate,"maskbits":None},**extra)[0]
+    assert not conservative_red_extended_candidate(
+        candidate,**{**extra,"neighbour_arcsec":float("nan")})[0]
 
 
 def test_red_extended_preview_only_masks_isolated_red_galaxies_not_blue_knots():
@@ -941,7 +945,8 @@ def test_red_extended_isolation_uses_wcs_not_scalar_pixel_scale():
     assert evidence["distance_geometry"] == (
         "NATIVE_WCS_LOCAL_EAST_NORTH_ARCSEC")
     assert 35. < evidence["offset_arcsec"] < 40.
-    assert np.isinf(evidence["nearest_arcsec"])
+    assert evidence["nearest_arcsec"] is None
+    assert evidence["no_catalogue_neighbour"] is True
     assert alone[120,160]
     # Fail closed if caller attempts to classify using no native WCS.
     with pytest.raises(ValueError,match="requires native celestial WCS"):
