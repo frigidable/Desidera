@@ -58,6 +58,33 @@ def _sig(value, invvar):
         return None
 
 
+def gaia_astrometric_foreground_review(row):
+    """Return (foreground_candidate, bad_negative_parallax) from DR11 Gaia refs.
+
+    A DR11 G3 cross-reference and component S/N are *review flags* only.
+    No astrometric-solution fidelity, RUWE, or PSF wing validation is
+    implied. A significant negative parallax vetoes foreground candidacy.
+    """
+    if str(row.get("ref_cat") or "").strip().upper() != "G3":
+        return False, False
+    try:
+        if int(row.get("ref_id") or 0) <= 0:
+            return False, False
+    except (TypeError, ValueError, OverflowError):
+        return False, False
+    par_sig = _sig(row.get("parallax_mas"), row.get("parallax_ivar"))
+    pm_sig = (
+        _sig(row.get("pmra_masyr"), row.get("pmra_ivar")),
+        _sig(row.get("pmdec_masyr"), row.get("pmdec_ivar")))
+    par = row.get("parallax_mas")
+    par = float(par) if par is not None else 0.
+    negative = par < 0. and par_sig is not None and par_sig >= 5.
+    positive = par > 0. and par_sig is not None and par_sig >= 5.
+    candidate = not negative and (
+        positive or any(v is not None and v >= 5. for v in pm_sig))
+    return bool(candidate), bool(negative)
+
+
 def _separation_arcsec(ra, dec, centre):
     if centre is None or ra is None or dec is None:
         return None
@@ -98,19 +125,8 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
     # unreliable astrometric solution than of genuine foreground depth.
     # The magnitude-only significance from _sig loses its sign, so
     # reintroduce it explicitly before generating foreground candidates.
-    negative_parallax_quality_alert = (
-        is_gaia and par_sig is not None and par_sig >= 5. and
-        float(row["parallax_mas"]) < 0.
-    )
-    positive_parallax_signal = (
-        par_sig is not None and par_sig >= 5. and
-        float(row["parallax_mas"]) > 0.
-    )
-    astrometric_foreground_signal = (
-        is_gaia and not negative_parallax_quality_alert and (
-            positive_parallax_signal or
-            any(v is not None and v >= 5. for v in (pmra_sig, pmdec_sig)))
-    )
+    astrometric_foreground_signal, negative_parallax_quality_alert = (
+        gaia_astrometric_foreground_review(row))
     evidence = []
     if is_gaia:
         evidence.append("GAIA_DR3_REFERENCE_ID")
@@ -151,8 +167,10 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         evidence.append("INSIDE_OR_TOUCHES_PROVISIONAL_TARGET_PROTECTION")
     if centre_sga:
         evidence.append("SGA_CENTRAL_REGION_NOT_MEMBERSHIP_PROOF")
-    if disposition == "PROPOSED_EXCLUDE":
+    if disposition in ("PROPOSED_EXCLUDE", "GAIA_FOREGROUND_MASK_PREVIEW"):
         evidence.append("GEOMETRIC_MASK_ONLY_NO_TRACTOR_MODEL")
+    if disposition == "GAIA_FOREGROUND_MASK_PREVIEW":
+        evidence.append("EXPERIMENTAL_GAIA_INTERIOR_MASK_NO_PSF_WINGS")
     objid = row.get("objid")
     sid = f"{release}/{region}/{brick}/OBJID={objid}"
     if objid is None:
@@ -181,6 +199,8 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
             if astrometric_foreground_signal else
             "REVIEW_TARGET_LIGHT_VS_CONTAMINANT"),
         "proposed_treatment_is_active":False,
+        "diagnostic_inner_gaia_mask_preview_active":(
+            disposition == "GAIA_FOREGROUND_MASK_PREVIEW"),
         "centre_in_target_protection":bool(centre_protected),
         "centre_in_sga_prior":bool(centre_sga),
         "reference_catalog":ref_cat, "reference_id":ref_id,
@@ -241,6 +261,10 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         _point_key(c["x"],c["y"],c.get("objid"))
         for c in screen_stats.get("masked_catalog_centres", ())
     }
+    gaia_preview_index = {
+        _point_key(c["x"],c["y"],c.get("objid"))
+        for c in screen_stats.get("gaia_inner_preview_centres", ())
+    }
     candidates = []
     for (x,y),row in zip(points,catalog.rows):
         if not np.isfinite(x) or not np.isfinite(y):
@@ -256,13 +280,16 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         centre_sga = (sga_core is not None and
                       0 <= i < nx and 0 <= j < ny
                       and bool(sga_core[j,i]))
-        if key in protected_index:
+        if key in gaia_preview_index:
+            disposition = "GAIA_FOREGROUND_MASK_PREVIEW"
+        elif key in protected_index:
             disposition = "PROTECTED_OVERLAP"
         elif key in masked_index:
             disposition = "PROPOSED_EXCLUDE"
         else:
             disposition = "NOT_SCREENED_OR_UNFITTED"
         candidates.append((0 if disposition == "PROTECTED_OVERLAP"
+                           else 0 if disposition == "GAIA_FOREGROUND_MASK_PREVIEW"
                            else 1 if disposition == "PROPOSED_EXCLUDE"
                            else 2, x,y,row,disposition,
                            centre_protected,centre_sga,inside))
@@ -273,8 +300,8 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
     n_native = sum(item[7] for item in candidates)
     full_counts = {
         name:sum(item[4] == name for item in candidates)
-        for name in ("PROTECTED_OVERLAP","PROPOSED_EXCLUDE",
-                     "NOT_SCREENED_OR_UNFITTED")
+        for name in ("PROTECTED_OVERLAP","GAIA_FOREGROUND_MASK_PREVIEW",
+                     "PROPOSED_EXCLUDE","NOT_SCREENED_OR_UNFITTED")
     }
     full_counts_native = {
         name:sum(item[4] == name and item[7] for item in candidates)
