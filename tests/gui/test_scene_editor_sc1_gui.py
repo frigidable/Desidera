@@ -863,6 +863,8 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert proposal["sga_seed_shape"].a_arcsec>prior.core_shape().a_arcsec
     assert "SGA INITIAL:" in editor.iso_sga_summary.text()
     assert "Independent moments:" in editor.iso_sga_summary.text()
+    assert "no auto restores or new exclusions" in (
+        editor.iso_sga_summary.text())
     review=proposal["sga_comparison"].get("review_candidates",())
     assert len(editor._sga_shred_paths)==len(review)
     assert not editor.iso_show_sga_shreds.isChecked()
@@ -874,6 +876,10 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     editor.iso_shape.setCurrentIndex(
         editor.iso_shape.findData("sga_seed"))
     assert editor._isophote_preview is not None
+    assert "SGA INITIAL (not a fitted isophote)" in editor.iso_summary.text()
+    assert "q=0.650" in editor.iso_summary.text()
+    assert "PA=140.0" in editor.iso_summary.text()
+    assert "nan" not in editor.iso_summary.text()
     assert not editor.iso_accept.isEnabled()
     editor._accept_isophote()
     assert editor.draft.edits==()
@@ -891,3 +897,54 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert np.array_equal(data["data"]["image"],original)
     assert editor._isophote_proposal is None
     assert editor._sga_shred_paths==[]
+
+
+def test_single_detected_contour_trial_does_not_falsely_claim_stability():
+    from lsbpipe.gui.scene_editor import scene_contour_stability_readout
+    # The Leo P screenshot showed 1 successful reference trial and
+    # 3 failures, giving a trivial 1.00 area ratio and NaN IoU.
+    result = {
+        "trials": ({"state":"DETECTED"},)
+                  + ({"state":"NO_STABLE_COMPONENT"},)*3,
+        "area_ratio":1.0,
+        "minimum_spatial_iou":None,
+    }
+    assert scene_contour_stability_readout(result) == (
+        1,4,"n/a","n/a")
+    result = {
+        "trials":({"state":"DETECTED"},{"state":"DETECTED"},
+                  {"state":"NO_STABLE_COMPONENT"},
+                  {"state":"NO_STABLE_COMPONENT"}),
+        "area_ratio":1.5,
+        "minimum_spatial_iou":.73,
+    }
+    assert scene_contour_stability_readout(result) == (
+        2,4,"1.50","0.73")
+
+
+def test_scene_sga_radial_protection_warning_does_not_auto_save(
+        qtbot,tmp_path,monkeypatch):
+    from lsbpipe.photometry.ellipse_seed import SGAInformedRadialSeed
+    from lsbpipe.photometry.sga_priors import SGAGeometryPrior,SGAPriorLookup
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    prior=SGAGeometryPrior(
+        release="SGA2025-PARENT",sga_id=5065058,name="Leo P",
+        ra_deg=359.999,dec_deg=60.,offset_arcsec=0.,
+        d26_arcmin=.476,d26_ref="VIEWER_PARENT_DIAMETER",
+        ba=.532,pa_deg=150.5,ellipsebit=0,ellipsemode=0,
+        flags=(),source_sha256="f"*64,source_path="local-parent.fits")
+    editor._accept_sga_lookup(SGAPriorLookup(
+        "SGA2025-PARENT",prior.source_path,prior.source_sha256,
+        (prior,)))
+    editor.sga_candidates.setCurrentIndex(1)
+    assert editor.sga_use_seed.isChecked()
+    # The warning rendering is tested separately from science recovery.
+    radial=SGAInformedRadialSeed(
+        reference_a_arcsec=14.28,detected_a_arcsec=60.2,
+        q_sky=.532,pa_deg=150.5,centre_icrs=(359.999,60.),
+        bins=(),masked_fraction=0.,
+        flags=("RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS",
+               "MASK_BOUNDARY_SENSITIVITY_NOT_TESTED"),
+        target_protection_radius_arcsec=60.)
+    assert "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS" in radial.flags
+    assert editor.draft.edits==()
