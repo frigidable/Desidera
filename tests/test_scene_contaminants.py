@@ -248,8 +248,8 @@ def test_source_inventory_does_not_promote_gaia_psf_or_shreds_to_membership():
     shape=(241,241)
     protected=np.zeros(shape,bool)
     protected[90:151,90:151]=True
-    positions=np.array([[120.,120.],[180.,120.],[110.,130.],
-                        [55.,50.]])
+    positions=np.array([[120.,120.],[180.,120.],[55.,50.],
+                        [110.,130.]])
     records=(
         # Target-overlapping: Gaia match with significant, but potentially
         # unreliable astrometric evidence. DO NOT automatically mask.
