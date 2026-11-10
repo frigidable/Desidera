@@ -510,7 +510,9 @@ def run_scene_protection_radius_sweep(
         inv = prepared["source_inventory"]
         disposition_sets[radius] = {
             "excluded": {v["source_id"] for v in inv["entries"]
-                         if v["screening_disposition"] == "PROPOSED_EXCLUDE"},
+                         if v["screening_disposition"] in (
+                             "PROPOSED_EXCLUDE", "GAIA_FOREGROUND_MASK_PREVIEW",
+                             "RED_EXTENDED_MASK_PREVIEW")},
             "overlap": {v["source_id"] for v in inv["entries"]
                         if v["screening_disposition"] == "PROTECTED_OVERLAP"},
         }
@@ -2157,6 +2159,8 @@ class SceneEditor(QWidget):
             f"{e.get('diagnostic_inner_gaia_mask_preview_active',False)}\n"
             f"Diagnostic red extended mask preview (NOT science): "
             f"{e.get('diagnostic_red_extended_mask_preview_active',False)}\n"
+            f"Red extended decision metrics: "
+            f"{e.get('red_extended_rule_evidence') or 'not selected'}\n"
             f"Target circle centre: "
             f"{e['centre_in_target_protection']}; "
             f"SGA prior centre: {e['centre_in_sga_prior']}\n"
