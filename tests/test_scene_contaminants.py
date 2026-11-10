@@ -825,7 +825,7 @@ def test_red_extended_preview_only_masks_isolated_red_galaxies_not_blue_knots():
         _red_extended_row(1888,source_type="PSF",red=False),
     )
     pos=np.array([[160.,120.],[130.,125.],[115.,135.],
-                  [115.,110.],[135.,115.],[70.,155.]])
+                  [115.,110.],[135.,115.],[110.,150.]])
     baseline,legacy=conservative_catalogue_mask(
         protected.shape,pos,rows,arcsec_per_pixel=1.,
         protected=protected,wcs=_wcs())
