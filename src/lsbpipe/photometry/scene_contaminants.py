@@ -14,6 +14,9 @@ import numpy as np
 from astropy.wcs.utils import proj_plane_pixel_scales
 
 from lsbpipe.photometry.psf_tractor_gaia import read_native_tractor_gaia
+from lsbpipe.photometry.scene_source_inventory import (
+    build_scene_source_inventory,
+)
 from lsbpipe.photometry.sky_masks import rasterize_sky_shape
 from lsbpipe.survey import named_bit
 
@@ -270,6 +273,10 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         shape, catalog.pixel_positions, catalog.rows,
         arcsec_per_pixel=pxscale, protected=protected,
         wcs=dataset["wcs"], sga_core=sga_core)
+    source_inventory = build_scene_source_inventory(
+        catalog, pixel_shape=shape, protected=protected,
+        screen_stats=counts, release=release, region=region,
+        brick=brick, band=band, sga_core=sga_core)
     auto = auto & ~restored_auto
     # Explicit manual exclusions are applied even if they overlap target
     # protection, whereas automated catalogue proposals never do.
@@ -324,6 +331,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                   "protected_pixels": int(np.count_nonzero(protected)),
                   "usable_pixels": int(np.count_nonzero(usable))},
         "maskbits_caution_counts": caution,
+        # Read-only raw Tractor-component evidence. It MUST NEVER be
+        # interpreted as galaxy membership or modify screening masks.
+        "source_inventory": source_inventory,
         "flags": tuple(flags),
     }
     for name in ("mask", "auto_mask", "protected", "hard"):
