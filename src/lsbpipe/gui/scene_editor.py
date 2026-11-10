@@ -372,12 +372,39 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
                             0 <= iy < footprint.shape[0] and
                             footprint[iy,ix] > 0):
                         unresolved.append(source)
+                # Prior SC1 reported only successfully SCREENED protected
+                # overlaps as unresolved. Low-S/N/unfitted Tractor sources
+                # inside the same ellipse were omitted, although they can
+                # contain real target stars or unmasked contaminants.
+                unfit = []
+                inventory = contamination.get("source_inventory") or {}
+                for entry in inventory.get("entries", ()):
+                    if (entry["screening_disposition"] !=
+                            "NOT_SCREENED_OR_UNFITTED"):
+                        continue
+                    ix, iy = int(round(entry["x"])), int(round(entry["y"]))
+                    if (0 <= ix < footprint.shape[1] and
+                            0 <= iy < footprint.shape[0] and
+                            footprint[iy, ix] > 0):
+                        unfit.append({
+                            "x":entry["x"], "y":entry["y"],
+                            "objid":entry["objid"],
+                            "type":entry["tractor_type"],
+                            "source_id":entry["source_id"],
+                            "screening_disposition":
+                                "NOT_SCREENED_OR_UNFITTED",
+                        })
                 sga_comparison = {
                     "masked_catalog_centres_in_initial_ellipse": len(candidates),
                     "unresolved_catalog_centres_in_initial_ellipse":
                         len(unresolved),
+                    "unscreened_catalog_centres_in_initial_ellipse":
+                        len(unfit),
+                    "all_unmasked_catalog_centres_in_initial_ellipse":
+                        len(unresolved) + len(unfit),
                     "review_candidates": tuple(candidates[:25]),
                     "unresolved_review": tuple(unresolved[:25]),
+                    "unscreened_review": tuple(unfit[:25]),
                     "catalogue_inventory_truncated":
                         contamination["stats"].get(
                             "masked_centres_truncated", 0),
@@ -1045,6 +1072,8 @@ class SceneEditor(QWidget):
                 ("All native catalogue sources", "ALL"),
                 ("Gaia astrometry · target overlap review", "ASTROMETRY_REVIEW"),
                 ("Protected / unresolved overlaps", "PROTECTED_OVERLAP"),
+                ("All touching target protection · any fit", "TARGET_PROTECTION_ALL"),
+                ("Unscreened in target protection", "TARGET_UNSCREENED"),
                 ("Gaia inner mask previews (experimental)",
                  "GAIA_FOREGROUND_MASK_PREVIEW"),
                 ("Proposed masked neighbours", "PROPOSED_EXCLUDE"),
@@ -1988,6 +2017,16 @@ class SceneEditor(QWidget):
                         (entry["centre_in_target_protection"] or
                          entry["screening_disposition"] == "PROTECTED_OVERLAP")):
                     continue
+            elif selected == "TARGET_PROTECTION_ALL":
+                if ("INSIDE_OR_TOUCHES_PROVISIONAL_TARGET_PROTECTION"
+                        not in entry["evidence_flags"]):
+                    continue
+            elif selected == "TARGET_UNSCREENED":
+                if (entry["screening_disposition"] !=
+                        "NOT_SCREENED_OR_UNFITTED" or
+                        "INSIDE_OR_TOUCHES_PROVISIONAL_TARGET_PROTECTION"
+                        not in entry["evidence_flags"]):
+                    continue
             elif (selected != "ALL" and
                   entry["screening_disposition"] != selected):
                 continue
@@ -2393,6 +2432,8 @@ class SceneEditor(QWidget):
                 "masked_catalog_centres_in_initial_ellipse", 0)
             unresolved = comparison.get(
                 "unresolved_catalog_centres_in_initial_ellipse", 0)
+            unscreened = comparison.get(
+                "unscreened_catalog_centres_in_initial_ellipse", 0)
             boundary_note = scene_sga_mask_boundary_warning(
                 radial,comparison.get("target_protection_radius_arcsec"))
             self.iso_sga_summary.setText(
@@ -2406,9 +2447,11 @@ class SceneEditor(QWidget):
                 f"ΔPA={comparison['delta_pa_deg']:.1f}°). "
                 f"SGA–target centre offset="
                 f"{comparison['center_offset_arcsec']:.1f}\". "
-                f"{masked} masked and {unresolved} unresolved "
-                "Tractor centres inside proposal need source-by-source "
-                "review; no auto restores or new exclusions."
+                f"{masked} masked candidates; {unresolved} protected "
+                f"overlaps + {unscreened} unscreened/unfitted = "
+                f"{unresolved + unscreened} unmasked Tractor centres "
+                "inside proposal need source-by-source review; "
+                "no automatic restores or exclusions."
                 + boundary_note
                 + ("" if radial is not None else
                    " No supported extension: " +
