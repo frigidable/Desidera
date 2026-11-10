@@ -595,3 +595,46 @@ def test_gaia_astrometry_review_is_not_automatic_mask_and_legacy_iso_is_inactive
     assert manual_result["mask"][120,180]
     assert manual_result["stats"]["protected_gaia_astrometry_review"] == 1
     assert np.array_equal(image, dataset["data"]["image"])
+
+
+
+def test_negative_gaia_parallax_alert_is_not_foreground_evidence():
+    """Large negative parallax can indicate an unreliable Gaia solution.
+
+    Even nominally significant component proper motion cannot make a
+    strongly negative astrometric solution a validated foreground star.
+    The QA evidence remains read-only in both cases.
+    """
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory,
+    )
+    records = (
+        {**_row(), "objid": 901, "ref_cat": "G3", "ref_id": 123,
+         "parallax_mas": -4., "parallax_ivar": 25.,
+         "pmra_masyr": 10., "pmra_ivar": 25.},
+        {**_row(), "objid": 902, "ref_cat": "G3", "ref_id": 124,
+         "parallax_mas": 1., "parallax_ivar": 36.,
+         "pmra_masyr": 0., "pmra_ivar": 1.},
+    )
+    catalog = SimpleNamespace(
+        rows=records, pixel_positions=np.array([[12.,12.],[24.,24.]]),
+        source_path="original-tractor.fits", source_sha256="b"*64)
+    protected = np.ones((41,41), dtype=bool)
+    e = build_scene_source_inventory(
+        catalog, pixel_shape=protected.shape, protected=protected,
+        screen_stats={}, release="dr11", region="south",
+        brick="1554p180", band="g")["entries"]
+    bad, good = e
+    assert bad["objid"] == 901 and good["objid"] == 902
+    assert bad["parallax_significance"] == pytest.approx(20.)
+    assert bad["foreground_evidence_assessment"] == (
+        "GAIA_ASTROMETRY_QUALITY_ALERT")
+    assert "GAIA_NEGATIVE_PARALLAX_QUALITY_REVIEW" in bad["evidence_flags"]
+    assert "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW" not in bad["evidence_flags"]
+    assert bad["proposed_source_treatment"] == "VERIFY_GAIA_ASTROMETRY_QUALITY"
+    assert good["foreground_evidence_assessment"] == (
+        "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW")
+    assert "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW" in good["evidence_flags"]
+    assert all(v["physical_membership"] == "UNDETERMINED" for v in e)
+    assert all(v["photometry_action"] == "NO_NEW_ACTION_READ_ONLY" for v in e)
+    assert all(v["proposed_treatment_is_active"] is False for v in e)
