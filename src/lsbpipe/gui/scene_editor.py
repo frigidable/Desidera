@@ -1533,19 +1533,20 @@ class SceneEditor(QWidget):
             masked = comparison.get(
                 "masked_catalog_centres_in_initial_ellipse", 0)
             self.iso_sga_summary.setText(
-                f"SGA-informed INITIAL ellipse: "
-                f"reference a={comparison['reference_a_arcsec']:.1f} arcsec; "
-                f"data-supported outer a={outer}; "
+                f"SGA INITIAL: a={comparison['reference_a_arcsec']:.1f}\" "
+                f"→ data-supported a={outer}; "
                 f"SGA q={comparison['reference_q']:.3f}, "
-                f"PA={comparison['reference_pa_deg']:.1f} deg. "
-                f"Independent moment delta q={comparison['delta_q']:.3f}, "
-                f"PA={comparison['delta_pa_deg']:.1f} deg. "
-                f"{masked} already-masked Tractor centres inside "
-                "the suggested ellipse: SOURCE IDENTITIES NEED REVIEW; "
-                "no sources automatically unmasked. "
-                + ("Flags: " + ", ".join(radial.flags)
-                   if radial is not None else
-                   "SGA extent unavailable: " +
+                f"PA={comparison['reference_pa_deg']:.1f}°. "
+                f"Independent moments: q={comparison['independent_q']:.3f}, "
+                f"PA={comparison['independent_pa_deg']:.1f}° "
+                f"(Δq={comparison['delta_q']:.3f}, "
+                f"ΔPA={comparison['delta_pa_deg']:.1f}°). "
+                f"SGA–target centre offset="
+                f"{comparison['center_offset_arcsec']:.1f}\". "
+                f"{masked} masked Tractor centres inside proposal "
+                "need source-by-source review; none restored."
+                + ("" if radial is not None else
+                   " No supported extension: " +
                    str(result.get('sga_warning') or 'insufficient evidence')))
         else:
             self.iso_sga_summary.setText(
@@ -1690,7 +1691,11 @@ class SceneEditor(QWidget):
                 f"smoothed RMS {model.smoothed_sky_rms:.4g}. "
                 f"All trials: {trial_text}. "
                 f"QA flags: {', '.join(original_qa['flags']) or 'none'}. "
-                "NOT a calibrated outer isophote: nearby stars, "
+                + ("SGA radial QA: "
+                   + ", ".join(self._isophote_proposal["sga_radial"].flags)
+                   + ". " if self._isophote_proposal.get("sga_radial")
+                   is not None else "")
+                + "NOT a calibrated outer isophote: nearby stars, "
                 "PSF wings, spatial sky structure and unmeasured "
                 "correlated noise may still bias the boundary.")
         self._refresh_controls()
