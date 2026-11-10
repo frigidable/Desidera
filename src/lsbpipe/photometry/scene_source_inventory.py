@@ -75,18 +75,26 @@ def conservative_red_extended_candidate(row, *, offset_arcsec,
         return False, info
     if row.get("gaia_duplicated_source", False):
         return False, info
-    if int(row.get("fitbits") or 0) or int(row.get("maskbits") or 0):
+    # Missing bitfields cannot be treated as an affirmative clean fit.
+    if row.get("fitbits") is None or row.get("maskbits") is None:
+        return False, info
+    if int(row["fitbits"]) or int(row["maskbits"]):
         return False, info
     size = row.get("shape_r_arcsec")
     if size is None or not math.isfinite(float(size)):
         return False, info
     if not .65 <= float(size) <= 4.:
         return False, info
-    if (offset_arcsec is None or
+    if (offset_arcsec is None or target_radius_arcsec is None or
+            not math.isfinite(float(target_radius_arcsec)) or
+            float(target_radius_arcsec) <= 0. or
             not math.isfinite(float(offset_arcsec)) or
             float(offset_arcsec) < max(12., .2*float(target_radius_arcsec))):
         return False, info
+    # +inf is a legitimate "no other catalogue source" sentinel;
+    # NaN is invalid data and must never count as isolation.
     if (neighbour_arcsec is None or
+            math.isnan(float(neighbour_arcsec)) or
             float(neighbour_arcsec) < 2.5):
         return False, info
     fluxes = row.get("model_fluxes_nMgy") or {}
@@ -110,7 +118,11 @@ def conservative_red_extended_candidate(row, *, offset_arcsec,
                  "r_minus_z": round(rz, 5),
                  "shape_r_arcsec": float(size),
                  "offset_arcsec": float(offset_arcsec),
-                 "nearest_arcsec": float(neighbour_arcsec),
+                 "nearest_arcsec": (
+                     float(neighbour_arcsec)
+                     if math.isfinite(float(neighbour_arcsec)) else None),
+                 "no_catalogue_neighbour": (
+                     math.isinf(float(neighbour_arcsec))),
                  "snr_g":round(signal["g"], 4),
                  "snr_r":round(signal["r"], 4),
                  "snr_z":round(signal["z"], 4)})
