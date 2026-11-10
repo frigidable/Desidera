@@ -97,6 +97,7 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
     assert result["maskbits_caution_counts"]["BRIGHT"] == 1
     assert result["draft_digest"] == draft.digest
     assert result["catalog_sha256"] == "f"*64
+    assert result["target_protection_radius_arcsec"] == pytest.approx(20.)
     assert not result["mask"].flags.writeable
     assert np.array_equal(image,original)
     assert np.array_equal(dataset["data"]["maskbits"],bits)
