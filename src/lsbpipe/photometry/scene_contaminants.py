@@ -76,6 +76,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     inner_preview_centres = []
     red_preview = np.zeros((ny,nx), dtype=bool)
     red_preview_centres = []
+    red_source_audit = []
+    red_source_audit_truncated = 0
     conflicts = []
     masked_centres = []
     inventory_truncated = 0
@@ -208,6 +210,12 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                         target_radius_arcsec=target_radius_arcsec))
                 red_evidence["distance_geometry"] = (
                     "NATIVE_WCS_LOCAL_EAST_NORTH_ARCSEC")
+                if len(red_source_audit) < 4096:
+                    red_source_audit.append({
+                        "x":x, "y":y, "objid":row.get("objid"),
+                        "evidence":red_evidence})
+                else:
+                    red_source_audit_truncated += 1
             if is_red_preview:
                 output[y1:y2, x1:x2] |= disk
                 red_preview[y1:y2, x1:x2] |= disk
@@ -302,6 +310,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         "red_extended_preview_mask": red_preview,
         "red_extended_preview_sources": len(red_preview_centres),
         "red_extended_preview_centres": tuple(red_preview_centres),
+        "red_extended_source_audit":tuple(red_source_audit),
+        "red_extended_source_audit_truncated":red_source_audit_truncated,
         "elliptical_catalog_sources": elliptical,
         "missing_shape_fallbacks": missing_shape,
         "skipped_target_overlap": near,
