@@ -288,3 +288,48 @@ def test_viewer_skips_invalid_overlay_but_retains_independent_valid_candidate(
     assert len(result.matches) == 1
     assert result.matches[0].sga_id == 325
     assert result.matches[0].core_shape().a_arcsec == pytest.approx(24.)
+
+
+
+def test_viewer_parent_has_separate_non_fitted_provenance(monkeypatch):
+    """The parent catalogue can seed geometry but is not a D26 fit."""
+    import io
+    import json
+    import lsbpipe.photometry.sga_priors as module
+
+    reply = json.dumps({
+        "rd": [[155.438012, 18.088025]],
+        "name": ["Leo P"],
+        "radiusArcsec": [22.],
+        "abRatio": [.7],
+        "posAngle": [55.],
+        "pgc": [12345],
+        "groupname": [""],
+    }).encode()
+
+    class Response(io.BytesIO):
+        def __init__(self, url):
+            super().__init__(reply)
+            self.url = url
+
+        def geturl(self):
+            return self.url
+
+    requests = []
+    def fake_open(url, timeout):
+        requests.append(url)
+        return Response(url)
+    monkeypatch.setattr(module, "urlopen", fake_open)
+    lookup = module.fetch_viewer_sga2025_priors(
+        (155.438012,18.088025), region="south", layer="parent")
+    assert len(requests) == 1
+    assert "/sga2025-parent/1/cat.json?" in requests[0]
+    assert lookup.release == "SGA2025-PARENT"
+    assert len(lookup.matches) == 1
+    prior = lookup.matches[0]
+    assert prior.sga_id == 12345
+    assert prior.d26_ref == "VIEWER_PARENT_DIAMETER"
+    assert "PARENT_INITIAL_GEOMETRY_NOT_FITTED_ISOPHOTE" in prior.flags
+    assert "PARENT_PGC_NOT_SGAID" in prior.flags
+    assert prior.core_shape().a_arcsec == pytest.approx(22.)
+    assert prior.source_path == requests[0]
