@@ -260,12 +260,14 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
 
 
 def prepare_scene_neighbour_masks(dataset, project_root, draft, center_icrs,
-                                  sga_prior=None, *, gaia_inner_preview=False):
+                                  sga_prior=None, *, gaia_inner_preview=False,
+                                  red_extended_preview=False):
     """Prepare native Tractor masks, optionally protecting an explicit SGA core."""
     project = read_object_project(project_root)
     return prepare_scene_contamination(
         dataset, project, draft, center_icrs, sga_prior=sga_prior,
-        gaia_inner_preview=gaia_inner_preview)
+        gaia_inner_preview=gaia_inner_preview,
+        red_extended_preview=red_extended_preview)
 
 
 def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
@@ -452,7 +454,7 @@ def run_scene_protection_radius_sweep(
         threshold_contrast=2.2, smoothing_pix=4.,
         bridge_guard_pix=2, sga_prior=None,
         sga_protection_prior=None, gaia_inner_preview=False,
-        radii_arcsec=(40., 50., 60., 70., 80.)):
+        red_extended_preview=False, radii_arcsec=(40., 50., 60., 70., 80.)):
     """Non-destructive, frozen-input protection-radius A/B experiment.
 
     This *diagnostic* only varies the circular target-protection radius.
@@ -497,7 +499,9 @@ def run_scene_protection_radius_sweep(
         prepared = prepare_scene_contamination(
             dataset, scenario_project, draft, center_icrs,
             sga_prior=sga_protection_prior,
-            **({"gaia_inner_preview":True} if gaia_inner_preview else {}))
+            **({"gaia_inner_preview":True} if gaia_inner_preview else {}),
+            **({"red_extended_preview":True}
+               if red_extended_preview else {}))
         if (catalogue_sha is not None and
                 prepared["catalog_sha256"] != catalogue_sha):
             raise ValueError("Tractor catalogue changed during radius sweep")
@@ -523,6 +527,10 @@ def run_scene_protection_radius_sweep(
                 "gaia_inner_preview_sources", 0),
             "gaia_inner_preview_pixels":counts.get(
                 "gaia_inner_preview_pixels", 0),
+            "red_extended_preview_sources":counts.get(
+                "red_extended_preview_sources", 0),
+            "red_extended_preview_pixels":counts.get(
+                "red_extended_preview_pixels", 0),
             "excluded_pixels":counts["excluded_pixels"],
             "protected_pixels":counts["protected_pixels"],
             "usable_pixels":counts["usable_pixels"],
@@ -992,6 +1000,21 @@ class SceneEditor(QWidget):
         self.iso_gaia_inner_preview.toggled.connect(
             self._discard_prepared_masks)
         iso_layout.addWidget(self.iso_gaia_inner_preview)
+        self.iso_red_extended_preview = QCheckBox(
+            "Auto-select isolated red extended sources · QA only")
+        self.iso_red_extended_preview.setObjectName(
+            "scene_red_extended_mask_preview")
+        self.iso_red_extended_preview.setToolTip(
+            "High-specificity diagnostic: red g-r and r-z, high g/r/z "
+            "Tractor S/N, extended EXP/DEV/SER fit, no fit/mask flags, "
+            "isolated from other sources and outside target central core. "
+            "Cyan footprints are candidates, NOT confirmed background "
+            "galaxies. Their purity, deblend, galaxy-light loss and PSF "
+            "are NOT validated. OFF by default; never science adopted.")
+        self.iso_red_extended_preview.setChecked(False)
+        self.iso_red_extended_preview.toggled.connect(
+            self._discard_prepared_masks)
+        iso_layout.addWidget(self.iso_red_extended_preview)
         self.iso_mask_toggle = QCheckBox("Show proposed contaminant mask")
         self.iso_mask_toggle.setObjectName("scene_show_neighbor_mask")
         self.iso_mask_toggle.setChecked(True)
@@ -1076,6 +1099,8 @@ class SceneEditor(QWidget):
                 ("Unscreened in target protection", "TARGET_UNSCREENED"),
                 ("Gaia inner mask previews (experimental)",
                  "GAIA_FOREGROUND_MASK_PREVIEW"),
+                ("Red extended mask previews (experimental)",
+                 "RED_EXTENDED_MASK_PREVIEW"),
                 ("Proposed masked neighbours", "PROPOSED_EXCLUDE"),
                 ("Other / no fitted band flux", "NOT_SCREENED_OR_UNFITTED")):
             self.source_registry_filter.addItem(label,value)
@@ -1363,6 +1388,9 @@ class SceneEditor(QWidget):
         self.iso_gaia_inner_preview.blockSignals(True)
         self.iso_gaia_inner_preview.setChecked(False)
         self.iso_gaia_inner_preview.blockSignals(False)
+        self.iso_red_extended_preview.blockSignals(True)
+        self.iso_red_extended_preview.setChecked(False)
+        self.iso_red_extended_preview.blockSignals(False)
         self._source_key = key
         self._loaded = dataset
         self._pending_world = []
@@ -1816,7 +1844,9 @@ class SceneEditor(QWidget):
             bridge_guard_pix=2 if self.iso_bridge_guard.isChecked() else 0,
             sga_prior=shape_prior, sga_protection_prior=protect_prior,
             **({"gaia_inner_preview":True}
-               if self.iso_gaia_inner_preview.isChecked() else {}))
+               if self.iso_gaia_inner_preview.isChecked() else {}),
+            **({"red_extended_preview":True}
+               if self.iso_red_extended_preview.isChecked() else {}))
         self._work_kind="radius_sweep"
         self._active_generation=self._load_generation
         self.radius_sweep_status.setText(
@@ -1852,7 +1882,9 @@ class SceneEditor(QWidget):
                 settings["sga_geometry_ref"] != current_sga or
                 settings["sga_protection_ref"] != current_protect or
                 settings.get("gaia_inner_preview", False) !=
-                self.iso_gaia_inner_preview.isChecked()):
+                self.iso_gaia_inner_preview.isChecked() or
+                settings.get("red_extended_preview", False) !=
+                self.iso_red_extended_preview.isChecked()):
             raise ValueError("Discarded radius sweep: controls changed")
         if (prior is not None and
                 (settings["sga_geometry_ref"] is not None or
@@ -1897,7 +1929,9 @@ class SceneEditor(QWidget):
             prepare_scene_neighbour_masks, *arguments,
             *((prior,) if prior is not None else ()),
             **({"gaia_inner_preview":True}
-               if self.iso_gaia_inner_preview.isChecked() else {}))
+               if self.iso_gaia_inner_preview.isChecked() else {}),
+            **({"red_extended_preview":True}
+               if self.iso_red_extended_preview.isChecked() else {}))
         self._work_kind = "contamination"
         self._active_generation = self._load_generation
         self.iso_mask_status.setText(
@@ -1916,6 +1950,8 @@ class SceneEditor(QWidget):
                 result["draft_digest"] != self._draft.digest or
                 result.get("gaia_inner_preview_enabled", False) !=
                 self.iso_gaia_inner_preview.isChecked() or
+                result.get("red_extended_preview_enabled", False) !=
+                self.iso_red_extended_preview.isChecked() or
                 result.get("sga_prior_id") != (
                     self._sga_candidate.sga_id
                     if self.sga_use_prior.isChecked()
@@ -1936,6 +1972,9 @@ class SceneEditor(QWidget):
         gaia_layer = result.get("gaia_inner_preview_mask")
         if gaia_layer is not None:
             layer[gaia_layer] = (244, 123, 76, 215)
+        red_layer = result.get("red_extended_preview_mask")
+        if red_layer is not None:
+            layer[red_layer] = (43, 207, 190, 210)
         self._contamination_overlay = QGraphicsPixmapItem(
             FITSExplorer._pixmap(layer, alpha=True))
         self._contamination_overlay.setZValue(2.5)
@@ -1970,6 +2009,8 @@ class SceneEditor(QWidget):
             f"{counts['skipped_target_overlap']} unresolved overlaps"
             + (f"; {counts.get('gaia_inner_preview_sources', 0)} "
                "inner Gaia masks (ORANGE · experimental)")
+            + (f"; {counts.get('red_extended_preview_sources', 0)} "
+               "red extended masks (CYAN · experimental)")
             + (f"; {max(0, counts.get('protected_gaia_astrometry_review', 0) - counts.get('gaia_inner_preview_sources', 0))} "
                "Gaia astrometry candidates left UNMASKED")
             + (f"; {counts.get('possible_sga_shreds', 0)} inside "
@@ -1986,11 +2027,14 @@ class SceneEditor(QWidget):
             f"{counts.get('missing_shape_fallbacks', 0)} shape fallbacks; "
             f"{counts.get('gaia_inner_preview_pixels', 0)} "
             "inner Gaia mask-preview pixels; "
+            f"{counts.get('red_extended_preview_pixels', 0)} "
+            "red extended mask-preview pixels; "
             f"{counts.get('legacy_isophote_protect_edits_ignored', 0)} "
             "legacy isophote protection edits inactive. "
             "Original FITS unchanged. NOT an exact Tractor pixel model, "
             "PSF-wing subtraction or a calibrated science mask. "
-            "ORANGE: opt-in diagnostic exclusion may REMOVE galaxy light. "
+            "ORANGE/CYAN: opt-in diagnostic exclusions may REMOVE "
+            "galaxy light. The red-extended policy is UNCALIBRATED. "
             "Flags: "
             + ", ".join(result["flags"]))
         self._refresh_controls()
@@ -2047,6 +2091,7 @@ class SceneEditor(QWidget):
             disp = entry["screening_disposition"]
             badge = ("REVIEW" if disp == "PROTECTED_OVERLAP"
                      else "INNER QA" if disp == "GAIA_FOREGROUND_MASK_PREVIEW"
+                     else "RED QA" if disp == "RED_EXTENDED_MASK_PREVIEW"
                      else "MASK?" if disp == "PROPOSED_EXCLUDE"
                      else "NO FIT?")
             if ("GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW"
@@ -2110,6 +2155,8 @@ class SceneEditor(QWidget):
             f"{e.get('proposed_source_treatment','REVIEW_ONLY')}\n"
             f"Diagnostic Gaia mask preview active (NOT science): "
             f"{e.get('diagnostic_inner_gaia_mask_preview_active',False)}\n"
+            f"Diagnostic red extended mask preview (NOT science): "
+            f"{e.get('diagnostic_red_extended_mask_preview_active',False)}\n"
             f"Target circle centre: "
             f"{e['centre_in_target_protection']}; "
             f"SGA prior centre: {e['centre_in_sga_prior']}\n"
@@ -2178,6 +2225,8 @@ class SceneEditor(QWidget):
                 "use_sga_geometry": self.sga_use_seed.isChecked(),
                 "gaia_inner_mask_preview": (
                     self.iso_gaia_inner_preview.isChecked()),
+                "red_extended_mask_preview": (
+                    self.iso_red_extended_preview.isChecked()),
                 "picked_isophote_centre_icrs": self._isophote_center_icrs,
                 "selected_isophote_trial": self.iso_candidate.currentData(),
                 "selected_isophote_shape": self.iso_shape.currentData(),
@@ -3036,6 +3085,7 @@ class SceneEditor(QWidget):
         self.iso_prepare.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_gaia_inner_preview.setEnabled(active and worker_idle)
+        self.iso_red_extended_preview.setEnabled(active and worker_idle)
         self.radius_sweep_btn.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_mask_toggle.setEnabled(self._contamination is not None)
