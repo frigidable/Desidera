@@ -661,6 +661,7 @@ class SceneEditor(QWidget):
         self._contamination = None
         self._source_registry = None
         self._source_registry_visible = []
+        self._sweep_result = None
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -922,6 +923,23 @@ class SceneEditor(QWidget):
             "No model subtraction, PSF wing validation or downloads.")
         self.iso_prepare.clicked.connect(self._prepare_neighbour_masks)
         iso_layout.addWidget(self.iso_prepare)
+        self.radius_sweep_btn = QPushButton(
+            "Compare protection radii · 40–80″")
+        self.radius_sweep_btn.setObjectName("scene_radius_sweep")
+        self.radius_sweep_btn.setToolTip(
+            "Read-only five-radius experiment (40/50/60/70/80 arcsec) "
+            "on the same native image, Tractor catalogue, centre, "
+            "SGA prior and isophote settings. Refit provisional "
+            "local sky per mask; no independent PSF/sky model, and no "
+            "files or mask drafts written. Results in Copy Scene QA.")
+        self.radius_sweep_btn.clicked.connect(self._run_radius_sweep)
+        iso_layout.addWidget(self.radius_sweep_btn)
+        self.radius_sweep_status = QLabel(
+            "Mask-radius comparison not run. PSF and sky scenarios "
+            "remain unvalidated.")
+        self.radius_sweep_status.setObjectName("scene_radius_sweep_status")
+        self.radius_sweep_status.setWordWrap(True)
+        iso_layout.addWidget(self.radius_sweep_status)
         self.iso_mask_toggle = QCheckBox("Show proposed contaminant mask")
         self.iso_mask_toggle.setObjectName("scene_show_neighbor_mask")
         self.iso_mask_toggle.setChecked(True)
@@ -1189,6 +1207,16 @@ class SceneEditor(QWidget):
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.redo)
         QShortcut(QKeySequence("Escape"), self).activated.connect(
             self._cancel_pending)
+        # Settings changes invalidate prior sweep readouts, without
+        # changing masks, image arrays, or saved project radii.
+        self.iso_threshold.valueChanged.connect(
+            self._invalidate_radius_sweep)
+        self.iso_smooth.valueChanged.connect(
+            self._invalidate_radius_sweep)
+        self.iso_bridge_guard.toggled.connect(
+            self._invalidate_radius_sweep)
+        self.sga_use_seed.toggled.connect(
+            self._invalidate_radius_sweep)
         self._mode_changed()
         self._refresh_controls()
 
@@ -1279,6 +1307,9 @@ class SceneEditor(QWidget):
         self._contamination = None
         self._source_registry = None
         self._source_registry_visible = []
+        self._sweep_result = None
+        self.radius_sweep_status.setText(
+            "Radius comparison invalidated by project/band switch.")
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -1352,6 +1383,8 @@ class SceneEditor(QWidget):
                 self._accept_sga_lookup(result)
             elif kind == "contamination":
                 self._accept_contamination_result(result)
+            elif kind == "radius_sweep":
+                self._accept_radius_sweep_result(result)
             else:
                 self._accept_dataset(result)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError,
@@ -1371,6 +1404,11 @@ class SceneEditor(QWidget):
                     + ". No unmasked isophote will be offered. "
                       "For DR11 South obtain the local Tractor catalogue "
                       "in PSF-0; no automatic download occurred.")
+            elif kind == "radius_sweep":
+                self._sweep_result = None
+                self.radius_sweep_status.setText(
+                    "Read-only protection-radius sweep FAILED: "
+                    + str(exc) + ". Nothing was saved.")
             else:
                 self.status.setText(
                     f"Original FITS scene could not be displayed: {exc}")
@@ -1449,6 +1487,7 @@ class SceneEditor(QWidget):
 
     def _discard_prepared_masks(self):
         """Invalidate candidate masks whenever target, source or edits change."""
+        self._invalidate_radius_sweep()
         self._clear_isophote_preview()
         if self._contamination_overlay is not None:
             if self._contamination_overlay.scene() is self.graphics:
@@ -1679,6 +1718,95 @@ class SceneEditor(QWidget):
         item.setZValue(3.3)
         self.graphics.addItem(item)
         self._sga_item = item
+
+    def _invalidate_radius_sweep(self, *_):
+        self._sweep_result = None
+        self.radius_sweep_status.setText(
+            "Radius comparison not run for current settings. "
+            "No independent PSF or spatial sky experiment.")
+
+    def _run_radius_sweep(self):
+        if (self._loaded is None or self._project_root is None or
+                self._draft is None or self._future is not None or
+                self._project_target is None):
+            self.radius_sweep_status.setText(
+                "Load the current native FITS and open a galaxy "
+                "project before starting the radius comparison.")
+            return
+        center=(self._isophote_center_icrs
+                if self._isophote_center_icrs is not None
+                else self._project_target)
+        shape_prior=(self._sga_candidate
+                     if self.sga_use_seed.isChecked() else None)
+        protect_prior=(self._sga_candidate
+                       if self.sga_use_prior.isChecked() else None)
+        self._sweep_result=None
+        self._future = self._executor.submit(
+            run_scene_protection_radius_sweep,
+            self._loaded, str(self._project_root), self._draft, center,
+            threshold_contrast=float(self.iso_threshold.value()),
+            smoothing_pix=float(self.iso_smooth.value()),
+            bridge_guard_pix=2 if self.iso_bridge_guard.isChecked() else 0,
+            sga_prior=shape_prior, sga_protection_prior=protect_prior)
+        self._work_kind="radius_sweep"
+        self._active_generation=self._load_generation
+        self.radius_sweep_status.setText(
+            "Comparing 40/50/60/70/80″ protection radii on identical "
+            "original G/R/I/Z input and catalogue, without writes…")
+        self._poll_timer.start()
+        self._refresh_controls()
+
+    def _accept_radius_sweep_result(self, result):
+        if (self._loaded is None or self._draft is None or
+                result.get("schema") !=
+                "desidera.gui.protection-radius-sweep/1" or
+                result["project_id"] != self._project_id or
+                result["dataset_source"] != self._loaded["source"] or
+                result["band"] != self._band or
+                result["draft_digest"] != self._draft.digest or
+                result["anchor_icrs"] != list(
+                    self._isophote_center_icrs
+                    if self._isophote_center_icrs is not None
+                    else self._project_target)):
+            raise ValueError(
+                "Discarded stale radius sweep: project, band or masks changed")
+        settings=result["fixed_settings"]
+        prior=self._sga_candidate
+        current_sga=prior.sga_id if (
+            prior is not None and self.sga_use_seed.isChecked()) else None
+        current_protect=prior.sga_id if (
+            prior is not None and self.sga_use_prior.isChecked()) else None
+        if (settings["contrast"] != float(self.iso_threshold.value()) or
+                settings["smoothing_pix"] != float(self.iso_smooth.value()) or
+                settings["bridge_guard_pix"] != (
+                    2 if self.iso_bridge_guard.isChecked() else 0) or
+                settings["sga_geometry_ref"] != current_sga or
+                settings["sga_protection_ref"] != current_protect):
+            raise ValueError("Discarded radius sweep: controls changed")
+        if (prior is not None and
+                (settings["sga_geometry_ref"] is not None or
+                 settings["sga_protection_ref"] is not None)):
+            if ((settings["sga_geometry_sha256"] is not None and
+                    settings["sga_geometry_sha256"] != prior.source_sha256)
+                or (settings["sga_protection_sha256"] is not None and
+                    settings["sga_protection_sha256"] != prior.source_sha256)):
+                raise ValueError("Discarded radius sweep: SGA input changed")
+        self._sweep_result=result
+        rows=result["scenarios"]
+        good=sum(row["status"] == "ISOPHOTE_PROPOSED_NOT_ADOPTED"
+                 for row in rows)
+        labels=[
+            f'{row["protection_radius_arcsec"]:g}″: '
+            + (f'{row["sga_radial_radius_arcsec"]:.1f}″'
+               if row["sga_radial_radius_arcsec"] is not None
+               else "no SGA radius")
+            + f', {row["masked_catalog_sources"]} masked'
+            for row in rows]
+        self.radius_sweep_status.setText(
+            f"READ-ONLY {good}/{len(rows)} isophotes. "
+            "SGA a / masked sources: " + "; ".join(labels)
+            + ". Full scenarios in Copy Scene QA. "
+            "PSF/independent sky not tested; NOTHING ADOPTED.")
 
     def _prepare_neighbour_masks(self):
         if (self._loaded is None or self._future is not None or
@@ -1959,7 +2087,9 @@ class SceneEditor(QWidget):
                 "isophote_summary": self.iso_summary.text(),
                 "sga_isophote_comparison": self.iso_sga_summary.text(),
                 "isophote_details_all_trials": self.iso_details.text(),
+                "radius_sweep_status":self.radius_sweep_status.text(),
             },
+            "protection_radius_sweep":self._sweep_result,
             "native_fits": None,
             "sga_lookup": None,
             "sga_selected_prior": None,
@@ -2770,6 +2900,8 @@ class SceneEditor(QWidget):
             ready and worker_idle and self._sga_candidate is not None
             and self._sga_candidate.core_shape() is not None)
         self.iso_prepare.setEnabled(
+            active and worker_idle and self._project_target is not None)
+        self.radius_sweep_btn.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_mask_toggle.setEnabled(self._contamination is not None)
         self.source_registry_toggle.setEnabled(
