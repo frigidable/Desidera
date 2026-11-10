@@ -10,7 +10,7 @@ GUI thread. The preview is bounded and never downsampled for mask QA.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 import json
 import csv
@@ -413,6 +413,201 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
             "contamination":contamination["stats"],
             "sensitivity":sensitivity,
             "bridge_guard_pix":int(bridge_guard_pix)}
+
+
+
+def run_scene_protection_radius_sweep(
+        dataset, project_root, draft, center_icrs, *,
+        threshold_contrast=2.2, smoothing_pix=4.,
+        bridge_guard_pix=2, sga_prior=None,
+        sga_protection_prior=None,
+        radii_arcsec=(40., 50., 60., 70., 80.)):
+    """Non-destructive, frozen-input protection-radius A/B experiment.
+
+    This *diagnostic* only varies the circular target-protection radius.
+    It reuses the same in-memory native band, project snapshot, draft,
+    threshold, smoothing and chosen SGA priors. It never saves a mask,
+    FITS or isophote, and never changes the original project's radius.
+    PSF/sky *models* are NOT varied; the provisional sky estimate is
+    recomputed per mask to expose this coupling.
+
+    A failed contour is recorded, not removed from the denominator.
+    """
+    project = read_object_project(project_root)
+    if (dataset["project_id"] != project.project_id or
+            draft.project_id != project.project_id):
+        raise ValueError("Protection sweep project identity mismatch")
+    if not isinstance(radii_arcsec, (tuple, list)) or not radii_arcsec:
+        raise ValueError("Provide protection radii for sensitivity sweep")
+    radii = tuple(float(v) for v in radii_arcsec)
+    if (len(radii) > 9 or len(set(radii)) != len(radii) or
+            60. not in radii or
+            any(not math.isfinite(v) or v <= 0 or
+                v > project.sky_inner_arcsec for v in radii)):
+        raise ValueError(
+            "Sweep radii must be distinct, contain 60 arcsec, and "
+            "remain within the project's sky-inner radius")
+    if sga_prior is not None and sga_prior.core_shape() is None:
+        raise ValueError("Selected SGA geometry cannot be used in a sweep")
+    if (sga_protection_prior is not None and
+            sga_protection_prior.core_shape() is None):
+        raise ValueError("Selected SGA source protection is invalid")
+    if sga_protection_prior is not None and sga_prior is not None:
+        if (sga_protection_prior.sga_id != sga_prior.sga_id or
+                sga_protection_prior.source_sha256 != sga_prior.source_sha256):
+            raise ValueError("Selected SGA prior identity mismatch")
+
+    rows, masks, components, disposition_sets = [], {}, {}, {}
+    catalogue_sha = None
+    for radius in radii:
+        # dataclasses.replace produces an in-memory project *copy*.
+        # No changes to project.json, active mask history or GUI state.
+        scenario_project = replace(project, target_radius_arcsec=radius)
+        prepared = prepare_scene_contamination(
+            dataset, scenario_project, draft, center_icrs,
+            sga_prior=sga_protection_prior)
+        if (catalogue_sha is not None and
+                prepared["catalog_sha256"] != catalogue_sha):
+            raise ValueError("Tractor catalogue changed during radius sweep")
+        catalogue_sha = prepared["catalog_sha256"]
+        masks[radius] = prepared["mask"]
+        inv = prepared["source_inventory"]
+        disposition_sets[radius] = {
+            "excluded": {v["source_id"] for v in inv["entries"]
+                         if v["screening_disposition"] == "PROPOSED_EXCLUDE"},
+            "overlap": {v["source_id"] for v in inv["entries"]
+                        if v["screening_disposition"] == "PROTECTED_OVERLAP"},
+        }
+        if inv["truncated"] or inv["screening_evidence_incomplete"]:
+            raise ValueError("Incomplete source inventory in radius sweep")
+        counts = prepared["stats"]
+        row = {
+            "protection_radius_arcsec":radius,
+            "status":"MASK_PREPARED_ISOPHOTE_PENDING",
+            "catalog_sha256":prepared["catalog_sha256"],
+            "masked_catalog_sources":counts["masked_catalog_sources"],
+            "protected_overlaps":counts["skipped_target_overlap"],
+            "excluded_pixels":counts["excluded_pixels"],
+            "protected_pixels":counts["protected_pixels"],
+            "usable_pixels":counts["usable_pixels"],
+            "native_hard_pixels":counts["native_hard_pixels"],
+            "source_evidence_total":inv["total_relevant_sources"],
+            "sga_radial_radius_arcsec":None,
+            "sga_radial_flags":[],
+            "sga_radial_warning":None,
+            "component_pixels":None,
+            "component_q":None,
+            "component_centroid_offset_pix":None,
+            "component_sky_nMgy_pixel":None,
+            "component_smoothed_sky_rms_nMgy_pixel":None,
+            "component_sky_training_pixels":None,
+            "contour_area_ratio_across_trials":None,
+            "minimum_trial_iou":None,
+            "confidence":None,
+            "sensitivity_flags":[],
+            "isophote_error":None,
+            "all_four_trials":[],
+        }
+        try:
+            proposal = propose_scene_isophote(
+                dataset, center_icrs, threshold_contrast,
+                smoothing_pix, prepared,
+                bridge_guard_pix=bridge_guard_pix, sga_prior=sga_prior)
+            model = proposal["proposal"]
+            sensitivity = proposal["sensitivity"]
+            components[radius] = model.component_indices
+            radial = proposal.get("sga_radial")
+            row.update({
+                "status":"ISOPHOTE_PROPOSED_NOT_ADOPTED",
+                "component_pixels":model.seed.component_pixels,
+                "component_q":model.seed.q,
+                "component_centroid_offset_pix":
+                    model.seed.centroid_offset_pix,
+                "component_sky_nMgy_pixel":model.local_sky,
+                "component_smoothed_sky_rms_nMgy_pixel":
+                    model.smoothed_sky_rms,
+                "component_sky_training_pixels":model.sky_pixels,
+                "sga_radial_radius_arcsec":
+                    radial.detected_a_arcsec if radial is not None else None,
+                "sga_radial_flags":
+                    list(radial.flags) if radial is not None else [],
+                "sga_radial_warning":proposal.get("sga_warning"),
+                "contour_area_ratio_across_trials":
+                    sensitivity["area_ratio"],
+                "minimum_trial_iou":
+                    sensitivity["minimum_spatial_iou"],
+                "confidence":sensitivity["confidence"],
+                "sensitivity_flags":list(sensitivity["flags"]),
+                "all_four_trials":[
+                    {k:_scene_qa_json_value(v) for k,v in trial.items()}
+                    for trial in sensitivity["trials"]],
+            })
+        except (ValueError, ArithmeticError) as exc:
+            row["status"]="ISOPHOTE_NOT_FOUND"
+            row["isophote_error"]=str(exc)[:500]
+            components[radius]=None
+        rows.append(row)
+    reference_mask=masks[60.]
+    ref_component=components[60.]
+    ref_sets=disposition_sets[60.]
+    for row in rows:
+        r=row["protection_radius_arcsec"]
+        mask=masks[r]
+        changed = np.count_nonzero(mask ^ reference_mask)
+        intersection = np.count_nonzero(mask & reference_mask)
+        union = np.count_nonzero(mask | reference_mask)
+        row["masked_pixel_change_vs_60arcsec"]=int(changed)
+        row["mask_jaccard_vs_60arcsec"]=(
+            float(intersection/union) if union else 1.)
+        candidate=components[r]
+        if ref_component is not None and candidate is not None:
+            inter=np.intersect1d(ref_component,candidate,
+                                  assume_unique=True).size
+            union_component=ref_component.size+candidate.size-inter
+            row["component_iou_vs_60arcsec"]=(
+                float(inter/union_component) if union_component else 1.)
+        else:
+            row["component_iou_vs_60arcsec"]=None
+        row["new_excluded_ids_vs_60arcsec"]=sorted(
+            disposition_sets[r]["excluded"]-ref_sets["excluded"])
+        row["new_protected_overlap_ids_vs_60arcsec"]=sorted(
+            disposition_sets[r]["overlap"]-ref_sets["overlap"])
+    return {
+        "schema":"desidera.gui.protection-radius-sweep/1",
+        "status":"READ_ONLY_DIAGNOSTIC_NOT_SCIENCE_VALIDATED",
+        "project_id":project.project_id,
+        "dataset_source":dataset["source"],
+        "band":dataset["band"],
+        "draft_digest":draft.digest,
+        "anchor_icrs":list(center_icrs),
+        "catalog_sha256":catalogue_sha,
+        "reference_radius_arcsec":60.,
+        "fixed_settings":{
+            "contrast":float(threshold_contrast),
+            "smoothing_pix":float(smoothing_pix),
+            "bridge_guard_pix":int(bridge_guard_pix),
+            "sga_geometry_ref":(
+                sga_prior.sga_id if sga_prior is not None else None),
+            "sga_geometry_sha256":(
+                sga_prior.source_sha256 if sga_prior is not None else None),
+            "sga_protection_ref":(
+                sga_protection_prior.sga_id
+                if sga_protection_prior is not None else None),
+            "sga_protection_sha256":(
+                sga_protection_prior.source_sha256
+                if sga_protection_prior is not None else None),
+        },
+        "limitations":[
+            "NO_NATIVE_FITS_CONTENT_HASH_IN_SC1",
+            "NO_PSF_WING_MODEL_SCENARIO_EXECUTED",
+            "NO_INDEPENDENT_SPATIAL_SKY_MODEL_SCENARIO_EXECUTED",
+            "LOCAL_SKY_REFIT_PER_MASK_SCENARIO_NOT_FIXED_SKY",
+            "TRACTOR_GEOMETRIC_MASKS_NOT_PHYSICAL_CLASSIFICATION",
+            "NO_SOURCE_OR_GALAXY_FLUX_MEASURED",
+            "SENSITIVITY_SWEEP_NOT_SCIENCE_ADOPTION",
+        ],
+        "scenarios":rows,
+    }
 
 
 class SceneDrawingView(FITSGraphicsView):
