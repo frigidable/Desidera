@@ -38,6 +38,7 @@ from lsbpipe.photometry.mask_drafts import (
 )
 from lsbpipe.photometry.sky_masks import (
     SkyMaskDraft, SkyMaskEdit, SkyMaskShape, rasterize_sky_shape,
+    is_legacy_isophote_protection,
 )
 from lsbpipe.photometry.ellipse_seed import (
     propose_local_isophote, seed_as_sky_geometry,
@@ -59,6 +60,7 @@ PURPOSE_COLORS = {
     "restore_auto": "#6dc9e5",
     "sky_train": "#e9c96e",
     "sky_holdout": "#b99ded",
+    "isophote_candidate": "#e5a5ed",
 }
 PURPOSE_LABELS = (
     ("Protect galaxy light", "protect_target"),
@@ -66,6 +68,7 @@ PURPOSE_LABELS = (
     ("Restore editable auto mask", "restore_auto"),
     ("Sky training region (draft)", "sky_train"),
     ("Sky holdout region (draft)", "sky_holdout"),
+    ("Isophote candidate · display only", "isophote_candidate"),
 )
 MAX_RENDER_PIXELS = 6_000_000
 
@@ -1018,6 +1021,7 @@ class SceneEditor(QWidget):
             "scene_source_inventory_filter")
         for label, value in (
                 ("All native catalogue sources", "ALL"),
+                ("Gaia astrometry · target overlap review", "ASTROMETRY_REVIEW"),
                 ("Protected / unresolved overlaps", "PROTECTED_OVERLAP"),
                 ("Proposed masked neighbours", "PROPOSED_EXCLUDE"),
                 ("Other / no fitted band flux", "NOT_SCREENED_OR_UNFITTED")):
@@ -1099,8 +1103,13 @@ class SceneEditor(QWidget):
         self.iso_low_conf_override.toggled.connect(self._refresh_controls)
         iso_layout.addWidget(self.iso_low_conf_override)
         proposal_actions = QHBoxLayout()
-        self.iso_accept = QPushButton("Add proposed region")
+        self.iso_accept = QPushButton("Keep proposal (no mask)")
         self.iso_accept.setObjectName("scene_isophote_accept")
+        self.iso_accept.setToolTip(
+            "Keep this contour as an inactive, editable ICRS proposal. "
+            "It will NOT expand target protection, alter neighbour masks "
+            "or adopt any galaxy photometry. An explicit independent "
+            "source-policy action is required to affect masking.")
         self.iso_accept.clicked.connect(self._accept_isophote)
         proposal_actions.addWidget(self.iso_accept)
         self.iso_discard = QPushButton("Discard")
@@ -1890,6 +1899,8 @@ class SceneEditor(QWidget):
             f"{counts['masked_catalog_sources']} masked neighbours "
             f"({counts.get('elliptical_catalog_sources', 0)} morphology-based), "
             f"{counts['skipped_target_overlap']} unresolved overlaps"
+            + (f"; {counts.get('protected_gaia_astrometry_review', 0)} "
+               "Gaia astrometry foreground candidates left UNMASKED")
             + (f"; {counts.get('possible_sga_shreds', 0)} inside "
                "chosen SGA central ellipse" if result.get("sga_prior_id")
                is not None else "")
@@ -1901,7 +1912,9 @@ class SceneEditor(QWidget):
             f"Catalogue SHA-256 {result['catalog_sha256']}; "
             f"SGA {result.get('sga_prior_id') or 'none'} "
             f"SHA-256 {result.get('sga_prior_sha256') or 'none'}; "
-            f"{counts.get('missing_shape_fallbacks', 0)} shape fallbacks. "
+            f"{counts.get('missing_shape_fallbacks', 0)} shape fallbacks; "
+            f"{counts.get('legacy_isophote_protect_edits_ignored', 0)} "
+            "legacy isophote protection edits inactive. "
             "Original FITS unchanged. NOT an exact Tractor pixel model, "
             "PSF-wing subtraction or a calibrated science mask. Flags: "
             + ", ".join(result["flags"]))
@@ -1922,8 +1935,15 @@ class SceneEditor(QWidget):
         selected = self.source_registry_filter.currentData()
         term = self.source_registry_search.text().strip().casefold()
         for entry in evidence["entries"]:
-            if (selected != "ALL" and
-                    entry["screening_disposition"] != selected):
+            if selected == "ASTROMETRY_REVIEW":
+                if not (
+                        "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW"
+                        in entry["evidence_flags"] and
+                        (entry["centre_in_target_protection"] or
+                         entry["screening_disposition"] == "PROTECTED_OVERLAP")):
+                    continue
+            elif (selected != "ALL" and
+                  entry["screening_disposition"] != selected):
                 continue
             search = " ".join((
                 str(entry["source_id"]),
@@ -1933,6 +1953,8 @@ class SceneEditor(QWidget):
                 " ".join(entry["evidence_flags"]),
                 " ".join(entry["maskbits_names"]),
                 " ".join(entry["fitbits_names"]),
+                str(entry.get("foreground_evidence_assessment", "")),
+                str(entry.get("proposed_source_treatment", "")),
             )).casefold()
             if term and term not in search:
                 continue
@@ -1941,6 +1963,11 @@ class SceneEditor(QWidget):
             badge = ("REVIEW" if disp == "PROTECTED_OVERLAP"
                      else "MASK?" if disp == "PROPOSED_EXCLUDE"
                      else "NO FIT?")
+            if ("GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW"
+                    in entry["evidence_flags"] and
+                    (entry["centre_in_target_protection"] or
+                     disp == "PROTECTED_OVERLAP")):
+                badge = "FG? " + badge
             if not entry.get("centre_in_native_frame", True):
                 badge = "EDGE " + badge
             ident = entry["objid"]
@@ -1991,6 +2018,10 @@ class SceneEditor(QWidget):
             f"SC1 screening: {e['screening_disposition']}\n"
             f"Physical membership: {e['physical_membership']}\n"
             f"Photometry action: {e['photometry_action']}\n"
+            f"Foreground evidence: "
+            f"{e.get('foreground_evidence_assessment','UNDETERMINED')}\n"
+            f"Proposed treatment (INACTIVE): "
+            f"{e.get('proposed_source_treatment','REVIEW_ONLY')}\n"
             f"Target circle centre: "
             f"{e['centre_in_target_protection']}; "
             f"SGA prior centre: {e['centre_in_sga_prior']}\n"
@@ -2581,7 +2612,7 @@ class SceneEditor(QWidget):
         try:
             edit = SkyMaskEdit(
                 "sc1_iso_" + uuid4().hex,
-                "protect_target",
+                "isophote_candidate",
                 shape_for_edit,
                 band=scope,
                 comment=comment)
@@ -2591,14 +2622,14 @@ class SceneEditor(QWidget):
             return
         self._clear_isophote_preview()
         self.iso_summary.setText(
-            "Added provisional " + kind + " as "
+            "Kept non-masking " + kind + " proposal as "
             + ("explicit shared ICRS geometry" if scope is None
                else f"{self._band.upper()}-only geometry")
-            + ". No science is adopted.")
+            + ". No source masks changed; no science adopted.")
         self.iso_details.setText(
-            "Provisional " + kind + " added to the scene DRAFT. "
-            "Undo/Remove or Redraw selected can revise it; it will be "
-            "autosaved as an unadopted user-reviewed mask. No science adopted.")
+            "Preliminary " + kind + " saved as a NON-MASKING proposal. "
+            "Undo/Remove/Redraw can revise the annotation. It never "
+            "enlarges protect_target, auto-masks or science products.")
 
     def _mode_changed(self, *_):
         primitive = self.mode.currentData()
@@ -2762,7 +2793,10 @@ class SceneEditor(QWidget):
         self.mode.setCurrentIndex(self.mode.findData(edit.shape.kind))
         self._cancel_pending()
         self._replace_index = index
-        self.purpose.setCurrentIndex(self.purpose.findData(edit.purpose))
+        selected_purpose = (
+            "isophote_candidate"
+            if is_legacy_isophote_protection(edit) else edit.purpose)
+        self.purpose.setCurrentIndex(self.purpose.findData(selected_purpose))
         self.scope.setCurrentIndex(
             self.scope.findData("all" if edit.band is None else "band"))
         self.comment.setText(edit.comment)
@@ -2832,8 +2866,11 @@ class SceneEditor(QWidget):
         if self._draft is None:
             return
         for edit in self._draft.edits:
+            label = ("legacy isophote · INACTIVE"
+                     if is_legacy_isophote_protection(edit)
+                     else edit.purpose)
             self.edits.addItem(
-                f"{edit.purpose} · {edit.shape.kind} · "
+                f"{label} · {edit.shape.kind} · "
                 f"{'all bands' if edit.band is None else edit.band.upper()}")
             if self._loaded is None or not edit.applies_to(self._band):
                 continue
@@ -2844,7 +2881,10 @@ class SceneEditor(QWidget):
             except (ValueError, IndexError, TypeError):
                 continue
             item = QGraphicsPathItem(path)
-            pen = QPen(QColor(PURPOSE_COLORS[edit.purpose]), 1.9)
+            pen = QPen(QColor(
+                PURPOSE_COLORS["isophote_candidate"]
+                if is_legacy_isophote_protection(edit)
+                else PURPOSE_COLORS[edit.purpose]), 1.9)
             pen.setCosmetic(True)
             item.setPen(pen)
             item.setZValue(3.)
