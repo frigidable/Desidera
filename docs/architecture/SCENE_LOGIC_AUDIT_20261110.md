@@ -596,3 +596,133 @@ this JSON alone. It would be premature to attribute the
 to these particular protective-radius variants for 50–80″**
 but is neither a validated total/limiting isophote nor free
 of star-wing, deblending and residual-sky biases.
+
+
+---
+
+## Fifth-pass source-policy separation and legacy isophote repair — 2026-11-11
+
+**Basis:** direct reinspection of \`conservative_catalogue_mask\`,
+\`prepare_scene_contamination\`, \`build_scene_source_inventory\`,
+\`SkyMaskEdit\` / \`evaluate_mask_draft\`, the GUI worker and acceptance
+paths, original DR11 documentation, and the 2026-11-10
+21:26 UTC complete Leo P QA report. This section documents actual code
+changes in branch \`feature/scene-wcs-editor-sc1\`, not an adopted
+foreground model.
+
+### Source policy: what was broken, and what remains unresolved
+
+The old screening rule
+\`if np.any(disk & protected): near+=1; continue\`
+vetoes the **entire proposed source footprint** on even one
+protected pixel. The radius encodes no physical source membership and
+cannot distinguish a real galaxy H II region from a Gaia foreground
+star or background system. The apparent stability of the 63.4-arcsec
+radial endpoint under 50–80 arcsec radius sweeps does not test the
+five Gaia astrometric foreground candidates common to the protected
+region (OBJID 1763, 1870, 1876, 2034, 2035). This behaviour is
+retained **as explicitly unvalidated screening**, pending a proper
+PSF/model-based source policy. It must not be described as foreground
+decontamination or science-ready masking.
+
+Independent source evidence is now reported with
+\`foreground_evidence_assessment\`,
+\`proposed_source_treatment\` and
+\`proposed_treatment_is_active=False\`, while
+\`physical_membership=UNDETERMINED\` and
+\`photometry_action=NO_NEW_ACTION_READ_ONLY\` remain unchanged.
+The proposed foreground review requires an identified G3/REF_ID and
+an absolute parallax/PM-component significance >=5 from inherited
+Tractor reference astrometry; it is **not a posterior probability**,
+nor an adequate Gaia solution-quality assessment. The protection
+worker records explicit IDs/counts of such sources currently left
+unmasked, and the GUI exposes a dedicated filter. No new pixel
+exclusion or native FITS modification is permitted by these labels.
+
+From the supplied unmodified Leo P baseline, the flagged internal
+source IDs are **1763, 1870, 1876, 2034, 2035 (5)**.
+They require external Gaia quality cross-checks and validated
+wavelength-dependent PSF wing treatment. In particular,
+\`OBJID=2035\` has large, nonzero reference parallax and a bright
+Tractor G model but its MASKBITS do not prove G-band saturation.
+
+### Confirmed separate P0 source of feedback, now mitigated
+
+Before this change, an explicit \`Add proposed region\` click
+persisted tentative \`contour\`, moment-ellipse or \`sga_seed\` as
+\`SkyMaskEdit(purpose="protect_target")\`. This activated additional
+protection in *subsequent* catalogue masking and introduced an
+unjustified feedback loop. While the 2026-11-10 Leo P baseline
+contained no saved edits, previously saved project drafts elsewhere
+could contain this harmful state.
+
+Corrected implementation:
+
+- New purpose \`isophote_candidate\` in the existing mask-draft
+  schema. Newly retained isophotes become **non-masking** scene
+  annotations, never a new active protection region. They remain
+  revisioned, opt-in, per-band scoped by default, redrawable and
+  explicitly shareable between bands.
+- Legacy \`protect_target\` regions generated automatically by SC1
+  are detected by \`sc1_iso_*\` ID and/or provenance markers
+  \`AUTO_ISOPHOTE_PRELIMINARY\` or
+  \`SGA_INITIAL_GEOMETRY_DRAFT\`, and are **interpreted as inactive
+  isophote candidates** by both the Scene preparation path and the
+  generic mask-draft evaluator. They are not mutated or automatically
+  resaved; previously recorded project digest/revision remain intact.
+  The GUI labels them \`legacy isophote · INACTIVE\`.
+- Explicit user-authored \`protect_target\` edits retain their previous
+  masking-policy effect. Explicit user-authored \`exclude\` keeps
+  priority over target protection even inside the circle. Original
+  native-hard pixels remain inviolable.
+
+Regression tests cover serialization, band scoping, manually authored
+protection, foreground manual exclusion inside the core, previously
+saved auto-isophote drafts, truncated old provenance comments and GUI
+reopen/rendering.
+
+**Scope boundary:** this corrects *proposal-to-policy feedback*, not
+the original source-screening veto itself. No Gaia candidate is
+automatically masked or PSF-subtracted. No source treatment can become
+a science-adopted mask before calibrated star models and explicit
+uncertainty-aware decision provenance exist. The science HOLD remains.
+
+### Next source-policy architecture (pending, NOT implemented)
+
+Separate three immutable layers per native dataset/band:
+1. \`SourceEvidence\`: detections, full Tractor metadata, verified
+   Gaia identity/epoch/quality and SGA contextual geometry; preserves
+   every candidate including below screening threshold.
+2. \`SourceTreatmentDecision\`: researcher-verified hypothesis
+   (galaxy component / foreground / background / ambiguous),
+   source identity, confidence, evidence references, explicit
+   policy action and per-band scope, independent of any circular
+   target-protection geometry.
+3. \`TreatmentRealization\`: rendered PSF/Tractor model with uncertainty,
+   missing-wing bounds or reviewed geometric exclusion, fractional
+   coverage and source-specific residual QA. A classification alone
+   never automatically becomes a pixel mask.
+
+A validated foreground star should be eligible for subtraction or
+exclusion even within the provisional target circle. Ambiguous
+overlaps must be propagated as alternative treatment scenarios rather
+than silently included or excluded. Star-forming knots and genuine
+resolved stellar light must not be removed merely because the Tractor
+reported multiple PSF/REX components.
+
+### Required revalidation before any scientific adoption
+
+- Existing Leo P \`edits=[]\`: new build must preserve the
+  baseline \`493 masked / 114 overlaps / 400042 excluded pixels\`,
+  original source-catalogue SHA and five-radius sweep as before.
+- Synthetic old \`sc1_iso_*\` accepted drafts: must not alter
+  \`protected\`, \`auto_mask\` or resulting contours on reprocessing.
+- New \`isophote_candidate\` after Save → Close → Reopen: must not
+  alter source policy or undo native-hard flags.
+- Manual \`protect_target\`, \`exclude\`, \`restore_auto\` must
+  keep their documented priorities and band scopes.
+- Gaia/source review flags must remain unadopted evidence and never
+  silently cause new mask bits.
+- Future independent PSF-wing and spatial-sky systematics must be
+  tested with native FITS and injection/recovery; JSON diagnostics
+  alone cannot supply this validation.
