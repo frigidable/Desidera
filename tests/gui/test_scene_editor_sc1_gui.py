@@ -713,3 +713,64 @@ def test_on_demand_desi_sga2025_never_needs_local_full_catalogue(
                                  wcs=_native_wcs(flipped=True)))
     assert editor._sga_item is not None
     assert editor.draft.edits==()
+
+
+
+def test_leo_p_zero_radius_viewer_rejected_then_parent_requested_explicitly(
+        qtbot, tmp_path, monkeypatch):
+    from lsbpipe.photometry.sga_priors import (
+        SGAGeometryPrior, SGAPriorLookup,
+    )
+    from lsbpipe.surveys.object_projects import save_object_project
+    import lsbpipe.gui.scene_editor as module
+
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    invalid = SGAPriorLookup(
+        "SGA2025", "https://www.legacysurvey.org/viewer/"
+        "sga2025-south/1/cat.json", "a"*64, (),
+        unusable_count=1,
+        unusable_examples=("SGA-0 (Viewer ref 0, 0.1 arcsec): "
+                           "missing/nonpositive overlay radius",))
+    editor._accept_sga_lookup(invalid)
+    assert editor.sga_candidates.count() == 1
+    assert editor._sga_candidate is None
+    assert editor._sga_item is None
+    assert not editor.sga_use_prior.isEnabled()
+    assert "ZERO usable initial ellipses" in editor.sga_status.text()
+    assert "SGA-0" in editor.sga_status.text()
+    assert editor.draft.edits == ()
+
+    project.selected_dataset = ("dr11", "south", "1554p600", "g")
+    save_object_project(project)
+    parent = SGAGeometryPrior(
+        release="SGA2025-PARENT", sga_id=42, name="Leo P",
+        ra_deg=359.999, dec_deg=60., offset_arcsec=0.,
+        d26_arcmin=.42, d26_ref="VIEWER_PARENT_DIAMETER",
+        ba=.65, pa_deg=80., ellipsebit=0, ellipsemode=0,
+        flags=("PARENT_INITIAL_GEOMETRY_NOT_FITTED_ISOPHOTE",),
+        source_sha256="c"*64,
+        source_path="https://www.legacysurvey.org/viewer/"
+                    "sga2025-parent/1/cat.json")
+    lookup = SGAPriorLookup(
+        "SGA2025-PARENT", parent.source_path, parent.source_sha256,
+        (parent,))
+    seen = []
+    def fake_fetch(coords, **kwargs):
+        seen.append((coords, kwargs))
+        return lookup
+    monkeypatch.setattr(module, "fetch_viewer_sga2025_priors",
+                        fake_fetch)
+    editor.sga_parent_find.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._sga_lookup is lookup,
+        timeout=5000)
+    assert len(seen) == 1
+    assert seen[0][1]["layer"] == "parent"
+    assert seen[0][1]["region"] == "south"
+    assert editor.sga_candidates.count() == 2
+    editor.sga_candidates.setCurrentIndex(1)
+    assert editor._sga_item is not None
+    assert "Parent initial diameter" in editor.sga_status.text()
+    assert "Parent PGC" in editor.sga_status.text()
+    assert not editor.sga_use_prior.isChecked()
+    assert editor.draft.edits == ()
