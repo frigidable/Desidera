@@ -832,7 +832,11 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
                      "masked_catalog_centres":(
                          {"x":186.,"y":150.,"objid":42,"type":"PSF",
                           "gaia_counterpart":False},),
-                     "skipped_target_overlap":0,
+                     "skipped_target_overlap":1,
+                     "near_target_sources":(
+                         {"x":160.,"y":160.,"objid":73,
+                          "type":"PSF","radius_pix":12.,
+                          "classification":"UNRESOLVED_TARGET_BLEND"},),
                      "excluded_pixels":int(mask.sum()),
                      "native_hard_pixels":0},
             "flags":("PSF_WINGS_NOT_VALIDATED",),
@@ -854,6 +858,8 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert proposal["sga_comparison"]["reference_pa_deg"]==pytest.approx(140.)
     assert proposal["sga_radial"] is not None
     assert proposal["sga_seed_shape"] is not None
+    assert proposal["sga_comparison"][
+        "unresolved_catalog_centres_in_initial_ellipse"]==1
     assert proposal["sga_seed_shape"].a_arcsec>prior.core_shape().a_arcsec
     assert "SGA INITIAL:" in editor.iso_sga_summary.text()
     assert "Independent moments:" in editor.iso_sga_summary.text()
