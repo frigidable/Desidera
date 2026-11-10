@@ -643,6 +643,9 @@ def run_scene_protection_radius_sweep(
                 sga_protection_prior.source_sha256
                 if sga_protection_prior is not None else None),
             "gaia_inner_preview":bool(gaia_inner_preview),
+            "red_extended_preview":bool(red_extended_preview),
+            "red_extended_policy":"red_extended_v1"
+                if red_extended_preview else None,
         },
         "limitations":[
             "NO_NATIVE_FITS_CONTENT_HASH_IN_SC1",
