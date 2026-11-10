@@ -351,6 +351,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                  "PROTECTED_OVERLAP", "GAIA_FOREGROUND_MASK_PREVIEW"))
     )
     auto = auto & ~restored_auto
+    # The displayed orange footprint must show EFFECTIVE proposed pixels,
+    # not pixels explicitly restored by the researcher.
+    inner_gaia_mask = inner_gaia_mask & ~restored_auto
     # Explicit manual exclusions are applied even if they overlap target
     # protection, whereas automated catalogue proposals never do.
     excluded = auto | manual_excluded
