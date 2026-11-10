@@ -495,3 +495,92 @@ def test_off_frame_mask_contributors_keep_original_source_identity():
     assert by_id[2]["screening_disposition"] == "PROPOSED_EXCLUDE"
     assert all(row["physical_membership"] == "UNDETERMINED"
                for row in by_id.values())
+
+
+
+def test_gaia_astrometry_review_is_not_automatic_mask_and_legacy_iso_is_inactive(
+        tmp_path, monkeypatch):
+    """A saved exploratory outline cannot suppress neighbour screening.
+
+    Gaia foreground *evidence* is shown, but no stellar PSF is silently
+    removed from the protected target. A separate deliberate manual
+    exclusion still works, including within target protection.
+    """
+    import lsbpipe.photometry.scene_contaminants as module
+    from lsbpipe.photometry.sky_masks import (
+        SkyMaskDraft, SkyMaskEdit, SkyMaskShape,
+    )
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path/"session"))
+    project = create_object_project(
+        "Leo P", tmp_path/"LeoP_Legacy",
+        field=SkyField(155., 18., 4.))
+    project.data_root = project.root/"data"
+    project.data_root.mkdir()
+    project.selected_dataset = ("dr11", "south", "1554p180", "g")
+    project.target_radius_arcsec = 20.
+    save_object_project(project)
+    image = np.zeros((241, 241), dtype=float)
+    dataset = {
+        "project_id": project.project_id, "band": "g",
+        "source": "native-test", "wcs": _wcs(),
+        "pixel_shape": image.shape, "native_hard": np.zeros_like(image, bool),
+        "data": {"image": image,
+                 "maskbits": np.zeros_like(image, dtype=np.uint32)},
+    }
+    rows = (
+        {**_row(flux=600.), "objid": 2035,
+         "ref_cat": "G3", "ref_id": 623919492384922624,
+         "parallax_mas": 1.1, "parallax_ivar": 900.,
+         "pmra_masyr": -1.5, "pmra_ivar": 400.},
+        {**_row(flux=100.), "objid": 1674,
+         "ref_cat": "", "ref_id": 0},
+    )
+    catalogue = SimpleNamespace(
+        source_path=str(project.data_root/"tractor.fits"),
+        source_sha256="a"*64,
+        pixel_positions=np.array([[120., 120.], [180., 120.]]),
+        rows=rows)
+    monkeypatch.setattr(module, "read_native_tractor_gaia",
+                        lambda *args, **kwargs: catalogue)
+    empty = SkyMaskDraft(project.project_id)
+    legacy = SkyMaskEdit(
+        "sc1_iso_older", "protect_target",
+        SkyMaskShape("circle", (155., 18.), radius_arcsec=90.),
+        comment="AUTO_ISOPHOTE_PRELIMINARY kind=contour")
+    assert legacy.applies_to("g")
+    previously_saved = empty.with_edit(legacy)
+    baseline = module.prepare_scene_contamination(
+        dataset, project, empty, (155., 18.))
+    recovered = module.prepare_scene_contamination(
+        dataset, project, previously_saved, (155., 18.))
+    assert baseline["stats"]["masked_catalog_sources"] == 1
+    assert recovered["stats"]["masked_catalog_sources"] == 1
+    assert baseline["stats"]["skipped_target_overlap"] == 1
+    assert np.array_equal(recovered["mask"], baseline["mask"])
+    assert np.array_equal(recovered["protected"], baseline["protected"])
+    assert recovered["stats"]["legacy_isophote_protect_edits_ignored"] == 1
+    assert "LEGACY_ISOPHOTE_PROTECT_EDITS_INACTIVE" in recovered["flags"]
+    assert "PROTECTED_GAIA_ASTROMETRY_STARS_NOT_REMOVED" in recovered["flags"]
+    assert recovered["stats"]["protected_gaia_astrometry_review"] == 1
+    assert recovered["foreground_astrometry_protected_review_ids"] == (
+        "dr11/south/1554p180/OBJID=2035",)
+    by_id = {e["objid"]: e for e in recovered["source_inventory"]["entries"]}
+    assert by_id[2035]["foreground_evidence_assessment"] == (
+        "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW")
+    assert by_id[2035]["proposed_source_treatment"] == (
+        "REVIEW_FOREGROUND_PSF_OR_MANUAL_EXCLUSION")
+    assert by_id[2035]["proposed_treatment_is_active"] is False
+    assert by_id[2035]["physical_membership"] == "UNDETERMINED"
+    assert by_id[2035]["photometry_action"] == "NO_NEW_ACTION_READ_ONLY"
+    assert not recovered["mask"][120, 120]
+    assert recovered["mask"][120, 180]
+    manual = SkyMaskEdit(
+        "user_exclude_g3", "exclude",
+        SkyMaskShape("circle", (155.,18.), radius_arcsec=3.),
+        band="g", comment="Independent foreground-star QA")
+    manual_result = module.prepare_scene_contamination(
+        dataset, project, previously_saved.with_edit(manual), (155.,18.))
+    assert manual_result["mask"][120,120]
+    assert manual_result["mask"][120,180]
+    assert manual_result["stats"]["protected_gaia_astrometry_review"] == 1
+    assert np.array_equal(image, dataset["data"]["image"])
