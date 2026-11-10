@@ -45,6 +45,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     elliptical, missing_shape = 0, 0
     possible_shreds = 0
     conflicts = []
+    masked_centres = []
+    inventory_truncated = 0
     if np.shape(positions) != (len(rows), 2):
         raise ValueError("Tractor positions and row count differ")
     # Original WCS CD/PC matrix maps *native FITS pixels* to east/north
@@ -160,6 +162,14 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             continue
         output[y1:y2, x1:x2] |= disk
         accepted += 1
+        if len(masked_centres) < 4096:
+            masked_centres.append({
+                "x":x,"y":y,"objid":row.get("objid"),
+                "type":source_type,
+                "gaia_counterpart":row.get("gaia_g_mag") is not None,
+            })
+        else:
+            inventory_truncated += 1
         if pa is not None:
             elliptical += 1
     output.setflags(write=False)
@@ -169,6 +179,11 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         "missing_shape_fallbacks": missing_shape,
         "skipped_target_overlap": near,
         "possible_sga_shreds": possible_shreds,
+        # Catalogue source CENTRES, not model footprints. Use only as
+        # unresolved potential galaxy-component inventory for QA after
+        # an independently measured initial radial extent exists.
+        "masked_catalog_centres": tuple(masked_centres),
+        "masked_centres_truncated": inventory_truncated,
         "near_target_sources": tuple(conflicts),
         "outside_cutout": outside,
         "unusable_catalog_sources": ignored,
