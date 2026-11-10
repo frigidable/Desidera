@@ -558,6 +558,17 @@ def test_gaia_astrometry_review_is_not_automatic_mask_and_legacy_iso_is_inactive
     assert baseline["stats"]["skipped_target_overlap"] == 1
     assert np.array_equal(recovered["mask"], baseline["mask"])
     assert np.array_equal(recovered["protected"], baseline["protected"])
+    new_proposal = SkyMaskEdit(
+        "sc1_iso_new_proposal", "isophote_candidate",
+        SkyMaskShape("circle", (155.,18.), radius_arcsec=90.),
+        band="g")
+    annotated = module.prepare_scene_contamination(
+        dataset, project, empty.with_edit(new_proposal), (155.,18.))
+    assert np.array_equal(annotated["mask"], baseline["mask"])
+    assert np.array_equal(annotated["protected"], baseline["protected"])
+    assert annotated["stats"]["masked_catalog_sources"] == 1
+    assert annotated["stats"]["skipped_target_overlap"] == 1
+    assert annotated["stats"]["legacy_isophote_protect_edits_ignored"] == 0
     assert recovered["stats"]["legacy_isophote_protect_edits_ignored"] == 1
     assert "LEGACY_ISOPHOTE_PROTECT_EDITS_INACTIVE" in recovered["flags"]
     assert "PROTECTED_GAIA_ASTROMETRY_STARS_NOT_REMOVED" in recovered["flags"]
