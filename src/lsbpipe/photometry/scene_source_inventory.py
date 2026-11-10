@@ -60,43 +60,53 @@ def _sig(value, invvar):
 
 def conservative_red_extended_candidate(row, *, offset_arcsec,
                                         neighbour_arcsec, target_radius_arcsec):
-    """High-specificity *hypothesis* for an isolated red extended interloper.
+    """High-specificity red extended contaminant *hypothesis* with audit.
 
-    This pre-registered diagnostic gate is not a calibrated membership
-    classifier. Individual independent cues are not probabilities; the
-    multi-band Tractor fluxes are not PSF-homogenized measurements.
-    Returns (passes, metrics) even when inputs are missing.
+    Every rejection returns a stable FIRST failing gate, so source-level
+    QA can explain missing masks. No gate is a physical-membership
+    classifier, and the thresholds remain science-uncalibrated.
     """
-    info = {"policy": "red_extended_v1", "passes": False}
-    if row.get("type") not in ("EXP", "DEV", "SER"):
+    info = {"policy":"red_extended_v1", "passes":False,
+            "first_failure":None}
+
+    def reject(reason):
+        info["first_failure"] = reason
         return False, info
+
+    if row.get("type") not in ("EXP", "DEV", "SER"):
+        return reject("MODEL_NOT_EXTENDED_EXP_DEV_SER")
     if (str(row.get("ref_cat") or "").strip().upper()
             in ("G2", "G3", "L4")):
-        return False, info
+        return reject("REFERENCE_GAIA_OR_SGA")
     if row.get("gaia_duplicated_source", False):
-        return False, info
-    # Missing bitfields cannot be treated as an affirmative clean fit.
+        return reject("DUPLICATED_GAIA_SOURCE")
     if row.get("fitbits") is None or row.get("maskbits") is None:
-        return False, info
+        return reject("FIT_OR_MASK_BITS_MISSING")
     if int(row["fitbits"]) or int(row["maskbits"]):
-        return False, info
+        return reject("FIT_OR_MASK_BITS_NONZERO")
     size = row.get("shape_r_arcsec")
     if size is None or not math.isfinite(float(size)):
-        return False, info
+        return reject("SHAPE_RADIUS_UNAVAILABLE")
+    info["shape_r_arcsec"] = float(size)
     if not .65 <= float(size) <= 4.:
-        return False, info
+        return reject("SHAPE_RADIUS_OUTSIDE_STRICT_RANGE")
     if (offset_arcsec is None or target_radius_arcsec is None or
             not math.isfinite(float(target_radius_arcsec)) or
             float(target_radius_arcsec) <= 0. or
-            not math.isfinite(float(offset_arcsec)) or
-            float(offset_arcsec) < max(12., .2*float(target_radius_arcsec))):
-        return False, info
-    # +inf is a legitimate "no other catalogue source" sentinel;
-    # NaN is invalid data and must never count as isolation.
+            not math.isfinite(float(offset_arcsec))):
+        return reject("TARGET_DISTANCE_UNAVAILABLE")
+    info["offset_arcsec"] = float(offset_arcsec)
+    if float(offset_arcsec) < max(12., .2*float(target_radius_arcsec)):
+        return reject("NEAR_TARGET_ANCHOR")
     if (neighbour_arcsec is None or
-            math.isnan(float(neighbour_arcsec)) or
-            float(neighbour_arcsec) < 2.5):
-        return False, info
+            math.isnan(float(neighbour_arcsec))):
+        return reject("NEAREST_NEIGHBOUR_UNAVAILABLE")
+    info["nearest_arcsec"] = (
+        float(neighbour_arcsec)
+        if math.isfinite(float(neighbour_arcsec)) else None)
+    info["no_catalogue_neighbour"] = math.isinf(float(neighbour_arcsec))
+    if float(neighbour_arcsec) < 2.5:
+        return reject("CROWDED_NEAREST_NEIGHBOUR_LT_2P5_ARCSEC")
     fluxes = row.get("model_fluxes_nMgy") or {}
     ivars = row.get("model_flux_ivars") or {}
     signal = {}
@@ -106,26 +116,22 @@ def conservative_red_extended_candidate(row, *, offset_arcsec,
                 not math.isfinite(float(flux)) or
                 not math.isfinite(float(ivar)) or
                 float(flux) <= 0. or float(ivar) <= 0.):
-            return False, info
+            return reject("THREE_BAND_POSITIVE_FLUX_IVAR_REQUIRED")
         signal[band] = float(flux)*math.sqrt(float(ivar))
-    if signal["g"] < 10. or signal["r"] < 10. or signal["z"] < 7.:
-        return False, info
-    gr = 2.5*math.log10(float(fluxes["r"])/float(fluxes["g"]))
-    rz = 2.5*math.log10(float(fluxes["z"])/float(fluxes["r"]))
-    if not (.8 <= gr <= 2.5 and .55 <= rz <= 2.):
-        return False, info
-    info.update({"passes": True, "g_minus_r": round(gr, 5),
-                 "r_minus_z": round(rz, 5),
-                 "shape_r_arcsec": float(size),
-                 "offset_arcsec": float(offset_arcsec),
-                 "nearest_arcsec": (
-                     float(neighbour_arcsec)
-                     if math.isfinite(float(neighbour_arcsec)) else None),
-                 "no_catalogue_neighbour": (
-                     math.isinf(float(neighbour_arcsec))),
-                 "snr_g":round(signal["g"], 4),
+    info.update({"snr_g":round(signal["g"], 4),
                  "snr_r":round(signal["r"], 4),
                  "snr_z":round(signal["z"], 4)})
+    if signal["g"] < 10. or signal["r"] < 10. or signal["z"] < 7.:
+        return reject("THREE_BAND_SNR_BELOW_STRICT_LIMIT")
+    gr = 2.5*math.log10(float(fluxes["r"])/float(fluxes["g"]))
+    rz = 2.5*math.log10(float(fluxes["z"])/float(fluxes["r"]))
+    info.update({"g_minus_r":round(gr, 5),
+                 "r_minus_z":round(rz, 5)})
+    if not .8 <= gr <= 2.5:
+        return reject("G_MINUS_R_OUTSIDE_STRICT_RANGE")
+    if not .55 <= rz <= 2.:
+        return reject("R_MINUS_Z_OUTSIDE_STRICT_RANGE")
+    info["passes"] = True
     return True, info
 
 
