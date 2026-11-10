@@ -1316,6 +1316,21 @@ def test_radius_sweep_is_non_destructive_and_tracks_mask_isophote_changes(
     assert result["scenarios"][4]["status"]=="ISOPHOTE_NOT_FOUND"
     assert "80 arcsec" in result["scenarios"][4]["isophote_error"]
     assert result["scenarios"][4]["component_iou_vs_60arcsec"] is None
+    # Compare neighbouring scenarios directly; relative-to-60 overlap
+    # cannot prove two large-radius components are pixel-identical.
+    assert result["scenarios"][0]["previous_radius_arcsec"] is None
+    assert result["scenarios"][0]["component_iou_vs_previous_radius"] is None
+    assert baseline["previous_radius_arcsec"]==50.
+    assert baseline["component_iou_vs_previous_radius"]==pytest.approx(
+        50./60.)
+    assert baseline["new_protected_overlap_ids_vs_previous_radius"]==["2"]
+    assert result["scenarios"][3]["previous_radius_arcsec"]==60.
+    assert result["scenarios"][3]["component_iou_vs_previous_radius"]==(
+        pytest.approx(60./70.))
+    assert result["scenarios"][4]["previous_radius_arcsec"]==70.
+    assert result["scenarios"][4]["component_iou_vs_previous_radius"] is None
+    assert result["scenarios"][4]["mask_jaccard_vs_previous_radius"] < 1.
+    assert result["scenarios"][4]["sga_radius_delta_vs_previous_arcsec"] is None
     assert len(baseline["all_four_trials"])==4
     assert "NO_PSF_WING_MODEL_SCENARIO_EXECUTED" in result["limitations"]
     assert "NO_INDEPENDENT_SPATIAL_SKY_MODEL_SCENARIO_EXECUTED" in result["limitations"]
@@ -1339,6 +1354,31 @@ def test_radius_sweep_is_non_destructive_and_tracks_mask_isophote_changes(
     # The red classifier must be part of the immutable input
     # fingerprint. Without the recorded flag, the GUI would reject
     # all valid red-on sweeps as stale.
+    # A component can be completely unchanged while neighbouring masks
+    # still differ: expose both facts rather than assuming zero mask change.
+    def fake_stable_at_80(dataset, anchor, contrast, smooth, prepared,
+                          bridge_guard_pix=0, sga_prior=None):
+        radius=float(prepared["stats"]["protected_pixels"])/4
+        if radius == 80.:
+            stable=dict(prepared)
+            stable["stats"]=dict(prepared["stats"],
+                                 protected_pixels=70.*4)
+            return fake_propose(dataset,anchor,contrast,smooth,stable,
+                                bridge_guard_pix=bridge_guard_pix,
+                                sga_prior=sga_prior)
+        return fake_propose(dataset,anchor,contrast,smooth,prepared,
+                            bridge_guard_pix=bridge_guard_pix,
+                            sga_prior=sga_prior)
+    monkeypatch.setattr(module,"propose_scene_isophote",
+                        fake_stable_at_80)
+    plateau=module.run_scene_protection_radius_sweep(
+        editor._loaded,project.root,editor.draft,editor._project_target,
+        threshold_contrast=2.7)
+    assert plateau["scenarios"][4]["component_iou_vs_previous_radius"]==1.
+    assert plateau["scenarios"][4]["mask_jaccard_vs_previous_radius"] < 1.
+    assert plateau["scenarios"][4]["component_iou_vs_60arcsec"] < 1.
+    assert plateau["scenarios"][4]["masked_pixel_change_vs_previous_radius"]>0
+    assert editor.draft.digest==draft_before
     editor.iso_red_extended_preview.setChecked(True)
     extra=module.run_scene_protection_radius_sweep(
         editor._loaded, project.root, editor.draft,
