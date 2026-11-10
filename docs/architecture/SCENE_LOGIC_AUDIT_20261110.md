@@ -455,3 +455,144 @@ verify source-policy fingerprints/independent holdout regions.
 
 This record is intended as a reproducible **metadata-level science
 audit**, not a claim of end-to-end FITS-level validation.
+
+
+---
+
+## Fourth-pass protection-radius sweep — Leo P (2026-11-10 21:26:22 UTC)
+
+**Input:** actual 2,064,599-byte \`Copy Scene QA\` JSON exported from
+Leo P, SHA-256
+\`b2b50d1825075490bef95a1efde214b25b5e2299c4dd7b01363733bf88c6abcd\`.
+Read-only five-scenario \`desidera.gui.protection-radius-sweep/1\`,
+DR11 south brick \`1554p180\`, \`g\` native IMAGE \`1324×1466\`,
+unchanged in-memory image, Tractor catalogue SHA-256
+\`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c\`,
+SGA2025-PARENT geometry ID 5065058 / SHA-256
+\`4ed9faa3b3ea039ef714d766e657698e0c12246dff831b7d7899f812973506e1\`.
+**SGA geometry ON, SGA core source protection OFF.**
+Contrast 2.2, smoothing 4.0 px, binary opening 2 px.
+Draft \`revision=2\`, \`edits=[]\`, \`dirty=false\` and digest
+\`2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619\`.
+No science adoption or project-file writes observed.
+
+### Reconciled results
+
+| Protected circle | Proposed masked IDs | Protected overlap IDs | Excluded pixels | Connected component px | q from moments | SGA-guided radial endpoint (arcsec) | Component IoU vs 60″ |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 40″ | 540 | 67 | 432426 | 39028 | 0.692313 | 53.6591 | 0.848593 |
+| 50″ | 517 | 90 | 417589 | 43397 | 0.583408 | 63.4153 | 0.943947 |
+| **60″** | **493** | **114** | **400042** | **45974** | **0.541076** | **63.4153** | **1.0** |
+| 70″ | 478 | 129 | 388230 | 46102 | 0.540712 | 63.4153 | 0.996704 |
+| 80″ | 459 | 148 | 371674 | 46102 | 0.540712 | 63.4153 | 0.996704 |
+
+Independent integer-ledger checks passed:
+- Each mask-preparation scenario preserves 607 screened eligible
+  sources \`masked+protected\`. Newly excluded IDs relative to
+  60″ are respectively 47/24/0/0/0; newly protected-overlap IDs
+  0/0/0/15/34. ID changes are nested, unique and agree with
+  baseline in-frame source screening. 811 relevant source entries
+  and identical catalogue digest are reported in all five cases.
+- XOR mask differences relative to 60″ are
+  \`32384,17547,0,11812,28368\` px. Because proposed exclusion
+  masks nest with radius, the exported mask Jaccards are exactly
+  the ratio of the smaller mask area to the larger area in every
+  case; no anomalous mask topology or pixel-accounting mismatch.
+- Native hard-invalid pixel overlap with excluded pixels is
+  **96** at radii 40/50/60″ and **0** at 70/80″; this explains
+  the small difference from simply subtracting total hard pixels
+  and excluded pixels from the total image area.
+- Relative to 60″, connected-component pixel area changes by
+  **−15.109%, −5.605%, 0%, +0.278%, +0.278%**. Solving the
+  recorded IoU against integer component sizes yields these
+  intersections with the 60″ component:
+  \`39020,43397,45974,45962,45962\` pixels respectively.
+  At 70″, even though the masks monotonically *shrink*, the new
+  thresholded region adds 140 px and loses 12 px. This is
+  consistent with recomputed normalized smoothing, thresholding,
+  and morphological opening; connected components need not
+  themselves be strictly nested.
+- The 60″ base row reproduces the separately saved
+  \`isophote_proposal\` exactly for component size, q, centroid,
+  sky, smoothed RMS and SGA radius. All 5 scenarios report
+  \`LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE\`.
+
+### Physical interpretation, source-level controls
+
+The simplistic hypothesis that the reported 63.415″ SGA-guided
+endpoint is directly or automatically equal to the protection
+radius **fails**: it remains exactly 63.415″ for protection
+50/60/70/80″. But masks matter substantially at radius 40″,
+when endpoint drops by **9.7562 arcsec = exactly 6 radial
+bins** (bin step ~1.6260″), area drops ~15.1%, and q shifts
+from .541 to .692. These tests demonstrate **conditional mask
+sensitivity** but do not identify the causal pixels or establish
+an astrophysical outer edge.
+
+The 40→50″ change simultaneously restores protection to 23
+source identities; the two particularly diagnostic Gaia G3
+sources are:
+- \`OBJID=1763\`: g Tractor model flux **17.152 nMgy**,
+  circular offset 48.317″, SGA-coordinate elliptical radius
+  **58.62″**, strong Gaia proper-motion signal.
+- \`OBJID=2034\`: g Tractor model flux **1.404 nMgy**,
+  circular offset 53.506″, SGA ellipse radius **58.55″**.
+- \`OBJID=1762\`: a nearby \`SER\` component **0.73″**
+  from 1763, also changes category at 40→50″, with
+  FITBITS \`HIT_RADIUS_LIMIT|WALKER|RUNNER|ITERATIVE\`.
+  This is a fitting/deblend-review target, **not** proof that
+  either source belongs to the galaxy.
+
+At 70″, newly protected Gaia source \`OBJID=2074\`
+(g~6.155 nMgy). At 80″ two more are additionally protected,
+\`OBJID=1796\` (g~34.975 nMgy) and \`OBJID=2226\`
+(g~24.945 nMgy). Expanded protection can preserve **known
+foreground-star candidates** rather than remove contamination.
+Conversely, the bright central Gaia sources
+\`2035\` (g~607.404 nMgy, offset ~19.9″),
+\`1876\` (g~39.101 nMgy, ~29.1″) and
+\`1870\` (g~5.876 nMgy, ~26.6″) remain protected in
+**all five scenarios**. They are a common-mode potential bias,
+not tested by this radius sweep.
+
+In all five runs, the reported robust local sky
+\`2.1435495000332594e-05 nMgy/pixel\`, smoothed sky RMS
+\`0.00027178690896814656 nMgy/pixel\` and number of sky
+pixels \`487180\` are **bitwise/numerically identical**.
+Thus no observed change in the reported *scalar* sky summary
+explains the inter-scenario differences. Sky modelling/systematic
+bias and source PSF wings were **not** tested independently.
+
+The reference SGA radial annulus at 63.415″ has median smoothed
+contrast 0.812 with coverage .959; the next annulus at 65.041″
+has contrast .589, below the fixed acceptance cutoff .65, with
+coverage .965. The sweep exports only one detected endpoint per
+radius, not the **full radial-bin sequence in each scenario**.
+Therefore the 40″ failure mechanism cannot be diagnosed from
+this JSON alone. It would be premature to attribute the
+53.66→63.42″ transition to the two named Gaia sources.
+
+### Next controlled test, in strict priority order
+
+1. Keep the input IMAGE, local sky, SGA geometry and catalogue
+   frozen, but **export all SGA annular bins (coverage, eight
+   sector values, median contrast, support reasons) for each
+   protection scenario**. This will identify where 40″ loses
+   continuity relative to 50″.
+2. Perform source-level leave-one-out / small-group controlled
+   tests on IDs \`1762,1763,2034\` with explicit mask-policy
+   alternatives. The baseline 60″ core Gaia set
+   \`2035,1876,1870\` must separately receive PSF-wing models
+   or clearly flagged exclusion experiments. Do not use
+   Tractor \`TYPE\`, Gaia ID or SGA context to decide target
+   membership automatically.
+3. Independently vary local/2D sky models, sky holdout sectors,
+   effective coverage and PSF-wing treatment. Then perform
+   star/galaxy injection–recovery on real coadds, without tuning
+   a threshold to reproduce the LBT resolved-star 70″ scale.
+
+**Disposition:** software experiment and internal arithmetic pass;
+**photometric science HOLD continues**. Radius 63.4″ is **robust
+to these particular protective-radius variants for 50–80″**
+but is neither a validated total/limiting isophote nor free
+of star-wing, deblending and residual-sky biases.
