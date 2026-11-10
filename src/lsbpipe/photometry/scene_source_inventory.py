@@ -287,6 +287,16 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         "diagnostic_red_extended_mask_preview_active":(
             disposition == "RED_EXTENDED_MASK_PREVIEW"),
         "red_extended_rule_evidence":red_rule_evidence,
+        "red_extended_first_failure":(
+            red_rule_evidence.get("first_failure")
+            if red_rule_evidence is not None else None),
+        "red_extended_near_miss":bool(
+            disposition in ("PROTECTED_OVERLAP", "NOT_SCREENED_OR_UNFITTED")
+            and red_rule_evidence is not None
+            and red_rule_evidence.get("first_failure") ==
+                "G_MINUS_R_OUTSIDE_STRICT_RANGE"
+            and .7 <= (red_rule_evidence.get("g_minus_r") or -100.) < .8
+            and .55 <= (red_rule_evidence.get("r_minus_z") or -100.) <= 2.),
         "centre_in_target_protection":bool(centre_protected),
         "centre_in_sga_prior":bool(centre_sga),
         "reference_catalog":ref_cat, "reference_id":ref_id,
@@ -356,6 +366,12 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         for c in screen_stats.get("red_extended_preview_centres", ())
     }
     red_preview_index = set(red_preview_records)
+    red_audit_records = {
+        _point_key(c["x"],c["y"],c.get("objid")):c
+        for c in screen_stats.get("red_extended_source_audit", ())
+    }
+    red_audit_enabled = bool(
+        screen_stats.get("red_extended_source_audit_enabled", False))
     candidates = []
     for (x,y),row in zip(points,catalog.rows):
         if not np.isfinite(x) or not np.isfinite(y):
@@ -419,8 +435,13 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         centre_protected=cp,centre_sga=cs,
         centre_in_native_frame=inside,
         red_rule_evidence=(
-            red_preview_records.get(_point_key(x,y,row.get("objid")), {})
-            .get("evidence") if disposition=="RED_EXTENDED_MASK_PREVIEW"
+            red_audit_records[_point_key(x,y,row.get("objid"))]["evidence"]
+            if _point_key(x,y,row.get("objid")) in red_audit_records
+            else {"policy":"red_extended_v1", "passes":False,
+                  "first_failure":"CURRENT_BAND_UNFITTED_OR_BELOW_5SNR"}
+            if red_audit_enabled and
+               disposition == "NOT_SCREENED_OR_UNFITTED" and
+               centre_protected
             else None),
         angular_arcsec=_separation_arcsec(
             row.get("ra_deg"),row.get("dec_deg"),anchor_icrs))
@@ -429,7 +450,8 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         screen_stats.get("skipped_target_overlap",0) >
         len(screen_stats.get("near_target_sources",())) or
         screen_stats.get("masked_catalog_sources",0) >
-        len(screen_stats.get("masked_catalog_centres",()))
+        len(screen_stats.get("masked_catalog_centres",())) or
+        screen_stats.get("red_extended_source_audit_truncated", 0) > 0
     )
     return {
         "schema":SOURCE_EVIDENCE_SCHEMA,
