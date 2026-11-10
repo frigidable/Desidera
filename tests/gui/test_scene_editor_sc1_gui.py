@@ -1036,3 +1036,126 @@ def test_readonly_source_inventory_shows_all_ambiguous_and_unfitted_gaia(
     assert not editor.iso_generate.isEnabled()
     assert editor.draft.edits==()
     assert not (project.root/"analyses").exists()
+
+
+
+def test_one_click_complete_scene_qa_copies_all_trials_and_catalogue(
+        qtbot, tmp_path, monkeypatch):
+    """Full clipboard snapshot is read-only, includes failed sensitivity
+    trials and full source metadata, but excludes native pixel arrays."""
+    import json
+    from PySide6.QtWidgets import QApplication
+    from lsbpipe.photometry.ellipse_seed import (
+        EllipseSeed, LocalIsophotalProposal,
+    )
+
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    record = {
+        "status": "CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+        "band": "g",
+        "project_id": project.project_id,
+        "catalog_sha256": "e"*64,
+        "dataset_source": editor._loaded["source"],
+        "draft_digest": editor.draft.digest,
+        "stats": {
+            "masked_catalog_sources": 493,
+            "skipped_target_overlap": 114,
+            "near_target_sources": ({"objid": 2035, "x": 48., "y": 51.},),
+        },
+        "flags": ("PSF_WINGS_NOT_VALIDATED",),
+        "mask": np.ones((96, 96), dtype=bool),
+        "auto_mask": np.ones((96, 96), dtype=bool),
+    }
+    editor._contamination = record
+    editor._source_registry = {
+        "schema": "test-source-evidence",
+        "catalog_sha256": "e"*64,
+        "stored_count": 2,
+        "total_in_native_frame": 2,
+        "entries": (
+            {"objid": 2035, "source_id": "dr11/south/1554p600/OBJID=2035",
+             "physical_membership": "UNDETERMINED",
+             "evidence_flags": ("GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW",)},
+            {"objid": 2076, "source_id": "dr11/south/1554p600/OBJID=2076",
+             "physical_membership": "UNDETERMINED",
+             "evidence_flags": ("SGA_GALAXY_CONTEXT_NOT_MEMBERSHIP_PROOF",)},
+        ),
+    }
+    seed = EllipseSeed(x_pix=48., y_pix=48., sma_pix=13., q=.5,
+                       theta_native_deg=30., component_pixels=150,
+                       centroid_offset_pix=1.)
+    proposal = LocalIsophotalProposal(
+        seed=seed, contour_xy=((40., 40.), (60., 40.), (50., 60.)),
+        local_sky=-.001, raw_sky_rms=.002, smoothed_sky_rms=.0004,
+        sky_pixels=1600, threshold_contrast=2.2, smoothing_pix=4.,
+        flags=("BACKGROUND_CONSTANT_NOT_VALIDATED",),
+        component_indices=np.arange(10000, dtype=np.int64))
+    trials = (
+        {"threshold": 2.2, "smooth_pix": 4., "state": "DETECTED",
+         "connected_pixels": 150, "overlap_to_reference": 1.},
+        {"threshold": 1.7, "smooth_pix": 4., "state": "DETECTED",
+         "connected_pixels": 200, "overlap_to_reference": .6},
+        {"threshold": 2.85, "smooth_pix": 4., "state": "NO_STABLE_COMPONENT",
+         "reason": "Disconnected pixel boundary"},
+        {"threshold": 2.2, "smooth_pix": 5.4, "state": "DETECTED",
+         "connected_pixels": 180, "overlap_to_reference": .8},
+    )
+    editor._isophote_proposal = {
+        "status": "LOCAL_ISOPHOTE_PROPOSAL_NOT_ADOPTED",
+        "proposal": proposal,
+        "alternatives": ({"model": proposal}, None, None, None),
+        "sensitivity": {"confidence": "LOW_CONFIDENCE", "trials": trials,
+                        "minimum_spatial_iou": .6,
+                        "flags": ("CONTOUR_FAILS_NEARBY_THRESHOLDS",)},
+        "catalog_sha256": "e"*64,
+    }
+    editor.iso_summary.setText("LOW CONFIDENCE: no science adoption")
+    editor.iso_details.setText("Independent PSF wings not validated")
+    before_draft = editor.draft
+    before_image = editor._loaded["data"]["image"].copy()
+    editor.copy_scene_qa_btn.click()
+    snapshot = json.loads(QApplication.clipboard().text())
+    assert snapshot["schema"] == "desidera.gui.scene-complete-qa/1"
+    assert snapshot["science_status"] == "UNADOPTED_DIAGNOSTIC_ONLY"
+    assert snapshot["native_fits"]["native_pixel_shape"] == [96, 96]
+    assert snapshot["contaminant_screening"]["stats"]["skipped_target_overlap"] == 114
+    assert snapshot["contaminant_screening"]["proposed_mask_pixel_count"] == 96*96
+    assert len(snapshot["source_inventory"]["entries"]) == 2
+    assert snapshot["source_inventory"]["entries"][1]["objid"] == 2076
+    assert snapshot["source_inventory"]["all_stored_entries_included"]
+    qa = snapshot["isophote_proposal"]["sensitivity"]
+    assert len(qa["trials"]) == 4
+    assert qa["trials"][2]["state"] == "NO_STABLE_COMPONENT"
+    assert "Disconnected" in qa["trials"][2]["reason"]
+    assert snapshot["isophote_proposal"]["proposal"]["component_indices"] == {
+        "pixel_array_omitted": True, "shape": [10000], "dtype": "int64",
+        "element_count": 10000,
+    }
+    assert snapshot["display_messages"]["isophote_details_all_trials"] == (
+        "Independent PSF wings not validated")
+    assert editor.draft == before_draft
+    assert np.array_equal(editor._loaded["data"]["image"], before_image)
+    assert not (project.root/"analyses").exists()
+
+
+def test_scene_qa_button_without_loaded_fits_stays_readonly(
+        qtbot, tmp_path, monkeypatch):
+    """Unprepared GUI exports explicit absence, never guesses FITS results."""
+    import json
+    from PySide6.QtWidgets import QApplication
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path/"session"))
+    project = create_object_project(
+        "Leo P", tmp_path/"Leo_P", field=SkyField(359.999, 60., 6.))
+    editor = SceneEditor()
+    qtbot.addWidget(editor)
+    editor.bind_project(project.root)
+    assert editor._loaded is None
+    editor.copy_scene_qa_btn.click()
+    qa = json.loads(QApplication.clipboard().text())
+    assert qa["native_fits"] is None
+    assert qa["isophote_proposal"] is None
+    assert qa["contaminant_screening"] is None
+    assert qa["project"]["project_id"] == project.project_id
+    assert qa["science_status"] == "UNADOPTED_DIAGNOSTIC_ONLY"
+    assert not (project.root/"analyses").exists()
