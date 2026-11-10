@@ -842,6 +842,10 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
                      "excluded_pixels":int(mask.sum()),
                      "native_hard_pixels":0},
             "flags":("PSF_WINGS_NOT_VALIDATED",),
+            "source_inventory":{"entries":(
+                {"x":160.,"y":159.,"objid":88,"tractor_type":"PSF",
+                 "source_id":"dr11/south/test/OBJID=88",
+                 "screening_disposition":"NOT_SCREENED_OR_UNFITTED"},)},
         }
 
     monkeypatch.setattr(module,"prepare_scene_neighbour_masks",fake_prepare)
@@ -862,6 +866,12 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert proposal["sga_seed_shape"] is not None
     assert proposal["sga_comparison"][
         "unresolved_catalog_centres_in_initial_ellipse"]==1
+    assert proposal["sga_comparison"][
+        "unscreened_catalog_centres_in_initial_ellipse"]==1
+    assert proposal["sga_comparison"][
+        "all_unmasked_catalog_centres_in_initial_ellipse"]==2
+    assert "1 protected overlaps + 1 unscreened/unfitted" in (
+        editor.iso_sga_summary.text())
     assert proposal["sga_seed_shape"].a_arcsec>prior.core_shape().a_arcsec
     assert "SGA INITIAL:" in editor.iso_sga_summary.text()
     assert "Independent moments:" in editor.iso_sga_summary.text()
@@ -958,7 +968,7 @@ def test_readonly_source_inventory_shows_all_ambiguous_and_unfitted_gaia(
     )
     editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
     data = _data(project.project_id)
-    points = np.array([[48.,48.],[75.,75.],[17.,22.]])
+    points = np.array([[48.,48.],[75.,75.],[45.,45.]])
     protected = np.zeros(data["pixel_shape"],bool)
     protected[38:59,38:59] = True
     rows = (
@@ -1016,6 +1026,13 @@ def test_readonly_source_inventory_shows_all_ambiguous_and_unfitted_gaia(
     assert "UNDETERMINED" in editor.source_registry_details.toPlainText()
     assert "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW" in (
         editor.source_registry_details.toPlainText())
+    editor.source_registry_filter.setCurrentIndex(
+        editor.source_registry_filter.findData("TARGET_PROTECTION_ALL"))
+    assert editor.source_registry_list.count()==2
+    editor.source_registry_filter.setCurrentIndex(
+        editor.source_registry_filter.findData("TARGET_UNSCREENED"))
+    assert editor.source_registry_list.count()==1
+    assert "OBJID 42" in editor.source_registry_list.item(0).text()
     editor.source_registry_filter.setCurrentIndex(
         editor.source_registry_filter.findData("NOT_SCREENED_OR_UNFITTED"))
     assert editor.source_registry_list.count()==1
