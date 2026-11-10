@@ -439,3 +439,59 @@ def test_source_registry_decodes_all_dr11_bit_names():
     assert "GAIA_POINTSOURCE" in by_id[2035]["fitbits_names"]
     assert all(v["physical_membership"] == "UNDETERMINED"
                for v in by_id.values())
+
+
+def test_off_frame_mask_contributors_keep_original_source_identity():
+    """Sources outside the cutout can mask *in-frame* pixels.
+
+    The old registry omitted these accepted screen sources, leaving
+    excluded pixels with no inspectable Tractor identity. Preserve the
+    2D native-centre count and report contributing off-frame centres.
+    """
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory,
+    )
+    protected = np.zeros((61, 61), dtype=bool)
+    protected[22:39, 22:39] = True
+    rows = (
+        {**_row(flux=100.), "objid": 1},  # protected source
+        {**_row(flux=100.), "objid": 2},  # source just outside right edge
+        {**_row(flux=100.), "objid": 3},  # ordinary in-frame exclusion
+        {**_row(flux=100.), "objid": 4},  # too distant to affect cutout
+    )
+    points = np.array([[30., 30.], [62., 30.],
+                       [10., 10.], [100., 40.]])
+    mask, stats = conservative_catalogue_mask(
+        protected.shape, points, rows,
+        arcsec_per_pixel=1., protected=protected)
+    assert stats["masked_catalog_sources"] == 2
+    assert stats["skipped_target_overlap"] == 1
+    assert stats["outside_cutout"] == 1
+    assert mask[30, 60] and mask[10, 10]
+    catalog = SimpleNamespace(
+        rows=rows, pixel_positions=points,
+        source_path="local-original-tractor.fits",
+        source_sha256="d"*64)
+    registry = build_scene_source_inventory(
+        catalog, pixel_shape=protected.shape,
+        protected=protected, screen_stats=stats,
+        release="dr11", region="south", brick="1554p180", band="g")
+    assert registry["total_in_native_frame"] == 2
+    assert registry["contributing_off_frame"] == 1
+    assert registry["total_relevant_sources"] == 3
+    assert registry["stored_count"] == 3
+    assert registry["screening_counts_all_native"] == {
+        "PROTECTED_OVERLAP": 1, "PROPOSED_EXCLUDE": 1,
+        "NOT_SCREENED_OR_UNFITTED": 0,
+    }
+    assert registry["screening_counts_all_relevant"] == {
+        "PROTECTED_OVERLAP": 1, "PROPOSED_EXCLUDE": 2,
+        "NOT_SCREENED_OR_UNFITTED": 0,
+    }
+    assert "OFF_FRAME_CONTRIBUTING_MASK_SOURCES" in registry["cautions"]
+    by_id = {row["objid"]:row for row in registry["entries"]}
+    assert set(by_id) == {1, 2, 3}
+    assert by_id[2]["centre_in_native_frame"] is False
+    assert by_id[2]["screening_disposition"] == "PROPOSED_EXCLUDE"
+    assert all(row["physical_membership"] == "UNDETERMINED"
+               for row in by_id.values())
