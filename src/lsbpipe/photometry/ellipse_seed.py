@@ -237,40 +237,73 @@ def _clipped_location(values):
 
 
 def _outer_boundary(region, xoff, yoff, *, max_vertices=192):
-    """Trace the exterior grid-edge ring of a 4-connected pixel component.
+    """Trace exterior grid-edge ring of a 4-connected pixel component.
 
-    No skimage/matplotlib dependency. Inner holes are deliberately ignored:
-    hard-invalid FITS pixels remain invalid independently of region geometry.
+    Preserve *directed edges*, not a one-successor-per-vertex dict.
+    Valid 4-connected regions can have diagonally touching voids or
+    concavities. At such a pixel-grid corner two boundary edges may
+    leave the same vertex; collapsing them into one dict entry drops
+    an edge and spuriously raises "Disconnected isophotal pixel
+    boundary". At ambiguities we follow the clockwise turn that keeps
+    the same pixel interior on the right. Every directed edge belongs
+    to exactly one closed boundary cycle; choose the largest-area cycle
+    as the exterior and ignore smaller hole cycles.
+
+    This is a preliminary display contour only. Native hard-invalid
+    pixels remain invalid and are not filled for science photometry.
     Coordinates are FITS pixel centres, not row-inverted Qt coordinates.
     """
     pixels = np.argwhere(region)
     if len(pixels) < 6:
         raise ValueError("Isophotal component is too small for a contour")
     ny, nx = region.shape
-    edges = {}
+    edges = []
+    outgoing = {}
+
+    def add_edge(start, end):
+        edge = (start, end)
+        edges.append(edge)
+        outgoing.setdefault(start, []).append(edge)
+
     for y, x in pixels:
         y, x = int(y), int(x)
         if y == 0 or not region[y-1, x]:
-            edges[(x, y)] = (x+1, y)
+            add_edge((x, y), (x+1, y))
         if x == nx-1 or not region[y, x+1]:
-            edges[(x+1, y)] = (x+1, y+1)
+            add_edge((x+1, y), (x+1, y+1))
         if y == ny-1 or not region[y+1, x]:
-            edges[(x+1, y+1)] = (x, y+1)
+            add_edge((x+1, y+1), (x, y+1))
         if x == 0 or not region[y, x-1]:
-            edges[(x, y+1)] = (x, y)
+            add_edge((x, y+1), (x, y))
+
+    def next_edge(edge):
+        start, vertex = edge
+        dx, dy = vertex[0]-start[0], vertex[1]-start[1]
+        # Pixel y increases downwards. Clockwise preference prevents
+        # cross-connecting two holes that touch only diagonally.
+        preferred = ((-dy, dx), (dx, dy), (dy, -dx), (-dx, -dy))
+        options = outgoing.get(vertex, ())
+        if not options:
+            raise ValueError("Disconnected isophotal pixel boundary")
+        return min(options, key=lambda candidate: preferred.index((
+            candidate[1][0]-vertex[0], candidate[1][1]-vertex[1])))
+
+    successors = {edge: next_edge(edge) for edge in edges}
+    visited = set()
     rings = []
-    while edges:
-        first = next(iter(edges))
+    for first in edges:
+        if first in visited:
+            continue
         cursor = first
-        ring = [first]
+        ring = []
         for _ in range(len(edges)+1):
-            successor = edges.pop(cursor, None)
-            if successor is None:
-                raise ValueError("Disconnected isophotal pixel boundary")
-            if successor == first:
+            if cursor in visited:
+                if cursor != first:
+                    raise ValueError("Ambiguous isophotal pixel boundary")
                 break
-            ring.append(successor)
-            cursor = successor
+            visited.add(cursor)
+            ring.append(cursor[0])
+            cursor = successors[cursor]
         else:
             raise ValueError("Isophotal boundary could not be closed")
         if len(ring) >= 8:
@@ -281,9 +314,8 @@ def _outer_boundary(region, xoff, yoff, *, max_vertices=192):
     if not rings:
         raise ValueError("No closed isophotal outline")
     exterior = max(rings, key=lambda row: row[0])[1]
-    # Reduce stair-step noise and bound immutable sky-mask snapshots to 256
-    # vertices. Equal arc-length spacing preserves the contour's spatial
-    # character better than taking every Nth grid edge.
+    # Bound immutable draft snapshots and smooth only the *display*
+    # outline. Real missing pixels are never filled by this operation.
     from scipy.ndimage import gaussian_filter1d
     exterior = gaussian_filter1d(exterior, 1.5, axis=0, mode="wrap")
     closed = np.vstack([exterior, exterior[0]])
