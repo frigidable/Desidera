@@ -64,6 +64,23 @@ PURPOSE_LABELS = (
 MAX_RENDER_PIXELS = 6_000_000
 
 
+def scene_contour_stability_readout(sensitivity):
+    """Do not present the ratio of one successful trial as evidence.
+
+    A single detected trial gives the tautological 1.00 area ratio,
+    while spatial IoU cannot be measured when all alternatives fail.
+    These are UNDETERMINED, not confirmations of robustness.
+    """
+    trials = sensitivity["trials"]
+    n_good = sum(trial["state"] == "DETECTED" for trial in trials)
+    area = (f"{sensitivity['area_ratio']:.2f}"
+            if n_good >= 2 else "n/a")
+    overlap = sensitivity.get("minimum_spatial_iou")
+    iou = (f"{overlap:.2f}"
+           if n_good >= 2 and overlap is not None else "n/a")
+    return n_good, len(trials), area, iou
+
+
 def load_scene_original_cutout(project_root: str, band: str,
                                width_arcmin: float) -> dict:
     """Read one original selected-brick quartet; no network or writes.
@@ -1591,14 +1608,16 @@ class SceneEditor(QWidget):
         low = sensitivity["confidence"].startswith("LOW_CONFIDENCE")
         label = ("LOW CONFIDENCE · manual review required" if low
                  else "PRELIMINARY · stable enough to inspect")
+        n_good, n_total, area, iou = scene_contour_stability_readout(
+            sensitivity)
         self.iso_summary.setText(
-            f"{label}. {self._band.upper()} connected area "
+            f"{label}. {self._band.upper()} native connected area "
             f"{model.seed.component_pixels:,} px; q={model.seed.q:.2f}; "
             f"centroid offset {model.seed.centroid_offset_pix:.1f} px. "
-            f"Sensitivity area ratio {sensitivity['area_ratio']:.2f}; "
-            f"min spatial IoU "
-            f"{sensitivity['minimum_spatial_iou'] if sensitivity['minimum_spatial_iou'] is not None else float('nan'):.2f} "
-            "across four trials. "
+            f"{n_good}/{n_total} native contour trials detected; "
+            f"area ratio {area}; min spatial IoU {iou}. "
+            + ("Stability cannot be evaluated with one detected trial. "
+               if n_good <= 1 else "")
             + ("Review flags; acceptance blocked until checkbox confirmed."
                if low else "Review before adding to draft."))
         trial_text = "; ".join(
@@ -1680,18 +1699,29 @@ class SceneEditor(QWidget):
             model = candidate["model"]
             summary = self._isophote_proposal["sensitivity"]
             label = ("LOW CONFIDENCE" if low else "PRELIMINARY")
-            self.iso_summary.setText(
-                ("SGA-derived PA/q with empirical radius · "
-                 if kind == "sga_seed" else "")
-                + f"{label} · trial {self.iso_candidate.currentData()} · "
-                f"{model.seed.component_pixels:,} pixels; "
-                f"q={model.seed.q:.2f}; "
-                f"centroid offset={model.seed.centroid_offset_pix:.1f} px. "
-                f"Across four trials: area ratio "
-                f"{summary['area_ratio']:.2f}, min IoU "
-                f"{summary.get('minimum_spatial_iou') if summary.get('minimum_spatial_iou') is not None else float('nan'):.2f}. "
-                + ("Manual-review override required." if low
-                   else "No science adoption."))
+            n_good, n_total, area, iou = (
+                scene_contour_stability_readout(summary))
+            if kind == "sga_seed":
+                self.iso_summary.setText(
+                    f"SGA INITIAL (not a fitted isophote): "
+                    f"a={shape.a_arcsec:.1f} arcsec, "
+                    f"q={shape.q:.3f}, PA={shape.pa_deg:.1f} deg. "
+                    f"Independent NATIVE contour QA: "
+                    f"{n_good}/{n_total} detected, area ratio {area}, "
+                    f"min IoU {iou}; "
+                    + ("LOW CONFIDENCE. " if low else "PRELIMINARY. ")
+                    + "Manual review required; no science adoption.")
+            else:
+                self.iso_summary.setText(
+                    f"Native {label} · trial "
+                    f"{self.iso_candidate.currentData()} · "
+                    f"{model.seed.component_pixels:,} pixels; "
+                    f"q={model.seed.q:.2f}; "
+                    f"centroid offset={model.seed.centroid_offset_pix:.1f} px. "
+                    f"{n_good}/{n_total} contour trials; "
+                    f"area ratio {area}, min IoU {iou}. "
+                    + ("Manual-review override required." if low
+                       else "No science adoption."))
             original_qa = self._isophote_proposal["sensitivity"]
             trial_text = "; ".join(
                 f"{trial['threshold']:.2f}/{trial['smooth_pix']:.1f}px:"
