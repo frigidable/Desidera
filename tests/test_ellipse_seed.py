@@ -182,3 +182,66 @@ def test_bridge_guard_is_bounded_and_does_not_mutate_native_pixels():
     with pytest.raises(ValueError,match="bridge settings"):
         propose_local_isophote(
             image,good,(120.,120.),bridge_guard_pix=9)
+
+
+def test_sga_guided_radial_extent_follows_native_light_not_parent_diameter():
+    from astropy.wcs import WCS
+    from lsbpipe.photometry.sky_masks import SkyMaskShape
+    from lsbpipe.photometry.ellipse_seed import sga_informed_radial_seed
+    w=WCS(naxis=2)
+    w.wcs.crpix=[201.,201.]
+    w.wcs.crval=[155.,18.]
+    w.wcs.cd=np.diag([-1.,1.])/3600.
+    w.wcs.ctype=["RA---TAN","DEC--TAN"]
+    y,x=np.indices((401,401))
+    east=-(x-200.)*np.cos(np.deg2rad(18.))
+    north=y-200.
+    angle=np.deg2rad(150.)
+    major=east*np.sin(angle)+north*np.cos(angle)
+    minor=east*np.cos(angle)-north*np.sin(angle)
+    a=35.
+    q=.55
+    gaussian=3.*np.exp(-.5*((major/a)**2+(minor/(a*q))**2))
+    noise=np.random.default_rng(115).normal(0.,.08,(401,401))
+    image=.3+noise+gaussian
+    original=image.copy()
+    valid=np.ones_like(image,bool)
+    valid[180:206,244:264]=False
+    prior=SkyMaskShape("ellipse",center=(155.,18.),
+                       a_arcsec=14.,q=q,pa_deg=150.)
+    result=sga_informed_radial_seed(
+        image,valid,w,prior,
+        local_sky=.3,smoothed_rms=.05,smooth_sigma_pix=3.)
+    assert result.status=="SGA_INFORMED_RADIAL_SEED_NOT_ADOPTED"
+    assert result.reference_a_arcsec==pytest.approx(14.)
+    assert result.detected_a_arcsec is not None
+    assert 26. < result.detected_a_arcsec < 135.
+    assert result.q_sky==pytest.approx(q)
+    assert result.pa_deg==pytest.approx(150.)
+    assert 0 < result.masked_fraction < .30
+    assert len(result.bins)>10
+    assert np.array_equal(image,original)
+
+
+def test_sga_guided_radial_seed_does_not_invent_extent_on_sky_noise():
+    from astropy.wcs import WCS
+    from lsbpipe.photometry.sky_masks import SkyMaskShape
+    from lsbpipe.photometry.ellipse_seed import sga_informed_radial_seed
+    w=WCS(naxis=2)
+    w.wcs.crpix=[201.,201.]
+    w.wcs.crval=[155.,18.]
+    w.wcs.cd=np.diag([-1.,1.])/3600.
+    w.wcs.ctype=["RA---TAN","DEC--TAN"]
+    image=np.random.default_rng(214).normal(0.,.1,(401,401))
+    prior=SkyMaskShape("ellipse",center=(155.,18.),
+                       a_arcsec=14.,q=.53,pa_deg=151.)
+    result=sga_informed_radial_seed(
+        image,np.ones_like(image,bool),w,prior,
+        local_sky=0.,smoothed_rms=.1)
+    assert result.detected_a_arcsec is None
+    assert "NO_DETECTED_OUTER_RADIUS" in result.flags
+    assert all(not b["supported"] for b in result.bins[:5])
+    assert result.status=="SGA_INFORMED_RADIAL_SEED_NOT_ADOPTED"
+    with pytest.raises(ValueError,match="valid selected SGA ellipse"):
+        sga_informed_radial_seed(image,np.ones_like(image,bool),w,None,
+                                 local_sky=0.,smoothed_rms=.1)
