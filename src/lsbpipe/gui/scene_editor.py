@@ -77,12 +77,12 @@ def _scene_qa_json_value(value):
     indices. Preserve their size/type, not a massive pixel-level dump.
     Source-registry *row metadata* is intentionally exported in full.
     """
+    if isinstance(value, np.generic):
+        return _scene_qa_json_value(value.item())
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
-    if isinstance(value, np.generic):
-        return _scene_qa_json_value(value.item())
     if isinstance(value, np.ndarray):
         return {"pixel_array_omitted": True,
                 "shape": list(value.shape), "dtype": str(value.dtype),
