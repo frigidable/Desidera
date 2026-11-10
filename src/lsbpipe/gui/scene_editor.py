@@ -1566,6 +1566,21 @@ class SceneEditor(QWidget):
                 "masked_catalog_centres_in_initial_ellipse", 0)
             unresolved = comparison.get(
                 "unresolved_catalog_centres_in_initial_ellipse", 0)
+            boundary_warning = (
+                radial is not None and
+                "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS"
+                in radial.flags)
+            protection_radius = comparison.get(
+                "target_protection_radius_arcsec")
+            boundary_note = (
+                f" WARNING: radial extent is close to the "
+                f"provisional {protection_radius:.1f} arcsec target "
+                "protection radius; catalogue masking changes across "
+                "that scale. The agreement is not a validated galaxy "
+                "boundary. Compare alternative protection settings "
+                "before using this initial estimate."
+                if boundary_warning and protection_radius is not None
+                else "")
             self.iso_sga_summary.setText(
                 f"SGA INITIAL: a={comparison['reference_a_arcsec']:.1f}\" "
                 f"→ data-supported a={outer}; "
@@ -1580,6 +1595,7 @@ class SceneEditor(QWidget):
                 f"{masked} masked and {unresolved} unresolved "
                 "Tractor centres inside proposal need source-by-source "
                 "review; no auto restores or new exclusions."
+                + boundary_note
                 + ("" if radial is not None else
                    " No supported extension: " +
                    str(result.get('sga_warning') or 'insufficient evidence')))
