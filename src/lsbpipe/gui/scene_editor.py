@@ -289,9 +289,20 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
                             0 <= iy < footprint.shape[0] and
                             footprint[iy,ix] > 0):
                         candidates.append(source)
+                unresolved = []
+                for source in contamination["stats"].get(
+                        "near_target_sources", ()):
+                    ix, iy = int(round(source["x"])),int(round(source["y"]))
+                    if (0 <= ix < footprint.shape[1] and
+                            0 <= iy < footprint.shape[0] and
+                            footprint[iy,ix] > 0):
+                        unresolved.append(source)
                 sga_comparison = {
                     "masked_catalog_centres_in_initial_ellipse": len(candidates),
+                    "unresolved_catalog_centres_in_initial_ellipse":
+                        len(unresolved),
                     "review_candidates": tuple(candidates[:25]),
+                    "unresolved_review": tuple(unresolved[:25]),
                     "catalogue_inventory_truncated":
                         contamination["stats"].get(
                             "masked_centres_truncated", 0),
@@ -1532,6 +1543,8 @@ class SceneEditor(QWidget):
                      else "NOT detected")
             masked = comparison.get(
                 "masked_catalog_centres_in_initial_ellipse", 0)
+            unresolved = comparison.get(
+                "unresolved_catalog_centres_in_initial_ellipse", 0)
             self.iso_sga_summary.setText(
                 f"SGA INITIAL: a={comparison['reference_a_arcsec']:.1f}\" "
                 f"→ data-supported a={outer}; "
@@ -1543,8 +1556,9 @@ class SceneEditor(QWidget):
                 f"ΔPA={comparison['delta_pa_deg']:.1f}°). "
                 f"SGA–target centre offset="
                 f"{comparison['center_offset_arcsec']:.1f}\". "
-                f"{masked} masked Tractor centres inside proposal "
-                "need source-by-source review; none restored."
+                f"{masked} masked and {unresolved} unresolved "
+                "Tractor centres inside proposal need source-by-source "
+                "review; no auto restores or new exclusions."
                 + ("" if radial is not None else
                    " No supported extension: " +
                    str(result.get('sga_warning') or 'insufficient evidence')))
