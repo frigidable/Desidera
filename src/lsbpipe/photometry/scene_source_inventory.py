@@ -168,7 +168,7 @@ def _point_key(x, y, objid):
 
 def _described_source(row, *, x, y, disposition, release, region, brick,
                       band, centre_protected, centre_sga, angular_arcsec,
-                      centre_in_native_frame):
+                      centre_in_native_frame, red_rule_evidence=None):
     ref_cat = str(row.get("ref_cat") or "").upper()
     ref_id = row.get("ref_id")
     is_gaia = ref_cat == "G3" and ref_id is not None and int(ref_id) > 0
@@ -226,7 +226,8 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         evidence.append("INSIDE_OR_TOUCHES_PROVISIONAL_TARGET_PROTECTION")
     if centre_sga:
         evidence.append("SGA_CENTRAL_REGION_NOT_MEMBERSHIP_PROOF")
-    if disposition in ("PROPOSED_EXCLUDE", "GAIA_FOREGROUND_MASK_PREVIEW"):
+    if disposition in ("PROPOSED_EXCLUDE", "GAIA_FOREGROUND_MASK_PREVIEW",
+                       "RED_EXTENDED_MASK_PREVIEW"):
         evidence.append("GEOMETRIC_MASK_ONLY_NO_TRACTOR_MODEL")
     if disposition == "GAIA_FOREGROUND_MASK_PREVIEW":
         evidence.append("EXPERIMENTAL_GAIA_INTERIOR_MASK_NO_PSF_WINGS")
@@ -259,12 +260,15 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
             if negative_parallax_quality_alert else
             "REVIEW_FOREGROUND_PSF_OR_MANUAL_EXCLUSION"
             if astrometric_foreground_signal else
+            "REVIEW_RED_EXTENDED_BACKGROUND_HYPOTHESIS"
+            if disposition == "RED_EXTENDED_MASK_PREVIEW" else
             "REVIEW_TARGET_LIGHT_VS_CONTAMINANT"),
         "proposed_treatment_is_active":False,
         "diagnostic_inner_gaia_mask_preview_active":(
             disposition == "GAIA_FOREGROUND_MASK_PREVIEW"),
         "diagnostic_red_extended_mask_preview_active":(
             disposition == "RED_EXTENDED_MASK_PREVIEW"),
+        "red_extended_rule_evidence":red_rule_evidence,
         "centre_in_target_protection":bool(centre_protected),
         "centre_in_sga_prior":bool(centre_sga),
         "reference_catalog":ref_cat, "reference_id":ref_id,
@@ -329,10 +333,11 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         _point_key(c["x"],c["y"],c.get("objid"))
         for c in screen_stats.get("gaia_inner_preview_centres", ())
     }
-    red_preview_index = {
-        _point_key(c["x"],c["y"],c.get("objid"))
+    red_preview_records = {
+        _point_key(c["x"],c["y"],c.get("objid")):c
         for c in screen_stats.get("red_extended_preview_centres", ())
     }
+    red_preview_index = set(red_preview_records)
     candidates = []
     for (x,y),row in zip(points,catalog.rows):
         if not np.isfinite(x) or not np.isfinite(y):
@@ -395,6 +400,10 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         release=release,region=region,brick=brick,band=band,
         centre_protected=cp,centre_sga=cs,
         centre_in_native_frame=inside,
+        red_rule_evidence=(
+            red_preview_records.get(_point_key(x,y,row.get("objid")), {})
+            .get("evidence") if disposition=="RED_EXTENDED_MASK_PREVIEW"
+            else None),
         angular_arcsec=_separation_arcsec(
             row.get("ra_deg"),row.get("dec_deg"),anchor_icrs))
         for _,x,y,row,disposition,cp,cs,inside in candidates)
