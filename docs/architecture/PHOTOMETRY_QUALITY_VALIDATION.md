@@ -443,7 +443,7 @@ rather than claims that a particular threshold is externally validated:
 - Stone et al. (2021), AutoProf, MNRAS 508, 1870:
   https://doi.org/10.1093/mnras/stab2709
 - Moustakas et al. (2023), Siena Galaxy Atlas 2020,
-  ApJS 269, 3: https://doi.org/10.3847/1538-4365/acfb80
+  ApJS 269, 3: https://doi.org/10.3847/1538-4365/acfaa2
 - PHOTOMETRY_INPUT_CONTRACT_P05.md and
   PSF_SCENE_SKY_ORDER_P13.md contain project-specific engineering
   conventions and may be stricter than generic literature methods.
