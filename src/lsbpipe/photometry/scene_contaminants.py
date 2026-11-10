@@ -17,7 +17,7 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 
 from lsbpipe.photometry.psf_tractor_gaia import read_native_tractor_gaia
 from lsbpipe.photometry.scene_source_inventory import (
-    build_scene_source_inventory,
+    build_scene_source_inventory, gaia_astrometric_foreground_review,
 )
 from lsbpipe.photometry.sky_masks import rasterize_sky_shape
 from lsbpipe.survey import named_bit
@@ -43,7 +43,8 @@ def _has_gaia_catalogue_reference(row):
 
 def conservative_catalogue_mask(shape, positions, rows, *,
                                 arcsec_per_pixel, protected, wcs=None,
-                                sga_core=None):
+                                sga_core=None,
+                                gaia_inner_preview=False):
     """Source-type-aware *screening* footprints, never rendered Tractor models.
 
     Point sources get conservative round brightness-dependent envelopes.
@@ -67,6 +68,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     accepted, near, outside, ignored = 0, 0, 0, 0
     elliptical, missing_shape = 0, 0
     possible_shreds = 0
+    inner_preview = np.zeros((ny, nx), dtype=bool)
+    inner_preview_centres = []
     conflicts = []
     masked_centres = []
     inventory_truncated = 0
@@ -157,6 +160,32 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         else:
             disk = dx*dx+dy*dy <= r_pix**2
         if np.any(disk & protected[y1:y2, x1:x2]):
+            # Explicit opt-in DIAGNOSTIC only. Strong reference astrometry
+            # nominates possible foreground stars, not verified PSF models.
+            # Even here we require PSF-type, valid Gaia G3 ID, and no
+            # Gaia duplicate/strongly negative parallax quality alert.
+            # Preserve the *entire* geometric envelope as a candidate
+            # exclusion, not as a subtraction or science mask.
+            is_gaia_preview = (
+                gaia_inner_preview and source_type == "PSF"
+                and not row.get("gaia_duplicated_source", False)
+                and gaia_astrometric_foreground_review(row)[0])
+            if is_gaia_preview:
+                output[y1:y2, x1:x2] |= disk
+                inner_preview[y1:y2, x1:x2] |= disk
+                accepted += 1
+                candidate = {
+                    "x": x, "y": y, "objid": row.get("objid"),
+                    "type": source_type, "radius_pix": r_pix,
+                    "gaia_counterpart": True,
+                    "diagnostic_only": True,
+                }
+                inner_preview_centres.append(candidate)
+                if len(masked_centres) < 4096:
+                    masked_centres.append(candidate)
+                else:
+                    inventory_truncated += 1
+                continue
             near += 1
             in_sga = (sga_core is not None and
                       0 <= int(round(x)) < nx and
@@ -196,8 +225,12 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         if pa is not None:
             elliptical += 1
     output.setflags(write=False)
+    inner_preview.setflags(write=False)
     return output, {
         "masked_catalog_sources": accepted,
+        "gaia_inner_preview_mask": inner_preview,
+        "gaia_inner_preview_sources": len(inner_preview_centres),
+        "gaia_inner_preview_centres": tuple(inner_preview_centres),
         "elliptical_catalog_sources": elliptical,
         "missing_shape_fallbacks": missing_shape,
         "skipped_target_overlap": near,
@@ -215,7 +248,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
 
 
 def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
-                                *, sga_prior=None):
+                                *, sga_prior=None, gaia_inner_preview=False):
     """Prepare source-bound candidate mask in a worker, with no network.
 
     The current stage supports verified local DR11 South native Tractor
@@ -301,7 +334,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
     auto, counts = conservative_catalogue_mask(
         shape, catalog.pixel_positions, catalog.rows,
         arcsec_per_pixel=pxscale, protected=protected,
-        wcs=dataset["wcs"], sga_core=sga_core)
+        wcs=dataset["wcs"], sga_core=sga_core,
+        gaia_inner_preview=bool(gaia_inner_preview))
+    inner_gaia_mask = counts.pop("gaia_inner_preview_mask")
     source_inventory = build_scene_source_inventory(
         catalog, pixel_shape=shape, protected=protected,
         screen_stats=counts, release=release, region=region,
@@ -312,7 +347,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         if "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW"
            in e["evidence_flags"]
         and (e["centre_in_target_protection"] or
-             e["screening_disposition"] == "PROTECTED_OVERLAP")
+             e["screening_disposition"] in (
+                 "PROTECTED_OVERLAP", "GAIA_FOREGROUND_MASK_PREVIEW"))
     )
     auto = auto & ~restored_auto
     # Explicit manual exclusions are applied even if they overlap target
@@ -331,8 +367,15 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
              "PROVISIONAL_PROTECTED_TARGET_RADIUS"]
     if counts["skipped_target_overlap"]:
         flags.append("TARGET_NEIGHBOURS_REQUIRE_MANUAL_REVIEW")
-    if foreground_review_ids:
+    if foreground_review_ids and counts["gaia_inner_preview_sources"] < (
+            len(foreground_review_ids)):
         flags.append("PROTECTED_GAIA_ASTROMETRY_STARS_NOT_REMOVED")
+    if gaia_inner_preview:
+        flags.extend((
+            "EXPLICIT_GAIA_INTERIOR_MASK_PREVIEW_ONLY",
+            "GAIA_ASTROMETRY_NOT_FIDELITY_VALIDATED",
+            "GAIA_WING_AND_GALAXY_FLUX_LOSS_NOT_QUANTIFIED",
+        ))
     if legacy_isophote_count:
         flags.append("LEGACY_ISOPHOTE_PROTECT_EDITS_INACTIVE")
     if sga_core is not None:
@@ -346,6 +389,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "status": "CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
         "mask": excluded.copy(),
         "auto_mask": auto.copy(),
+        "gaia_inner_preview_mask": inner_gaia_mask.copy(),
+        "gaia_inner_preview_enabled": bool(gaia_inner_preview),
         "protected": protected.copy(),
         "hard": hard.copy(),
         "project_id": project.project_id,
@@ -371,6 +416,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                       legacy_isophote_count,
                   "protected_gaia_astrometry_review":
                       len(foreground_review_ids),
+                  "gaia_inner_preview_pixels":
+                      int(np.count_nonzero(inner_gaia_mask)),
                   "catalog_rows": len(catalog.rows),
                   "excluded_pixels": int(np.count_nonzero(excluded)),
                   "native_hard_pixels": int(np.count_nonzero(hard)),
@@ -382,6 +429,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "source_inventory": source_inventory,
         "flags": tuple(flags),
     }
-    for name in ("mask", "auto_mask", "protected", "hard"):
+    for name in ("mask", "auto_mask", "gaia_inner_preview_mask",
+                 "protected", "hard"):
         output[name].setflags(write=False)
     return output
