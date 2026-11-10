@@ -618,6 +618,52 @@ def run_scene_protection_radius_sweep(
             disposition_sets[r]["excluded"]-ref_sets["excluded"])
         row["new_protected_overlap_ids_vs_60arcsec"]=sorted(
             disposition_sets[r]["overlap"]-ref_sets["overlap"])
+    # A common reference alone cannot establish whether the two largest
+    # radii produce identical pixel components. Compare adjacent scenarios
+    # directly, including failures rather than implying a plateau.
+    ordered_radii=sorted(radii)
+    previous_by_radius={
+        current:previous for previous,current in
+        zip(ordered_radii[:-1],ordered_radii[1:])}
+    for row in rows:
+        r=row["protection_radius_arcsec"]
+        previous=previous_by_radius.get(r)
+        row["previous_radius_arcsec"]=previous
+        row["masked_pixel_change_vs_previous_radius"]=None
+        row["mask_jaccard_vs_previous_radius"]=None
+        row["component_iou_vs_previous_radius"]=None
+        row["sga_radius_delta_vs_previous_arcsec"]=None
+        row["new_excluded_ids_vs_previous_radius"]=[]
+        row["new_protected_overlap_ids_vs_previous_radius"]=[]
+        if previous is None:
+            continue
+        old_mask,new_mask=masks[previous],masks[r]
+        row["masked_pixel_change_vs_previous_radius"]=int(
+            np.count_nonzero(old_mask ^ new_mask))
+        union=np.count_nonzero(old_mask | new_mask)
+        row["mask_jaccard_vs_previous_radius"]=(
+            float(np.count_nonzero(old_mask & new_mask)/union)
+            if union else 1.)
+        old_component,new_component=components[previous],components[r]
+        if old_component is not None and new_component is not None:
+            overlap=np.intersect1d(
+                old_component,new_component,assume_unique=True).size
+            total=old_component.size+new_component.size-overlap
+            row["component_iou_vs_previous_radius"]=(
+                float(overlap/total) if total else 1.)
+        old_row=next(item for item in rows
+                     if item["protection_radius_arcsec"]==previous)
+        old_a=old_row["sga_radial_radius_arcsec"]
+        new_a=row["sga_radial_radius_arcsec"]
+        if old_a is not None and new_a is not None:
+            row["sga_radius_delta_vs_previous_arcsec"]=float(
+                new_a-old_a)
+        row["new_excluded_ids_vs_previous_radius"]=sorted(
+            disposition_sets[r]["excluded"] -
+            disposition_sets[previous]["excluded"])
+        row["new_protected_overlap_ids_vs_previous_radius"]=sorted(
+            disposition_sets[r]["overlap"] -
+            disposition_sets[previous]["overlap"])
     return {
         "schema":"desidera.gui.protection-radius-sweep/1",
         "status":"READ_ONLY_DIAGNOSTIC_NOT_SCIENCE_VALIDATED",
