@@ -81,7 +81,8 @@ def _point_key(x, y, objid):
 
 
 def _described_source(row, *, x, y, disposition, release, region, brick,
-                      band, centre_protected, centre_sga, angular_arcsec):
+                      band, centre_protected, centre_sga, angular_arcsec,
+                      centre_in_native_frame):
     ref_cat = str(row.get("ref_cat") or "").upper()
     ref_id = row.get("ref_id")
     is_gaia = ref_cat == "G3" and ref_id is not None and int(ref_id) > 0
@@ -145,6 +146,7 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
     return {
         "source_id":sid, "objid":objid,
         "x":float(x), "y":float(y),
+        "centre_in_native_frame":bool(centre_in_native_frame),
         "ra_deg":row.get("ra_deg"), "dec_deg":row.get("dec_deg"),
         "offset_arcsec":angular_arcsec,
         "tractor_type":str(row.get("type") or ""),
@@ -185,8 +187,10 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
                                  max_records=12000):
     """Join native catalog identities with actual SC1 disposition.
 
-    All sources with centres in the native cutout plus protected-border
-    overlap sources are eligible, even if they lack a fitted flux.
+    All native-cutout centres plus any off-frame source whose screened
+    exclusion/protected-overlap footprint actually enters the cutout are
+    eligible, even if they lack a fitted flux. Off-frame contributors
+    must remain source-level auditable; they are not native-frame centres.
     The selected-protected and excluded sets are DIFFERENT policies,
     not physical hypotheses. Any truncation is explicitly reported.
     """
@@ -216,7 +220,7 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         x,y=float(x),float(y)
         inside = 0 <= x < nx and 0 <= y < ny
         key = _point_key(x,y,row.get("objid"))
-        if not inside and key not in protected_index:
+        if not inside and key not in protected_index and key not in masked_index:
             continue
         i,j=int(round(x)),int(round(y))
         centre_protected = (0 <= i < nx and 0 <= j < ny
@@ -233,15 +237,20 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         candidates.append((0 if disposition == "PROTECTED_OVERLAP"
                            else 1 if disposition == "PROPOSED_EXCLUDE"
                            else 2, x,y,row,disposition,
-                           centre_protected,centre_sga))
+                           centre_protected,centre_sga,inside))
     # Stable identity and focus ordering, independent of FITS row order.
     candidates.sort(key=lambda item:(
         item[0], str(item[3].get("objid")), item[1], item[2]))
     n_total = len(candidates)
+    n_native = sum(item[7] for item in candidates)
     full_counts = {
         name:sum(item[4] == name for item in candidates)
         for name in ("PROTECTED_OVERLAP","PROPOSED_EXCLUDE",
                      "NOT_SCREENED_OR_UNFITTED")
+    }
+    full_counts_native = {
+        name:sum(item[4] == name and item[7] for item in candidates)
+        for name in full_counts
     }
     if n_total > max_records:
         candidates = candidates[:max_records]
@@ -249,9 +258,10 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         row,x=x,y=y,disposition=disposition,
         release=release,region=region,brick=brick,band=band,
         centre_protected=cp,centre_sga=cs,
+        centre_in_native_frame=inside,
         angular_arcsec=_separation_arcsec(
             row.get("ra_deg"),row.get("dec_deg"),anchor_icrs))
-        for _,x,y,row,disposition,cp,cs in candidates)
+        for _,x,y,row,disposition,cp,cs,inside in candidates)
     source_screening_truncated = (
         screen_stats.get("skipped_target_overlap",0) >
         len(screen_stats.get("near_target_sources",())) or
@@ -264,10 +274,13 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         "catalog_source_path":catalog.source_path,
         "dataset_id":catalog.dataset_id if hasattr(catalog,"dataset_id")
                      else f"{release}/{region}/{brick}/{band}",
-        "total_in_native_frame":n_total,
+        "total_in_native_frame":n_native,
+        "total_relevant_sources":n_total,
+        "contributing_off_frame":n_total-n_native,
         "stored_count":len(entries),
         "truncated":max(0,n_total-len(entries)),
-        "screening_counts_all_native":full_counts,
+        "screening_counts_all_native":full_counts_native,
+        "screening_counts_all_relevant":full_counts,
         "screening_evidence_incomplete":bool(source_screening_truncated),
         "screening_stats_legacy":{
             "skipped_target_overlap":screen_stats.get(
@@ -286,6 +299,8 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
             "NO_NEW_MASK_OR_PHOTOMETRY_ACTION",
             "SC1_MASKED_CENTRE_INVENTORY_MAY_BE_CAPPED",
         ) + (("INVENTORY_TRUNCATED",) if n_total>len(entries) else ())
+          + (("OFF_FRAME_CONTRIBUTING_MASK_SOURCES",)
+             if n_total>n_native else ())
           + (("UPSTREAM_SCREENING_OUTCOMES_TRUNCATED",)
              if source_screening_truncated else ()),
     }
