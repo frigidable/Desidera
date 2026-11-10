@@ -146,3 +146,65 @@ def test_icrs_ellipse_area_mirror_symmetry_and_chunk_invariance():
     assert first.sum() == pytest.approx(mirrored.sum(), rel=.02)
     assert first[25, 25] == pytest.approx(1.)
     assert mirrored[25, 25] == pytest.approx(1.)
+
+
+
+def test_isophote_candidate_and_legacy_auto_protect_are_annotation_only():
+    """Saving a contour MUST NOT change protection, masking or sky training."""
+    from lsbpipe.photometry.sky_masks import (
+        is_legacy_isophote_protection,
+    )
+    wcs = _wcs(ra=155.)
+    contour = SkyMaskShape("circle", (155., .1), radius_arcsec=9.)
+    actual_target = SkyMaskShape("circle", (155., .1),
+                                 radius_arcsec=2.)
+    candidate = SkyMaskEdit("sc1_new_candidate", "isophote_candidate",
+                            contour, band="g")
+    legacy = SkyMaskEdit(
+        "sc1_iso_old_legacy", "protect_target", contour, band="g",
+        comment="AUTO_ISOPHOTE_PRELIMINARY source=DR11")
+    manual = SkyMaskEdit("researcher_core", "protect_target",
+                         actual_target, band="g")
+    exclude = SkyMaskEdit("manual_foreground", "exclude", actual_target,
+                          band="g")
+    draft = _draft()
+    for edit in (candidate, legacy, manual, exclude):
+        draft = draft.with_edit(edit)
+    stored = SkyMaskDraft.from_dict(draft.to_dict())
+    assert stored == draft and stored.digest == draft.digest
+    assert is_legacy_isophote_protection(legacy)
+    assert not is_legacy_isophote_protection(manual)
+    hard = np.zeros((51, 51), dtype=bool)
+    evaluated = evaluate_mask_draft(
+        stored, wcs, hard.shape, "g", native_hard=hard)
+    assert evaluated["legacy_isophote_count"] == 1
+    assert evaluated["isophote_candidate"].sum() > (
+        evaluated["target_protect"].sum() * 4)
+    assert evaluated["target_protect"][25,25]
+    assert not evaluated["target_protect"][25,32]
+    assert evaluated["isophote_candidate"][25,32]
+    assert evaluated["excluded"][25,25]  # explicitly excluded star
+    assert not evaluated["excluded"][25,32]
+    assert not evaluated["sky_train"].any()
+    assert not evaluated["sky_holdout"].any()
+    # Other native bands never inherit band-local proposals.
+    other = evaluate_mask_draft(
+        stored, wcs, hard.shape, "r", native_hard=hard)
+    assert not other["isophote_candidate"].any()
+    assert not other["target_protect"].any()
+    assert not other["excluded"].any()
+
+
+def test_isophote_provenance_markers_ignored_without_mask_change():
+    """Old SC1 SGA-seed provenance is recognizable after reopening drafts."""
+    from lsbpipe.photometry.sky_masks import (
+        is_legacy_isophote_protection,
+    )
+    ellipse = SkyMaskShape("ellipse", (155., .1),
+                           a_arcsec=15., q=.6, pa_deg=30.)
+    old_seed = SkyMaskEdit(
+        "sc1_iso_old_sga", "protect_target", ellipse,
+        comment="SGA_INITIAL_GEOMETRY_DRAFT kind=sga_seed")
+    assert is_legacy_isophote_protection(old_seed)
+    assert not is_legacy_isophote_protection(
+        SkyMaskEdit("custom", "protect_target", ellipse))
