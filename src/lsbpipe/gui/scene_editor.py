@@ -270,7 +270,9 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
                 dataset["data"]["image"], valid, wcs, prior_shape,
                 local_sky=model.local_sky,
                 smoothed_rms=model.smoothed_sky_rms,
-                smooth_sigma_pix=float(smoothing))
+                smooth_sigma_pix=float(smoothing),
+                target_protection_radius_arcsec=contamination.get(
+                    "target_protection_radius_arcsec"))
             if sga_result.detected_a_arcsec is not None:
                 sga_seed_shape = SkyMaskShape(
                     "ellipse", center=sga_result.centre_icrs,
@@ -325,6 +327,8 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
             "delta_q":abs(model_sky["q_sky"]-prior_shape.q),
             "delta_pa_deg":min(pa_delta,180.-pa_delta),
             "center_offset_arcsec":center_sep,
+            "target_protection_radius_arcsec":contamination.get(
+                "target_protection_radius_arcsec"),
             "sga_ref":sga_prior.sga_id,
             "sga_source_sha256":sga_prior.source_sha256,
         }
