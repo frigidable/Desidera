@@ -1103,7 +1103,7 @@ class SceneEditor(QWidget):
         self.iso_low_conf_override.toggled.connect(self._refresh_controls)
         iso_layout.addWidget(self.iso_low_conf_override)
         proposal_actions = QHBoxLayout()
-        self.iso_accept = QPushButton("Keep proposal (no mask)")
+        self.iso_accept = QPushButton("Keep (no mask)")
         self.iso_accept.setObjectName("scene_isophote_accept")
         self.iso_accept.setToolTip(
             "Keep this contour as an inactive, editable ICRS proposal. "
