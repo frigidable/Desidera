@@ -58,6 +58,65 @@ def _sig(value, invvar):
         return None
 
 
+def conservative_red_extended_candidate(row, *, offset_arcsec,
+                                        neighbour_arcsec, target_radius_arcsec):
+    """High-specificity *hypothesis* for an isolated red extended interloper.
+
+    This pre-registered diagnostic gate is not a calibrated membership
+    classifier. Individual independent cues are not probabilities; the
+    multi-band Tractor fluxes are not PSF-homogenized measurements.
+    Returns (passes, metrics) even when inputs are missing.
+    """
+    info = {"policy": "red_extended_v1", "passes": False}
+    if row.get("type") not in ("EXP", "DEV", "SER"):
+        return False, info
+    if (str(row.get("ref_cat") or "").strip().upper()
+            in ("G2", "G3", "L4")):
+        return False, info
+    if row.get("gaia_duplicated_source", False):
+        return False, info
+    if int(row.get("fitbits") or 0) or int(row.get("maskbits") or 0):
+        return False, info
+    size = row.get("shape_r_arcsec")
+    if size is None or not math.isfinite(float(size)):
+        return False, info
+    if not .65 <= float(size) <= 4.:
+        return False, info
+    if (offset_arcsec is None or
+            not math.isfinite(float(offset_arcsec)) or
+            float(offset_arcsec) < max(12., .2*float(target_radius_arcsec))):
+        return False, info
+    if (neighbour_arcsec is None or
+            float(neighbour_arcsec) < 2.5):
+        return False, info
+    fluxes = row.get("model_fluxes_nMgy") or {}
+    ivars = row.get("model_flux_ivars") or {}
+    signal = {}
+    for band in ("g", "r", "z"):
+        flux, ivar = fluxes.get(band), ivars.get(band)
+        if (flux is None or ivar is None or
+                not math.isfinite(float(flux)) or
+                not math.isfinite(float(ivar)) or
+                float(flux) <= 0. or float(ivar) <= 0.):
+            return False, info
+        signal[band] = float(flux)*math.sqrt(float(ivar))
+    if signal["g"] < 10. or signal["r"] < 10. or signal["z"] < 7.:
+        return False, info
+    gr = 2.5*math.log10(float(fluxes["r"])/float(fluxes["g"]))
+    rz = 2.5*math.log10(float(fluxes["z"])/float(fluxes["r"]))
+    if not (.8 <= gr <= 2.5 and .55 <= rz <= 2.):
+        return False, info
+    info.update({"passes": True, "g_minus_r": round(gr, 5),
+                 "r_minus_z": round(rz, 5),
+                 "shape_r_arcsec": float(size),
+                 "offset_arcsec": float(offset_arcsec),
+                 "nearest_arcsec": float(neighbour_arcsec),
+                 "snr_g":round(signal["g"], 4),
+                 "snr_r":round(signal["r"], 4),
+                 "snr_z":round(signal["z"], 4)})
+    return True, info
+
+
 def gaia_astrometric_foreground_review(row):
     """Return (foreground_candidate, bad_negative_parallax) from DR11 Gaia refs.
 
@@ -171,6 +230,9 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         evidence.append("GEOMETRIC_MASK_ONLY_NO_TRACTOR_MODEL")
     if disposition == "GAIA_FOREGROUND_MASK_PREVIEW":
         evidence.append("EXPERIMENTAL_GAIA_INTERIOR_MASK_NO_PSF_WINGS")
+    if disposition == "RED_EXTENDED_MASK_PREVIEW":
+        evidence.append("MULTIBAND_RED_EXTENDED_ISOLATED_HYPOTHESIS")
+        evidence.append("AUTO_CLASSIFIER_PURITY_NOT_VALIDATED")
     objid = row.get("objid")
     sid = f"{release}/{region}/{brick}/OBJID={objid}"
     if objid is None:
@@ -201,6 +263,8 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
         "proposed_treatment_is_active":False,
         "diagnostic_inner_gaia_mask_preview_active":(
             disposition == "GAIA_FOREGROUND_MASK_PREVIEW"),
+        "diagnostic_red_extended_mask_preview_active":(
+            disposition == "RED_EXTENDED_MASK_PREVIEW"),
         "centre_in_target_protection":bool(centre_protected),
         "centre_in_sga_prior":bool(centre_sga),
         "reference_catalog":ref_cat, "reference_id":ref_id,
@@ -265,6 +329,10 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         _point_key(c["x"],c["y"],c.get("objid"))
         for c in screen_stats.get("gaia_inner_preview_centres", ())
     }
+    red_preview_index = {
+        _point_key(c["x"],c["y"],c.get("objid"))
+        for c in screen_stats.get("red_extended_preview_centres", ())
+    }
     candidates = []
     for (x,y),row in zip(points,catalog.rows):
         if not np.isfinite(x) or not np.isfinite(y):
@@ -282,6 +350,8 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
                       and bool(sga_core[j,i]))
         if key in gaia_preview_index:
             disposition = "GAIA_FOREGROUND_MASK_PREVIEW"
+        elif key in red_preview_index:
+            disposition = "RED_EXTENDED_MASK_PREVIEW"
         elif key in protected_index:
             disposition = "PROTECTED_OVERLAP"
         elif key in masked_index:
@@ -289,7 +359,8 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         else:
             disposition = "NOT_SCREENED_OR_UNFITTED"
         candidates.append((0 if disposition == "PROTECTED_OVERLAP"
-                           else 0 if disposition == "GAIA_FOREGROUND_MASK_PREVIEW"
+                           else 0 if disposition in ("GAIA_FOREGROUND_MASK_PREVIEW",
+                                                      "RED_EXTENDED_MASK_PREVIEW")
                            else 1 if disposition == "PROPOSED_EXCLUDE"
                            else 2, x,y,row,disposition,
                            centre_protected,centre_sga,inside))
@@ -306,6 +377,9 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
     if any(item[4] == "GAIA_FOREGROUND_MASK_PREVIEW"
            for item in candidates):
         dispositions += ("GAIA_FOREGROUND_MASK_PREVIEW",)
+    if any(item[4] == "RED_EXTENDED_MASK_PREVIEW"
+           for item in candidates):
+        dispositions += ("RED_EXTENDED_MASK_PREVIEW",)
     full_counts = {
         name:sum(item[4] == name for item in candidates)
         for name in dispositions
