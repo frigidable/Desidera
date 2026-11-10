@@ -1132,3 +1132,46 @@ def test_red_source_policy_explains_near_misses_and_unfitted_without_masking():
         near_miss,offset_arcsec=30.,neighbour_arcsec=5.,
         target_radius_arcsec=60.)[1]["first_failure"]==(
         "G_MINUS_R_OUTSIDE_STRICT_RANGE")
+
+
+
+def test_red_policy_unscreened_protection_audit_is_row_local():
+    """Regression: the last Tractor row can be outside target protection.
+
+    A generator must use each inventory candidate's saved protection flag,
+    not the stale flag from the final catalogue row. Real Leo P previously
+    exported NULL red-policy refusals for 42 faint target-region sources.
+    """
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory,
+    )
+    protected = np.zeros((50, 50), dtype=bool)
+    protected[14:26, 14:26] = True
+    cat = SimpleNamespace(
+        rows=(
+            {"objid": 2084, "type": "PSF", "flux": 0.1,
+             "flux_ivar": 1000., "ref_cat": "", "ref_id": 0},
+            {"objid": 9999, "type": "PSF", "flux": 0.1,
+             "flux_ivar": 1000., "ref_cat": "", "ref_id": 0},
+        ),
+        pixel_positions=np.array([[20., 20.], [40., 40.]]),
+        source_path="native-tractor.fits",
+        source_sha256="a"*64,
+    )
+    inventory = build_scene_source_inventory(
+        cat, pixel_shape=protected.shape, protected=protected,
+        screen_stats={"red_extended_source_audit_enabled": True},
+        release="dr11", region="south", brick="1554p180", band="g",
+    )
+    e = {item["objid"]: item for item in inventory["entries"]}
+    assert e[2084]["screening_disposition"]=="NOT_SCREENED_OR_UNFITTED"
+    assert e[2084]["centre_in_target_protection"] is True
+    assert e[2084]["red_extended_first_failure"]==(
+        "CURRENT_BAND_UNFITTED_OR_BELOW_5SNR")
+    assert e[2084]["red_extended_rule_evidence"]["passes"] is False
+    assert e[9999]["centre_in_target_protection"] is False
+    assert e[9999]["red_extended_rule_evidence"] is None
+    assert e[9999]["red_extended_first_failure"] is None
+    assert inventory["screening_evidence_incomplete"] is False
+    assert all(item["photometry_action"]=="NO_NEW_ACTION_READ_ONLY"
+               for item in inventory["entries"])
