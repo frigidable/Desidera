@@ -905,3 +905,82 @@ def test_red_extended_mask_preview_keeps_origins_and_source_roles_separate(
                for v in e.values())
     assert draft.edits==()
     assert np.array_equal(image,data["data"]["image"])
+
+
+
+def test_red_extended_isolation_uses_wcs_not_scalar_pixel_scale():
+    """A nearby interloper must not appear isolated in an anisotropic WCS.
+
+    Here the neighbour is five native pixels away, but just one
+    arcsecond in the actual world tangent plane. The former scalar
+    pixel-scale method would incorrectly pass the 2.5-arcsec veto.
+    """
+    wcs = _wcs()
+    wcs.wcs.cd = np.diag([-1., .2])/3600.
+    protected = np.ones((241,241), dtype=bool)
+    candidate = _red_extended_row(1794)
+    neighbour = _row("PSF", flux=50.)
+    positions = np.array([[160.,120.], [160.,125.]])
+    mask, stats = conservative_catalogue_mask(
+        protected.shape, positions, (candidate,neighbour),
+        arcsec_per_pixel=1., protected=protected, wcs=wcs,
+        red_extended_preview=True,anchor_pixel=(120.,120.),
+        target_radius_arcsec=60.)
+    assert stats["red_extended_preview_sources"] == 0
+    assert stats["skipped_target_overlap"] == 2
+    assert not mask.any()
+    # Removing the close neighbour makes exactly the same red object
+    # pass, with a sky-plane offset accounting for cos(dec) and scale.
+    alone, counts = conservative_catalogue_mask(
+        protected.shape, positions[:1], (candidate,),
+        arcsec_per_pixel=1., protected=protected, wcs=wcs,
+        red_extended_preview=True,anchor_pixel=(120.,120.),
+        target_radius_arcsec=60.)
+    assert counts["red_extended_preview_sources"] == 1
+    evidence = counts["red_extended_preview_centres"][0]["evidence"]
+    assert evidence["distance_geometry"] == (
+        "NATIVE_WCS_LOCAL_EAST_NORTH_ARCSEC")
+    assert 35. < evidence["offset_arcsec"] < 40.
+    assert np.isinf(evidence["nearest_arcsec"])
+    assert alone[120,160]
+    # Fail closed if caller attempts to classify using no native WCS.
+    with pytest.raises(ValueError,match="requires native celestial WCS"):
+        conservative_catalogue_mask(
+            protected.shape, positions[:1], (candidate,),
+            arcsec_per_pixel=1., protected=protected,
+            red_extended_preview=True,anchor_pixel=(120.,120.),
+            target_radius_arcsec=60.)
+
+
+def test_red_extended_policy_records_evidence_for_selected_source():
+    """All decisions are reversible and metrics survive Source evidence."""
+    import lsbpipe.photometry.scene_source_inventory as si
+    protected = np.ones((241,241), dtype=bool)
+    candidate = _red_extended_row(2290)
+    points = np.array([[170.,120.]])
+    mask, stats = conservative_catalogue_mask(
+        protected.shape, points, (candidate,),
+        arcsec_per_pixel=1., protected=protected, wcs=_wcs(),
+        red_extended_preview=True,anchor_pixel=(120.,120.),
+        target_radius_arcsec=60.)
+    cat = SimpleNamespace(
+        pixel_positions=points, rows=(candidate,),
+        source_path="native-tractor.fits",source_sha256="c"*64)
+    inv = si.build_scene_source_inventory(
+        cat,pixel_shape=protected.shape,protected=protected,
+        screen_stats=stats,release="dr11",region="south",
+        brick="1554p180",band="g",anchor_icrs=(155.,18.))
+    source = inv["entries"][0]
+    assert source["screening_disposition"] == "RED_EXTENDED_MASK_PREVIEW"
+    evidence = source["red_extended_rule_evidence"]
+    assert evidence["policy"]=="red_extended_v1"
+    assert evidence["passes"] is True
+    assert evidence["distance_geometry"] == (
+        "NATIVE_WCS_LOCAL_EAST_NORTH_ARCSEC")
+    assert evidence["snr_g"] >= 10
+    assert source["physical_membership"] == "UNDETERMINED"
+    assert source["photometry_action"] == "NO_NEW_ACTION_READ_ONLY"
+    assert source["proposed_treatment_is_active"] is False
+    assert "MULTIBAND_RED_EXTENDED_ISOLATED_HYPOTHESIS" in (
+        source["evidence_flags"])
+    assert int(mask.sum()) > 0
