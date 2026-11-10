@@ -1056,3 +1056,79 @@ def test_combined_gaia_and_red_extended_preview_keeps_target_sources():
                for v in lookup.values())
     assert all(v["physical_membership"]=="UNDETERMINED"
                for v in lookup.values())
+
+
+
+def test_red_source_policy_explains_near_misses_and_unfitted_without_masking():
+    """Mass-QA can explain omitted source footprints without false adoption."""
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory, conservative_red_extended_candidate,
+    )
+    shape=(241,241)
+    protected=np.ones(shape,bool)
+    # This object satisfies every strict gate except g-r=0.75<0.80.
+    flux_r=10.**(.75/2.5)
+    flux_z=flux_r*10.**(.70/2.5)
+    near_miss={
+        **_red_extended_row(1793),
+        "model_fluxes_nMgy":{"g":1.,"r":flux_r,"z":flux_z},
+    }
+    foreground_like=_red_extended_row(1900,source_type="PSF")
+    faint={**_red_extended_row(2084,source_type="PSF"),
+           "flux":.001,"flux_ivar":400.}
+    passing=_red_extended_row(1794)
+    rows=(near_miss,foreground_like,faint,passing)
+    positions=np.array([[175.,120.],[80.,120.],[120.,120.],
+                        [170.,170.]])
+    base, old=conservative_catalogue_mask(
+        shape,positions,rows,arcsec_per_pixel=1.,
+        protected=protected,wcs=_wcs())
+    new,counts=conservative_catalogue_mask(
+        shape,positions,rows,arcsec_per_pixel=1.,
+        protected=protected,wcs=_wcs(),
+        red_extended_preview=True,anchor_pixel=(120.,120.),
+        target_radius_arcsec=60.)
+    assert not base.any()
+    assert counts["red_extended_preview_sources"]==1
+    assert counts["red_extended_source_audit_enabled"] is True
+    assert counts["red_extended_source_audit_truncated"]==0
+    assert len(counts["red_extended_source_audit"])==3
+    by_id={item["objid"]:item["evidence"]
+           for item in counts["red_extended_source_audit"]}
+    assert by_id[1793]["first_failure"]=="G_MINUS_R_OUTSIDE_STRICT_RANGE"
+    assert .7 <= by_id[1793]["g_minus_r"] < .8
+    assert by_id[1900]["first_failure"]=="MODEL_NOT_EXTENDED_EXP_DEV_SER"
+    assert by_id[1794]["first_failure"] is None
+    cat=SimpleNamespace(rows=rows,pixel_positions=positions,
+                        source_path="native-tractor.fits",
+                        source_sha256="f"*64)
+    inv=build_scene_source_inventory(
+        cat,pixel_shape=shape,protected=protected,
+        screen_stats=counts,release="dr11",region="south",
+        brick="1554p180",band="g",anchor_icrs=(155.,18.))
+    e={item["objid"]:item for item in inv["entries"]}
+    assert e[1793]["red_extended_near_miss"] is True
+    assert e[1793]["screening_disposition"]=="PROTECTED_OVERLAP"
+    assert e[1793]["red_extended_first_failure"]==(
+        "G_MINUS_R_OUTSIDE_STRICT_RANGE")
+    assert e[1900]["red_extended_near_miss"] is False
+    assert e[1900]["red_extended_first_failure"]==(
+        "MODEL_NOT_EXTENDED_EXP_DEV_SER")
+    assert e[2084]["red_extended_first_failure"]==(
+        "CURRENT_BAND_UNFITTED_OR_BELOW_5SNR")
+    assert e[2084]["screening_disposition"]=="NOT_SCREENED_OR_UNFITTED"
+    assert e[1794]["screening_disposition"]=="RED_EXTENDED_MASK_PREVIEW"
+    assert e[1794]["red_extended_rule_evidence"]["passes"] is True
+    assert e[1794]["red_extended_first_failure"] is None
+    assert new[170,170] and not new[120,175] and not new[120,80]
+    assert all(v["photometry_action"]=="NO_NEW_ACTION_READ_ONLY"
+               for v in e.values())
+    assert all(v["physical_membership"]=="UNDETERMINED"
+               for v in e.values())
+    assert counts["masked_catalog_sources"]==1
+    assert counts["skipped_target_overlap"]==2
+    assert not base.flags.writeable and not new.flags.writeable
+    assert conservative_red_extended_candidate(
+        near_miss,offset_arcsec=30.,neighbour_arcsec=5.,
+        target_radius_arcsec=60.)[1]["first_failure"]==(
+        "G_MINUS_R_OUTSIDE_STRICT_RANGE")
