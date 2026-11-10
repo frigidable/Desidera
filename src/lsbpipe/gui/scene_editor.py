@@ -2451,7 +2451,7 @@ class SceneEditor(QWidget):
                 f"overlaps + {unscreened} unscreened/unfitted = "
                 f"{unresolved + unscreened} unmasked Tractor centres "
                 "inside proposal need source-by-source review; "
-                "no automatic restores or exclusions."
+                "no auto restores or new exclusions."
                 + boundary_note
                 + ("" if radial is not None else
                    " No supported extension: " +
