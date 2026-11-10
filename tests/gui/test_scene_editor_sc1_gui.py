@@ -444,8 +444,10 @@ def test_preliminary_isophote_preview_is_not_saved_until_explicit_accept(
     assert edit.shape.kind == "polygon"
     assert edit.shape == chosen
     assert f"trial={chosen_trial}" in edit.comment
-    assert edit.purpose == "protect_target"
+    assert edit.purpose == "isophote_candidate"
     assert edit.band == "g"  # native-band default for source-derived contours
+    assert editor.purpose.findData("isophote_candidate") >= 0
+    assert "no mask" in editor.iso_accept.text().lower()
     assert "AUTO_ISOPHOTE_PRELIMINARY" in edit.comment
     assert np.array_equal(data["data"]["image"],original)
     assert editor._isophote_proposal is None
@@ -1306,3 +1308,31 @@ def test_radius_sweep_refuses_invalid_radii_without_changing_project(
     assert project.target_radius_arcsec==project_before
     assert editor.draft.edits==()
     assert not (project.root/"analyses").exists()
+
+
+
+def test_saved_legacy_synthetic_isophote_is_clearly_inactive_in_scene_gui(
+        qtbot, tmp_path, monkeypatch):
+    """A reopened old SC1 tentative contour must not silently protect pixels."""
+    from lsbpipe.photometry.sky_masks import SkyMaskEdit, SkyMaskShape
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    legacy = SkyMaskEdit(
+        "sc1_iso_reopened_test", "protect_target",
+        SkyMaskShape("circle", (359.999, 60.), radius_arcsec=18.),
+        band="g",
+        comment="AUTO_ISOPHOTE_PRELIMINARY trial=0 manual_override=1")
+    editor._push_edits(editor.draft.edits+(legacy,))
+    assert editor.draft.edits[0] == legacy
+    assert "legacy isophote · INACTIVE" in editor.edits.item(0).text()
+    assert len(editor._paths) == 1
+    editor.edits.setCurrentRow(0)
+    editor.edit_selected()
+    assert editor.purpose.currentData() == "isophote_candidate"
+    editor._cancel_pending()
+    editor.save_draft()
+    saved, _ = read_active_mask_draft(project.root)
+    assert saved.edits == (legacy,)
+    assert editor.draft.edits[0].purpose == "protect_target"
+    # Original on-disk revision preserved: only its *interpretation*
+    # changes (legacy AUTO_ISOPHOTE no longer active source protection).
+    assert "AUTO_ISOPHOTE_PRELIMINARY" in saved.edits[0].comment
