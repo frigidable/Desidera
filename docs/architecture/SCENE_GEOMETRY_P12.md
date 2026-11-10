@@ -833,3 +833,59 @@ https://www.legacysurvey.org/dr11/bitmasks/
 Stage SA1 must remain in draft pending evaluation on original Leo P
 FITS and exact local DR11 Tractor catalogue. Passing synthetic
 regressions is NOT a physical source-classification validation.
+
+
+## 2026-11-10 · Stage SA2a — positional candidate linker (science HOLD)
+
+SA2a introduces an isolated, read-only scientific primitive,
+photometry/scene_source_association.py. It accepts detections measured
+independently from native images in each available optical band. It does
+NOT generate detections, classify physical objects, use shared Tractor
+griz fluxes as independent measurements, render PSFs, subtract sources,
+alter masks, or feed adopted photometry. It is not wired to the GUI
+until native per-band image detections have been implemented and reviewed.
+
+Input contract: for each participating band, supply its original dataset
+identifier, image SHA/provenance token, segmentation-run identifier, and
+source-centroid ICRS coordinates with stable band-local detection IDs.
+A spatial matching radius must be explicitly selected and is not a
+calibrated astrometric uncertainty. An absent band is absent; neither
+an unobserved source nor a zero flux is invented.
+
+Candidate association: spherical 3-D unit-vector cross-band proximity
+search (RA=0 crossing and poles supported), with explicit bounds on
+detections and candidate edges. All input detections are preserved.
+Connected candidate graphs are classified as:
+- SINGLE_BAND_DETECTION: no other band has a candidate in radius;
+- POSITIONAL_CANDIDATE_ONLY: one detection per band and every
+  pairwise separation is within the specified radius;
+- AMBIGUOUS_MULTIPLE_DETECTIONS_IN_BAND: possible one-to-many blend;
+- AMBIGUOUS_NONTRANSITIVE_OFFSETS: individually close links whose
+  end-to-end separation exceeds the search radius.
+
+There is no promotion of a positional candidate to physical membership;
+all records remain UNDETERMINED with NO_NEW_ACTION_READ_ONLY.
+This is a precondition for rigorous source association, not SA2 completion.
+
+Validation so far: five synthetic local pytest checks passed for RA
+wrap, one-to-many blending, transitive-chain failure, deterministic
+input ordering/single-band sources, and fail-closed provenance/limits.
+These checks do NOT establish recovery completeness or purity on real
+Leo P images, nor do they replace GitHub CI.
+
+Next gates before GUI and science adoption:
+1. Export/review all real Leo P protected-overlap Tractor rows from SA1,
+   preserving exact SHA and documenting any capped inventories.
+2. Implement independent, PSF-aware multiband native-image compact
+   and diffuse detections, with quantitative centroid covariance,
+   mask flags, segmentation footprint and spatially varying sensitivity.
+3. Check the SA2a positional radius against actual WCS residuals and
+   confusion density; inspect candidates and one-to-many blends.
+4. Attach Tractor IDs and Gaia astrometry as separate evidence,
+   with Gaia quality metrics where available; never treat the catalogue
+   cross-identification itself as foreground membership.
+5. Hold out Leo P HST/MUSE data for adjudication of real stellar
+   associations / H II regions, then measure errors on injected and
+   independently vetted scenes.
+6. Keep original SC1 masks, SGA priors, target-protection areas,
+   geometries and original FITS unchanged until these gates pass.
