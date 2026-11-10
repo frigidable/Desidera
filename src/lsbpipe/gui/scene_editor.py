@@ -470,7 +470,7 @@ def run_scene_protection_radius_sweep(
         prepared = prepare_scene_contamination(
             dataset, scenario_project, draft, center_icrs,
             sga_prior=sga_protection_prior,
-            gaia_inner_preview=gaia_inner_preview)
+            **({"gaia_inner_preview":True} if gaia_inner_preview else {}))
         if (catalogue_sha is not None and
                 prepared["catalog_sha256"] != catalogue_sha):
             raise ValueError("Tractor catalogue changed during radius sweep")
