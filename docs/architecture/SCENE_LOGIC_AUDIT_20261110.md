@@ -632,12 +632,24 @@ Independent source evidence is now reported with
 \`physical_membership=UNDETERMINED\` and
 \`photometry_action=NO_NEW_ACTION_READ_ONLY\` remain unchanged.
 The proposed foreground review requires an identified G3/REF_ID and
-an absolute parallax/PM-component significance >=5 from inherited
-Tractor reference astrometry; it is **not a posterior probability**,
-nor an adequate Gaia solution-quality assessment. The protection
+a positive parallax significance or absolute PM-component
+significance >=5 from inherited Tractor reference astrometry,
+provided there is no strongly negative parallax quality alert.
+This is **not a posterior probability** or a substitute for
+Gaia astrometric-solution quality verification. The protection
 worker records explicit IDs/counts of such sources currently left
 unmasked, and the GUI exposes a dedicated filter. No new pixel
 exclusion or native FITS modification is permitted by these labels.
+
+**Negative-parallax safety rule:** an absolute-significance calculation
+by itself would misclassify a strongly negative parallax as foreground
+distance evidence. Such sources now receive
+`GAIA_NEGATIVE_PARALLAX_QUALITY_REVIEW` and
+`GAIA_ASTROMETRY_QUALITY_ALERT`, never an automatic foreground
+proposal, even if the nominal proper-motion component also has high
+significance. All treatment remains read-only. See Rybizki et al.
+(2022, MNRAS 510, 2597), https://doi.org/10.1093/mnras/stab3588,
+on spurious Gaia astrometry and negative-parallax quality warnings.
 
 From the supplied unmodified Leo P baseline, the flagged internal
 source IDs are **1763, 1870, 1876, 2034, 2035 (5)**.
