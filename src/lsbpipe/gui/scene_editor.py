@@ -1463,8 +1463,54 @@ class SceneEditor(QWidget):
                 self._contamination["catalog_sha256"] != result["catalog_sha256"]
                 or self._contamination["draft_digest"] != result["draft_digest"]):
             raise ValueError("Neighbour masks changed during detection")
+        comparison = result.get("sga_comparison")
+        if comparison is not None and (
+                not self.sga_use_seed.isChecked() or
+                self._sga_candidate is None or
+                self._sga_candidate.sga_id != comparison["sga_ref"] or
+                self._sga_candidate.source_sha256 !=
+                comparison["sga_source_sha256"]):
+            raise ValueError("SGA geometry changed during radial analysis")
         self._isophote_proposal = result
         self.iso_low_conf_override.setChecked(False)
+        self.iso_shape.blockSignals(True)
+        if result.get("sga_seed_shape") is not None:
+            if self.iso_shape.findData("sga_seed") < 0:
+                self.iso_shape.addItem(
+                    "SGA-informed initial ellipse · supported radius",
+                    "sga_seed")
+        else:
+            idx = self.iso_shape.findData("sga_seed")
+            if idx >= 0:
+                self.iso_shape.removeItem(idx)
+        self.iso_shape.blockSignals(False)
+        if comparison is not None:
+            radial = result.get("sga_radial")
+            outer = (f"{radial.detected_a_arcsec:.1f} arcsec"
+                     if radial is not None
+                     and radial.detected_a_arcsec is not None
+                     else "NOT detected")
+            masked = comparison.get(
+                "masked_catalog_centres_in_initial_ellipse", 0)
+            self.iso_sga_summary.setText(
+                f"SGA-informed INITIAL ellipse: "
+                f"reference a={comparison['reference_a_arcsec']:.1f} arcsec; "
+                f"data-supported outer a={outer}; "
+                f"SGA q={comparison['reference_q']:.3f}, "
+                f"PA={comparison['reference_pa_deg']:.1f} deg. "
+                f"Independent moment delta q={comparison['delta_q']:.3f}, "
+                f"PA={comparison['delta_pa_deg']:.1f} deg. "
+                f"{masked} already-masked Tractor centres inside "
+                "the suggested ellipse: SOURCE IDENTITIES NEED REVIEW; "
+                "no sources automatically unmasked. "
+                + ("Flags: " + ", ".join(radial.flags)
+                   if radial is not None else
+                   "SGA extent unavailable: " +
+                   str(result.get('sga_warning') or 'insufficient evidence')))
+        else:
+            self.iso_sga_summary.setText(
+                "No SGA geometry used. Select an SGA prior to compare "
+                "a data-supported initial ellipse with independent moments.")
         self.iso_candidate.blockSignals(True)
         self.iso_candidate.clear()
         for index, trial in enumerate(result["sensitivity"]["trials"]):
@@ -1547,7 +1593,12 @@ class SceneEditor(QWidget):
         if candidate is None:
             self._refresh_controls()
             return
-        shape = candidate[self.iso_shape.currentData()]
+        kind = self.iso_shape.currentData()
+        shape = (self._isophote_proposal.get("sga_seed_shape")
+                 if kind == "sga_seed" else candidate[kind])
+        if shape is None:
+            self._refresh_controls()
+            return
         try:
             path = scene_shape_outline(
                 shape, self._loaded["wcs"], self._loaded["pixel_shape"][0])
@@ -1571,7 +1622,9 @@ class SceneEditor(QWidget):
             summary = self._isophote_proposal["sensitivity"]
             label = ("LOW CONFIDENCE" if low else "PRELIMINARY")
             self.iso_summary.setText(
-                f"{label} · trial {self.iso_candidate.currentData()} · "
+                ("SGA-derived PA/q with empirical radius · "
+                 if kind == "sga_seed" else "")
+                + f"{label} · trial {self.iso_candidate.currentData()} · "
                 f"{model.seed.component_pixels:,} pixels; "
                 f"q={model.seed.q:.2f}; "
                 f"centroid offset={model.seed.centroid_offset_pix:.1f} px. "
@@ -1620,17 +1673,23 @@ class SceneEditor(QWidget):
             self.iso_details.setText("Stale isophote: recalculate on current FITS.")
             return
         sensitivity = proposed["sensitivity"]
-        if (sensitivity["confidence"].startswith("LOW_CONFIDENCE")
+        kind = self.iso_shape.currentData()
+        if ((sensitivity["confidence"].startswith("LOW_CONFIDENCE")
+             or kind == "sga_seed")
                 and not self.iso_low_conf_override.isChecked()):
             self.iso_summary.setText(
                 "LOW CONFIDENCE: contour cannot be added until "
                 "explicit manual-review override is checked.")
             return
-        kind = self.iso_shape.currentData()
         candidate = self._selected_isophote()
         if candidate is None:
             return
         model = candidate["model"]
+        shape_for_edit = (
+            proposed.get("sga_seed_shape")
+            if kind == "sga_seed" else candidate[kind])
+        if shape_for_edit is None:
+            return
         scope = None if self.iso_share_bands.isChecked() else self._band
         provenance = (
             f"AUTO_ISOPHOTE_PRELIMINARY from_band={self._band} "
@@ -1642,7 +1701,13 @@ class SceneEditor(QWidget):
             f"smooth_pix={model.smoothing_pix:g} "
             f"bridge_pix={proposed['bridge_guard_pix']} "
             f"min_iou={sensitivity.get('minimum_spatial_iou')} "
-            f"sky={model.local_sky:.7g} "
+            + (f"SGAref={proposed['sga_comparison']['sga_ref']} "
+               f"SGAsha={proposed['sga_comparison']['sga_source_sha256'][:16]} "
+               f"SGAinitial_a={shape_for_edit.a_arcsec:.2f} "
+               f"SGAinitial_q={shape_for_edit.q:.3f} "
+               f"SGAinitial_PA={shape_for_edit.pa_deg:.1f} "
+               if kind == "sga_seed" else "")
+            + f"sky={model.local_sky:.7g} "
             f"rms={model.smoothed_sky_rms:.7g} "
             f"TractorSHA256={proposed['catalog_sha256']} "
             f"source={proposed['source']}")
@@ -1651,7 +1716,7 @@ class SceneEditor(QWidget):
             edit = SkyMaskEdit(
                 "sc1_iso_" + uuid4().hex,
                 "protect_target",
-                candidate[kind],
+                shape_for_edit,
                 band=scope,
                 comment=comment[:512])
             self._push_edits(self._draft.edits + (edit,))
@@ -1979,9 +2044,10 @@ class SceneEditor(QWidget):
         self.iso_reset_center.setEnabled(active and worker_idle)
         confidence_ok = (
             self._isophote_proposal is not None
-            and (not self._isophote_proposal["sensitivity"][
-                "confidence"].startswith("LOW_CONFIDENCE")
-                or self.iso_low_conf_override.isChecked()))
+            and (self.iso_low_conf_override.isChecked()
+                 or (self.iso_shape.currentData() != "sga_seed"
+                     and not self._isophote_proposal["sensitivity"][
+                         "confidence"].startswith("LOW_CONFIDENCE"))))
         self.iso_accept.setEnabled(
             active and worker_idle and confidence_ok
             and self._isophote_preview is not None)
