@@ -239,3 +239,93 @@ def test_sga_neighbour_with_gaia_counterpart_stays_unresolved_not_auto_removed()
     assert stats["possible_sga_shreds"]==0
     assert stats["near_target_sources"][0]["classification"]==(
         "GAIA_COUNTERPART_REVIEW")
+
+
+def test_source_inventory_does_not_promote_gaia_psf_or_shreds_to_membership():
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory, SOURCE_EVIDENCE_SCHEMA,
+    )
+    shape=(241,241)
+    protected=np.zeros(shape,bool)
+    protected[90:151,90:151]=True
+    positions=np.array([[120.,120.],[180.,120.],[110.,130.],
+                        [55.,50.]])
+    records=(
+        # Target-overlapping: Gaia match with significant, but potentially
+        # unreliable astrometric evidence. DO NOT automatically mask.
+        {**_row(),"objid":23,"ref_cat":"G3","ref_id":999,
+         "parallax_mas":1.5,"parallax_ivar":36.,
+         "pmra_masyr":6.,"pmra_ivar":4.},
+        # Candidate mask outside target; not yet a physical foreground star.
+        {**_row(),"objid":24,"ref_cat":"", "ref_id":0},
+        # Retained Gaia source without ANY fitted band flux; old SC1
+        # screening silently ignores it. Must remain in source inventory.
+        {**_row(flux=25.),"objid":25,"ref_cat":"G3","ref_id":123456,
+         "flux_ivar":0.,"gaia_g_mag":17.},
+        # Forced PSF in local resolved-dwarf / SGA context: could be
+        # galaxy light; neither MASKBITS nor FITBITS proves membership.
+        {**_row(),"objid":26,"ref_cat":"L4","ref_id":77,
+         "fitbits":1<<0,"maskbits":(1<<17)|(1<<12)},
+    )
+    proposed,screen=conservative_catalogue_mask(
+        shape,positions,records,arcsec_per_pixel=1.,
+        protected=protected)
+    assert screen["skipped_target_overlap"]==2
+    assert screen["masked_catalog_sources"]==1
+    assert screen["unusable_catalog_sources"]==1
+    assert not proposed[120,120] and proposed[120,180]
+    native=SimpleNamespace(rows=records,pixel_positions=positions,
+                           source_path="native-tractor.fits",
+                           source_sha256="f"*64,
+                           dataset_id="dr11/south/1554p180/i")
+    inventory=build_scene_source_inventory(
+        native,pixel_shape=shape,protected=protected,
+        screen_stats=screen,release="dr11",region="south",
+        brick="1554p180",band="i")
+    assert inventory["schema"]==SOURCE_EVIDENCE_SCHEMA
+    assert inventory["catalog_sha256"]=="f"*64
+    assert inventory["total_in_native_frame"]==4
+    by_id={row["objid"]:row for row in inventory["entries"]}
+    assert set(by_id)=={23,24,25,26}
+    assert by_id[23]["screening_disposition"]=="PROTECTED_OVERLAP"
+    assert "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW" in by_id[23][
+        "evidence_flags"]
+    assert by_id[23]["parallax_significance"]==pytest.approx(9.)
+    assert by_id[23]["gaia_dr3_source_id"]==999
+    assert by_id[24]["screening_disposition"]=="PROPOSED_EXCLUDE"
+    assert "GEOMETRIC_MASK_ONLY_NO_TRACTOR_MODEL" in by_id[24][
+        "evidence_flags"]
+    assert by_id[25]["screening_disposition"]=="NOT_SCREENED_OR_UNFITTED"
+    assert "RETAINED_GAIA_SOURCE_POSSIBLE" in by_id[25][
+        "evidence_flags"]
+    assert "NO_FITTED_TRACTOR_BAND_FLUX" in by_id[25]["evidence_flags"]
+    assert by_id[26]["screening_disposition"]=="PROTECTED_OVERLAP"
+    assert "PSF_TYPE_NOT_STELLAR_MEMBERSHIP_PROOF" in by_id[26][
+        "evidence_flags"]
+    assert "RESOLVED_DWARF_CONTEXT_NOT_MEMBERSHIP_PROOF" in by_id[26][
+        "evidence_flags"]
+    assert by_id[26]["reference_catalog"]=="L4"
+    assert all(row["physical_membership"]=="UNDETERMINED" for row in by_id.values())
+    assert all(row["photometry_action"]=="NO_NEW_ACTION_READ_ONLY"
+               for row in by_id.values())
+    assert not proposed[120,120]
+    assert inventory["truncated"]==0
+
+
+def test_source_inventory_explicit_truncation_is_not_silent():
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory,
+    )
+    points=np.array([[30.,30.],[31.,30.],[32.,30.]])
+    rows=tuple({**_row(),"objid":i} for i in range(3))
+    catalog=SimpleNamespace(rows=rows,pixel_positions=points,
+                            source_path="local",source_sha256="a"*64)
+    result=build_scene_source_inventory(
+        catalog,pixel_shape=(61,61),
+        protected=np.zeros((61,61),bool),screen_stats={},
+        release="dr11",region="south",brick="1554p180",
+        band="g",max_records=2)
+    assert result["total_in_native_frame"]==3
+    assert result["stored_count"]==2
+    assert result["truncated"]==1
+    assert "INVENTORY_TRUNCATED" in result["cautions"]
