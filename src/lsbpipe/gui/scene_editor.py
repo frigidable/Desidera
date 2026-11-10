@@ -10,6 +10,8 @@ GUI thread. The preview is bounded and never downsampled for mask QA.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import csv
+from io import StringIO
 import math
 from pathlib import Path
 from uuid import uuid4
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
+    QApplication, QPlainTextEdit,
 )
 
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
@@ -428,6 +431,8 @@ class SceneEditor(QWidget):
         self._isophote_proposal = None
         self._isophote_preview = None
         self._contamination = None
+        self._source_registry = None
+        self._source_registry_visible = []
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -732,6 +737,76 @@ class SceneEditor(QWidget):
         self.iso_mask_details_toggle.toggled.connect(
             self.iso_mask_details.setVisible)
         iso_layout.addWidget(self.iso_mask_details)
+
+        # Source-by-source review is deliberately READ-ONLY at SC1:
+        # no association hypothesis silently alters any science mask.
+        self.source_registry_toggle = QToolButton()
+        self.source_registry_toggle.setObjectName(
+            "scene_source_inventory_toggle")
+        self.source_registry_toggle.setText(
+            "Source evidence · inspect all protected overlaps")
+        self.source_registry_toggle.setCheckable(True)
+        self.source_registry_toggle.setChecked(False)
+        iso_layout.addWidget(self.source_registry_toggle)
+        self.source_registry_panel = QWidget()
+        registry_layout = QVBoxLayout(self.source_registry_panel)
+        registry_layout.setContentsMargins(2,2,2,2)
+        self.source_registry_status = QLabel(
+            "Prepare masks to inspect Tractor sources, including "
+            "Gaia references with unfitted Legacy band flux.")
+        self.source_registry_status.setWordWrap(True)
+        registry_layout.addWidget(self.source_registry_status)
+        self.source_registry_filter = QComboBox()
+        self.source_registry_filter.setObjectName(
+            "scene_source_inventory_filter")
+        for label, value in (
+                ("All native catalogue sources", "ALL"),
+                ("Protected / unresolved overlaps", "PROTECTED_OVERLAP"),
+                ("Proposed masked neighbours", "PROPOSED_EXCLUDE"),
+                ("Other / no fitted band flux", "NOT_SCREENED_OR_UNFITTED")):
+            self.source_registry_filter.addItem(label,value)
+        self.source_registry_filter.currentIndexChanged.connect(
+            self._render_source_registry)
+        registry_layout.addWidget(self.source_registry_filter)
+        self.source_registry_search = QLineEdit()
+        self.source_registry_search.setObjectName(
+            "scene_source_inventory_search")
+        self.source_registry_search.setPlaceholderText(
+            "Search OBJID, Gaia ID, flag, type…")
+        self.source_registry_search.textChanged.connect(
+            self._render_source_registry)
+        registry_layout.addWidget(self.source_registry_search)
+        self.source_registry_list = QListWidget()
+        self.source_registry_list.setObjectName(
+            "scene_source_inventory_list")
+        self.source_registry_list.setMinimumHeight(112)
+        self.source_registry_list.setMaximumHeight(200)
+        self.source_registry_list.currentRowChanged.connect(
+            self._inspect_source_registry)
+        registry_layout.addWidget(self.source_registry_list)
+        self.source_registry_details = QPlainTextEdit()
+        self.source_registry_details.setObjectName(
+            "scene_source_inventory_details")
+        self.source_registry_details.setReadOnly(True)
+        self.source_registry_details.setMaximumHeight(180)
+        self.source_registry_details.setPlainText(
+            "A Tractor component is not a confirmed galaxy member "
+            "or foreground contaminant.")
+        registry_layout.addWidget(self.source_registry_details)
+        self.source_registry_copy = QPushButton(
+            "Copy filtered evidence as TSV")
+        self.source_registry_copy.setObjectName(
+            "scene_source_inventory_copy")
+        self.source_registry_copy.setToolTip(
+            "Copy read-only evidence to clipboard. No project folders, "
+            "science masks or source classifications are written.")
+        self.source_registry_copy.clicked.connect(
+            self._copy_source_registry_tsv)
+        registry_layout.addWidget(self.source_registry_copy)
+        self.source_registry_panel.setVisible(False)
+        self.source_registry_toggle.toggled.connect(
+            self.source_registry_panel.setVisible)
+        iso_layout.addWidget(self.source_registry_panel)
         self.iso_generate = QPushButton("2 · Find masked isophote")
         self.iso_generate.setObjectName("scene_isophote_generate")
         self.iso_generate.clicked.connect(self._generate_isophote)
@@ -963,6 +1038,8 @@ class SceneEditor(QWidget):
         self._isophote_proposal = None
         self._isophote_preview = None
         self._contamination = None
+        self._source_registry = None
+        self._source_registry_visible = []
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -1143,6 +1220,15 @@ class SceneEditor(QWidget):
                 self.graphics.removeItem(item)
         self._conflict_paths.clear()
         self._contamination = None
+        self._source_registry = None
+        self._source_registry_visible = []
+        self.source_registry_list.clear()
+        self.source_registry_status.setText(
+            "Source evidence invalidated. Prepare masks for this "
+            "project, band and scene revision.")
+        self.source_registry_details.setPlainText(
+            "No current source-level evidence; no physical "
+            "membership or photometric action has been adopted.")
         self.iso_mask_details.setText("")
         self.iso_mask_status.setText(
             "Neighbour masks need preparation for the current "
@@ -1400,6 +1486,8 @@ class SceneEditor(QWidget):
         if np.shape(result["mask"]) != tuple(self._loaded["pixel_shape"]):
             raise ValueError("Contaminant mask grid mismatch")
         self._contamination = result
+        self._source_registry = result.get("source_inventory")
+        self._render_source_registry()
         ny, nx = self._loaded["pixel_shape"]
         layer = np.zeros((ny, nx, 4), dtype=np.uint8)
         layer[result["auto_mask"]] = (175, 106, 238, 180)
@@ -2173,6 +2261,14 @@ class SceneEditor(QWidget):
         self.iso_prepare.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_mask_toggle.setEnabled(self._contamination is not None)
+        self.source_registry_toggle.setEnabled(
+            self._source_registry is not None)
+        self.source_registry_filter.setEnabled(
+            self._source_registry is not None)
+        self.source_registry_search.setEnabled(
+            self._source_registry is not None)
+        self.source_registry_copy.setEnabled(
+            bool(self._source_registry_visible))
         self.iso_show_sga_shreds.setEnabled(
             self._isophote_proposal is not None
             and bool(self._sga_shred_paths))
