@@ -738,3 +738,103 @@ reported multiple PSF/REX components.
 - Future independent PSF-wing and spatial-sky systematics must be
   tested with native FITS and injection/recovery; JSON diagnostics
   alone cannot supply this validation.
+
+
+---
+
+## Sixth-pass experimental inner Gaia masks — Leo P (2026-11-11)
+
+**User-observed defect:** a post-fix screenshot and actual \`Copy Scene QA\`
+generated \`2026-11-10T21:55:57Z\` still displayed no
+purple/orange masks over the five foreground-star *candidates* in the
+target core. The report explicitly contained
+\`PROTECTED_GAIA_ASTROMETRY_STARS_NOT_REMOVED\` and
+\`foreground_astrometry_protected_review_ids\` =
+\`1763, 1870, 1876, 2034, 2035\`.
+Baseline, unedited Leo P source stats were exactly 493 proposed
+masked and 114 protected overlaps with 400042 masked pixels.
+**This was expected from the previous code; earlier changes added
+read-only evidence, not an internal masking engine.**
+
+### New, deliberately opt-in preview mode
+
+The SC1 GUI now exposes **Include inner Gaia candidates · QA only**
+(default OFF). On the next **Prepare neighbour masks**, the native
+same-brick DR11 Tractor catalogue is screened by the same source-type
+/ positive SNR / flux and native FITS WCS rules as before, with one
+additional *conditional* eligibility rule for sources whose proposed
+footprints overlap target protection:
+
+- Tractor PSF source, genuine \`REF_CAT=G3\` and positive \`REF_ID\`;
+- nominal Gaia parallax positive and >=5-sigma OR one absolute
+  proper-motion component >=5-sigma, with no significantly
+  negative-parallax quality alert;
+- \`gaia_duplicated_source\` false;
+- the source's existing geometric PSF envelope actually intersects
+  the current target-protected pixel set;
+- source was otherwise eligible for catalogue screening.
+
+These five *existing* Leo P Tractor/Gaia records satisfy that
+provisional eligibility criterion on the supplied snapshot, so a
+current-band preparation with the checkbox enabled should yield
+**5 orange source-footprint previews**: 498 total masked candidate
+sources and 109 remaining unresolved overlaps (subject to the same
+files and untouched project inputs as the baseline). Exact pixel count
+and isophote changes **must be measured**, not inferred from these
+identity counts.
+
+The native \`gaia_inner_preview_mask\` is a separate Boolean layer;
+preview pixels are overdrawn in orange over ordinary purple
+catalogue candidate exclusions. The source inventory uses
+\`GAIA_FOREGROUND_MASK_PREVIEW\` and the diagnostic-activity flag while
+keeping \`physical_membership=UNDETERMINED\`,
+\`photometry_action=NO_NEW_ACTION_READ_ONLY\` and
+\`proposed_treatment_is_active=False\`. The layer is included in
+the current provisional isophote calculations and optional radius
+sweep, and the toggle state, per-source IDs and pixel counts enter
+\`Copy Scene QA\`. Turning the checkbox OFF and re-preparing returns to
+the exact baseline; neither state is adopted or stored as a project
+mask decision.
+
+### Scientific limitations, not resolved by this mode
+
+- DR11 Tractor circular magnitude-dependent source envelopes
+  **are not a PSF model, subtraction, wing prediction or calibrated
+  profile mask**. The loss of actual galaxy light beneath a foreground
+  star is not quantified by zeroing these pixels.
+- Gaia astrometric solution fidelity, EDR3 reference epoch and
+  reliability are not independently verified. Even extremely large
+  formal significance need not imply a valid clean deblend or PSF.
+- DR11 \`PSF\` is a fitted *component*, not a unique physical
+  star; close pairs and shredding require independent inspection.
+- Unknown H II complexes, overlapping background galaxies and
+  non-Gaia contaminants are not automatically classified/masked.
+- The previous blanket protected-area veto persists for **other**
+  sources. The mode is a controlled A/B diagnostic, not the final
+  source-treatment architecture.
+
+**Critical safety:** default OFF, no new directories/branches,
+native FITS immutable, manual \`exclude\` / \`restore_auto\` edits retain
+their usual priority, old preliminary isophotes remain inactive,
+and the SCIENCE HOLD is unchanged.
+
+### Reproduction and acceptance targets
+
+For the same frozen Leo P G-band dataset (DR11 south \`1554p180\`,
+source catalogue SHA-256
+\`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c\`):
+
+1. With checkbox **OFF**, run Prepare → expect **493 / 114** and no
+   orange pixels; save a \`Copy Scene QA\` snapshot.
+2. Enable checkbox and run Prepare again → expect **5 orange**
+   previews, **498 / 109**, same catalogue identity and protected
+   region. Inspect source IDs and any overlap with real target light.
+3. Recompute four isophote trials and the SGA radial endpoint,
+   comparing native component IoU, q/PA, sky, masked pixels and
+   leakage warnings against baseline. No new values are pre-claimed.
+4. Toggle OFF and re-prepare: the exact baseline source count and
+   pixel mask must be recovered; original source FITS and project
+   draft digest/revision remain invariant.
+
+The resulting radial change, if any, is **sensitivity to this
+particular geometric masking policy**, not validated decontamination.
