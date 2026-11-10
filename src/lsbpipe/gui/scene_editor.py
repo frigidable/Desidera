@@ -260,11 +260,12 @@ def scene_shape_outline(shape: SkyMaskShape, wcs, ny: int):
 
 
 def prepare_scene_neighbour_masks(dataset, project_root, draft, center_icrs,
-                                  sga_prior=None):
+                                  sga_prior=None, *, gaia_inner_preview=False):
     """Prepare native Tractor masks, optionally protecting an explicit SGA core."""
     project = read_object_project(project_root)
     return prepare_scene_contamination(
-        dataset, project, draft, center_icrs, sga_prior=sga_prior)
+        dataset, project, draft, center_icrs, sga_prior=sga_prior,
+        gaia_inner_preview=gaia_inner_preview)
 
 
 def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
@@ -423,7 +424,7 @@ def run_scene_protection_radius_sweep(
         dataset, project_root, draft, center_icrs, *,
         threshold_contrast=2.2, smoothing_pix=4.,
         bridge_guard_pix=2, sga_prior=None,
-        sga_protection_prior=None,
+        sga_protection_prior=None, gaia_inner_preview=False,
         radii_arcsec=(40., 50., 60., 70., 80.)):
     """Non-destructive, frozen-input protection-radius A/B experiment.
 
@@ -468,7 +469,8 @@ def run_scene_protection_radius_sweep(
         scenario_project = replace(project, target_radius_arcsec=radius)
         prepared = prepare_scene_contamination(
             dataset, scenario_project, draft, center_icrs,
-            sga_prior=sga_protection_prior)
+            sga_prior=sga_protection_prior,
+            gaia_inner_preview=gaia_inner_preview)
         if (catalogue_sha is not None and
                 prepared["catalog_sha256"] != catalogue_sha):
             raise ValueError("Tractor catalogue changed during radius sweep")
@@ -490,6 +492,8 @@ def run_scene_protection_radius_sweep(
             "catalog_sha256":prepared["catalog_sha256"],
             "masked_catalog_sources":counts["masked_catalog_sources"],
             "protected_overlaps":counts["skipped_target_overlap"],
+            "gaia_inner_preview_sources":counts["gaia_inner_preview_sources"],
+            "gaia_inner_preview_pixels":counts["gaia_inner_preview_pixels"],
             "excluded_pixels":counts["excluded_pixels"],
             "protected_pixels":counts["protected_pixels"],
             "usable_pixels":counts["usable_pixels"],
@@ -599,6 +603,7 @@ def run_scene_protection_radius_sweep(
             "sga_protection_sha256":(
                 sga_protection_prior.source_sha256
                 if sga_protection_prior is not None else None),
+            "gaia_inner_preview":bool(gaia_inner_preview),
         },
         "limitations":[
             "NO_NATIVE_FITS_CONTENT_HASH_IN_SC1",
@@ -943,6 +948,21 @@ class SceneEditor(QWidget):
         self.radius_sweep_status.setObjectName("scene_radius_sweep_status")
         self.radius_sweep_status.setWordWrap(True)
         iso_layout.addWidget(self.radius_sweep_status)
+        self.iso_gaia_inner_preview = QCheckBox(
+            "Include inner Gaia candidates · QA only")
+        self.iso_gaia_inner_preview.setObjectName(
+            "scene_gaia_inner_mask_preview")
+        self.iso_gaia_inner_preview.setToolTip(
+            "EXPERIMENTAL: on Prepare neighbour masks, add native "
+            "geometric Tractor PSF footprints for G3 Gaia sources with "
+            "significant reference astrometry even inside protected "
+            "light. No Gaia fidelity or PSF-wing fit; potential loss "
+            "of real galaxy light. Uncheck and Prepare again for baseline. "
+            "No project drafts or source classification are written.")
+        self.iso_gaia_inner_preview.setChecked(False)
+        self.iso_gaia_inner_preview.toggled.connect(
+            self._discard_prepared_masks)
+        iso_layout.addWidget(self.iso_gaia_inner_preview)
         self.iso_mask_toggle = QCheckBox("Show proposed contaminant mask")
         self.iso_mask_toggle.setObjectName("scene_show_neighbor_mask")
         self.iso_mask_toggle.setChecked(True)
@@ -1023,6 +1043,8 @@ class SceneEditor(QWidget):
                 ("All native catalogue sources", "ALL"),
                 ("Gaia astrometry · target overlap review", "ASTROMETRY_REVIEW"),
                 ("Protected / unresolved overlaps", "PROTECTED_OVERLAP"),
+                ("Gaia inner mask previews (experimental)",
+                 "GAIA_FOREGROUND_MASK_PREVIEW"),
                 ("Proposed masked neighbours", "PROPOSED_EXCLUDE"),
                 ("Other / no fitted band flux", "NOT_SCREENED_OR_UNFITTED")):
             self.source_registry_filter.addItem(label,value)
@@ -1756,7 +1778,9 @@ class SceneEditor(QWidget):
             threshold_contrast=float(self.iso_threshold.value()),
             smoothing_pix=float(self.iso_smooth.value()),
             bridge_guard_pix=2 if self.iso_bridge_guard.isChecked() else 0,
-            sga_prior=shape_prior, sga_protection_prior=protect_prior)
+            sga_prior=shape_prior, sga_protection_prior=protect_prior,
+            **({"gaia_inner_preview":True}
+               if self.iso_gaia_inner_preview.isChecked() else {}))
         self._work_kind="radius_sweep"
         self._active_generation=self._load_generation
         self.radius_sweep_status.setText(
@@ -1790,7 +1814,9 @@ class SceneEditor(QWidget):
                 settings["bridge_guard_pix"] != (
                     2 if self.iso_bridge_guard.isChecked() else 0) or
                 settings["sga_geometry_ref"] != current_sga or
-                settings["sga_protection_ref"] != current_protect):
+                settings["sga_protection_ref"] != current_protect or
+                settings.get("gaia_inner_preview", False) !=
+                self.iso_gaia_inner_preview.isChecked()):
             raise ValueError("Discarded radius sweep: controls changed")
         if (prior is not None and
                 (settings["sga_geometry_ref"] is not None or
@@ -1833,7 +1859,9 @@ class SceneEditor(QWidget):
         # Keep existing non-SGA work flow and its test contracts intact.
         self._future = self._executor.submit(
             prepare_scene_neighbour_masks, *arguments,
-            *((prior,) if prior is not None else ()))
+            *((prior,) if prior is not None else ()),
+            **({"gaia_inner_preview":True}
+               if self.iso_gaia_inner_preview.isChecked() else {}))
         self._work_kind = "contamination"
         self._active_generation = self._load_generation
         self.iso_mask_status.setText(
@@ -1850,6 +1878,8 @@ class SceneEditor(QWidget):
                 result["dataset_source"] != self._loaded["source"] or
                 result["band"] != self._band or
                 result["draft_digest"] != self._draft.digest or
+                result.get("gaia_inner_preview_enabled", False) !=
+                self.iso_gaia_inner_preview.isChecked() or
                 result.get("sga_prior_id") != (
                     self._sga_candidate.sga_id
                     if self.sga_use_prior.isChecked()
@@ -1867,6 +1897,9 @@ class SceneEditor(QWidget):
         ny, nx = self._loaded["pixel_shape"]
         layer = np.zeros((ny, nx, 4), dtype=np.uint8)
         layer[result["auto_mask"]] = (175, 106, 238, 180)
+        gaia_layer = result.get("gaia_inner_preview_mask")
+        if gaia_layer is not None:
+            layer[gaia_layer] = (244, 123, 76, 215)
         self._contamination_overlay = QGraphicsPixmapItem(
             FITSExplorer._pixmap(layer, alpha=True))
         self._contamination_overlay.setZValue(2.5)
