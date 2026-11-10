@@ -1439,3 +1439,86 @@ def test_opt_in_gaia_inner_mask_preview_recomputes_isophote_inputs(
     editor.set_band("r")
     assert not editor.iso_gaia_inner_preview.isChecked()
     assert editor._contamination is None
+
+
+
+def test_red_extended_qa_preview_is_opt_in_reversible_and_not_persisted(
+        qtbot, tmp_path, monkeypatch):
+    """Unadopted high-specificity classifier crosses GUI worker safely."""
+    import lsbpipe.gui.scene_editor as module
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    assert not editor.iso_red_extended_preview.isChecked()
+    assert editor.source_registry_filter.findData(
+        "RED_EXTENDED_MASK_PREVIEW") >= 0
+    seen = []
+
+    def prepare(dataset, root, draft, anchor, **kwargs):
+        red = bool(kwargs.get("red_extended_preview", False))
+        gaia = bool(kwargs.get("gaia_inner_preview", False))
+        seen.append((red,gaia))
+        outside = np.zeros(dataset["pixel_shape"], bool)
+        outside[2:6,2:6] = True
+        red_mask = np.zeros_like(outside)
+        if red:
+            red_mask[35:40,35:40] = True
+        result_mask = outside | red_mask
+        return {
+            "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "mask":result_mask,"auto_mask":result_mask.copy(),
+            "red_extended_preview_mask":red_mask,
+            "red_extended_preview_enabled":red,
+            "gaia_inner_preview_enabled":gaia,
+            "gaia_inner_preview_mask":np.zeros_like(outside),
+            "protected":np.zeros_like(outside),
+            "hard":dataset["native_hard"].copy(),
+            "project_id":project.project_id,
+            "draft_digest":draft.digest,
+            "dataset_source":dataset["source"],
+            "band":dataset["band"],
+            "anchor_icrs":anchor,
+            "catalog_sha256":"a"*64,
+            "stats":{
+                "masked_catalog_sources":1+int(red),
+                "skipped_target_overlap":1-int(red),
+                "gaia_inner_preview_sources":0,
+                "red_extended_preview_sources":int(red),
+                "red_extended_preview_pixels":int(red_mask.sum()),
+                "excluded_pixels":int(result_mask.sum()),
+                "native_hard_pixels":0},
+            "flags":("EXPLICIT_RED_EXTENDED_MASK_PREVIEW_ONLY",)
+                    if red else ("PSF_WINGS_NOT_VALIDATED",),
+        }
+
+    monkeypatch.setattr(module, "prepare_scene_neighbour_masks", prepare)
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda:editor._future is None and editor._contamination is not None,
+        timeout=10000)
+    assert seen==[(False,False)]
+    assert not editor._contamination["mask"][37,37]
+    editor.iso_red_extended_preview.setChecked(True)
+    assert editor._contamination is None
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda:editor._future is None and editor._contamination is not None,
+        timeout=10000)
+    assert seen==[(False,False),(True,False)]
+    assert editor._contamination["mask"][37,37]
+    assert editor._contamination["red_extended_preview_mask"][37,37]
+    assert "1 red extended masks" in editor.iso_mask_status.text()
+    assert "CYAN" in editor.iso_mask_status.text()
+    assert editor._complete_scene_qa_snapshot()["controls"][
+        "red_extended_mask_preview"] is True
+    assert editor.draft.edits==()
+    editor.iso_red_extended_preview.setChecked(False)
+    assert editor._contamination is None
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda:editor._future is None and editor._contamination is not None,
+        timeout=10000)
+    assert seen[-1]==(False,False)
+    assert not editor._contamination["mask"][37,37]
+    assert editor.draft.edits==()
+    editor.iso_red_extended_preview.setChecked(True)
+    editor.set_band("r")
+    assert not editor.iso_red_extended_preview.isChecked()
