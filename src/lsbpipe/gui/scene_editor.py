@@ -1102,6 +1102,8 @@ class SceneEditor(QWidget):
                 ("Protected / unresolved overlaps", "PROTECTED_OVERLAP"),
                 ("All touching target protection · any fit", "TARGET_PROTECTION_ALL"),
                 ("Unscreened in target protection", "TARGET_UNSCREENED"),
+                ("Unmasked · red-policy near misses", "RED_POLICY_NEAR_MISS"),
+                ("Unmasked · red-policy reasons", "RED_POLICY_UNMASKED"),
                 ("Gaia inner mask previews (experimental)",
                  "GAIA_FOREGROUND_MASK_PREVIEW"),
                 ("Red extended mask previews (experimental)",
@@ -2076,6 +2078,15 @@ class SceneEditor(QWidget):
                         "INSIDE_OR_TOUCHES_PROVISIONAL_TARGET_PROTECTION"
                         not in entry["evidence_flags"]):
                     continue
+            elif selected == "RED_POLICY_NEAR_MISS":
+                if not entry.get("red_extended_near_miss", False):
+                    continue
+            elif selected == "RED_POLICY_UNMASKED":
+                if (entry["screening_disposition"] not in
+                        ("PROTECTED_OVERLAP",
+                         "NOT_SCREENED_OR_UNFITTED") or
+                        entry.get("red_extended_first_failure") is None):
+                    continue
             elif (selected != "ALL" and
                   entry["screening_disposition"] != selected):
                 continue
@@ -2089,6 +2100,7 @@ class SceneEditor(QWidget):
                 " ".join(entry["fitbits_names"]),
                 str(entry.get("foreground_evidence_assessment", "")),
                 str(entry.get("proposed_source_treatment", "")),
+                str(entry.get("red_extended_first_failure", "")),
             )).casefold()
             if term and term not in search:
                 continue
@@ -2104,6 +2116,8 @@ class SceneEditor(QWidget):
                     (entry["centre_in_target_protection"] or
                      disp == "PROTECTED_OVERLAP")):
                 badge = "FG? " + badge
+            if entry.get("red_extended_near_miss", False):
+                badge = "RED NEAR-MISS " + badge
             if not entry.get("centre_in_native_frame", True):
                 badge = "EDGE " + badge
             ident = entry["objid"]
@@ -2162,8 +2176,12 @@ class SceneEditor(QWidget):
             f"{e.get('diagnostic_inner_gaia_mask_preview_active',False)}\n"
             f"Diagnostic red extended mask preview (NOT science): "
             f"{e.get('diagnostic_red_extended_mask_preview_active',False)}\n"
-            f"Red extended decision metrics: "
-            f"{e.get('red_extended_rule_evidence') or 'not selected'}\n"
+            f"Red extended policy audit (QA only): "
+            f"{e.get('red_extended_rule_evidence') or 'not screened'}\n"
+            f"Red policy first failure: "
+            f"{e.get('red_extended_first_failure')}\n"
+            f"Near strict red boundary, UNMASKED: "
+            f"{e.get('red_extended_near_miss',False)}\n"
             f"Target circle centre: "
             f"{e['centre_in_target_protection']}; "
             f"SGA prior centre: {e['centre_in_sga_prior']}\n"
