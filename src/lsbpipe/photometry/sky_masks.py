@@ -16,7 +16,10 @@ import numpy as np
 
 SCHEMA = "desidera.sky-mask-draft/1"
 DRAFT_STATUS = "MASK_DRAFT_NOT_ADOPTED"
-PURPOSES = frozenset(("exclude", "restore_auto", "protect_target", "sky_train", "sky_holdout"))
+# Isophotal proposals are annotation-only. They MUST NOT become
+# target-protection source policy without a separate deliberate decision.
+PURPOSES = frozenset(("exclude", "restore_auto", "protect_target",
+                      "sky_train", "sky_holdout", "isophote_candidate"))
 BANDS = frozenset(("g", "r", "i", "z"))
 
 
@@ -137,6 +140,22 @@ class SkyMaskEdit:
         return cls(edit_id=info["edit_id"], purpose=info["purpose"],
                    shape=SkyMaskShape.from_dict(info["shape"]),
                    band=info.get("band"), comment=info.get("comment", ""))
+
+
+
+def is_legacy_isophote_protection(edit: SkyMaskEdit) -> bool:
+    """Recognize previously saved SC1 auto-isophote masks safely.
+
+    The historical GUI serialized a preliminary isophote or SGA seed as
+    protect_target. Treat ONLY those provenance-labelled edits as inactive
+    proposals, without rewriting project history or blocking deliberate
+    user-authored protect_target regions.
+    """
+    return (edit.purpose == "protect_target" and (
+        "AUTO_ISOPHOTE_PRELIMINARY" in edit.comment or
+        "SGA_INITIAL_GEOMETRY_DRAFT" in edit.comment))
+
+
 
 
 @dataclass(frozen=True)
@@ -303,7 +322,10 @@ def evaluate_mask_draft(draft: SkyMaskDraft, wcs, pixel_shape: tuple[int, int],
             continue
         covered = rasterize_sky_shape(
             edit.shape, wcs, pixel_shape, subpixels=subpixels) > 0
-        layers[edit.purpose] |= covered
+        effective_purpose = (
+            "isophote_candidate" if is_legacy_isophote_protection(edit)
+            else edit.purpose)
+        layers[effective_purpose] |= covered
     if np.any(layers["sky_train"] & layers["sky_holdout"]):
         raise ValueError("Sky training and validation regions must not overlap")
     editable_auto = auto & ~layers["restore_auto"]
@@ -320,6 +342,10 @@ def evaluate_mask_draft(draft: SkyMaskDraft, wcs, pixel_shape: tuple[int, int],
         "manual_exclude": layers["exclude"],
         "manual_restore_auto": layers["restore_auto"],
         "target_protect": layers["protect_target"],
+        "isophote_candidate": layers["isophote_candidate"],
+        "legacy_isophote_count": sum(
+            is_legacy_isophote_protection(e) and e.applies_to(band)
+            for e in draft.edits),
         "sky_train": layers["sky_train"] & ~excluded & ~layers["protect_target"],
         "sky_holdout": layers["sky_holdout"] & ~excluded & ~layers["protect_target"],
         "excluded": excluded,
