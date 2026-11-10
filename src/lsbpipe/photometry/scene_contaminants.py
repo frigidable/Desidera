@@ -310,6 +310,11 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
             sga_prior.source_sha256 if sga_prior is not None else None),
         "sga_core_pixels": (
             int(np.count_nonzero(sga_core)) if sga_core is not None else 0),
+        # This provisional circular exclusion/protection scale affects
+        # which Tractor sources can be masked. Preserve it for independent
+        # radial-boundary sensitivity QA; not a science galaxy radius.
+        "target_protection_radius_arcsec": float(
+            project.target_radius_arcsec),
         "catalog_sha256": catalog.source_sha256,
         "catalog_path": catalog.source_path,
         "stats": {**counts,
