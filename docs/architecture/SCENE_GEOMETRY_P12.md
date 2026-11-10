@@ -709,3 +709,127 @@ PSF-wing review of bright sources, a more appropriate spatial
 sky model, and independent g/r/z-band measurements. This stage
 does **not** automatically attribute Tractor sources to Leo P
 or claim a validated outer extent.
+
+
+## 2026-11-10 · Stage SA1 — native Tractor source-evidence register (read-only)
+
+The next major research workstream is **Source Association & Contaminant
+Modelling**, to precede scientifically adopted aperture/ellipse photometry.
+Stage SA1 creates only a source-level evidence register, with NO
+automatic physical classification or change to the existing SC1
+provisional geometric masks. Source detections, physical membership,
+and chosen photometric treatment must remain separate layers.
+
+### Evidence contract and optical-source inclusion
+
+- In `photometry/psf_tractor_gaia.py`, the native DR11 South
+  same-brick Tractor FITS reader retains the original source
+  `RA, DEC, OBJID, REF_CAT, REF_ID, FITBITS, MASKBITS, TYPE`,
+  original per-band Tractor model fluxes and IVAR for g/r/i/z
+  when present, and Gaia `PARALLAX, PMRA, PMDEC`, their separate
+  inverse variances and `REF_EPOCH` when supplied. No non-existent
+  catalogue field is guessed. These are NOT independently obtained
+  Gaia positions, epoch-corrected sky positions, calibrated color
+  gradients or valid foreground membership probabilities.
+- `scene_source_inventory.py` associates all source **centres**
+  projected onto the full native image with the previously generated
+  SC1 *screening disposition*. This must include sources ignored by
+  the old mask algorithm because the selected-band Tractor
+  `FLUX_IVAR` is zero; the DR11 documentation says retained very
+  bright Gaia stars may have deliberately zero fit IVAR.
+- Screening dispositions are `PROTECTED_OVERLAP` (the old
+  geometrical proposed envelope touched the protected galaxy),
+  `PROPOSED_EXCLUDE` (old preliminary outside-source mask),
+  or `NOT_SCREENED_OR_UNFITTED` (often faint/no reliable fitted
+  flux, but can have other reasons). These labels do NOT indicate
+  physical classes. **Every** record has
+  `physical_membership=UNDETERMINED` and
+  `photometry_action=NO_NEW_ACTION_READ_ONLY`.
+- A source is grounded by the original DR11
+  `release/region/brick/OBJID`, the original FITS RA/Dec and
+  source-pixel position. A SHA-256 of the exact local same-brick
+  Tractor file is recorded with the source register. No extra
+  directory, downstream measurement or science table is written.
+  Native source identities and screening decisions are invalidated
+  when switching objects/bands/drafts; the GUI does not reuse stale
+  evidence.
+- The register is bounded to prevent giant GUI tables. It reports
+  its full native-frame row count, stored row count, any explicit
+  truncation, and whether the old screening-conflict inventory was
+  itself capped. Protected overlaps are displayed first.
+- In Scene & Masks, a COLLAPSED
+  `Source evidence · inspect all protected overlaps` panel now
+  provides filtering by old screening status, source search, original
+  row-level metadata, and an *explicit* clipboard TSV export of
+  the displayed rows with catalogue SHA. Unlike the old
+  `Show 20 nearest unresolved neighbours`, it can inspect all
+  125 unresolved Leo P sources (subject to explicitly reported
+  safety caps), not only graphic markers.
+
+### Evidence semantics that prevent astrophysical mistakes
+
+- `REF_CAT=G3` with a positive `REF_ID` is a Gaia DR3
+  *cross-identification*, not proof that the source is in the
+  Milky Way. The significant absolute parallax/proper-motion
+  values and their diagonal formal IVAR are evidence flags for
+  foreground review only; without astrometric quality and
+  cross-match tests do not adopt a physical classification.
+- `MASKBITS=RESOLVED` means within the footprint of a nearby
+  galaxy with individually resolvable stars, not proof of
+  galaxy membership for a particular Tractor component.
+  `MASKBITS=GALAXY` is SGA geometry context, not membership.
+  `FITBITS=FORCED_POINTSOURCE`, `FROZEN` and
+  `TYPE=PSF` are processing/model facts. The DR11 pipeline
+  can force PSF types inside GALAXY/BRIGHT/CLUSTER masks.
+- A REF_CAT L4 SGA reference is catalogue provenance, not a
+  single resolved physical source or a bona-fide young clump.
+  No H II region, young stellar association, background galaxy,
+  foreground contaminant, or Tractor shred is automatically
+  classified at SA1. A Tractor component is never counted as an
+  independent star, a guaranteed H II source or a galaxy member
+  based only on its catalogue attributes.
+- Colours calculated from Tractor model fluxes are NOT
+  substitute PSF-matched, same-aperture `griz` colours,
+  particularly where forced/incomplete fits or ionized gas
+  dominate. The coming photometry workstream must preserve
+  distinct total-galaxy fluxes and coherent-aperture colours,
+  both with their own background/PSF uncertainty.
+
+### Explicit research gates for the next stages
+
+**SA2 — resolved source association and manual evidence review:**
+add sky-scoped source/segmentation linking across the griz originals,
+more discriminating Gaia astrometry with quality checks, and separate
+hypotheses for (a) foreground stars, (b) background galaxies,
+(c) galaxy-internal point sources/stellar associations, (d)
+ionized-gas or H II structures, and (e) overlapping mixed sources.
+Leo P HST/MUSE should be held out as external validation evidence,
+NOT universally required catalogue inputs. Uncertain identities
+must remain undecided; do not train on SGA/Tractor labels as if they
+were independent truth.
+
+**SA3 — contaminant light modelling:** test PSF-convolved individual
+foreground and background source models against residual images,
+while preserving separate target diffuse and compact components.
+Never turn a rough geometry-only footprint into a science subtraction.
+Explicitly quantify residuals and model mismatch/PSF wing biases.
+
+**SA4 — mutually consistent science masks and photometry:** separate
+native validity, background sampling, contamination removal,
+robust isophotal geometry and total-flux definitions. Preserve
+internally generated star-forming light in total flux (including
+nebular emission in observed broad bands), while allowing robust
+downweighting for smooth stellar isophote geometry. Match-aperture
+colours and band-specific total curves of growth must be reported
+separately. Masked-flux reconstruction, sky gradients, PSF leakage
+and alternative source-membership scenarios require independent
+uncertainty propagation and injection/recovery tests.
+
+Official references for source semantics:
+https://www.legacysurvey.org/dr11/catalogs/
+https://www.legacysurvey.org/dr11/description/
+https://www.legacysurvey.org/dr11/bitmasks/
+
+Stage SA1 must remain in draft pending evaluation on original Leo P
+FITS and exact local DR11 Tractor catalogue. Passing synthetic
+regressions is NOT a physical source-classification validation.
