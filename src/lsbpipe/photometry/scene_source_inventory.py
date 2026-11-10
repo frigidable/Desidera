@@ -18,17 +18,24 @@ import numpy as np
 
 SOURCE_EVIDENCE_SCHEMA = "desidera.scene-source-evidence/1"
 # DR11 official MASKBITS/FITBITS; masks denote processing context, not origin.
+# Full published DR11 bit names: preserve all processing provenance.
+# These denote survey context/fitting behaviour, never physical membership.
+# https://www.legacysurvey.org/dr11/bitmasks/
 MASKBIT_NAMES = {
-    1: "BRIGHT", 2: "SATUR_G", 3: "SATUR_R", 4: "SATUR_Z",
-    5: "ALLMASK_G", 6: "ALLMASK_R", 7: "ALLMASK_Z",
+    0: "NPRIMARY", 1: "BRIGHT", 2: "SATUR_G", 3: "SATUR_R",
+    4: "SATUR_Z", 5: "ALLMASK_G", 6: "ALLMASK_R",
+    7: "ALLMASK_Z", 8: "WISEM1", 9: "WISEM2",
     10: "BAILOUT", 11: "MEDIUM", 12: "GALAXY",
     13: "CLUSTER", 14: "SATUR_I", 15: "ALLMASK_I",
     16: "SUB_BLOB", 17: "RESOLVED", 18: "MCLOUDS",
+    19: "WISE_GAIA",
 }
 FITBIT_NAMES = {
     0: "FORCED_POINTSOURCE", 1: "FIT_BACKGROUND",
     2: "HIT_RADIUS_LIMIT", 3: "HIT_SERSIC_LIMIT",
     4: "FROZEN", 5: "BRIGHT", 6: "MEDIUM", 7: "GAIA",
+    8: "TYCHO2", 9: "LARGEGALAXY", 10: "WALKER",
+    11: "RUNNER", 12: "GAIA_POINTSOURCE", 13: "ITERATIVE",
 }
 
 
