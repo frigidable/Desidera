@@ -942,3 +942,97 @@ def test_sga_protected_60arcsec_radius_coincidence_is_not_claimed_as_real_edge()
         q_sky=.532,pa_deg=150.5,centre_icrs=(359.999,60.),
         bins=(),masked_fraction=0.,flags=())
     assert not scene_sga_mask_boundary_warning(other,60.)
+
+
+def test_readonly_source_inventory_shows_all_ambiguous_and_unfitted_gaia(
+        qtbot, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory,
+    )
+    from lsbpipe.photometry.scene_contaminants import (
+        conservative_catalogue_mask,
+    )
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    data = _data(project.project_id)
+    points = np.array([[48.,48.],[75.,75.],[17.,22.]])
+    protected = np.zeros(data["pixel_shape"],bool)
+    protected[38:59,38:59] = True
+    rows = (
+        {"objid":40, "type":"PSF","flux":15.,"flux_ivar":12.,
+         "ref_cat":"G3","ref_id":4567,"gaia_g_mag":20.,
+         "parallax_mas":1.2,"parallax_ivar":100.,
+         "pmra_masyr":None,"pmra_ivar":None,
+         "maskbits":(1<<17)|(1<<12),"fitbits":1<<0},
+        {"objid":41,"type":"EXP","flux":120.,"flux_ivar":8.,
+         "ref_cat":"","ref_id":0,"maskbits":0,"fitbits":0,
+         "shape_r_arcsec":2.},
+        {"objid":42,"type":"PSF","flux":45.,"flux_ivar":0.,
+         "ref_cat":"G3","ref_id":9999,"gaia_g_mag":16.5,
+         "maskbits":1<<1,"fitbits":1<<4},
+    )
+    mask, stats = conservative_catalogue_mask(
+        data["pixel_shape"],points,rows,
+        arcsec_per_pixel=1.,protected=protected)
+    assert stats["skipped_target_overlap"]==1
+    assert stats["masked_catalog_sources"]==1
+    assert stats["unusable_catalog_sources"]==1
+    catalog = SimpleNamespace(
+        rows=rows,pixel_positions=points,
+        source_path="local/tractor-1554p600.fits",
+        source_sha256="d"*64,
+        dataset_id="dr11/south/1554p600/g")
+    evidence = build_scene_source_inventory(
+        catalog,pixel_shape=data["pixel_shape"],protected=protected,
+        screen_stats=stats,release="dr11",region="south",
+        brick="1554p600",band="g")
+    result = {
+        "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+        "mask":mask,"auto_mask":mask.copy(),
+        "project_id":project.project_id,
+        "dataset_source":data["source"],
+        "band":"g", "draft_digest":editor.draft.digest,
+        "anchor_icrs":editor._project_target,
+        "catalog_sha256":"d"*64,
+        "source_inventory":evidence,
+        "stats":{**stats,
+                 "excluded_pixels":int(mask.sum()),
+                 "native_hard_pixels":1},
+        "flags":("CATALOGUE_GEOMETRY_NOT_TRACTOR_MODEL_RENDER",),
+    }
+    editor._accept_contamination_result(result)
+    assert editor.source_registry_toggle.isEnabled()
+    assert editor.source_registry_list.count()==3
+    assert "3 shown of 3" in editor.source_registry_status.text()
+    assert editor.source_registry_details.toPlainText()
+    editor.source_registry_toggle.setChecked(True)
+    editor.source_registry_filter.setCurrentIndex(
+        editor.source_registry_filter.findData("PROTECTED_OVERLAP"))
+    assert editor.source_registry_list.count()==1
+    assert "OBJID 40" in editor.source_registry_list.item(0).text()
+    assert "UNDETERMINED" in editor.source_registry_details.toPlainText()
+    assert "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW" in (
+        editor.source_registry_details.toPlainText())
+    editor.source_registry_filter.setCurrentIndex(
+        editor.source_registry_filter.findData("NOT_SCREENED_OR_UNFITTED"))
+    assert editor.source_registry_list.count()==1
+    assert "OBJID 42" in editor.source_registry_list.item(0).text()
+    assert "RETAINED_GAIA_SOURCE_POSSIBLE" in (
+        editor.source_registry_details.toPlainText())
+    editor.source_registry_copy.click()
+    exported = QApplication.clipboard().text()
+    assert "source_catalog_sha256\t" + "d"*64 in exported
+    assert "dr11/south/1554p600/OBJID=42" in exported
+    assert "NO_NEW_ACTION_READ_ONLY" in exported
+    assert "OBJID=40" not in exported
+    editor.source_registry_search.setText("nonexistent_source")
+    assert editor.source_registry_list.count()==0
+    assert not editor.source_registry_copy.isEnabled()
+    editor._discard_prepared_masks()
+    assert editor._source_registry is None
+    assert editor._source_registry_visible==[]
+    assert not editor.source_registry_toggle.isEnabled()
+    assert not editor.iso_generate.isEnabled()
+    assert editor.draft.edits==()
+    assert not (project.root/"analyses").exists()
