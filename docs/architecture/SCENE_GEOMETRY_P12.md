@@ -573,3 +573,71 @@ The real Leo P SGA2025 parent response and scientific merged FITS
 have **not yet been examined**, so no new galaxy radius/PA/q is
 reported as a measurement. Unit and GUI tests cover the observed
 SGA-0 anomaly and the explicit parent fallback on synthetic responses.
+
+
+## 2026-11-10 · SGA-informed first ellipse with image-supported radius (SC1 diagnostic)
+
+The Leo P experiment showed that selecting a fitted SGA2025 Parent
+geometry did **not** change the 507 masked neighbours or the 125
+ambiguous overlaps, because its semimajor axis (14.28 arcsec) is
+entirely contained within the existing project's 60-arcsec target
+protection. `POSSIBLE_GALAXY_SHRED=0` within this tiny parent ellipse
+does NOT mean that there are no galaxy-associated Tractor shreds
+elsewhere in Leo P. SGA was previously used only as an optional
+core-protection mask; its centre/q/PA were not passed to the ellipse
+initialization.
+
+A new opt-in read-only geometry diagnostic addresses this specific
+gap without assuming a physical outer LSB isophote:
+
+1. After explicitly selecting a SGA source, `Use SGA centre/q/PA for
+   initial geometry` enables **a separate SGA-guided seed**. Central
+   Tractor protection remains a completely independent checkbox.
+2. Following normal verified local Tractor masking and native isophote
+   diagnostics, use the chosen SGA *centre*, celestial `q` and PA.
+   A new `sga_informed_radial_seed()` routine uses native WCS
+   tangent-plane offsets, normalized masked Gaussian convolution,
+   provisional local sky and empirical smoothed-sky RMS. It examines
+   successive elliptical annuli and eight angular sectors. It
+   requires adequate valid coverage, >=4 positive sectors and >=2
+   consecutive supported outer rings; it stops after unsupported
+   radii instead of jumping to a separate bright nearby object.
+   The outer semimajor axis must be supported by the actual original
+   masked DESI pixels — **never by multiplying the SGA diameter by
+   an arbitrary factor**. No supported extent => no SGA-guided
+   expanded ellipse is offered.
+3. In the dropdown, `SGA-informed initial ellipse · supported radius`
+   can now be compared directly with `Native isophote contour` and
+   `Equivalent ICRS ellipse` computed independently from component
+   moments. A short summary compares PA/q and initial semimajor
+   axes, reports the original SGA-to-target centre displacement and
+   documents radial-detection flags. The new geometry stays
+   band-local and can only be persisted as an unadopted draft after
+   manual review override; it does not supersede native galaxy
+   morphology or imply a calibrated outer isophote.
+4. Prepared DR11 Tractor screening retains a bounded, immutable
+   *source-centre inventory* of provisional masks. If a data-supported
+   SGA initial ellipse exists, Desidera counts masked catalogue source
+   centres within it and offers opt-in **blue review rings** for up to
+   25. These sources are `POTENTIAL_SHRED_OR_CONTAMINANT_REVIEW`,
+   not verified galaxy members: neither native masks nor model
+   pixels are unmasked automatically. The total is a lower bound
+   when the inventory is truncated; restore/remove decisions remain
+   manual and revisioned.
+5. The SGA/Tractor provenance is source-bound. The algorithm never
+   touches original FITS or science PSF; the selected SGA source
+   and SHA, independent original FITS/band and Tractor catalogue
+   identity, and geometry/detection parameters are retained for QA.
+
+**Scientific limitations:** empirical smoothed-background RMS is
+NOT a Gaussian detection significance after correlated imaging;
+fixed sky from a distant annulus can be biased; SGA may already
+derive from the same Legacy/Tractor imaging; PA/q are **priors**,
+not independently refitted isophotal measurements in this stage;
+bright-star PSF wings and shreds may still pollute the detected
+profile; outer extent is a provisional *observed support radius*,
+not a measured `D26`, `R_e` or final galaxy boundary. Complete
+Tractor PSF-convolved source rendering, probabilistic source
+membership, spatial sky refinement, injection-and-recovery,
+and radial profile fitting remain research gates, not implied by
+this prototype.
