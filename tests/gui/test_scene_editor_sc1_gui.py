@@ -842,10 +842,6 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
                      "excluded_pixels":int(mask.sum()),
                      "native_hard_pixels":0},
             "flags":("PSF_WINGS_NOT_VALIDATED",),
-            "source_inventory":{"entries":(
-                {"x":160.,"y":159.,"objid":88,"tractor_type":"PSF",
-                 "source_id":"dr11/south/test/OBJID=88",
-                 "screening_disposition":"NOT_SCREENED_OR_UNFITTED"},)},
         }
 
     monkeypatch.setattr(module,"prepare_scene_neighbour_masks",fake_prepare)
@@ -853,6 +849,13 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     qtbot.waitUntil(
         lambda: editor._future is None and editor._contamination is not None,
         timeout=10000)
+    # Inject inventory-only evidence AFTER the GUI accepts the
+    # ordinary minimal test fixture; no source-registry widget contract
+    # is mocked by this targeted radial-count regression.
+    editor._contamination["source_inventory"]={"entries":(
+        {"x":160.,"y":159.,"objid":88,"tractor_type":"PSF",
+         "source_id":"dr11/south/test/OBJID=88",
+         "screening_disposition":"NOT_SCREENED_OR_UNFITTED"},)}
     editor.iso_smooth.setValue(3.)
     editor.iso_generate.click()
     qtbot.waitUntil(
