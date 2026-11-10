@@ -1199,7 +1199,8 @@ def test_radius_sweep_is_non_destructive_and_tracks_mask_isophote_changes(
     original_radius = project.target_radius_arcsec
     draft_before = editor.draft.digest
     observed = []
-    def fake_prepare(dataset, scenario_project, draft, anchor, *, sga_prior=None):
+    def fake_prepare(dataset, scenario_project, draft, anchor, *,
+                     sga_prior=None, **kwargs):
         radius = scenario_project.target_radius_arcsec
         observed.append(("mask",radius,anchor))
         mask = np.zeros(dataset["pixel_shape"],dtype=bool)
@@ -1312,6 +1313,21 @@ def test_radius_sweep_is_non_destructive_and_tracks_mask_isophote_changes(
         "READ_ONLY_DIAGNOSTIC_NOT_SCIENCE_VALIDATED")
     editor.iso_threshold.setValue(2.7)
     assert editor._sweep_result is None
+
+    # The red classifier must be part of the immutable input
+    # fingerprint. Without the recorded flag, the GUI would reject
+    # all valid red-on sweeps as stale.
+    editor.iso_red_extended_preview.setChecked(True)
+    extra=module.run_scene_protection_radius_sweep(
+        editor._loaded, project.root, editor.draft,
+        editor._project_target, threshold_contrast=2.7,
+        red_extended_preview=True)
+    assert extra["fixed_settings"]["red_extended_preview"] is True
+    assert extra["fixed_settings"]["red_extended_policy"]=="red_extended_v1"
+    editor._accept_radius_sweep_result(extra)
+    assert editor._sweep_result is extra
+    assert editor.draft.digest==draft_before
+    assert np.array_equal(editor._loaded["data"]["image"],image_before)
 
 
 def test_radius_sweep_refuses_invalid_radii_without_changing_project(
