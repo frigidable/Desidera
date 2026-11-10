@@ -31,11 +31,11 @@ from lsbpipe.photometry.mask_drafts import (
     read_active_mask_draft, save_mask_draft,
 )
 from lsbpipe.photometry.sky_masks import (
-    SkyMaskDraft, SkyMaskEdit, SkyMaskShape,
+    SkyMaskDraft, SkyMaskEdit, SkyMaskShape, rasterize_sky_shape,
 )
 from lsbpipe.photometry.ellipse_seed import (
     propose_local_isophote, seed_as_sky_geometry,
-    assess_local_isophote_sensitivity,
+    assess_local_isophote_sensitivity, sga_informed_radial_seed,
 )
 from lsbpipe.photometry.scene_contaminants import prepare_scene_contamination
 from lsbpipe.photometry.sga_priors import (
@@ -196,7 +196,8 @@ def prepare_scene_neighbour_masks(dataset, project_root, draft, center_icrs,
 
 
 def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
-                           contamination, bridge_guard_pix=0):
+                           contamination, bridge_guard_pix=0,
+                           sga_prior=None):
     """Require the prepared source-bound mask before extracting an isophote."""
     if (contamination is None or
             contamination.get("status") !=
@@ -246,8 +247,80 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
         (sky_shapes(candidate) if candidate is not None else None)
         for candidate in sensitivity["trial_models"])
     ellipse, contour = alternatives[0]["ellipse"], alternatives[0]["contour"]
+    sga_result = None
+    sga_seed_shape = None
+    sga_warning = None
+    sga_comparison = None
+    if sga_prior is not None:
+        if (sga_prior.core_shape() is None or
+                contamination["project_id"] != dataset["project_id"]):
+            raise ValueError("Selected SGA prior has no valid geometry")
+        from astropy.coordinates import SkyCoord
+        from astropy import units as u
+        prior_shape = sga_prior.core_shape()
+        from_centre = SkyCoord(*prior_shape.center, unit="deg")
+        anchor_centre = SkyCoord(*center_icrs, unit="deg")
+        center_sep = float(from_centre.separation(anchor_centre).arcsec)
+        if center_sep > 60.:
+            raise ValueError("SGA prior centre too far from target anchor")
+        # SGA/Tractor are not statistically independent. The radial
+        # diagnostic itself uses the SAME original pixels after masking.
+        try:
+            sga_result = sga_informed_radial_seed(
+                dataset["data"]["image"], valid, wcs, prior_shape,
+                local_sky=model.local_sky,
+                smoothed_rms=model.smoothed_sky_rms,
+                smooth_sigma_pix=float(smoothing))
+            if sga_result.detected_a_arcsec is not None:
+                sga_seed_shape = SkyMaskShape(
+                    "ellipse", center=sga_result.centre_icrs,
+                    a_arcsec=sga_result.detected_a_arcsec,
+                    q=sga_result.q_sky,
+                    pa_deg=sga_result.pa_deg)
+                # Explicitly INVENTORY masked source centers, not
+                # automatic 'shred' assignments or a new mask.
+                footprint = rasterize_sky_shape(
+                    sga_seed_shape,wcs,dataset["pixel_shape"])
+                candidates = []
+                for source in contamination["stats"].get(
+                        "masked_catalog_centres", ()):
+                    ix, iy = int(round(source["x"])),int(round(source["y"]))
+                    if (0 <= ix < footprint.shape[1] and
+                            0 <= iy < footprint.shape[0] and
+                            footprint[iy,ix] > 0):
+                        candidates.append(source)
+                sga_comparison = {
+                    "masked_catalog_centres_in_initial_ellipse": len(candidates),
+                    "review_candidates": tuple(candidates[:25]),
+                    "catalogue_inventory_truncated":
+                        contamination["stats"].get(
+                            "masked_centres_truncated", 0),
+                }
+        except (ValueError, TypeError, ArithmeticError) as exc:
+            # Independent connected-component results stay usable when
+            # SGA-informed analysis cannot support an outer extent.
+            sga_warning = str(exc)[:250]
+        model_sky = seed_as_sky_geometry(model.seed,wcs)
+        pa_delta = abs(model_sky["pa_north_through_east_deg"]
+                       -prior_shape.pa_deg)%180.
+        sga_comparison = {
+            **(sga_comparison or {}),
+            "reference_a_arcsec":prior_shape.a_arcsec,
+            "reference_q":prior_shape.q,
+            "reference_pa_deg":prior_shape.pa_deg,
+            "independent_q":model_sky["q_sky"],
+            "independent_pa_deg":
+                model_sky["pa_north_through_east_deg"],
+            "delta_q":abs(model_sky["q_sky"]-prior_shape.q),
+            "delta_pa_deg":min(pa_delta,180.-pa_delta),
+            "center_offset_arcsec":center_sep,
+            "sga_ref":sga_prior.sga_id,
+            "sga_source_sha256":sga_prior.source_sha256,
+        }
     return {"status":model.state, "ellipse":ellipse, "contour":contour,
             "proposal":model, "alternatives":alternatives,
+            "sga_radial":sga_result, "sga_seed_shape":sga_seed_shape,
+            "sga_warning":sga_warning, "sga_comparison":sga_comparison,
             "band":dataset["band"],
             "project_id":dataset["project_id"],
             "source":dataset["source"],
