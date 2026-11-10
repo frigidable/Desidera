@@ -2,8 +2,10 @@
 
 Uses same-brick, same-band DR11 Tractor positions and shape metadata as
 *diagnostic* evidence, not a rendered Tractor model or validated PSF.
-Never changes original FITS, ignores catalogue rows inside the protected
-target footprint, and refuses to proceed when catalogue evidence is absent.
+Never changes original FITS. Preliminary target protection is a
+source-screening VETO only, not physical membership. Explicit manual
+exclusions can work inside target protection, but automatic foreground
+PSF/galaxy decomposition is NOT implemented. Refuse absent evidence.
 """
 from __future__ import annotations
 
@@ -220,7 +222,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
     catalogues. In other datasets or when the catalogue is absent, fail
     closed rather than call a raw threshold contour a cleaned isophote.
     """
-    from lsbpipe.photometry.sky_masks import SkyMaskShape
+    from lsbpipe.photometry.sky_masks import (
+        SkyMaskShape, is_legacy_isophote_protection,
+    )
     if (project.project_id != dataset["project_id"] or
             project.selected_dataset is None or
             project.data_root is None or draft.project_id != project.project_id):
@@ -275,8 +279,15 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         protected |= sga_core
     manual_excluded = np.zeros(shape, dtype=bool)
     restored_auto = np.zeros(shape, dtype=bool)
+    legacy_isophote_count = 0
     for edit in draft.edits:
         if not edit.applies_to(band):
+            continue
+        if is_legacy_isophote_protection(edit):
+            # Historical SC1 candidate previews were serialized as
+            # protect_target. Fail-safe: never let them change *any*
+            # subsequent source-screening decision.
+            legacy_isophote_count += 1
             continue
         if edit.purpose not in ("protect_target", "exclude", "restore_auto"):
             continue
@@ -296,6 +307,13 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         screen_stats=counts, release=release, region=region,
         brick=brick, band=band, sga_core=sga_core,
         anchor_icrs=anchor)
+    foreground_review_ids = tuple(
+        e["source_id"] for e in source_inventory["entries"]
+        if "GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW"
+           in e["evidence_flags"]
+        and (e["centre_in_target_protection"] or
+             e["screening_disposition"] == "PROTECTED_OVERLAP")
+    )
     auto = auto & ~restored_auto
     # Explicit manual exclusions are applied even if they overlap target
     # protection, whereas automated catalogue proposals never do.
@@ -313,6 +331,10 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
              "PROVISIONAL_PROTECTED_TARGET_RADIUS"]
     if counts["skipped_target_overlap"]:
         flags.append("TARGET_NEIGHBOURS_REQUIRE_MANUAL_REVIEW")
+    if foreground_review_ids:
+        flags.append("PROTECTED_GAIA_ASTROMETRY_STARS_NOT_REMOVED")
+    if legacy_isophote_count:
+        flags.append("LEGACY_ISOPHOTE_PROTECT_EDITS_INACTIVE")
     if sga_core is not None:
         flags.extend(("SGA_CORE_ONLY_NOT_OUTER_LSB_BOUNDARY",
                       "SGA_TRACTOR_EVIDENCE_NOT_STATISTICALLY_INDEPENDENT"))
@@ -343,7 +365,12 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
             project.target_radius_arcsec),
         "catalog_sha256": catalog.source_sha256,
         "catalog_path": catalog.source_path,
+        "foreground_astrometry_protected_review_ids": foreground_review_ids,
         "stats": {**counts,
+                  "legacy_isophote_protect_edits_ignored":
+                      legacy_isophote_count,
+                  "protected_gaia_astrometry_review":
+                      len(foreground_review_ids),
                   "catalog_rows": len(catalog.rows),
                   "excluded_pixels": int(np.count_nonzero(excluded)),
                   "native_hard_pixels": int(np.count_nonzero(hard)),
