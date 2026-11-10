@@ -1414,3 +1414,8 @@ def test_opt_in_gaia_inner_mask_preview_recomputes_isophote_inputs(
     assert requests == [False, True, False]
     assert not editor._contamination["mask"][46,46]
     assert editor.draft.edits == ()
+    # Experiment selection MUST NOT leak to another native band.
+    editor.iso_gaia_inner_preview.setChecked(True)
+    editor.set_band("r")
+    assert not editor.iso_gaia_inner_preview.isChecked()
+    assert editor._contamination is None
