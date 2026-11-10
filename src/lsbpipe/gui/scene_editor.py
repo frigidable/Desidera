@@ -544,14 +544,6 @@ class SceneEditor(QWidget):
         self.fit_btn = QPushButton("Fit")
         self.fit_btn.clicked.connect(lambda: self.view.fit_image())
         toolbar.addWidget(self.fit_btn)
-        self.copy_scene_qa_btn = QPushButton("Copy complete Scene QA")
-        self.copy_scene_qa_btn.setObjectName("scene_copy_complete_qa")
-        self.copy_scene_qa_btn.setToolTip(
-            "Copy current project/band/Tractor/SGA/mask/isophote diagnostics, "
-            "every sensitivity trial and all source-evidence metadata as JSON. "
-            "May include local catalogue paths. No FITS or project writes.")
-        self.copy_scene_qa_btn.clicked.connect(self._copy_complete_scene_qa)
-        toolbar.addWidget(self.copy_scene_qa_btn)
         toolbar.addStretch(1)
         root.addLayout(toolbar)
         # Keep the narrow-screen minimum width independent of display options.
@@ -559,6 +551,17 @@ class SceneEditor(QWidget):
         display_row.addWidget(QLabel("Display stretch"))
         display_row.addWidget(self.display_mode)
         display_row.addStretch(1)
+        # Keep the long diagnostic action off the crowded image toolbar:
+        # it must not inflate the entire Photometry tab's minimum width.
+        self.copy_scene_qa_btn = QPushButton("Copy Scene QA")
+        self.copy_scene_qa_btn.setObjectName("scene_copy_complete_qa")
+        self.copy_scene_qa_btn.setMaximumWidth(130)
+        self.copy_scene_qa_btn.setToolTip(
+            "Copy current project/band/Tractor/SGA/mask/isophote diagnostics, "
+            "every sensitivity trial and all source-evidence metadata as JSON. "
+            "May include local catalogue paths. No FITS or project writes.")
+        self.copy_scene_qa_btn.clicked.connect(self._copy_complete_scene_qa)
+        display_row.addWidget(self.copy_scene_qa_btn)
         root.addLayout(display_row)
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -1817,8 +1820,10 @@ class SceneEditor(QWidget):
         payload = json.dumps(report, ensure_ascii=False, indent=2,
                              allow_nan=False)
         QApplication.clipboard().setText(payload)
-        self.copy_scene_qa_btn.setText(
-            f"Copied Scene QA ({len(payload)//1024} KiB)")
+        self.copy_scene_qa_btn.setText("Copied Scene QA")
+        self.copy_scene_qa_btn.setToolTip(
+            f"Copied {len(payload):,} JSON characters to the clipboard. "
+            "Copy again at any time for the current state.")
 
     def _copy_source_registry_tsv(self):
         """Only explicit user action can export the filtered evidence."""
