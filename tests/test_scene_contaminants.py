@@ -329,3 +329,60 @@ def test_source_inventory_explicit_truncation_is_not_silent():
     assert result["stored_count"]==2
     assert result["truncated"]==1
     assert "INVENTORY_TRUNCATED" in result["cautions"]
+
+
+def test_zero_gaia_magnitude_placeholders_do_not_create_fake_gaia_matches():
+    """DR11 non-Gaia rows commonly have gaia_g_mag=0.0.
+
+    A null/zero magnitude must not turn every protected blend and every
+    masked-centre record into a "Gaia counterpart". Preserve real G2
+    and G3 catalogue references without claiming stellar membership.
+    """
+    protected = np.zeros((241, 241), dtype=bool)
+    protected[100:140, 100:140] = True
+    rows = (
+        {**_row(), "objid": 11, "ref_cat": "", "ref_id": 0,
+         "gaia_g_mag": 0.0},
+        {**_row(), "objid": 12, "ref_cat": "G2", "ref_id": 789,
+         "gaia_g_mag": 17.4},
+        {**_row(), "objid": 13, "ref_cat": "", "ref_id": 0,
+         "gaia_g_mag": 0.0},
+        {**_row(), "objid": 14, "ref_cat": "G3", "ref_id": 456,
+         "gaia_g_mag": 18.0},
+    )
+    positions = np.array([[116., 120.], [125., 125.],
+                          [180., 120.], [210., 120.]])
+    mask, stats = conservative_catalogue_mask(
+        protected.shape, positions, rows,
+        arcsec_per_pixel=1., protected=protected)
+    assert stats["skipped_target_overlap"] == 2
+    assert stats["masked_catalog_sources"] == 2
+    overlap = {v["objid"]:v for v in stats["near_target_sources"]}
+    assert overlap[11]["classification"] == "UNRESOLVED_TARGET_BLEND"
+    assert overlap[12]["classification"] == "GAIA_COUNTERPART_REVIEW"
+    centres = {v["objid"]:v for v in stats["masked_catalog_centres"]}
+    assert centres[13]["gaia_counterpart"] is False
+    assert centres[14]["gaia_counterpart"] is True
+    assert not mask[120,116] and not mask[125,125]
+    assert mask[120,180] and mask[120,210]
+
+
+def test_gaia_reference_requires_valid_catalogue_identifier():
+    """A Gaia magnitude alone is insufficient to claim matched identity."""
+    protected = np.zeros((241, 241), dtype=bool)
+    protected[105:135, 105:135] = True
+    rows = (
+        {**_row(), "objid": 21, "ref_cat": "G3", "ref_id": 0,
+         "gaia_g_mag": 17.0},
+        {**_row(), "objid": 22, "ref_cat": "G3", "ref_id": None,
+         "gaia_g_mag": 16.0},
+        {**_row(), "objid": 23, "ref_cat": "", "ref_id": 99,
+         "gaia_g_mag": 17.0},
+    )
+    positions = np.array([[112., 113.], [121., 113.], [130., 115.]])
+    _, stats = conservative_catalogue_mask(
+        protected.shape, positions, rows,
+        arcsec_per_pixel=1., protected=protected)
+    assert stats["skipped_target_overlap"] == 3
+    assert all(v["classification"] == "UNRESOLVED_TARGET_BLEND"
+               for v in stats["near_target_sources"])
