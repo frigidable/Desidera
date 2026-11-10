@@ -234,6 +234,15 @@ the thresholded component's pixel count. The three alternative trials
 show filled-polygon/threshold-pixel area ratios approximately
 **1.092 / 1.078 / 1.100**. The area-equivalent moment ellipse is
 **defined** to have area 45,974 pixels, not 49,560.
+Also, `propose_local_isophote` computes q/PA from the component's
+**weighted barycentre** but constructs `EllipseSeed(x_pix=x0,y_pix=y0)`
+at the original target anchor, *not* at that barycentre. For the
+reference trial, the centroid displacement is 39.9 px = ~10.5 arcsec;
+for the sensitivity trials it reaches 50.2 px = ~13.2 arcsec.
+Thus the displayed "moments ellipse" is a **target-anchored,
+area-equivalent surrogate** with an independently measured orientation,
+not a self-consistent freely fitted moment ellipse. It should never
+be labelled an independently fitted isophote.
 
 The discrepancy can result from intentional 2-pixel contour dilation,
 smoothing and holes/gaps inside the outer ring. The stored contour
