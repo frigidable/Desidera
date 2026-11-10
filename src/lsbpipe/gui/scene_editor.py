@@ -1932,8 +1932,10 @@ class SceneEditor(QWidget):
             f"{counts['masked_catalog_sources']} masked neighbours "
             f"({counts.get('elliptical_catalog_sources', 0)} morphology-based), "
             f"{counts['skipped_target_overlap']} unresolved overlaps"
-            + (f"; {counts.get('protected_gaia_astrometry_review', 0)} "
-               "Gaia astrometry foreground candidates left UNMASKED")
+            + (f"; {counts.get('gaia_inner_preview_sources', 0)} "
+               "inner Gaia masks (ORANGE · experimental)")
+            + (f"; {max(0, counts.get('protected_gaia_astrometry_review', 0) - counts.get('gaia_inner_preview_sources', 0))} "
+               "Gaia astrometry candidates left UNMASKED")
             + (f"; {counts.get('possible_sga_shreds', 0)} inside "
                "chosen SGA central ellipse" if result.get("sga_prior_id")
                is not None else "")
@@ -1946,10 +1948,14 @@ class SceneEditor(QWidget):
             f"SGA {result.get('sga_prior_id') or 'none'} "
             f"SHA-256 {result.get('sga_prior_sha256') or 'none'}; "
             f"{counts.get('missing_shape_fallbacks', 0)} shape fallbacks; "
+            f"{counts.get('gaia_inner_preview_pixels', 0)} "
+            "inner Gaia mask-preview pixels; "
             f"{counts.get('legacy_isophote_protect_edits_ignored', 0)} "
             "legacy isophote protection edits inactive. "
             "Original FITS unchanged. NOT an exact Tractor pixel model, "
-            "PSF-wing subtraction or a calibrated science mask. Flags: "
+            "PSF-wing subtraction or a calibrated science mask. "
+            "ORANGE: opt-in diagnostic exclusion may REMOVE galaxy light. "
+            "Flags: "
             + ", ".join(result["flags"]))
         self._refresh_controls()
 
@@ -1994,6 +2000,7 @@ class SceneEditor(QWidget):
             self._source_registry_visible.append(entry)
             disp = entry["screening_disposition"]
             badge = ("REVIEW" if disp == "PROTECTED_OVERLAP"
+                     else "INNER QA" if disp == "GAIA_FOREGROUND_MASK_PREVIEW"
                      else "MASK?" if disp == "PROPOSED_EXCLUDE"
                      else "NO FIT?")
             if ("GAIA_ASTROMETRIC_SIGNAL_FOREGROUND_REVIEW"
@@ -2055,6 +2062,8 @@ class SceneEditor(QWidget):
             f"{e.get('foreground_evidence_assessment','UNDETERMINED')}\n"
             f"Proposed treatment (INACTIVE): "
             f"{e.get('proposed_source_treatment','REVIEW_ONLY')}\n"
+            f"Diagnostic Gaia mask preview active (NOT science): "
+            f"{e.get('diagnostic_inner_gaia_mask_preview_active',False)}\n"
             f"Target circle centre: "
             f"{e['centre_in_target_protection']}; "
             f"SGA prior centre: {e['centre_in_sga_prior']}\n"
@@ -2121,6 +2130,8 @@ class SceneEditor(QWidget):
                 "conservative_bridge_guard": self.iso_bridge_guard.isChecked(),
                 "use_sga_for_protection": self.sga_use_prior.isChecked(),
                 "use_sga_geometry": self.sga_use_seed.isChecked(),
+                "gaia_inner_mask_preview": (
+                    self.iso_gaia_inner_preview.isChecked()),
                 "picked_isophote_centre_icrs": self._isophote_center_icrs,
                 "selected_isophote_trial": self.iso_candidate.currentData(),
                 "selected_isophote_shape": self.iso_shape.currentData(),
@@ -2974,6 +2985,7 @@ class SceneEditor(QWidget):
             and self._sga_candidate.core_shape() is not None)
         self.iso_prepare.setEnabled(
             active and worker_idle and self._project_target is not None)
+        self.iso_gaia_inner_preview.setEnabled(active and worker_idle)
         self.radius_sweep_btn.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_mask_toggle.setEnabled(self._contamination is not None)
