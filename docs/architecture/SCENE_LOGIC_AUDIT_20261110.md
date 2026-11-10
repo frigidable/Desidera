@@ -328,3 +328,130 @@ exported complete QA report from the amended build, verifying
 overlaps**, new high FITBITS decoding, and unchanged raw pixel
 stats. The fact that synthetic tests pass is not enough for Leo P
 science acceptance.
+
+
+---
+
+## Third-pass live GUI verification — 2026-11-10 19:07 UTC
+
+**Input:** full 2,042,300-byte JSON exported from Leo P via
+\`Copy Scene QA\` at \`2026-11-10T19:07:11.196149+00:00\`;
+file SHA-256
+\`22e7c576a11139d21bf08977a6c1802a87228068093f522ffcdac8e70cd402a7\`.
+The report is **not** a FITS-file digest. Same object/band/Tractor hash
+\`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c\`,
+project \`Leo_P\`, DR11 South brick \`1554p180\`, native G cutout
+\`1324×1466\`, mask draft \`edits=[]\` and \`dirty=false\`.
+This is the first supplied **live GUI re-export** following the
+source-evidence completeness and bit-decoding corrections.
+
+### Newly confirmed passes
+
+1. **Exact source identity ledger:** 811 distinct source IDs with no
+   export truncation; **785 centres within native FITS** and **26
+   off-frame contributors**. Class counts (native centres)
+   \`114 protected / 467 proposed exclude / 204 unfit\`;
+   class counts (all relevant sources)
+   \`114 protected / 493 proposed exclude / 204 unfit\`.
+   In particular, the 26 exterior sources are now visible and
+   individually traceable; the native pixel mask is unchanged.
+2. **Classification fix:** \`near_target_sources\` now contains
+   **5 GAIA_COUNTERPART_REVIEW + 109 UNRESOLVED_TARGET_BLEND**.
+   The 811 catalogue entries contain 29 positive G3 references:
+   **27 in-frame and two exterior**; 5 are protected overlaps.
+   All entries still have \`physical_membership=UNDETERMINED\` and
+   \`photometry_action=NO_NEW_ACTION_READ_ONLY\`.
+3. **DR11 FITBITS/MASKBITS:** independent decoding of every source's
+   integer bitfields against the official DR11 tables matches its
+   exported bit-name arrays **811/811**, with **zero unknown high
+   bits**. All-bit counts (including exterior contributors):
+   \`ITERATIVE=42\`, \`GAIA_POINTSOURCE=24\`, \`WALKER=5\`,
+   \`RUNNER=1\`, \`LARGEGALAXY=1\`. Counts differ slightly from the
+   earlier in-frame-only 785-row snapshot because the new export
+   includes the 26 exterior sources.
+4. **Mask and identity arithmetic:** \`5363 = 493+114+3330+1426\`;
+   native total \`1,940,984\` px, proposed excluded \`400,042\`,
+   native hard-invalid \`385\`, usable \`1,540,653\`. Inclusion/
+   exclusion implies 96 pixels both hard-invalid and proposed
+   excluded. Protection circle \`164,759\` px agrees with
+   \`pi*(60/0.262)^2=164,759.24\` to integer rounding.
+5. **Complete provenance consistency within this run:** the
+   catalogue SHA matches in \`contaminant_screening\`,
+   \`source_inventory\` and \`isophote_proposal\`; all three mask-draft
+   digests match the saved draft. SGA lookup and selected prior share
+   the same source SHA; SGA **geometry enabled**, but **SGA automatic
+   protection disabled**. No worker was running.
+6. **Internal coordinate consistency:** using the exported TAN/FK5
+   header (including PC×CDELT) to recompute the pixel→world mapping
+   independently for all 811 source rows and 192 contour vertices
+   reproduces the exported positions at ~\`1e-8 arcsec\` numerical
+   tolerance. This validates **internal WCS bookkeeping**, not
+   independent calibration against external astrometry.
+7. **Contour arithmetic:** the reference component contains
+   **45,974 pixels**; shoelace area of the 192-vertex outer contour
+   is **49,560.505 px**, ratio **1.0780116**. The area-equivalent
+   target-centred ellipse has calculated area **45,973.822 px**,
+   consistent with its name but **not** with the filled polygon.
+   Distinguish all three area definitions.
+8. **Independent spatial source counts:** direct native polygon
+   encloses **97 catalogue centres** =
+   \`71 protected + 26 unscreened\` (G3 IDs 1870/1876/2035).
+   SGA-guided ellipse encloses **120 centres** =
+   \`83 protected + 36 unscreened + 1 proposed masked\`
+   (G3 IDs 1763/1870/1876/2034/2035). The existing GUI summary
+   reports only \`83+1\`, i.e. omits **36** unscreened centres
+   from the sentence, though they exist in the full Source evidence.
+9. **Sensitivity arithmetic:** four detected contours have areas
+   \`45,974 / 56,373 / 37,976 / 62,439\`;
+   independently recomputed area ratio \`1.644170\`,
+   q spread \`0.194475\`, min recorded IoU \`0.734775\`,
+   maximum centroid drift \`50.211px\`.
+   The appropriate output remains
+   \`LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE\`.
+   IoU itself cannot be independently recomputed from this export:
+   component pixel *indices* are deliberately omitted.
+
+### Interpretation that remains blocked
+
+- **Gaia foreground:** sources 2035, 1870 and 1876 are G3 matches
+  with high astrometric significance within the **direct** polygon;
+  these three alone contribute ~652.38 nMgy in **Tractor G-band model
+  fluxes at their centres**, among ~787.22 nMgy obtained by naively
+  summing the *model flux values* of 97 centred catalogue components.
+  The resulting ~83% is **NOT the contaminant fraction of observed
+  galaxy flux**: fits overlap, profiles extend beyond polygon edges,
+  and Tractor's dwarf deblending is unreliable here. It is only a
+  strong diagnostic signal demanding PSF/wing modelling before
+  integrating observed pixels.
+- **Non-independent radial edge:** supported SGA-guided radial
+  radius \`63.415''\` is the last accepted annulus with median
+  smoothed flux/RMS contrast \`0.812\`; the next at \`65.041''\`
+  has \`0.589\` vs an empirical threshold \`0.65\`, while coverage
+  remains \`~96%\`. The 60-arcsec source-protection boundary may
+  influence contrast, but causal influence is **not demonstrated**.
+  \`sga_radial.masked_fraction\` is ~\`0.77%\`, which denotes
+  *provisional masking*, not freedom from foreground-star flux.
+- **Unchanged feedback hazard:** \`Add proposed region\` can, on
+  explicit manual confirmation, store a segmented contour as a
+  future \`protect_target\` geometry. No such action occurred
+  in this snapshot. The discrepancy between source pixels,
+  filled contour and target-centred area ellipse reinforces the
+  requirement to split \`proposal\`, \`policy\` and \`measurement\`.
+- **Sky / image science:** original IMAGE/INVVAR/NEXP/MASKBITS
+  pixels, PSF models, forced source-render images, independent
+  residual sky measurements and full pixel noise covariance are
+  **absent** from this JSON. No physical isophotal radius,
+  integrated flux, decontaminated colour or SBF distance can be
+  validated from the metadata alone.
+
+**Decision:** source evidence QA and bit mapping pass within this
+single-band, single-object, current-snapshot scope.
+**Scene/Mask and outer-isophote science adoption remain on HOLD.**
+Do not tune the detection threshold to reproduce the reference
+70-arcsec stellar extent. Next controlled tests should hold the
+native FITS, SGA prior and source catalog fixed while varying
+protection policy, PSF-wing treatment and sky definitions, and
+verify source-policy fingerprints/independent holdout regions.
+
+This record is intended as a reproducible **metadata-level science
+audit**, not a claim of end-to-end FITS-level validation.
