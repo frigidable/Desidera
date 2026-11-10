@@ -560,6 +560,16 @@ class SceneEditor(QWidget):
             "an overlay prior, not necessarily catalogue D26 and never "
             "the full LSB radius.")
         sga_layout.addWidget(self.sga_use_prior)
+        self.sga_use_seed = QCheckBox(
+            "Use SGA centre/q/PA for initial geometry")
+        self.sga_use_seed.setObjectName("scene_sga_use_geometry_seed")
+        self.sga_use_seed.setToolTip(
+            "Use selected SGA central geometry as an orientation prior. "
+            "Estimate radial extent from masked native DESI pixels, "
+            "with no arbitrary diameter multiplier or science adoption.")
+        self.sga_use_seed.setChecked(False)
+        self.sga_use_seed.toggled.connect(self._clear_isophote_preview)
+        sga_layout.addWidget(self.sga_use_seed)
         self.sga_status = QLabel(
             "Use Find SGA-2025 to query the DESI Viewer by current target "
             "coordinates. It returns a provisional central overlay ellipse, "
@@ -709,6 +719,12 @@ class SceneEditor(QWidget):
         self.iso_summary.setObjectName("scene_isophote_summary")
         self.iso_summary.setWordWrap(True)
         iso_layout.addWidget(self.iso_summary)
+        self.iso_sga_summary = QLabel(
+            "SGA-informed geometry not yet calculated.")
+        self.iso_sga_summary.setObjectName(
+            "scene_sga_informed_initial_geometry_qa")
+        self.iso_sga_summary.setWordWrap(True)
+        iso_layout.addWidget(self.iso_sga_summary)
         self.iso_details_toggle = QToolButton()
         self.iso_details_toggle.setText("Isophote QA and all sensitivity trials")
         self.iso_details_toggle.setCheckable(True)
@@ -832,6 +848,7 @@ class SceneEditor(QWidget):
         self.sga_candidates.clear()
         self.sga_candidates.blockSignals(False)
         self.sga_use_prior.setChecked(False)
+        self.sga_use_seed.setChecked(False)
         self.sga_status.setText(
             "No SGA prior selected for this galaxy; local FITS only. "
             "SGA D26 is a central scale, never an outer LSB boundary.")
@@ -1033,6 +1050,13 @@ class SceneEditor(QWidget):
                 self.graphics.removeItem(self._isophote_preview)
             self._isophote_preview = None
         self._isophote_proposal = None
+        self.iso_shape.blockSignals(True)
+        seed_index = self.iso_shape.findData("sga_seed")
+        if seed_index >= 0:
+            self.iso_shape.removeItem(seed_index)
+        self.iso_shape.blockSignals(False)
+        self.iso_sga_summary.setText(
+            "No SGA-informed radial proposal on this band.")
         self.iso_candidate.blockSignals(True)
         self.iso_candidate.clear()
         self.iso_candidate.blockSignals(False)
@@ -1086,6 +1110,7 @@ class SceneEditor(QWidget):
         self.sga_candidates.clear()
         self.sga_candidates.blockSignals(False)
         self.sga_use_prior.setChecked(False)
+        self.sga_use_seed.setChecked(False)
         self._redraw_sga_prior()
         self._discard_prepared_masks()
         options = {"region":region, "radius_arcmin":3.}
@@ -1120,6 +1145,7 @@ class SceneEditor(QWidget):
         self.sga_candidates.clear()
         self.sga_candidates.blockSignals(False)
         self.sga_use_prior.setChecked(False)
+        self.sga_use_seed.setChecked(False)
         self._redraw_sga_prior()
         self._discard_prepared_masks()
         self._future = self._executor.submit(
@@ -1195,8 +1221,10 @@ class SceneEditor(QWidget):
                 or prior not in self._sga_lookup.matches)):
             prior = None
         self._sga_candidate = prior
-        # Always require an explicit opt-in for USING the core prior
-        # in neighbour masking, even if there is only one catalogue row.
+        # Explicit row selection permits a read-only geometry preview;
+        # mask protection remains a separate, unchecked opt-in.
+        self.sga_use_seed.setChecked(
+            prior is not None and prior.core_shape() is not None)
         self.sga_use_prior.setChecked(False)
         self._discard_prepared_masks()
         self._redraw_sga_prior()
@@ -1402,11 +1430,14 @@ class SceneEditor(QWidget):
         center = (self._isophote_center_icrs
                   if self._isophote_center_icrs is not None
                   else self._project_target)
+        sga = (self._sga_candidate if self.sga_use_seed.isChecked()
+               else None)
+        options = {"sga_prior":sga} if sga is not None else {}
         self._future = self._executor.submit(
             propose_scene_isophote, self._loaded, center,
             float(self.iso_threshold.value()),
             float(self.iso_smooth.value()), self._contamination,
-            2 if self.iso_bridge_guard.isChecked() else 0)
+            2 if self.iso_bridge_guard.isChecked() else 0, **options)
         self._work_kind = "isophote"
         self._active_generation = self._load_generation
         self.iso_summary.setText("Analysing four nearby thresholds/scales…")
@@ -1932,6 +1963,9 @@ class SceneEditor(QWidget):
         self.sga_candidates.setEnabled(
             ready and worker_idle and self.sga_candidates.count() > 0)
         self.sga_use_prior.setEnabled(
+            ready and worker_idle and self._sga_candidate is not None
+            and self._sga_candidate.core_shape() is not None)
+        self.sga_use_seed.setEnabled(
             ready and worker_idle and self._sga_candidate is not None
             and self._sga_candidate.core_shape() is not None)
         self.iso_prepare.setEnabled(
