@@ -386,3 +386,56 @@ def test_gaia_reference_requires_valid_catalogue_identifier():
     assert stats["skipped_target_overlap"] == 3
     assert all(v["classification"] == "UNRESOLVED_TARGET_BLEND"
                for v in stats["near_target_sources"])
+
+
+def test_source_registry_decodes_all_dr11_bit_names():
+    """DR11 flags 8..13 must not disappear from the evidence browser.
+
+    In Leo P, FITBITS ITERATIVE, GAIA_POINTSOURCE, WALKER and RUNNER
+    occur even though the old registry only decoded FITBITS 0..7.
+    These tags describe fitting history, never a stellar/galaxy truth.
+    """
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory, FITBIT_NAMES, MASKBIT_NAMES,
+    )
+    for bit, name in {
+        8: "TYCHO2", 9: "LARGEGALAXY", 10: "WALKER",
+        11: "RUNNER", 12: "GAIA_POINTSOURCE", 13: "ITERATIVE",
+    }.items():
+        assert FITBIT_NAMES[bit] == name
+    for bit, name in {
+        0: "NPRIMARY", 8: "WISEM1", 9: "WISEM2",
+        19: "WISE_GAIA",
+    }.items():
+        assert MASKBIT_NAMES[bit] == name
+    rows = (
+        {**_row("SER"), "objid": 2059,
+         "ref_cat": "L4", "ref_id": 5053883,
+         "fitbits": (1<<9) | (1<<4) | (1<<1),
+         "maskbits": (1<<12)},
+        {**_row("SER"), "objid": 1762,
+         "fitbits": (1<<2) | (1<<10) | (1<<11) | (1<<13),
+         "maskbits": (1<<0) | (1<<19)},
+        {**_row("PSF"), "objid": 2035,
+         "ref_cat": "G3", "ref_id": 623919492384922624,
+         "fitbits": (1<<7) | (1<<12)},
+    )
+    points = np.array([[12., 12.], [20., 20.], [28., 28.]])
+    catalogue = SimpleNamespace(
+        rows=rows, pixel_positions=points,
+        source_path="original-tractor.fits", source_sha256="a"*64)
+    result = build_scene_source_inventory(
+        catalogue, pixel_shape=(41, 41),
+        protected=np.zeros((41, 41), dtype=bool),
+        screen_stats={}, release="dr11", region="south",
+        brick="1554p180", band="g")
+    by_id = {entry["objid"]:entry for entry in result["entries"]}
+    assert {"LARGEGALAXY", "FROZEN", "FIT_BACKGROUND"}.issubset(
+        set(by_id[2059]["fitbits_names"]))
+    assert {"HIT_RADIUS_LIMIT", "WALKER", "RUNNER", "ITERATIVE"}.issubset(
+        set(by_id[1762]["fitbits_names"]))
+    assert {"NPRIMARY", "WISE_GAIA"}.issubset(
+        set(by_id[1762]["maskbits_names"]))
+    assert "GAIA_POINTSOURCE" in by_id[2035]["fitbits_names"]
+    assert all(v["physical_membership"] == "UNDETERMINED"
+               for v in by_id.values())
