@@ -451,6 +451,16 @@ class SceneEditor(QWidget):
             "and may differ from the merged SGA2025 scientific catalogue.")
         self.sga_find.clicked.connect(self._find_desi_sga2025)
         sga_layout.addWidget(self.sga_find)
+        self.sga_parent_find = QPushButton(
+            "Try SGA-2025 Parent · initial geometry")
+        self.sga_parent_find.setObjectName("scene_sga_find_parent")
+        self.sga_parent_find.setToolTip(
+            "Separate DESI Viewer SGA2025 parent overlay. May provide "
+            "an initial catalogue diameter even when fitted SGA2025 "
+            "ellipse is missing. NOT a measured isophote or fitted SGAID.")
+        self.sga_parent_find.clicked.connect(
+            self._find_desi_sga2025_parent)
+        sga_layout.addWidget(self.sga_parent_find)
         self.sga_load = QPushButton("Or choose local SGA FITS…")
         self.sga_load.setObjectName("scene_sga_open_local")
         self.sga_load.setToolTip(
@@ -977,7 +987,14 @@ class SceneEditor(QWidget):
         self._refresh_controls()
 
     def _find_desi_sga2025(self):
-        """On-demand official Viewer SGA2025 overlay; explicit network click."""
+        """On-demand official SGA2025 fitted-ellipse Viewer overlay."""
+        self._request_sga2025_viewer_layer("ellipse")
+
+    def _find_desi_sga2025_parent(self):
+        """Explicit SGA2025 parent initial geometry, not a fitted isophote."""
+        self._request_sga2025_viewer_layer("parent")
+
+    def _request_sga2025_viewer_layer(self, layer):
         if (self._project_root is None or self._project_target is None
                 or self._future is not None):
             return
@@ -998,15 +1015,19 @@ class SceneEditor(QWidget):
         self.sga_use_prior.setChecked(False)
         self._redraw_sga_prior()
         self._discard_prepared_masks()
+        options = {"region":region, "radius_arcmin":3.}
+        if layer == "parent":
+            options["layer"] = "parent"
         self._future = self._executor.submit(
-            fetch_viewer_sga2025_priors, self._project_target,
-            region=region, radius_arcmin=3.)
+            fetch_viewer_sga2025_priors, self._project_target, **options)
         self._work_kind = "sga"
         self._active_generation = self._load_generation
+        kind = ("parent initial geometry" if layer == "parent"
+                else "fitted-ellipse overlay")
         self.sga_status.setText(
-            f"Querying official DESI Viewer SGA2025-{region} overlay "
-            "by coordinates. The JSON is provisional and version-mutable; "
-            "no FITS catalogue is being downloaded or changed.")
+            f"Querying official DESI Viewer SGA2025 {kind} by "
+            f"{region} sky coordinates. Version-mutable small JSON; "
+            "no full FITS download, and nothing science-adopted.")
         self._poll_timer.start()
         self._refresh_controls()
 
@@ -1051,6 +1072,8 @@ class SceneEditor(QWidget):
             f"Select matched galaxy ({len(lookup.matches)} candidates)", None)
         for row in lookup.matches:
             identifier = (
+                f"Parent PGC {row.sga_id}"
+                if row.d26_ref == "VIEWER_PARENT_DIAMETER" else
                 f"Viewer ref {row.sga_id}"
                 if row.d26_ref == "VIEWER_RADIUS_ARCSEC" else
                 f"SGAID {row.sga_id}")
@@ -1081,7 +1104,8 @@ class SceneEditor(QWidget):
                    if invalid_notes else "")
                 + "Do not use these records as galaxy geometry or "
                   "enable SGA-based Tractor protection. "
-                  "Native-FITS analysis can continue without SGA.")
+                  "Try the separate SGA2025 Parent initial geometry "
+                  "layer, or continue without SGA.")
         else:
             self.sga_status.setText(
                 "No SGA2025 geometry match within 3 arcmin of the saved "
@@ -1107,12 +1131,16 @@ class SceneEditor(QWidget):
             return
         d26 = (f"{prior.d26_arcmin:.3f} arcmin"
                if prior.d26_arcmin is not None else "unavailable")
-        radius_label = ("Viewer overlay diameter"
-                        if prior.d26_ref == "VIEWER_RADIUS_ARCSEC"
-                        else "D26")
-        identifier = ("Viewer ref" if
-                      prior.d26_ref == "VIEWER_RADIUS_ARCSEC"
-                      else "SGAID")
+        radius_label = (
+            "Parent initial diameter"
+            if prior.d26_ref == "VIEWER_PARENT_DIAMETER" else
+            "Viewer overlay diameter"
+            if prior.d26_ref == "VIEWER_RADIUS_ARCSEC" else "D26")
+        identifier = (
+            "Parent PGC"
+            if prior.d26_ref == "VIEWER_PARENT_DIAMETER" else
+            "Viewer ref"
+            if prior.d26_ref == "VIEWER_RADIUS_ARCSEC" else "SGAID")
         pa = (f"{prior.pa_deg:.1f} deg"
               if prior.pa_deg is not None else "unavailable")
         q = (f"{prior.ba:.3f}"
@@ -1823,6 +1851,8 @@ class SceneEditor(QWidget):
             active and 0 <= self.edits.currentRow() < len(self._draft.edits))
         worker_idle = self._future is None or self._future.done()
         self.sga_find.setEnabled(
+            ready and worker_idle and self._project_target is not None)
+        self.sga_parent_find.setEnabled(
             ready and worker_idle and self._project_target is not None)
         self.sga_load.setEnabled(ready and worker_idle
                                  and self._project_target is not None)
