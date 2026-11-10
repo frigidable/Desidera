@@ -152,6 +152,7 @@ def is_legacy_isophote_protection(edit: SkyMaskEdit) -> bool:
     user-authored protect_target regions.
     """
     return (edit.purpose == "protect_target" and (
+        edit.edit_id.startswith("sc1_iso_") or
         "AUTO_ISOPHOTE_PRELIMINARY" in edit.comment or
         "SGA_INITIAL_GEOMETRY_DRAFT" in edit.comment))
 
