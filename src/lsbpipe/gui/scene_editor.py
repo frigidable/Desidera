@@ -382,6 +382,7 @@ class SceneEditor(QWidget):
         self._contamination = None
         self._contamination_overlay = None
         self._conflict_paths = []
+        self._sga_shred_paths = []
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
         self._project_target = None
@@ -653,6 +654,18 @@ class SceneEditor(QWidget):
         self.iso_show_conflicts.toggled.connect(
             self._update_contamination_overlay)
         iso_layout.addWidget(self.iso_show_conflicts)
+        self.iso_show_sga_shreds = QCheckBox(
+            "Show masked candidates inside SGA initial ellipse")
+        self.iso_show_sga_shreds.setObjectName(
+            "scene_sga_initial_shred_candidates")
+        self.iso_show_sga_shreds.setChecked(False)
+        self.iso_show_sga_shreds.setToolTip(
+            "Blue review rings mark previously masked Tractor centres "
+            "inside the SGA-supported initial ellipse. These are "
+            "NOT proven galaxy shreds or automatically restored.")
+        self.iso_show_sga_shreds.toggled.connect(
+            self._update_contamination_overlay)
+        iso_layout.addWidget(self.iso_show_sga_shreds)
         self.iso_mask_status = QLabel(
             "Neighbour mask not prepared. Local DR11 South Tractor "
             "catalogue required; obtain it through PSF-0 if absent.")
@@ -904,6 +917,7 @@ class SceneEditor(QWidget):
         self._contamination = None
         self._contamination_overlay = None
         self._conflict_paths = []
+        self._sga_shred_paths = []
         self._sga_item = None
         self._isophote_center_icrs = None
         self._picking_isophote_center = False
@@ -1050,6 +1064,10 @@ class SceneEditor(QWidget):
                 self.graphics.removeItem(self._isophote_preview)
             self._isophote_preview = None
         self._isophote_proposal = None
+        for item in self._sga_shred_paths:
+            if item.scene() is self.graphics:
+                self.graphics.removeItem(item)
+        self._sga_shred_paths.clear()
         self.iso_shape.blockSignals(True)
         seed_index = self.iso_shape.findData("sga_seed")
         if seed_index >= 0:
@@ -1394,6 +1412,8 @@ class SceneEditor(QWidget):
                 self.iso_opacity.value()/100.)
         for item in self._conflict_paths:
             item.setVisible(self.iso_show_conflicts.isChecked())
+        for item in self._sga_shred_paths:
+            item.setVisible(self.iso_show_sga_shreds.isChecked())
 
     def _pick_isophote_center(self):
         if self._loaded is None:
@@ -1472,6 +1492,26 @@ class SceneEditor(QWidget):
                 comparison["sga_source_sha256"]):
             raise ValueError("SGA geometry changed during radial analysis")
         self._isophote_proposal = result
+        for item in self._sga_shred_paths:
+            if item.scene() is self.graphics:
+                self.graphics.removeItem(item)
+        self._sga_shred_paths.clear()
+        candidates = ((comparison or {}).get("review_candidates") or ())
+        ny = self._loaded["pixel_shape"][0]
+        for entry in candidates:
+            x = float(entry["x"])+.5
+            y = ny-float(entry["y"])-.5
+            radius = 6.
+            ring = QPainterPath()
+            ring.addEllipse(x-radius,y-radius,2*radius,2*radius)
+            item = QGraphicsPathItem(ring)
+            pen = QPen(QColor("#66c9ff"),2.,Qt.DashLine)
+            pen.setCosmetic(True)
+            item.setPen(pen)
+            item.setZValue(3.7)
+            self.graphics.addItem(item)
+            self._sga_shred_paths.append(item)
+        self._update_contamination_overlay()
         self.iso_low_conf_override.setChecked(False)
         self.iso_shape.blockSignals(True)
         if result.get("sga_seed_shape") is not None:
@@ -2036,6 +2076,9 @@ class SceneEditor(QWidget):
         self.iso_prepare.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_mask_toggle.setEnabled(self._contamination is not None)
+        self.iso_show_sga_shreds.setEnabled(
+            self._isophote_proposal is not None
+            and bool(self._sga_shred_paths))
         self.iso_generate.setEnabled(
             active and worker_idle and self._project_target is not None
             and self._contamination is not None
