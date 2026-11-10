@@ -878,6 +878,9 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert editor.draft.edits[0].band=="g"
     assert "kind=sga_seed" in editor.draft.edits[0].comment
     assert "SGAref=5065058" in editor.draft.edits[0].comment
+    assert "SGAsha256=" + "c"*64 in editor.draft.edits[0].comment
+    assert "TractorSHA256=" + "a"*64 in editor.draft.edits[0].comment
+    assert "MANUAL_REVIEW_NO_SCIENCE_ADOPTION" in editor.draft.edits[0].comment
     assert np.array_equal(data["data"]["image"],original)
     assert editor._isophote_proposal is None
     assert editor._sga_shred_paths==[]
