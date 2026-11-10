@@ -856,6 +856,13 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert proposal["sga_seed_shape"] is not None
     assert proposal["sga_seed_shape"].a_arcsec>prior.core_shape().a_arcsec
     assert "SGA-informed INITIAL ellipse" in editor.iso_sga_summary.text()
+    review=proposal["sga_comparison"].get("review_candidates",())
+    assert len(editor._sga_shred_paths)==len(review)
+    assert not editor.iso_show_sga_shreds.isChecked()
+    if review:
+        assert not editor._sga_shred_paths[0].isVisible()
+        editor.iso_show_sga_shreds.setChecked(True)
+        assert editor._sga_shred_paths[0].isVisible()
     assert editor.iso_shape.findData("sga_seed")>=0
     editor.iso_shape.setCurrentIndex(
         editor.iso_shape.findData("sga_seed"))
@@ -873,3 +880,4 @@ def test_sga_informed_radial_initial_ellipse_requires_explicit_review(
     assert "SGAref=5065058" in editor.draft.edits[0].comment
     assert np.array_equal(data["data"]["image"],original)
     assert editor._isophote_proposal is None
+    assert editor._sga_shred_paths==[]
