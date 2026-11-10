@@ -1159,3 +1159,150 @@ def test_scene_qa_button_without_loaded_fits_stays_readonly(
     assert qa["project"]["project_id"] == project.project_id
     assert qa["science_status"] == "UNADOPTED_DIAGNOSTIC_ONLY"
     assert not (project.root/"analyses").exists()
+
+
+
+def test_radius_sweep_is_non_destructive_and_tracks_mask_isophote_changes(
+        qtbot, tmp_path, monkeypatch):
+    """Only target protection radius differs, on one immutable band/scene.
+
+    Source membership and photometric adoption are unchanged. Failure
+    scenarios remain in the denominator instead of disappearing.
+    """
+    import lsbpipe.gui.scene_editor as module
+    from lsbpipe.photometry.ellipse_seed import EllipseSeed, LocalIsophotalProposal
+
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    image_before = editor._loaded["data"]["image"].copy()
+    original_radius = project.target_radius_arcsec
+    draft_before = editor.draft.digest
+    observed = []
+    def fake_prepare(dataset, scenario_project, draft, anchor, *, sga_prior=None):
+        radius = scenario_project.target_radius_arcsec
+        observed.append(("mask",radius,anchor))
+        mask = np.zeros(dataset["pixel_shape"],dtype=bool)
+        mask[:int(radius/10),:4] = True
+        return {
+            "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "project_id":project.project_id, "band":"g",
+            "dataset_source":dataset["source"],
+            "draft_digest":draft.digest,"anchor_icrs":anchor,
+            "mask":mask,"catalog_sha256":"a"*64,
+            "source_inventory":{
+                "total_relevant_sources":3, "truncated":0,
+                "screening_evidence_incomplete":False,
+                "entries": (
+                    {"source_id":"1","screening_disposition":
+                     "PROPOSED_EXCLUDE"},
+                    {"source_id":"2","screening_disposition":
+                     ("PROTECTED_OVERLAP" if radius >= 60.
+                      else "PROPOSED_EXCLUDE")},
+                    {"source_id":"3","screening_disposition":
+                     "NOT_SCREENED_OR_UNFITTED"},
+                ),
+            },
+            "stats":{
+                "masked_catalog_sources":(1 if radius>=60. else 2),
+                "skipped_target_overlap":(1 if radius>=60. else 0),
+                "excluded_pixels":int(mask.sum()),
+                "protected_pixels":int(radius*4),
+                "usable_pixels":mask.size-int(mask.sum()),
+                "native_hard_pixels":1,
+            },
+        }
+    def fake_propose(dataset, anchor, contrast, smooth, prepared,
+                     bridge_guard_pix=0, sga_prior=None):
+        radius = float(prepared["stats"]["protected_pixels"])/4
+        observed.append(("detect",radius,anchor))
+        if radius == 80.:
+            raise ValueError("No connected emission at 80 arcsec")
+        n=int(radius)
+        component=np.arange(n,dtype=np.int64)
+        seed=EllipseSeed(
+            x_pix=48., y_pix=48., sma_pix=12., q=.55,
+            theta_native_deg=30., component_pixels=n,
+            centroid_offset_pix=float(radius/10))
+        model=LocalIsophotalProposal(
+            seed=seed,contour_xy=((42.,42.),(56.,42.),(48.,56.)),
+            local_sky=float(radius)/1e6,raw_sky_rms=.002,
+            smoothed_sky_rms=.0002,sky_pixels=2400,
+            threshold_contrast=contrast,smoothing_pix=smooth,
+            flags=("BACKGROUND_CONSTANT_NOT_VALIDATED",),
+            component_indices=component)
+        return {
+            "proposal":model,"sga_radial":None,"sga_warning":None,
+            "sensitivity":{
+                "area_ratio":1.2,"minimum_spatial_iou":.7,
+                "confidence":"LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE",
+                "flags":("UNANCHORED_CENTROID_DRIFT",),
+                "trials":(
+                    {"threshold":contrast,"smooth_pix":smooth,
+                     "connected_pixels":n,"state":"DETECTED"},
+                    {"threshold":contrast-.5,"smooth_pix":smooth,
+                     "state":"DETECTED"},
+                    {"threshold":contrast+.65,"smooth_pix":smooth,
+                     "state":"DETECTED"},
+                    {"threshold":contrast,"smooth_pix":smooth*1.35,
+                     "state":"DETECTED"}),
+            },
+        }
+    monkeypatch.setattr(module,"prepare_scene_contamination",fake_prepare)
+    monkeypatch.setattr(module,"propose_scene_isophote",fake_propose)
+    result=module.run_scene_protection_radius_sweep(
+        editor._loaded, project.root, editor.draft,
+        editor._project_target,
+        threshold_contrast=2.2, smoothing_pix=4.,
+        bridge_guard_pix=2)
+    assert result["schema"]=="desidera.gui.protection-radius-sweep/1"
+    assert result["status"]=="READ_ONLY_DIAGNOSTIC_NOT_SCIENCE_VALIDATED"
+    assert [r["protection_radius_arcsec"] for r in result["scenarios"]] == [
+        40.,50.,60.,70.,80.]
+    assert len(observed)==10  # 5 preparations, 5 detection attempts
+    assert result["catalog_sha256"]=="a"*64
+    assert all(r["catalog_sha256"]=="a"*64 for r in result["scenarios"])
+    baseline=result["scenarios"][2]
+    assert baseline["masked_pixel_change_vs_60arcsec"]==0
+    assert baseline["mask_jaccard_vs_60arcsec"]==pytest.approx(1.)
+    assert baseline["component_iou_vs_60arcsec"]==pytest.approx(1.)
+    assert baseline["component_sky_nMgy_pixel"]==pytest.approx(60e-6)
+    assert baseline["new_excluded_ids_vs_60arcsec"]==[]
+    assert result["scenarios"][0]["new_excluded_ids_vs_60arcsec"]==["2"]
+    assert result["scenarios"][3]["component_iou_vs_60arcsec"] < 1.
+    assert result["scenarios"][4]["status"]=="ISOPHOTE_NOT_FOUND"
+    assert "80 arcsec" in result["scenarios"][4]["isophote_error"]
+    assert result["scenarios"][4]["component_iou_vs_60arcsec"] is None
+    assert len(baseline["all_four_trials"])==4
+    assert "NO_PSF_WING_MODEL_SCENARIO_EXECUTED" in result["limitations"]
+    assert "NO_INDEPENDENT_SPATIAL_SKY_MODEL_SCENARIO_EXECUTED" in result["limitations"]
+    assert editor.draft.digest==draft_before
+    assert project.target_radius_arcsec==original_radius
+    assert np.array_equal(editor._loaded["data"]["image"],image_before)
+    assert not (project.root/"analyses").exists()
+    editor._accept_radius_sweep_result(result)
+    assert editor._sweep_result is result
+    assert "4/5 isophotes" in editor.radius_sweep_status.text()
+    editor.copy_scene_qa_btn.click()
+    from PySide6.QtWidgets import QApplication
+    import json
+    export=json.loads(QApplication.clipboard().text())
+    assert len(export["protection_radius_sweep"]["scenarios"])==5
+    assert export["protection_radius_sweep"]["status"]==(
+        "READ_ONLY_DIAGNOSTIC_NOT_SCIENCE_VALIDATED")
+    editor.iso_threshold.setValue(2.7)
+    assert editor._sweep_result is None
+
+
+def test_radius_sweep_refuses_invalid_radii_without_changing_project(
+        qtbot, tmp_path, monkeypatch):
+    import lsbpipe.gui.scene_editor as module
+    editor, project=_make_editor(qtbot,tmp_path,monkeypatch)
+    project_before=project.target_radius_arcsec
+    for radii in ((40.,50.,70.,80.),(40.,60.,60.),
+                  (40.,60.,100.),(-1.,60.)):
+        with pytest.raises(ValueError,match="Sweep radii"):
+            module.run_scene_protection_radius_sweep(
+                editor._loaded, project.root, editor.draft,
+                editor._project_target, radii_arcsec=radii)
+    assert project.target_radius_arcsec==project_before
+    assert editor.draft.edits==()
+    assert not (project.root/"analyses").exists()
