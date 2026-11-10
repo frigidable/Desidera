@@ -218,3 +218,73 @@ def test_official_viewer_fails_closed_on_redirect_or_malformed_catalog(monkeypat
         module.fetch_viewer_sga2025_priors((155.,18.))
     with pytest.raises(ValueError,match="safe limits"):
         module.fetch_viewer_sga2025_priors((155.,89.))
+
+
+
+def test_leo_p_viewer_sga_zero_without_radius_is_not_initial_geometry(
+        monkeypatch):
+    """Reproduces a real Leo P GUI observation: SGA-0, ref 0, D26 absent."""
+    import io
+    import json
+    import lsbpipe.photometry.sga_priors as module
+
+    data = json.dumps({
+        "rd": [[155.438020, 18.088025]],
+        "name": ["SGA-0"],
+        "radiusArcsec": [0.],
+        "abRatio": [1.],
+        "posAngle": [0.],
+        "pgc": [0],
+        "groupname": [""],
+    }).encode()
+
+    class Response(io.BytesIO):
+        def __init__(self, url):
+            super().__init__(data)
+            self.url = url
+
+        def geturl(self):
+            return self.url
+
+    monkeypatch.setattr(module, "urlopen",
+                        lambda url, timeout: Response(url))
+    result = module.fetch_viewer_sga2025_priors(
+        (155.438012, 18.088025), region="south")
+    assert result.matches == ()
+    assert result.unusable_count == 1
+    assert "SGA-0" in result.unusable_examples[0]
+    assert "missing/nonpositive overlay radius" in result.unusable_examples[0]
+    assert len(result.source_sha256) == 64
+
+
+def test_viewer_skips_invalid_overlay_but_retains_independent_valid_candidate(
+        monkeypatch):
+    import io
+    import json
+    import lsbpipe.photometry.sga_priors as module
+
+    data = json.dumps({
+        "rd": [[155., 18.], [155.0001, 18.0001]],
+        "name": ["SGA-0", "Valid ellipse"],
+        "radiusArcsec": [0., 24.],
+        "abRatio": [1., .6],
+        "posAngle": [0., 38.],
+        "pgc": [0, 325],
+        "groupname": ["", ""],
+    }).encode()
+
+    class Response(io.BytesIO):
+        def __init__(self, url):
+            super().__init__(data)
+            self.url = url
+
+        def geturl(self):
+            return self.url
+
+    monkeypatch.setattr(module, "urlopen",
+                        lambda url, timeout: Response(url))
+    result = module.fetch_viewer_sga2025_priors((155., 18.))
+    assert result.unusable_count == 1
+    assert len(result.matches) == 1
+    assert result.matches[0].sga_id == 325
+    assert result.matches[0].core_shape().a_arcsec == pytest.approx(24.)
