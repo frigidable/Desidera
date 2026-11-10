@@ -298,10 +298,17 @@ def build_scene_source_inventory(catalog, *, pixel_shape, protected,
         item[0], str(item[3].get("objid")), item[1], item[2]))
     n_total = len(candidates)
     n_native = sum(item[7] for item in candidates)
+    dispositions = (
+        "PROTECTED_OVERLAP", "PROPOSED_EXCLUDE",
+        "NOT_SCREENED_OR_UNFITTED")
+    # Preserve the legacy 3-key inventory contract unless an actual
+    # experimental Gaia mask is present. It keeps baseline QA comparable.
+    if any(item[4] == "GAIA_FOREGROUND_MASK_PREVIEW"
+           for item in candidates):
+        dispositions += ("GAIA_FOREGROUND_MASK_PREVIEW",)
     full_counts = {
         name:sum(item[4] == name for item in candidates)
-        for name in ("PROTECTED_OVERLAP","GAIA_FOREGROUND_MASK_PREVIEW",
-                     "PROPOSED_EXCLUDE","NOT_SCREENED_OR_UNFITTED")
+        for name in dispositions
     }
     full_counts_native = {
         name:sum(item[4] == name and item[7] for item in candidates)
