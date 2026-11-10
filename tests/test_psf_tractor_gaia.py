@@ -100,6 +100,16 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
     catalog["FLUX_IVAR_G"]=np.array([100.,200.,2.],dtype=np.float32)
     catalog["GAIA_DUPLICATED_SOURCE"]=[False,False,False]
     catalog["GAIA_PHOT_G_MEAN_MAG"]=np.array([18.,19.,0.],dtype=np.float32)
+    # Optional source association data from SAME original DR11 Tractor FITS.
+    catalog["REF_EPOCH"]=np.array([2016.,2016.,0.],dtype=np.float32)
+    catalog["PARALLAX"]=np.array([1.5,0.,0.],dtype=np.float32)
+    catalog["PARALLAX_IVAR"]=np.array([36.,0.,0.],dtype=np.float32)
+    catalog["PMRA"]=np.array([3.,0.,0.],dtype=np.float32)
+    catalog["PMRA_IVAR"]=np.array([9.,0.,0.],dtype=np.float32)
+    catalog["PMDEC"]=np.array([-2.,0.,0.],dtype=np.float32)
+    catalog["PMDEC_IVAR"]=np.array([16.,0.,0.],dtype=np.float32)
+    catalog["FLUX_R"]=np.array([4.,5.,1.],dtype=np.float32)
+    catalog["FLUX_IVAR_R"]=np.array([40.,50.,10.],dtype=np.float32)
     # Original DR11 angular shape metadata (arcsec), not a guessed PSF.
     catalog["SHAPE_R"]=np.array([0.,0.,1.7],dtype=np.float32)
     catalog["SHAPE_E1"]=np.array([0.,0.,.2],dtype=np.float32)
@@ -115,6 +125,17 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
         frame=frame)
     assert len(data.rows)==3
     assert data.rows[2]["type"]=="EXP"
+    assert data.rows[0]["ra_deg"]==pytest.approx(ra[0])
+    assert data.rows[0]["dec_deg"]==pytest.approx(dec[0])
+    assert data.rows[0]["parallax_mas"]==pytest.approx(1.5)
+    assert data.rows[0]["parallax_ivar"]==pytest.approx(36.)
+    assert data.rows[0]["pmra_masyr"]==pytest.approx(3.)
+    assert data.rows[0]["pmra_ivar"]==pytest.approx(9.)
+    assert data.rows[0]["pmdec_masyr"]==pytest.approx(-2.)
+    assert data.rows[0]["pmdec_ivar"]==pytest.approx(16.)
+    assert data.rows[0]["model_fluxes_nMgy"]["r"]==pytest.approx(4.)
+    assert data.rows[0]["model_flux_ivars"]["r"]==pytest.approx(40.)
+    assert data.rows[0]["model_fluxes_nMgy"]["z"] is None
     assert data.rows[2]["shape_r_arcsec"]==pytest.approx(1.7,rel=1e-6)
     assert data.rows[2]["shape_e1"]==pytest.approx(.2,rel=1e-6)
     assert data.rows[2]["shape_e2"]==pytest.approx(-.1,rel=1e-6)
@@ -139,6 +160,8 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
         root,release="dr11",region="south",brick="1554p180",
         frame=frame)
     assert legacy_data.rows[2]["shape_r_arcsec"] is None
+    assert legacy_data.rows[2]["ra_deg"]==pytest.approx(ra[2])
+    assert legacy_data.rows[2]["model_fluxes_nMgy"]["g"]==pytest.approx(2.)
     assert legacy_data.rows[2]["shape_e1"] is None
     assert legacy_data.rows[2]["shape_e2"] is None
     assert legacy_data.rows[2]["sersic_n"] is None
