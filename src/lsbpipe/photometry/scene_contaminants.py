@@ -276,7 +276,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
     source_inventory = build_scene_source_inventory(
         catalog, pixel_shape=shape, protected=protected,
         screen_stats=counts, release=release, region=region,
-        brick=brick, band=band, sga_core=sga_core)
+        brick=brick, band=band, sga_core=sga_core,
+        anchor_icrs=anchor)
     auto = auto & ~restored_auto
     # Explicit manual exclusions are applied even if they overlap target
     # protection, whereas automated catalogue proposals never do.
