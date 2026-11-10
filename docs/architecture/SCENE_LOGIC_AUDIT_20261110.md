@@ -880,3 +880,87 @@ The source policy returns deterministic evidence metrics (`g_minus_r`, `r_minus_
 Foreground star 1900 without Gaia information is deliberately **not** automatically selected on red color: known carbon stars Leo P (OBJIDs 1939/1991) also have red Tractor SEDs. This is a demonstrated precision/recall tradeoff, not a bug to fix with unconditional PSF red masking.
 
 **Next release gate for actual mass science:** benchmark across diverse dwarf morphologies, environments and distances, with independent resolved/spectroscopic truth sets; measure per-source precision and recall by projected radius, color and morphology; quantify target-galaxy flux loss, radial-profile bias and false-positive source masking with star/galaxy injection-recovery; check spatial sky, PSF wing residuals and per-band aperture consistency. Revise threshold policy only on training objects and verify on HELD-OUT objects. Until this succeeds, keep opt-in QA mode and SCIENCE HOLD. Do not claim all secure contaminants found, do not auto-adopt any mask or use color as a posterior membership probability.
+
+
+---
+
+## Ninth-pass verified branch state and WCS-safe red-source QA — 2026-11-11
+
+**Verified before changes:** Draft PR #84 against \`main\`, same
+\`feature/scene-wcs-editor-sc1\` branch and HEAD
+\`5b9f6e665f955335f804c847134ec87aba5ed27c\`.
+Both workflows **SUCCESS**, including Ubuntu + Windows × Python
+3.10/3.12, GUI-import, and offline Windows PySide6 screenshot.
+This checks software regression, not source-classification purity.
+
+**Independent historical Leo P metadata re-evaluation:** loaded the
+unchanged uploaded \`Copy Scene QA\` from
+\`2026-11-10T22:19:04.846138Z\`, using all 811 records and the
+FITS-native WCS header
+(\`PC1_1=-7.2777777777778e-05 deg/pix\`,
+\`PC2_2=+7.2777777777778e-05 deg/pix\`,
+\`CRVAL2=18 deg\`). Angular scales in the east/north
+tangent plane are approximately \`0.249177″/px\` in native x,
+\`0.262000″/px\` in native y; a scalar \`0.262″/px\` is
+not exact for isolation or target-offset vetoes.
+
+Recomputed the exact \`red_extended_v1\` TYPE, bitfield, size,
+g/r/z Tractor SNR, g−r, r−z, centre-distance and nearest-source
+cuts from the exported catalogue with a sky-plane KD-tree.
+The **six** red/extended preview candidates are unchanged under
+the corrected WCS-neighbour test:
+
+| OBJID | Tractor TYPE | g−r | r−z | Nearest neighbour (arcsec) |
+| --- | --- | ---: | ---: | ---: |
+| 1674 | EXP | 0.93 | 0.87 | 3.41 |
+| 1794 | EXP | 1.13 | 0.67 | 3.57 |
+| 1804 | DEV | 1.62 | 0.84 | 3.57 |
+| 2151 | SER | 1.72 | 1.08 | 7.98 |
+| 2185 | SER | 0.93 | 0.64 | 16.86 |
+| 2290 | DEV | 1.67 | 1.21 | 3.39 |
+
+Independently matched MUSE background galaxies among these six:
+1794, 1804, 2151. Three other IDs do **not** have such
+independent confirmation. Of 17 distinct Tractor components
+associated with 19/20 published MUSE background positions within
+1.5″, 3 are recovered (**17.6% reference-set recall**), by design
+low for purity-oriented screening. None of 15 distinct native
+Tractor components positionally associated with published hot
+stellar and cool/AGB target controls were selected (**0/15
+observed false positives in this nonrepresentative control set**).
+The three unverified selections prevent any claim of 100% purity.
+No true population-level rates, photometric light-loss correction
+or calibrated probability can be inferred from this single dwarf.
+
+**Corrective engineering in same PR:**
+
+1. Replace scalar pixel-scale neighbour separation with the
+   native WCS PC/CD east/north tangent-plane transformation and
+   a KD-tree. Use the same WCS for galaxy-centre offset. Red
+   screening without valid native WCS now fails closed.
+2. Missing native FITBITS/MASKBITS and NaN nearest-neighbour
+   distances now fail the candidate gate. If *no* other source
+   exists (\`nearest=+inf\`), source evidence explicitly records
+   \`no_catalogue_neighbour\` and a JSON-safe null nearest value.
+3. Include \`red_extended_preview\` and classifier version
+   \`red_extended_v1\` in radius-sweep \`fixed_settings\`.
+   Previously the worker could calculate red-mask scenarios but
+   the GUI would reject their result as stale, because the
+   policy switch was missing from this input fingerprint.
+4. Regression coverage: anisotropic WCS vs scalar-distance false
+   isolation, JSON-safe evidence, missing/NaN-fit veto, full
+   radius-sweep GUI acceptance and unchanged drafts/native arrays.
+
+**Limitations:** the 811 QA records are sufficient for the
+specified inner-field pilot, but the original complete 5363-row
+Tractor FITS and native IMAGE/INVVAR pixel arrays are not present
+in this export. The positional filtering and WCS metadata are
+independently recalculated, **not** the physical mask pixel count or
+PSF/sky-corrected isophotes. The next on-device Leo P A/B QA
+must verify that the original full Tractor catalogue yields the
+same six identities under the enabled policy and record the
+actual pixel masks, per-band leakage, sky and contour changes.
+
+**Science status remains HOLD.** The red/extended classifier is
+a conservative, opt-in **non-adopted diagnostic**, not a
+calibrated unattended mass-photometry mask policy.
