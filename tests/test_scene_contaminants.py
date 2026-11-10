@@ -989,3 +989,70 @@ def test_red_extended_policy_records_evidence_for_selected_source():
     assert "MULTIBAND_RED_EXTENDED_ISOLATED_HYPOTHESIS" in (
         source["evidence_flags"])
     assert int(mask.sum()) > 0
+
+
+
+def test_combined_gaia_and_red_extended_preview_keeps_target_sources():
+    """Four-way source policy must not make two tentative flags into membership.
+
+    Gaia astrometry and red extended morphology supply separate candidate
+    pixel footprints. An actual target carbon star and a blue knot are
+    retained, despite being Tractor components in the same protected core.
+    """
+    from lsbpipe.photometry.scene_source_inventory import (
+        build_scene_source_inventory,
+    )
+    shape = (241,241)
+    protected=np.ones(shape, bool)
+    rows=(
+        _red_extended_row(1794),
+        {**_row("PSF",flux=600.),"objid":2035,
+         "ref_cat":"G3","ref_id":623919492384922624,
+         "parallax_mas":1.1,"parallax_ivar":900.},
+        _red_extended_row(1939,source_type="PSF"),
+        _red_extended_row(1946,blue=True),
+    )
+    positions=np.array([[175.,120.],[75.,120.],[120.,120.],[120.,155.]])
+    kw=dict(arcsec_per_pixel=1.,protected=protected,wcs=_wcs(),
+            anchor_pixel=(120.,120.),target_radius_arcsec=60.)
+    baseline, old = conservative_catalogue_mask(
+        shape,positions,rows,arcsec_per_pixel=1.,
+        protected=protected,wcs=_wcs())
+    gaia, gaia_stats = conservative_catalogue_mask(
+        shape,positions,rows,**kw,gaia_inner_preview=True)
+    red, red_stats = conservative_catalogue_mask(
+        shape,positions,rows,**kw,red_extended_preview=True)
+    combined, stats = conservative_catalogue_mask(
+        shape,positions,rows,**kw,
+        gaia_inner_preview=True,red_extended_preview=True)
+    assert not baseline.any()
+    assert old["skipped_target_overlap"]==4
+    assert gaia_stats["gaia_inner_preview_sources"]==1
+    assert red_stats["red_extended_preview_sources"]==1
+    assert stats["gaia_inner_preview_sources"]==1
+    assert stats["red_extended_preview_sources"]==1
+    assert stats["masked_catalog_sources"]==2
+    assert stats["skipped_target_overlap"]==2
+    assert np.array_equal(combined, gaia | red)
+    assert np.array_equal(
+        combined,
+        stats["gaia_inner_preview_mask"] |
+        stats["red_extended_preview_mask"])
+    assert combined[120,75] and combined[120,175]
+    assert not combined[120,120] and not combined[155,120]
+    cat=SimpleNamespace(
+        rows=rows,pixel_positions=positions,source_sha256="c"*64,
+        source_path="same-brick-native-tractor.fits")
+    inv=build_scene_source_inventory(
+        cat,pixel_shape=shape,protected=protected,screen_stats=stats,
+        release="dr11",region="south",brick="1554p180",band="g",
+        anchor_icrs=(155.,18.))
+    lookup={e["objid"]:e for e in inv["entries"]}
+    assert lookup[1794]["screening_disposition"]=="RED_EXTENDED_MASK_PREVIEW"
+    assert lookup[2035]["screening_disposition"]=="GAIA_FOREGROUND_MASK_PREVIEW"
+    assert lookup[1939]["screening_disposition"]=="PROTECTED_OVERLAP"
+    assert lookup[1946]["screening_disposition"]=="PROTECTED_OVERLAP"
+    assert all(v["photometry_action"]=="NO_NEW_ACTION_READ_ONLY"
+               for v in lookup.values())
+    assert all(v["physical_membership"]=="UNDETERMINED"
+               for v in lookup.values())
