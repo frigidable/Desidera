@@ -1336,3 +1336,81 @@ def test_saved_legacy_synthetic_isophote_is_clearly_inactive_in_scene_gui(
     # Original on-disk revision preserved: only its *interpretation*
     # changes (legacy AUTO_ISOPHOTE no longer active source protection).
     assert "AUTO_ISOPHOTE_PRELIMINARY" in saved.edits[0].comment
+
+
+
+def test_opt_in_gaia_inner_mask_preview_recomputes_isophote_inputs(
+        qtbot, tmp_path, monkeypatch):
+    """Gaia experimental checkbox is explicit, band-safe and reversible."""
+    import lsbpipe.gui.scene_editor as module
+    editor, project = _make_editor(qtbot, tmp_path, monkeypatch)
+    editor._accept_dataset(_data(project.project_id))
+    assert not editor.iso_gaia_inner_preview.isChecked()
+    requests = []
+
+    def prepare(dataset, root, draft, anchor, **kwargs):
+        active = bool(kwargs.get("gaia_inner_preview", False))
+        requests.append(active)
+        outside = np.zeros(dataset["pixel_shape"], bool)
+        outside[8:10,8:10] = True
+        inner = np.zeros(dataset["pixel_shape"], bool)
+        if active:
+            inner[45:48,45:48] = True
+        full = outside | inner
+        return {
+            "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "mask":full, "auto_mask":full.copy(),
+            "gaia_inner_preview_mask":inner,
+            "gaia_inner_preview_enabled":active,
+            "protected":np.zeros_like(full),
+            "hard":dataset["native_hard"].copy(),
+            "project_id":project.project_id,
+            "draft_digest":draft.digest,
+            "dataset_source":dataset["source"],
+            "band":dataset["band"],
+            "anchor_icrs":anchor,
+            "catalog_sha256":"b"*64,
+            "stats":{
+                "masked_catalog_sources":1+int(active),
+                "skipped_target_overlap":1-int(active),
+                "gaia_inner_preview_sources":int(active),
+                "gaia_inner_preview_pixels":int(inner.sum()),
+                "protected_gaia_astrometry_review":1,
+                "excluded_pixels":int(full.sum()),
+                "native_hard_pixels":1,
+            },
+            "flags":("EXPLICIT_GAIA_INTERIOR_MASK_PREVIEW_ONLY",)
+                    if active else ("PSF_WINGS_NOT_VALIDATED",),
+        }
+
+    monkeypatch.setattr(module, "prepare_scene_neighbour_masks", prepare)
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._contamination is not None,
+        timeout=10000)
+    assert requests == [False]
+    assert not editor._contamination["mask"][46,46]
+    editor.iso_gaia_inner_preview.setChecked(True)
+    assert editor._contamination is None
+    assert editor._isophote_proposal is None
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._contamination is not None,
+        timeout=10000)
+    assert requests == [False, True]
+    assert editor._contamination["mask"][46,46]
+    assert editor._contamination["gaia_inner_preview_mask"][46,46]
+    assert "1 inner Gaia masks" in editor.iso_mask_status.text()
+    assert "ORANGE" in editor.iso_mask_status.text()
+    assert editor._complete_scene_qa_snapshot()["controls"][
+        "gaia_inner_mask_preview"] is True
+    assert editor.draft.edits == ()
+    editor.iso_gaia_inner_preview.setChecked(False)
+    assert editor._contamination is None
+    editor.iso_prepare.click()
+    qtbot.waitUntil(
+        lambda: editor._future is None and editor._contamination is not None,
+        timeout=10000)
+    assert requests == [False, True, False]
+    assert not editor._contamination["mask"][46,46]
+    assert editor.draft.edits == ()
