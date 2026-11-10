@@ -241,17 +241,20 @@ def read_local_sga_priors(path, target_icrs, *, radius_arcmin=3.):
 VIEWER_SGA2025_ENDPOINTS = {
     "south": "https://www.legacysurvey.org/viewer/sga2025-south/1/cat.json",
     "north": "https://www.legacysurvey.org/viewer/sga2025-north/1/cat.json",
+    "parent": "https://www.legacysurvey.org/viewer/sga2025-parent/1/cat.json",
 }
 MAX_VIEWER_JSON_BYTES = 2_000_000
 
 
 def fetch_viewer_sga2025_priors(
-        target_icrs, *, region="south", radius_arcmin=3.):
+        target_icrs, *, region="south", radius_arcmin=3.,
+        layer="ellipse"):
     """Explicit, bounded, on-demand SGA2025 Viewer sky-box lookup.
 
-    Viewer 'radiusArcsec' is the catalog overlay ellipse semi-major axis.
-    Its 'pgc' field is populated from Viewer T.ref_id, NOT necessarily
-    final SGA2025 SGAID or PGC. No final-science D26, D26_REF, fit
+    Viewer 'radiusArcsec' is the catalog overlay semi-major axis.
+    For ellipse layers 'pgc' is populated from T.ref_id (not a
+    verified SGAID); parent-layer 'pgc' is a real parent PGC field.
+    Neither mode returns a complete final-science D26, D26_REF, fit
     quality flags or complete SGA2025 photometry is supplied by this
     endpoint. Label this provisional *overlay* geometry accordingly.
     """
@@ -260,7 +263,8 @@ def fetch_viewer_sga2025_priors(
         radius = float(radius_arcmin)
     except (ValueError, TypeError) as exc:
         raise ValueError("Invalid target coordinate or search radius") from exc
-    if (region not in VIEWER_SGA2025_ENDPOINTS or
+    if (region not in ("north", "south") or
+            layer not in ("ellipse", "parent") or
             not all(math.isfinite(v) for v in (ra, dec, radius)) or
             not 0 <= ra < 360 or not -86 <= dec <= 86 or
             not .1 <= radius <= 10.):
@@ -274,7 +278,8 @@ def fetch_viewer_sga2025_priors(
         "declo": f"{max(-90.,dec-delta_dec):.9f}",
         "dechi": f"{min(90.,dec+delta_dec):.9f}",
     })
-    url = VIEWER_SGA2025_ENDPOINTS[region]+"?"+query
+    source_key = region if layer == "ellipse" else "parent"
+    url = VIEWER_SGA2025_ENDPOINTS[source_key]+"?"+query
     # Only the fixed official HTTPS endpoint may return bytes. HTTP
     # errors, timeout, malformed JSON and unexpectedly large replies
     # fail closed; there is no fallback to fabricated catalog priors.
@@ -282,7 +287,8 @@ def fetch_viewer_sga2025_priors(
         effective = urlsplit(stream.geturl())
         if (effective.scheme != "https" or
                 effective.hostname != "www.legacysurvey.org" or
-                effective.path != urlsplit(VIEWER_SGA2025_ENDPOINTS[region]).path):
+                effective.path != urlsplit(
+                    VIEWER_SGA2025_ENDPOINTS[source_key]).path):
             raise ValueError("Untrusted SGA2025 Viewer redirect")
         payload = stream.read(MAX_VIEWER_JSON_BYTES+1)
     if len(payload) > MAX_VIEWER_JSON_BYTES:
@@ -350,10 +356,13 @@ def fetch_viewer_sga2025_priors(
             continue
         flags = [
             "SGA2025_VIEWER_OVERLAY_NOT_MERGED_CATALOG",
-            "VIEWER_REF_ID_NOT_VERIFIED_SGAID",
+            ("PARENT_PGC_NOT_SGAID" if layer == "parent"
+             else "VIEWER_REF_ID_NOT_VERIFIED_SGAID"),
             "NO_SGA2025_D26_REF_OR_FIT_QUALITY",
             "VIEWER_LATEST_CATALOG_CAN_CHANGE",
         ]
+        if layer == "parent":
+            flags.append("PARENT_INITIAL_GEOMETRY_NOT_FITTED_ISOPHOTE")
         # Do not replace invalid radii, q or PA by defaults even though
         # the Viewer itself normalizes some bad entries to unity or zero.
         d26 = 2.*semi/60.
@@ -370,10 +379,13 @@ def fetch_viewer_sga2025_priors(
         # A transient negative row key is only a UI disambiguator;
         # never claim that it is a persistent SGA2025 object identifier.
         priors.append(SGAGeometryPrior(
-            release="SGA2025", sga_id=reference if reference >= 0
+            release=("SGA2025-PARENT" if layer == "parent" else "SGA2025"),
+            sga_id=reference if reference >= 0
             else -1-index, name=label,
             ra_deg=r, dec_deg=d, offset_arcsec=sep,
-            d26_arcmin=d26, d26_ref="VIEWER_RADIUS_ARCSEC",
+            d26_arcmin=d26,
+            d26_ref=("VIEWER_PARENT_DIAMETER" if layer == "parent"
+                     else "VIEWER_RADIUS_ARCSEC"),
             ba=minor, pa_deg=angle, ellipsebit=0, ellipsemode=0,
             flags=tuple(flags), source_sha256=digest,
             source_path=url))
@@ -381,6 +393,7 @@ def fetch_viewer_sga2025_priors(
         raise ValueError("Ambiguous SGA2025 Viewer region (>32 sources)")
     priors.sort(key=lambda row:row.offset_arcsec)
     return SGAPriorLookup(
-        release="SGA2025", source_path=url, source_sha256=digest,
+        release=("SGA2025-PARENT" if layer == "parent" else "SGA2025"),
+        source_path=url, source_sha256=digest,
         matches=tuple(priors), unusable_count=unusable_count,
         unusable_examples=tuple(unusable_examples))
