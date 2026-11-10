@@ -750,3 +750,158 @@ def test_opt_in_internal_gaia_mask_does_not_change_source_membership(
     assert not new["gaia_inner_preview_mask"].flags.writeable
     assert np.array_equal(image,ds["data"]["image"])
     assert draft.edits==()
+
+
+
+def _red_extended_row(objid, *, source_type="EXP", red=True,
+                      blue=False, shape_r=1.1, fitbits=0, maskbits=0,
+                      ref_cat="", ref_id=0):
+    """Synthetic multi-band Tractor source; NOT a real observation."""
+    g, r, z = (1., 3., 6.) if red else (1., 1.1, 1.25)
+    if blue:
+        g, r, z = 4., 1.5, 1.
+    return {
+        **_row(source_type, flux=g, shape_r=shape_r),
+        "objid":objid, "flux_ivar":100.,
+        "ref_cat":ref_cat, "ref_id":ref_id,
+        "fitbits":fitbits, "maskbits":maskbits,
+        "model_fluxes_nMgy":{"g":g,"r":r,"z":z},
+        "model_flux_ivars":{"g":400.,"r":400.,"z":400.},
+    }
+
+
+def test_red_extended_v1_multicue_policy_vetoes_member_like_sources():
+    from lsbpipe.photometry.scene_source_inventory import (
+        conservative_red_extended_candidate,
+    )
+    extra={"offset_arcsec":32.,"neighbour_arcsec":5.,
+           "target_radius_arcsec":60.}
+    candidate=_red_extended_row(100)
+    passes,evidence=conservative_red_extended_candidate(candidate,**extra)
+    assert passes and evidence["policy"]=="red_extended_v1"
+    assert evidence["passes"] is True
+    assert evidence["g_minus_r"] >= .8
+    # Genuine dwarf carbon stars may be very red, but PSF-only
+    # photometry and colors are NOT proof of background membership.
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(101,source_type="PSF"),**extra)[0]
+    # Bluer star-forming knots and spurious SGA Tractor shreds stay protected.
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(102,blue=True),**extra)[0]
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(103,ref_cat="L4",ref_id=15),**extra)[0]
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(104,maskbits=1<<12),**extra)[0]
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(105,fitbits=18),**extra)[0]
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(106,shape_r=.4),**extra)[0]
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(107),**{**extra,"offset_arcsec":4.})[0]
+    assert not conservative_red_extended_candidate(
+        _red_extended_row(108),**{**extra,"neighbour_arcsec":1.})[0]
+    assert not conservative_red_extended_candidate(
+        {**candidate,"model_flux_ivars":{"g":0.,"r":400.,"z":400.}},
+        **extra)[0]
+    assert not conservative_red_extended_candidate(
+        {**candidate,"model_fluxes_nMgy":{"g":1.,"r":3.,"z":None}},
+        **extra)[0]
+    assert not conservative_red_extended_candidate(
+        {**candidate,"gaia_duplicated_source":True},**extra)[0]
+
+
+def test_red_extended_preview_only_masks_isolated_red_galaxies_not_blue_knots():
+    """An all-catalogue non-Gaia procedure independent of external papers."""
+    center=(120.,120.)
+    protected=np.zeros((241,241),bool)
+    yy,xx=np.indices(protected.shape)
+    protected[(xx-120.)**2+(yy-120.)**2<50.**2]=True
+    rows=(
+        _red_extended_row(1794),  # red+extended+isolated
+        _red_extended_row(1946,blue=True), # blue galaxy star cluster
+        _red_extended_row(1939,source_type="PSF"), # red target carbon star
+        _red_extended_row(2059,ref_cat="L4",ref_id=1), # target component
+        _red_extended_row(2048,fitbits=18), # source forced by GALAXY
+        _red_extended_row(1888,source_type="PSF",red=False),
+    )
+    pos=np.array([[160.,120.],[130.,125.],[115.,135.],
+                  [115.,110.],[135.,115.],[70.,155.]])
+    baseline,legacy=conservative_catalogue_mask(
+        protected.shape,pos,rows,arcsec_per_pixel=1.,
+        protected=protected,wcs=_wcs())
+    preview,stats=conservative_catalogue_mask(
+        protected.shape,pos,rows,arcsec_per_pixel=1.,
+        protected=protected,wcs=_wcs(),
+        red_extended_preview=True,anchor_pixel=center,
+        target_radius_arcsec=50.)
+    assert legacy["masked_catalog_sources"]==0
+    assert stats["red_extended_preview_sources"]==1
+    assert stats["masked_catalog_sources"]==1
+    assert stats["skipped_target_overlap"]==5
+    assert [v["objid"] for v in stats["red_extended_preview_centres"]]==[1794]
+    assert stats["red_extended_preview_centres"][0]["evidence"]["policy"]==(
+        "red_extended_v1")
+    assert preview[120,160] and not baseline[120,160]
+    assert not preview[125,130]
+    assert not preview[135,115]
+    assert np.array_equal(preview, stats["red_extended_preview_mask"])
+    assert not preview.flags.writeable
+    assert not stats["red_extended_preview_mask"].flags.writeable
+    # Cannot enable isolated color classifier without target geometry.
+    with pytest.raises(ValueError,match="current target geometry"):
+        conservative_catalogue_mask(
+            protected.shape,pos,rows,arcsec_per_pixel=1.,
+            protected=protected,red_extended_preview=True)
+
+
+def test_red_extended_mask_preview_keeps_origins_and_source_roles_separate(
+        monkeypatch,tmp_path):
+    import lsbpipe.photometry.scene_contaminants as module
+    from lsbpipe.photometry.sky_masks import SkyMaskDraft
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR",str(tmp_path/"session"))
+    project=create_object_project(
+        "Leo P",tmp_path/"LeoP_RedPreview",field=SkyField(155.,18.,4.))
+    project.data_root=project.root/"data"
+    project.data_root.mkdir()
+    project.selected_dataset=("dr11","south","1554p180","g")
+    project.target_radius_arcsec=50.
+    save_object_project(project)
+    image=np.ones((241,241),dtype=float)
+    data={"project_id":project.project_id,"band":"g",
+          "source":"native-test","wcs":_wcs(),"pixel_shape":image.shape,
+          "native_hard":np.zeros_like(image,bool),
+          "data":{"image":image,"maskbits":np.zeros_like(image,np.uint32)}}
+    rows=(_red_extended_row(1794),_red_extended_row(1946,blue=True))
+    cat=SimpleNamespace(rows=rows,
+        pixel_positions=np.array([[160.,120.],[130.,130.]]),
+        source_path="native-tractor.fits",source_sha256="a"*64)
+    monkeypatch.setattr(module,"read_native_tractor_gaia",
+                        lambda *args,**kwargs:cat)
+    draft=SkyMaskDraft(project.project_id)
+    old=module.prepare_scene_contamination(
+        data,project,draft,(155.,18.))
+    new=module.prepare_scene_contamination(
+        data,project,draft,(155.,18.),red_extended_preview=True)
+    assert old["stats"]["masked_catalog_sources"]==0
+    assert new["stats"]["masked_catalog_sources"]==1
+    assert new["stats"]["red_extended_preview_sources"]==1
+    assert new["red_extended_preview_enabled"] is True
+    assert new["gaia_inner_preview_enabled"] is False
+    assert new["stats"]["red_extended_preview_pixels"]>0
+    assert new["mask"][120,160] and not old["mask"][120,160]
+    assert not new["mask"][130,130]
+    assert np.array_equal(new["mask"],new["red_extended_preview_mask"])
+    assert "EXPLICIT_RED_EXTENDED_MASK_PREVIEW_ONLY" in new["flags"]
+    assert "COLOR_MORPHOLOGY_CLASSIFIER_PURITY_NOT_VALIDATED" in new["flags"]
+    e={v["objid"]:v for v in new["source_inventory"]["entries"]}
+    assert e[1794]["screening_disposition"]=="RED_EXTENDED_MASK_PREVIEW"
+    assert e[1794]["diagnostic_red_extended_mask_preview_active"] is True
+    assert e[1946]["screening_disposition"]=="PROTECTED_OVERLAP"
+    assert e[1946]["diagnostic_red_extended_mask_preview_active"] is False
+    assert all(v["physical_membership"]=="UNDETERMINED" for v in e.values())
+    assert all(v["photometry_action"]=="NO_NEW_ACTION_READ_ONLY"
+               for v in e.values())
+    assert all(v["proposed_treatment_is_active"] is False
+               for v in e.values())
+    assert draft.edits==()
+    assert np.array_equal(image,data["data"]["image"])
