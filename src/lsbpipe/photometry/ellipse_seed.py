@@ -549,3 +549,190 @@ def assess_local_isophote_sensitivity(
         "trial_models": tuple(trial_models),
         "sensitivity_status": "MULTISCALE_DIAGNOSTIC_NOT_SCIENCE_VALIDATED",
     }
+
+
+@dataclass(frozen=True)
+class SGAInformedRadialSeed:
+    """Unadopted SGA-oriented radius evidence measured on native masked IMAGE.
+
+    The sky-plane axis ratio and PA come from an explicitly selected
+    external SGA central prior; ONLY the extent is inferred from
+    azimuthally supported native pixel intensities. This is an
+    initialization diagnostic, NOT a measured outer isophote.
+    """
+    reference_a_arcsec: float
+    detected_a_arcsec: float | None
+    q_sky: float
+    pa_deg: float
+    centre_icrs: tuple[float, float]
+    bins: tuple[dict, ...]
+    masked_fraction: float
+    flags: tuple[str, ...]
+    status: str = "SGA_INFORMED_RADIAL_SEED_NOT_ADOPTED"
+
+
+def sga_informed_radial_seed(
+        image: np.ndarray, valid: np.ndarray, wcs, sga_shape,
+        *, local_sky: float, smoothed_rms: float,
+        smooth_sigma_pix: float = 4.,
+        median_contrast: float = .65,
+        min_positive_sectors: int = 4) -> SGAInformedRadialSeed:
+    """Find data-supported outer radial continuity along an SGA initial ellipse.
+
+    Uses normalized masked Gaussian smoothing, robust annular medians
+    and sector support; radial extent comes from *observed* data rather
+    than a multiplier of SGA D26/parent diameter. Requires >=2
+    consecutive outer annuli supported in >=4 of 8 sectors; no
+    detection => no expanded radius. Masked source light is NOT
+    recovered, and PSF/sky/noise correlations remain uncalibrated.
+    """
+    from scipy.ndimage import gaussian_filter
+    from astropy.coordinates import SkyCoord
+    from astropy import units as u
+
+    arr = np.asarray(image, dtype=float)
+    okay = np.asarray(valid)
+    if (arr.ndim != 2 or arr.size == 0 or okay.shape != arr.shape
+            or okay.dtype.kind != "b" or
+            not np.isfinite(arr[okay]).all()):
+        raise ValueError("SGA radial seed requires same-grid valid native IMAGE")
+    if (not all(math.isfinite(float(v)) for v in
+                (local_sky, smoothed_rms, smooth_sigma_pix, median_contrast))
+            or smoothed_rms <= 0 or not 1 <= smooth_sigma_pix <= 12
+            or not .2 <= median_contrast <= 4
+            or not 2 <= min_positive_sectors <= 8):
+        raise ValueError("SGA radial settings or empirical sky RMS invalid")
+    if (sga_shape is None or sga_shape.kind != "ellipse" or
+            not .05 < sga_shape.q <= 1 or sga_shape.a_arcsec <= 0):
+        raise ValueError("A valid selected SGA ellipse is required")
+    ra0, dec0 = (float(x) for x in sga_shape.center)
+    ny, nx = arr.shape
+    x0, y0 = map(float, wcs.all_world2pix(ra0, dec0, 0))
+    if (not all(math.isfinite(v) for v in (x0, y0)) or
+            not 0 <= x0 < nx or not 0 <= y0 < ny):
+        raise ValueError("Selected SGA centre outside original native FITS")
+    # Spherical local WCS tangent, with PA north-through-east (ICRS).
+    anchor = SkyCoord(ra0*u.deg, dec0*u.deg, frame="icrs")
+    steps = []
+    for dx, dy in ((1, 0), (0, 1)):
+        xr, dr = wcs.all_pix2world(x0+dx, y0+dy, 0)
+        point = SkyCoord(xr*u.deg, dr*u.deg, frame="icrs")
+        east, north = anchor.spherical_offsets_to(point)
+        steps.append((east.to_value(u.arcsec),north.to_value(u.arcsec)))
+    jac = np.asarray(steps, float).T
+    singular = np.linalg.svd(jac, compute_uv=False)
+    if (not np.isfinite(singular).all() or singular[-1] <= 0 or
+            singular[0]/singular[-1] > 10):
+        raise ValueError("Cannot use distorted native WCS for SGA radial seed")
+    pixel_scale = float(np.sqrt(np.linalg.det(jac.T@jac))**.5)
+    # Use data-only search radius: conservatively bounded by the target's
+    # distance to image edge, excluding the distant sky annulus.
+    edge_pix = min(x0, y0, nx-1-x0, ny-1-y0)
+    max_a = float(min(.30*min(nx,ny), .70*edge_pix)*singular[-1])
+    step = float(max(3.,1.5*smooth_sigma_pix)*pixel_scale)
+    if max_a <= sga_shape.a_arcsec + 2*step:
+        return SGAInformedRadialSeed(
+            sga_shape.a_arcsec,None,sga_shape.q,sga_shape.pa_deg,
+            (ra0,dec0),(),0.,
+            ("SGA_PRIOR_TOO_LARGE_FOR_NATIVE_SEARCH","NO_DETECTED_OUTER_RADIUS"))
+    good = okay & np.isfinite(arr)
+    numerator = gaussian_filter(
+        np.where(good,arr-local_sky,0.),smooth_sigma_pix)
+    coverage = gaussian_filter(good.astype(float),smooth_sigma_pix)
+    supported = good & (coverage > .8)
+    smooth = np.divide(numerator,coverage,
+                       out=np.zeros_like(numerator),where=coverage > .8)
+    # Bound region before allocating 2D coordinate grids.
+    radius_px = max_a/singular[-1]
+    x1 = max(0,int(math.floor(x0-radius_px)))
+    x2 = min(nx,int(math.ceil(x0+radius_px))+1)
+    y1 = max(0,int(math.floor(y0-radius_px)))
+    y2 = min(ny,int(math.ceil(y0+radius_px))+1)
+    gy, gx = np.ogrid[y1:y2,x1:x2]
+    dx, dy = gx-x0,gy-y0
+    east = jac[0,0]*dx+jac[0,1]*dy
+    north = jac[1,0]*dx+jac[1,1]*dy
+    theta = math.radians(sga_shape.pa_deg)
+    major = east*math.sin(theta)+north*math.cos(theta)
+    minor = east*math.cos(theta)-north*math.sin(theta)
+    eradius = np.hypot(major,minor/sga_shape.q)
+    azimuth = np.arctan2(minor/sga_shape.q,major)
+    bin_index = np.floor(eradius/step).astype(np.int32)
+    sectors = np.mod(np.floor((azimuth+math.pi)*4/math.pi).astype(int),8)
+    subgood = supported[y1:y2,x1:x2]
+    subsmoothed = smooth[y1:y2,x1:x2]
+    bins = []
+    max_bin = min(int(max_a/step),48)
+    for n in range(1,max_bin):
+        ring = bin_index == n
+        n_pix = int(np.count_nonzero(ring))
+        n_good = int(np.count_nonzero(ring & subgood))
+        if n_pix < 24:
+            continue
+        coverage_fraction = n_good/n_pix
+        sector_medians = []
+        for k in range(8):
+            sel = ring & subgood & (sectors == k)
+            if np.count_nonzero(sel) >= 7:
+                sector_medians.append(
+                    float(np.median(subsmoothed[sel])/smoothed_rms))
+        valid_sectors = len(sector_medians)
+        positive_sectors = sum(
+            x >= .4*median_contrast for x in sector_medians)
+        median = (float(np.median(subsmoothed[ring & subgood])
+                        /smoothed_rms) if n_good >= 24 else None)
+        supported_ring = (coverage_fraction >= .55 and
+                          valid_sectors >= 5 and
+                          positive_sectors >= min_positive_sectors and
+                          median is not None and median >= median_contrast)
+        bins.append({
+            "a_mid_arcsec":float((n+.5)*step),
+            "outer_arcsec":float((n+1)*step),
+            "pixels":n_pix,"valid_pixels":n_good,
+            "coverage":float(coverage_fraction),
+            "sectors_with_data":valid_sectors,
+            "sectors_positive":positive_sectors,
+            "median_smoothed_rms":median,
+            "supported":bool(supported_ring),
+        })
+    # Only trace continuity from the SGA core. Do not opportunistically
+    # jump to a distant unrelated bright object or arbitrary radius.
+    first = next((i for i,b in enumerate(bins)
+                  if b["outer_arcsec"] >= .70*sga_shape.a_arcsec),None)
+    last_supported = None
+    if first is not None:
+        misses = 0
+        good_run = 0
+        for b in bins[first:]:
+            if b["supported"]:
+                good_run += 1
+                misses = 0
+                if good_run >= 2 and b["outer_arcsec"] > sga_shape.a_arcsec:
+                    last_supported = b["outer_arcsec"]
+            else:
+                misses += 1
+                if misses >= 2:
+                    break
+                good_run = 0
+    detected = (float(last_supported)
+                if last_supported is not None else None)
+    flags = ["EMPIRICAL_SMOOTHED_RMS_NOT_CALIBRATED_SIGNIFICANCE",
+             "SGA_PA_Q_PRIOR_NOT_INDEPENDENT_OF_TRACTOR",
+             "SGA_RADIAL_RESULT_DEPENDS_ON_MASKED_SOURCES",
+             "CONSTANT_LOCAL_SKY_NOT_VALIDATED"]
+    if detected is None:
+        flags.append("NO_DETECTED_OUTER_RADIUS")
+    elif bins and bins[-1]["supported"]:
+        flags.append("SEARCH_RADIAL_LIMIT_REVIEW")
+    # Descriptive diagnostic: fraction of the central-to-proposed
+    # annular area which is excluded, never a completeness correction.
+    final_a = detected if detected is not None else sga_shape.a_arcsec
+    within = eradius <= final_a
+    masked_fraction = (float(np.mean(~subgood[within]))
+                       if np.any(within) else 0.)
+    return SGAInformedRadialSeed(
+        reference_a_arcsec=float(sga_shape.a_arcsec),
+        detected_a_arcsec=detected,
+        q_sky=float(sga_shape.q),pa_deg=float(sga_shape.pa_deg),
+        centre_icrs=(ra0,dec0),bins=tuple(bins),
+        masked_fraction=masked_fraction,flags=tuple(flags))
