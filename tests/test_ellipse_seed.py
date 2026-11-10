@@ -292,3 +292,45 @@ def test_sga_radial_matches_target_protection_radius_flagged_not_confirmed():
         sga_informed_radial_seed(
             image,good,w,shape,local_sky=.3,smoothed_rms=.05,
             target_protection_radius_arcsec=0.)
+
+
+def test_outer_boundary_keeps_edges_at_diagonal_void_contacts():
+    """A valid 4-connected galaxy region may have diagonally touching holes.
+
+    Previously an edge dictionary silently overwrote one outgoing edge
+    at the shared pixel-grid vertex and raised "Disconnected isophotal
+    pixel boundary", although the outer contour was fully connected.
+    """
+    from lsbpipe.photometry.ellipse_seed import _outer_boundary
+
+    region = np.zeros((42, 42), dtype=bool)
+    region[4:38, 4:38] = True
+    region[14, 14] = False
+    region[15, 15] = False
+    # The source region is still 4-connected; only the two holes touch
+    # diagonally. The exterior must enclose the *whole* source, not a hole.
+    from scipy.ndimage import label
+    components, count = label(region)
+    assert count == 1
+
+    outline = np.asarray(_outer_boundary(region, 100, 200))
+    assert 24 <= len(outline) <= 192
+    assert np.isfinite(outline).all()
+    assert np.ptp(outline[:, 0]) > 30.
+    assert np.ptp(outline[:, 1]) > 30.
+    assert 101. <= outline[:, 0].min() < 108.
+    assert 201. <= outline[:, 1].min() < 208.
+
+
+def test_outer_boundary_diagonal_hole_chain_is_deterministic():
+    """Three corner-touching holes do not change the chosen outer ring."""
+    from lsbpipe.photometry.ellipse_seed import _outer_boundary
+
+    region = np.zeros((42, 42), dtype=bool)
+    region[4:38, 4:38] = True
+    for row in (14, 15, 16):
+        region[row, row] = False
+    a = _outer_boundary(region, 0, 0)
+    b = _outer_boundary(region.copy(), 0, 0)
+    assert a == b
+    assert len(a) >= 24
