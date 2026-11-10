@@ -84,7 +84,6 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     # Nearest-neighbour isolation is an independent veto. Do not use
     # red/extended heuristics to discard blended target light in dense
     # galaxy cores. Only compute this layer if explicitly requested.
-    near_pix = None
     if red_extended_preview:
         if (anchor_pixel is None or len(anchor_pixel) != 2 or
                 not all(math.isfinite(float(v)) for v in anchor_pixel) or
@@ -92,11 +91,6 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 not math.isfinite(float(target_radius_arcsec)) or
                 float(target_radius_arcsec) <= 0):
             raise ValueError("Red-extended QA needs current target geometry")
-        p = np.asarray(positions, dtype=float)
-        good = np.where(np.isfinite(p).all(axis=1))[0]
-        near_pix = np.full(len(rows), np.inf)
-        if len(good) > 1:
-            near_pix[good] = cKDTree(p[good]).query(p[good], k=2)[0][:, 1]
     # Original WCS CD/PC matrix maps *native FITS pixels* to east/north
     # arcsec at the small selected field's tangent location.
     jacobian = None
@@ -111,6 +105,21 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 not np.isfinite(jacobian).all() or
                 abs(float(np.linalg.det(jacobian))) < 1e-8):
             raise ValueError("Invalid local WCS for Tractor morphology")
+    nearest_arcsec = None
+    if red_extended_preview:
+        if jacobian is None:
+            raise ValueError(
+                "Red-extended QA requires native celestial WCS for "
+                "true east/north neighbour distances")
+        # A nearest-neighbour decision must be sky-plane based: a single
+        # scalar pixel scale is wrong for an anisotropic / sheared WCS.
+        points = np.asarray(positions, dtype=float)
+        valid = np.where(np.isfinite(points).all(axis=1))[0]
+        nearest_arcsec = np.full(len(rows), np.inf, dtype=float)
+        if len(valid) > 1:
+            sky_xy_arcsec = points[valid] @ jacobian.T
+            nearest_arcsec[valid] = cKDTree(sky_xy_arcsec).query(
+                sky_xy_arcsec, k=2)[0][:, 1]
     for index, ((x, y), row) in enumerate(zip(positions, rows)):
         x, y = float(x), float(y)
         if not math.isfinite(x) or not math.isfinite(y):
@@ -189,14 +198,16 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             is_red_preview = False
             red_evidence = None
             if red_extended_preview:
-                offset = (math.hypot(x-float(anchor_pixel[0]),
-                                     y-float(anchor_pixel[1])) *
-                          arcsec_per_pixel)
+                displacement = jacobian @ np.array(
+                    [x-float(anchor_pixel[0]), y-float(anchor_pixel[1])])
+                offset = float(np.hypot(*displacement))
                 is_red_preview, red_evidence = (
                     conservative_red_extended_candidate(
                         row, offset_arcsec=offset,
-                        neighbour_arcsec=near_pix[index]*arcsec_per_pixel,
+                        neighbour_arcsec=float(nearest_arcsec[index]),
                         target_radius_arcsec=target_radius_arcsec))
+                red_evidence["distance_geometry"] = (
+                    "NATIVE_WCS_LOCAL_EAST_NORTH_ARCSEC")
             if is_red_preview:
                 output[y1:y2, x1:x2] |= disk
                 red_preview[y1:y2, x1:x2] |= disk
