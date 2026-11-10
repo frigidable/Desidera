@@ -81,6 +81,22 @@ def scene_contour_stability_readout(sensitivity):
     return n_good, len(trials), area, iou
 
 
+def scene_sga_mask_boundary_warning(radial, protection_radius):
+    """Explain a suspect coincidence without asserting a causal artifact."""
+    if (radial is None or protection_radius is None or
+            "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS"
+            not in radial.flags):
+        return ""
+    return (
+        f" WARNING: proposed radius lies near the provisional "
+        f"{float(protection_radius):.1f} arcsec target-protection circle. "
+        "Automatic Tractor exclusion changes around this scale, and "
+        "the radial estimate is MASK-DEPENDENT; the coincidence alone "
+        "does not prove a galaxy boundary or a masking artifact. "
+        "Review alternate target-mask settings before interpreting "
+        "or adopting a radial extent.")
+
+
 def load_scene_original_cutout(project_root: str, band: str,
                                width_arcmin: float) -> dict:
     """Read one original selected-brick quartet; no network or writes.
@@ -1566,21 +1582,8 @@ class SceneEditor(QWidget):
                 "masked_catalog_centres_in_initial_ellipse", 0)
             unresolved = comparison.get(
                 "unresolved_catalog_centres_in_initial_ellipse", 0)
-            boundary_warning = (
-                radial is not None and
-                "RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS"
-                in radial.flags)
-            protection_radius = comparison.get(
-                "target_protection_radius_arcsec")
-            boundary_note = (
-                f" WARNING: radial extent is close to the "
-                f"provisional {protection_radius:.1f} arcsec target "
-                "protection radius; catalogue masking changes across "
-                "that scale. The agreement is not a validated galaxy "
-                "boundary. Compare alternative protection settings "
-                "before using this initial estimate."
-                if boundary_warning and protection_radius is not None
-                else "")
+            boundary_note = scene_sga_mask_boundary_warning(
+                radial,comparison.get("target_protection_radius_arcsec"))
             self.iso_sga_summary.setText(
                 f"SGA INITIAL: a={comparison['reference_a_arcsec']:.1f}\" "
                 f"→ data-supported a={outer}; "
