@@ -1042,6 +1042,28 @@ def test_readonly_source_inventory_shows_all_ambiguous_and_unfitted_gaia(
     assert "OBJID 42" in editor.source_registry_list.item(0).text()
     assert "RETAINED_GAIA_SOURCE_POSSIBLE" in (
         editor.source_registry_details.toPlainText())
+    assert editor.source_registry_filter.findData("RED_POLICY_UNMASKED") >= 0
+    assert editor.source_registry_filter.findData("RED_POLICY_NEAR_MISS") >= 0
+    # Deliberately synthetic GUI-only evidence; the physics predicate
+    # is independently tested with real-valued multi-band inputs.
+    reviewed = evidence["entries"][0]
+    reviewed["red_extended_first_failure"]="G_MINUS_R_OUTSIDE_STRICT_RANGE"
+    reviewed["red_extended_near_miss"]=True
+    reviewed["red_extended_rule_evidence"]={
+        "policy":"red_extended_v1", "passes":False,
+        "first_failure":"G_MINUS_R_OUTSIDE_STRICT_RANGE",
+        "g_minus_r":.75,"r_minus_z":.70}
+    editor.source_registry_filter.setCurrentIndex(
+        editor.source_registry_filter.findData("RED_POLICY_NEAR_MISS"))
+    assert editor.source_registry_list.count()==1
+    assert "RED NEAR-MISS" in editor.source_registry_list.item(0).text()
+    assert "G_MINUS_R_OUTSIDE_STRICT_RANGE" in (
+        editor.source_registry_details.toPlainText())
+    editor.source_registry_filter.setCurrentIndex(
+        editor.source_registry_filter.findData("RED_POLICY_UNMASKED"))
+    assert editor.source_registry_list.count()==1
+    editor.source_registry_filter.setCurrentIndex(
+        editor.source_registry_filter.findData("NOT_SCREENED_OR_UNFITTED"))
     editor.source_registry_copy.click()
     exported = QApplication.clipboard().text()
     assert "source_catalog_sha256\t" + "d"*64 in exported
