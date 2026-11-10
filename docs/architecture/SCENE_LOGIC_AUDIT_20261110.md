@@ -855,3 +855,28 @@ Reference: Evans et al. (2019), A&A 622 A129, DOI https://doi.org/10.1051/0004-6
 - Implemented in the existing Draft PR #84: read-only Source Evidence filters TARGET_PROTECTION_ALL, TARGET_UNSCREENED, and full SGA unmasked counts. Do not automatically mask non-Gaia candidates; introduce a general provenance-rich literature crossmatch and research-confirmed source-mask proposal workflow, with many-to-one blend handling and HST/MUSE validation.
 
 No new branch/directory, FITS modification, active mask promotion or SCIENCE adoption.
+
+
+---
+
+## Eighth-pass scalable conservative source-policy pilot — 2026-11-11
+
+**Scientific objective:** enable unattended high-precision contamination selection when thousands of low-surface-brightness galaxies lack object-specific MUSE/HST/literature analysis. NO per-object literature or network lookup is required by this algorithm. The current state is a conservative **QA-only candidate exclusion**, NOT a calibrated classifier or accepted galaxy photometry.
+
+Policy `red_extended_v1` is implemented as pure deterministic source evidence in the existing `scene_source_inventory.py` and consumed by `conservative_catalogue_mask` within `scene_contaminants.py`. The `red_extended_preview=True` option is explicit, default False, and source-/band-bound. It evaluates native Tractor sources that intersect the target-protection area and that already meet same-band positive flux/SNR screening. This is additional to, independent of, the Gaia astrometry mask preview.
+
+**High-specificity conjunctive criteria (all must pass):**
+
+- Native TYPE in EXP/DEV/SER; never infer physical identity from a single Tractor type. Do not classify PSF or REX models as secure interlopers by color alone.
+- No Gaia G2/G3 or SGA L4 reference, no Gaia duplicate, and both FITBITS and MASKBITS exactly zero. Reject strong catalog warning / forced fit regions.
+- Native Tractor shape radius between 0.65 and 4.0 arcsec; strongly extended model but not the huge host target component.
+- Positive independently fitted g/r/z Tractor fluxes and inverse variances, with SNR g >= 10, r >= 10, z >= 7 (diagonal-only, not PSF-matched); model g-r in [0.80,2.50] and r-z in [0.55,2.00]. Colors are not dust-corrected; a red stellar population alone is not contamination proof.
+- At least 2.5 arcsec from the nearest other native Tractor source, measured with a one-time KD-tree; at least max(12 arcsec, 0.2 times target protection radius) from the galaxy anchor. Both are conservative blend/core vetoes, not membership radii.
+
+The source policy returns deterministic evidence metrics (`g_minus_r`, `r_minus_z`, size, target offset, nearest neighbor and three band SNRs), and the source registry marks `RED_EXTENDED_MASK_PREVIEW` with `MULTIBAND_RED_EXTENDED_ISOLATED_HYPOTHESIS`, `AUTO_CLASSIFIER_PURITY_NOT_VALIDATED`. `physical_membership=UNDETERMINED` and `photometry_action=NO_NEW_ACTION_READ_ONLY` remain unchanged. The independent pixel Boolean preview layer and color-coded cyan overlay are used in provisional isophote A/B and radius-sweep, honor existing manual `restore_auto` operations, do not mutate native FITS or project edits, and reset on dataset/source changes.
+
+**Frozen Leo P QA-snapshot offline predicate check:** 6 selected OBJIDs 1674, 1794, 1804, 2151, 2185, 2290. Three sources (1794, 1804, 2151) independently match spectroscopically confirmed background galaxies from Evans et al. (2019, A&A 622 A129); 3 are still unconfirmed. ZERO selected among the earlier listed known member/hot-star, carbon-star, SGA-core and H II Tractor control IDs. This is **not** a measured 100% purity; there is no representative galaxy validation set. Recall of known spectroscopic background galaxies is deliberately low, especially for blue, PSF and REX-type or low-SNR systems, to protect true galaxy light.
+
+Foreground star 1900 without Gaia information is deliberately **not** automatically selected on red color: known carbon stars Leo P (OBJIDs 1939/1991) also have red Tractor SEDs. This is a demonstrated precision/recall tradeoff, not a bug to fix with unconditional PSF red masking.
+
+**Next release gate for actual mass science:** benchmark across diverse dwarf morphologies, environments and distances, with independent resolved/spectroscopic truth sets; measure per-source precision and recall by projected radius, color and morphology; quantify target-galaxy flux loss, radial-profile bias and false-positive source masking with star/galaxy injection-recovery; check spatial sky, PSF wing residuals and per-band aperture consistency. Revise threshold policy only on training objects and verify on HELD-OUT objects. Until this succeeds, keep opt-in QA mode and SCIENCE HOLD. Do not claim all secure contaminants found, do not auto-adopt any mask or use color as a posterior membership probability.
