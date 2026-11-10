@@ -61,6 +61,10 @@ class SGAPriorLookup:
     source_sha256: str
     matches: tuple[SGAGeometryPrior, ...]
     status: str = "SGA_LOCAL_MATCHES_REQUIRE_RESEARCHER_SELECTION"
+    # Source entries near the target which cannot supply an actual
+    # elliptical prior. Their sky coincidence is not a valid geometry.
+    unusable_count: int = 0
+    unusable_examples: tuple[str, ...] = ()
 
 
 def _scalar(row, key, names, default=None):
@@ -301,6 +305,8 @@ def fetch_viewer_sga2025_priors(
         raise ValueError("SGA2025 Viewer arrays are inconsistent")
     digest = hashlib.sha256(payload).hexdigest()
     priors = []
+    unusable_count = 0
+    unusable_examples = []
     for index in range(count):
         pair = doc["rd"][index]
         if not isinstance(pair, (list, tuple)) or len(pair) != 2:
@@ -313,12 +319,34 @@ def fetch_viewer_sga2025_priors(
             reference = int(doc["pgc"][index])
         except (ValueError, TypeError, OverflowError) as exc:
             raise ValueError("Invalid SGA2025 Viewer source properties") from exc
-        if not all(math.isfinite(x) for x in (r,d,semi,q,pa)):
+        if not all(math.isfinite(x) for x in (r,d)):
             continue
         if not (0 <= r < 360 and -90 <= d <= 90):
             continue
         sep = float(_distance_arcsec(r,d,ra,dec))
         if sep > radius*60.:
+            continue
+        # The DESI Viewer also indexes some SGA2025 rows with no
+        # usable fitted geometry, e.g. Leo P "SGA-0" with radius=0.
+        # A perfect 0.1-arcsec position match does NOT make its zero
+        # ellipse suitable for an initial photometric geometry.
+        valid_radius = math.isfinite(semi) and 0 < semi <= 1800.
+        valid_shape = math.isfinite(q) and 0 < q <= 1.
+        valid_angle = math.isfinite(pa) and 0 <= pa <= 360.
+        if not (valid_radius and valid_shape and valid_angle):
+            unusable_count += 1
+            if len(unusable_examples) < 5:
+                reasons = []
+                if not valid_radius:
+                    reasons.append("missing/nonpositive overlay radius")
+                if not valid_shape:
+                    reasons.append("invalid b/a")
+                if not valid_angle:
+                    reasons.append("invalid PA")
+                unusable_examples.append(
+                    f"{str(doc['name'][index])[:50] or 'Unnamed SGA row'} "
+                    f"(Viewer ref {reference}, {sep:.1f} arcsec): "
+                    + ", ".join(reasons))
             continue
         flags = [
             "SGA2025_VIEWER_OVERLAY_NOT_MERGED_CATALOG",
@@ -328,11 +356,11 @@ def fetch_viewer_sga2025_priors(
         ]
         # Do not replace invalid radii, q or PA by defaults even though
         # the Viewer itself normalizes some bad entries to unity or zero.
-        d26 = 2.*semi/60. if 0 < semi <= 1800 else None
-        minor = q if 0 < q <= 1 else None
-        angle = pa % 180. if 0 <= pa <= 360 else None
-        if d26 is None or minor is None or angle is None:
-            flags.append("VIEWER_GEOMETRY_INCOMPLETE")
+        d26 = 2.*semi/60.
+        minor = q
+        angle = pa % 180.
+        if reference == 0:
+            flags.append("VIEWER_REFERENCE_ZERO_NOT_UNIQUE_ID")
         if reference < 0:
             flags.append("NO_STABLE_VIEWER_REF_ID")
         label = str(doc["name"][index]).strip()
@@ -354,4 +382,5 @@ def fetch_viewer_sga2025_priors(
     priors.sort(key=lambda row:row.offset_arcsec)
     return SGAPriorLookup(
         release="SGA2025", source_path=url, source_sha256=digest,
-        matches=tuple(priors))
+        matches=tuple(priors), unusable_count=unusable_count,
+        unusable_examples=tuple(unusable_examples))
