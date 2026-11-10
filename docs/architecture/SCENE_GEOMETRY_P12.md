@@ -645,3 +645,67 @@ Tractor PSF-convolved source rendering, probabilistic source
 membership, spatial sky refinement, injection-and-recovery,
 and radial profile fitting remain research gates, not implied by
 this prototype.
+
+
+## 2026-11-10 · Real Leo P radial-screening QA: 60.2 arcsec is NOT validated
+
+The first real Leo P DR11 i-band screenshots from `SGA-informed
+initial ellipse` gave SGA2025-PARENT PGC 5065058 central
+semimajor axis 14.3 arcsec, q=0.532 and PA=150.5 degrees.
+The masked-pixel, data-supported radial *proposal* was
+a=60.2 arcsec with same SGA q/PA. The independent connected
+component reported q≈0.598 and PA≈146.0 degrees, a centre
+offset of 59.4 native pixels, and LOW CONFIDENCE. In particular:
+the displayed area ratio 1.00 was computed only from the
+single reference detection; other comparison trials did not
+produce a spatial overlap, so the minimum IoU was undefined.
+Neither value is evidence of multi-threshold stability.
+The radial proposal contained 0 already masked catalogue source
+centres and 92 unresolved protected Tractor source centres.
+These 92 require source-by-source evaluation; they are NOT
+confirmed stellar members or galaxy shreds.
+
+**Scientific QA gate:** the pipeline's provisional source-screening
+target circle has **radius 60 arcsec**. The independently
+derived-looking semi-major axis 60.2 arcsec nearly matches that
+source-mask choice. This may be an artifact of different
+contaminant masking inside/outside the protected circle, a real
+radial falloff, or both. Coincidence alone establishes neither
+causality nor a physical galaxy boundary. The screen's large
+orange fitted outline is therefore still a REVIEW-ONLY initial
+hypothesis, not a measured limiting isophote or a final
+photometric aperture. The scientific reason for 60.2 arcsec has
+NOT been demonstrated with the user's original FITS in the
+developer's environment.
+
+Changes:
+- Scene source screening now preserves the actual project
+  `target_protection_radius_arcsec` as separate provenance.
+- `sga_informed_radial_seed` takes the optional source-screening
+  target-circle radius and raises
+  `RADIAL_EXTENT_NEAR_PROVISIONAL_TARGET_PROTECTION_RADIUS` and
+  `MASK_BOUNDARY_SENSITIVITY_NOT_TESTED` when the inferred
+  semimajor axis falls within 10 percent (or two radial bins)
+  of the provisional protection radius. This is a
+  **heuristic caution**, not a claim that the mask caused the
+  proposed edge. The old geometry remains unadopted.
+- The GUI now displays this caution prominently, showing the
+  current screening radius. The native-cone sensitivity summary
+  reports `N/4` detected trials, with area-ratio and spatial
+  IoU displayed as `n/a` where only one trial succeeded.
+  It never reports the tautological 1.00 or NaN as if those
+  were meaningful estimates of robustness.
+- SGA shape selection displays the SGA hypothesis's own
+  `a, q, PA` rather than silently reusing the native-component
+  q and centroid in that line. Its independent native
+  segmentation/low-confidence evidence remains separately
+  labelled.
+- Regression tests reproduce the near-60-arcsec scale
+  coincidence and single-detection/no-IoU failure case.
+
+NEXT DATA VALIDATION MUST compare the radial profile under
+alternative explicitly controlled target screening radii,
+PSF-wing review of bright sources, a more appropriate spatial
+sky model, and independent g/r/z-band measurements. This stage
+does **not** automatically attribute Tractor sources to Leo P
+or claim a validated outer extent.
