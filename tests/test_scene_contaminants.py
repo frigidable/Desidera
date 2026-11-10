@@ -638,3 +638,115 @@ def test_negative_gaia_parallax_alert_is_not_foreground_evidence():
     assert all(v["physical_membership"] == "UNDETERMINED" for v in e)
     assert all(v["photometry_action"] == "NO_NEW_ACTION_READ_ONLY" for v in e)
     assert all(v["proposed_treatment_is_active"] is False for v in e)
+
+
+
+def test_internal_gaia_mask_preview_does_not_touch_non_gaia_or_negative_parallax():
+    """Only opt-in candidate PSF footprints enter target-protected pixels.
+
+    A galaxy knot and a doubtful negative-parallax Gaia source remain
+    unresolved; brightness/type alone are never membership decisions.
+    """
+    protected = np.zeros((241, 241), bool)
+    yy, xx = np.indices(protected.shape)
+    protected[(xx-120.)**2 + (yy-120.)**2 < 40.**2] = True
+    positions = np.array([[120.,120.], [160.,120.],
+                          [120.,160.], [214.,120.]])
+    rows = (
+        {**_row("PSF", flux=600.), "objid": 2035,
+         "ref_cat": "G3", "ref_id": 12345,
+         "parallax_mas": 1.1, "parallax_ivar": 900.,
+         "pmra_masyr": 1., "pmra_ivar": 900.},
+        {**_row("REX", flux=100., shape_r=2.), "objid": 2076,
+         "ref_cat": "L4", "ref_id": 12},
+        {**_row("PSF", flux=100.), "objid": 901,
+         "ref_cat": "G3", "ref_id": 987,
+         "parallax_mas": -4., "parallax_ivar": 25.,
+         "pmra_masyr": 10., "pmra_ivar": 25.},
+        {**_row("PSF", flux=100.), "objid": 1000},
+    )
+    baseline, old = conservative_catalogue_mask(
+        protected.shape, positions, rows, arcsec_per_pixel=1.,
+        protected=protected)
+    preview, new = conservative_catalogue_mask(
+        protected.shape, positions, rows, arcsec_per_pixel=1.,
+        protected=protected, gaia_inner_preview=True)
+    assert old["masked_catalog_sources"] == 1
+    assert old["skipped_target_overlap"] == 3
+    assert new["masked_catalog_sources"] == 2
+    assert new["skipped_target_overlap"] == 2
+    assert new["gaia_inner_preview_sources"] == 1
+    assert [e["objid"] for e in new["gaia_inner_preview_centres"]] == [2035]
+    assert not baseline[120,120] and preview[120,120]
+    assert not baseline[120,160] and not preview[120,160]
+    assert not baseline[160,120] and not preview[160,120]
+    assert baseline[120,214] and preview[120,214]
+    assert np.array_equal(
+        preview, baseline | new["gaia_inner_preview_mask"])
+    assert not new["gaia_inner_preview_mask"][120,214]
+    assert not preview.flags.writeable
+    assert not new["gaia_inner_preview_mask"].flags.writeable
+
+
+def test_opt_in_internal_gaia_mask_does_not_change_source_membership(
+        monkeypatch, tmp_path):
+    """Prepare returns a separate auditable layer, not an adopted science mask."""
+    import lsbpipe.photometry.scene_contaminants as module
+    from lsbpipe.photometry.sky_masks import SkyMaskDraft
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path/"session"))
+    project = create_object_project(
+        "Leo P", tmp_path/"Leo_P_preview",
+        field=SkyField(155.,18.,4.))
+    project.data_root = project.root/"data"
+    project.data_root.mkdir()
+    project.selected_dataset = ("dr11","south","1554p180","g")
+    project.target_radius_arcsec = 20.
+    save_object_project(project)
+    image = np.ones((241,241))
+    ds = {"project_id":project.project_id, "band":"g",
+          "source":"native-test", "wcs":_wcs(),
+          "pixel_shape":image.shape,
+          "native_hard":np.zeros(image.shape,bool),
+          "data":{"image":image, "maskbits":np.zeros(image.shape,np.uint32)}}
+    rows = (
+        {**_row(flux=600.), "objid":2035,"ref_cat":"G3","ref_id":12345,
+         "parallax_mas":1.1,"parallax_ivar":900.},
+        {**_row(flux=100.),"objid":900,"ref_cat":"","ref_id":0},
+    )
+    catalog = SimpleNamespace(
+        rows=rows,pixel_positions=np.array([[120.,120.],[205.,120.]]),
+        source_path="native-tractor.fits",source_sha256="b"*64)
+    monkeypatch.setattr(module,"read_native_tractor_gaia",
+                        lambda *args,**kwargs:catalog)
+    draft=SkyMaskDraft(project.project_id)
+    base=module.prepare_scene_contamination(
+        ds,project,draft,(155.,18.))
+    new=module.prepare_scene_contamination(
+        ds,project,draft,(155.,18.),gaia_inner_preview=True)
+    assert not base["gaia_inner_preview_enabled"]
+    assert new["gaia_inner_preview_enabled"]
+    assert base["stats"]["masked_catalog_sources"]==1
+    assert new["stats"]["masked_catalog_sources"]==2
+    assert base["stats"]["skipped_target_overlap"]==1
+    assert new["stats"]["skipped_target_overlap"]==0
+    assert new["stats"]["gaia_inner_preview_sources"]==1
+    assert new["stats"]["gaia_inner_preview_pixels"]>0
+    assert np.array_equal(new["mask"], base["mask"] |
+                          new["gaia_inner_preview_mask"])
+    assert not base["mask"][120,120] and new["mask"][120,120]
+    assert new["catalog_sha256"]==base["catalog_sha256"]=="b"*64
+    assert new["draft_digest"]==base["draft_digest"]==draft.digest
+    assert "EXPLICIT_GAIA_INTERIOR_MASK_PREVIEW_ONLY" in new["flags"]
+    assert "GAIA_WING_AND_GALAXY_FLUX_LOSS_NOT_QUANTIFIED" in new["flags"]
+    e = {x["objid"]:x for x in new["source_inventory"]["entries"]}
+    assert e[2035]["screening_disposition"]=="GAIA_FOREGROUND_MASK_PREVIEW"
+    assert e[2035]["diagnostic_inner_gaia_mask_preview_active"] is True
+    assert e[2035]["photometry_action"]=="NO_NEW_ACTION_READ_ONLY"
+    assert e[2035]["physical_membership"]=="UNDETERMINED"
+    assert e[900]["screening_disposition"]=="PROPOSED_EXCLUDE"
+    assert new["source_inventory"]["screening_counts_all_relevant"][
+        "GAIA_FOREGROUND_MASK_PREVIEW"]==1
+    assert not new["mask"].flags.writeable
+    assert not new["gaia_inner_preview_mask"].flags.writeable
+    assert np.array_equal(image,ds["data"]["image"])
+    assert draft.edits==()
