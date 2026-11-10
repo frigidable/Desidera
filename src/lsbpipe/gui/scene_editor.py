@@ -10,6 +10,9 @@ GUI thread. The preview is bounded and never downsampled for mask QA.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import fields, is_dataclass
+from datetime import datetime, timezone
+import json
 import csv
 from io import StringIO
 import math
@@ -65,6 +68,36 @@ PURPOSE_LABELS = (
     ("Sky holdout region (draft)", "sky_holdout"),
 )
 MAX_RENDER_PIXELS = 6_000_000
+
+
+def _scene_qa_json_value(value):
+    """JSON-safe diagnostic metadata, never raw native-image pixels.
+
+    Isophotal proposal dataclasses may hold tens of thousands of pixel
+    indices. Preserve their size/type, not a massive pixel-level dump.
+    Source-registry *row metadata* is intentionally exported in full.
+    """
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, np.generic):
+        return _scene_qa_json_value(value.item())
+    if isinstance(value, np.ndarray):
+        return {"pixel_array_omitted": True,
+                "shape": list(value.shape), "dtype": str(value.dtype),
+                "element_count": int(value.size)}
+    if isinstance(value, dict):
+        return {str(k): _scene_qa_json_value(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_scene_qa_json_value(v) for v in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return {f.name: _scene_qa_json_value(getattr(value, f.name))
+                for f in fields(value)}
+    if hasattr(value, "to_dict"):
+        return _scene_qa_json_value(value.to_dict())
+    raise TypeError(f"Unsupported scene diagnostic field: {type(value).__name__}")
+
 
 
 def scene_contour_stability_readout(sensitivity):
@@ -511,6 +544,14 @@ class SceneEditor(QWidget):
         self.fit_btn = QPushButton("Fit")
         self.fit_btn.clicked.connect(lambda: self.view.fit_image())
         toolbar.addWidget(self.fit_btn)
+        self.copy_scene_qa_btn = QPushButton("Copy complete Scene QA")
+        self.copy_scene_qa_btn.setObjectName("scene_copy_complete_qa")
+        self.copy_scene_qa_btn.setToolTip(
+            "Copy current project/band/Tractor/SGA/mask/isophote diagnostics, "
+            "every sensitivity trial and all source-evidence metadata as JSON. "
+            "May include local catalogue paths. No FITS or project writes.")
+        self.copy_scene_qa_btn.clicked.connect(self._copy_complete_scene_qa)
+        toolbar.addWidget(self.copy_scene_qa_btn)
         toolbar.addStretch(1)
         root.addLayout(toolbar)
         # Keep the narrow-screen minimum width independent of display options.
@@ -1643,6 +1684,141 @@ class SceneEditor(QWidget):
             "\nNo automatic foreground, background, HII, young-star "
             "or Tractor-shred membership has been inferred.")
         self.source_registry_details.setPlainText(info)
+
+
+    def _complete_scene_qa_snapshot(self):
+        """Build a faithful read-only snapshot, including failed trials.
+
+        Does not read files, call workers, change selections, save drafts,
+        adopt photometry or touch the original FITS. It is deliberately a
+        *single-band* snapshot; another band needs a separate report.
+        """
+        dataset = self._loaded
+        source = self._source_registry
+        contamination = self._contamination
+        proposed = self._isophote_proposal
+        prior = self._sga_candidate
+        active = (
+            self._project_id is not None
+            and self._draft is not None
+        )
+        result = {
+            "schema": "desidera.gui.scene-complete-qa/1",
+            "generated_utc": datetime.now(timezone.utc).isoformat(),
+            "science_status": "UNADOPTED_DIAGNOSTIC_ONLY",
+            "scope": "CURRENT_OBJECT_CURRENT_NATIVE_BAND",
+            "warning": (
+                "Scene/SGA/Tractor and isophote diagnostics are provisional. "
+                "No sky, PSF wings, total photometry or membership validated. "
+                "Array values are not exported, only their metadata."),
+            "project": {
+                "project_id": self._project_id,
+                "project_directory_name": (
+                    self._project_root.name if self._project_root else None),
+                "target_icrs_deg": self._project_target,
+                "active": active,
+            },
+            "controls": {
+                "band": self._band,
+                "view_width_arcmin": self.width.value(),
+                "image_stretch": self.display_mode.currentText(),
+                "contrast": self.iso_threshold.value(),
+                "gaussian_smooth_pix": self.iso_smooth.value(),
+                "conservative_bridge_guard": self.iso_bridge_guard.isChecked(),
+                "use_sga_for_protection": self.sga_use_prior.isChecked(),
+                "use_sga_geometry": self.sga_use_seed.isChecked(),
+                "picked_isophote_centre_icrs": self._isophote_center_icrs,
+                "selected_isophote_trial": self.iso_candidate.currentData(),
+                "selected_isophote_shape": self.iso_shape.currentData(),
+                "share_across_bands": self.iso_share_bands.isChecked(),
+                "low_confidence_override": self.iso_low_conf_override.isChecked(),
+                "mask_overlay_visible": self.iso_mask_toggle.isChecked(),
+                "mask_opacity_percent": self.iso_opacity.value(),
+                "show_unresolved_rings": self.iso_show_conflicts.isChecked(),
+                "show_sga_mask_candidates": self.iso_show_sga_shreds.isChecked(),
+                "native_hard_overlay_visible": self.show_hard.isChecked(),
+                "source_evidence_filter": self.source_registry_filter.currentData(),
+                "source_evidence_search": self.source_registry_search.text(),
+                "source_evidence_visible_count": len(self._source_registry_visible),
+                "selected_source_detail": self.source_registry_details.toPlainText(),
+            },
+            "worker": {
+                "operation": self._work_kind,
+                "in_progress": self._future is not None
+                               and not self._future.done(),
+            },
+            "display_messages": {
+                "scene_status": self.status.text(),
+                "scene_warning": self.warning.text(),
+                "sga_status": self.sga_status.text(),
+                "neighbour_mask_status": self.iso_mask_status.text(),
+                "neighbour_mask_details": self.iso_mask_details.text(),
+                "source_inventory_status": self.source_registry_status.text(),
+                "isophote_summary": self.iso_summary.text(),
+                "sga_isophote_comparison": self.iso_sga_summary.text(),
+                "isophote_details_all_trials": self.iso_details.text(),
+            },
+            "native_fits": None,
+            "sga_lookup": None,
+            "sga_selected_prior": None,
+            "scene_draft": None,
+            "contaminant_screening": None,
+            "isophote_proposal": None,
+            "source_inventory": None,
+        }
+        if dataset is not None:
+            wcs = dataset["wcs"]
+            result["native_fits"] = {
+                "status": dataset["status"],
+                "dataset_source": dataset["source"],
+                "band": dataset["band"],
+                "project_id": dataset["project_id"],
+                "native_pixel_shape": dataset["pixel_shape"],
+                "display_width_arcmin": dataset["display_width_arcmin"],
+                "project_field_width_arcmin":
+                    dataset["project_field_width_arcmin"],
+                "hdu_indices": dataset["hdu_indices"],
+                "native_hard_pixel_count":
+                    int(np.count_nonzero(dataset["native_hard"])),
+                "wcs_fits_header": dict(wcs.to_header(relax=True)),
+            }
+        if self._draft is not None:
+            result["scene_draft"] = {
+                **self._draft.to_dict(),
+                "working_digest": self._draft.digest,
+                "last_saved_digest": self._saved_digest,
+                "dirty": self._draft.digest != self._saved_digest,
+            }
+        if self._sga_lookup is not None:
+            result["sga_lookup"] = _scene_qa_json_value(self._sga_lookup)
+        if prior is not None:
+            result["sga_selected_prior"] = _scene_qa_json_value(prior)
+        if contamination is not None:
+            result["contaminant_screening"] = {
+                **{k: _scene_qa_json_value(v)
+                   for k, v in contamination.items()
+                   if k not in ("mask", "auto_mask", "source_inventory")},
+                "proposed_mask_pixel_count":
+                    int(np.count_nonzero(contamination["mask"])),
+                "auto_mask_pixel_count":
+                    int(np.count_nonzero(contamination["auto_mask"])),
+                "pixel_arrays_not_exported": True,
+            }
+        if proposed is not None:
+            result["isophote_proposal"] = _scene_qa_json_value(proposed)
+        if source is not None:
+            result["source_inventory"] = _scene_qa_json_value(source)
+            result["source_inventory"]["all_stored_entries_included"] = True
+        return _scene_qa_json_value(result)
+
+    def _copy_complete_scene_qa(self):
+        """One-click diagnostic exchange with the researcher; never mutates QA."""
+        report = self._complete_scene_qa_snapshot()
+        payload = json.dumps(report, ensure_ascii=False, indent=2,
+                             allow_nan=False)
+        QApplication.clipboard().setText(payload)
+        self.copy_scene_qa_btn.setText(
+            f"Copied Scene QA ({len(payload)//1024} KiB)")
 
     def _copy_source_registry_tsv(self):
         """Only explicit user action can export the filtered evidence."""
