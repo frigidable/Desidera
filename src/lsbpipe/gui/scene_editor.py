@@ -156,8 +156,38 @@ def load_scene_original_cutout(project_root: str, band: str,
         raise ValueError("Cutout width must remain inside the saved project field")
     field = SkyField(project.field.ra_deg, project.field.dec_deg, width_arcmin)
     hit = BrickHit(release, region, brick, 0., 0., 0., 0., {band: 1})
+    # Record the exact physical sources BEFORE loading any science pixels.
+    # The GUI scientific cutout previously checked WCS/shape but Stage04
+    # could not report a full-FITS content lineage. Keep this in the
+    # worker thread and never modify a source file or project manifest.
+    from lsbpipe.gui.science_workflows import science_data_root
+    from lsbpipe.surveys.dataset_integrity import (
+        KINDS, _expected_paths, _sha256_file)
+    native_root = science_data_root(project.data_root, hit=hit, band=band)
+    expected_paths = _expected_paths(
+        native_root, (release, region, brick, band))
+    before = {}
+    for kind in KINDS:
+        file = expected_paths[kind]
+        if not file.is_file() or file.is_symlink():
+            raise ValueError(
+                f"Unsafe or missing original {kind} FITS for Scene")
+        stat = file.stat()
+        before[kind] = (stat.st_size, stat.st_mtime_ns)
     original = prepare_fits_explorer(
         directory=project.data_root, field=field, hit=hit, band=band)
+    if str(native_root.resolve()) != str(
+            Path(original["data_root"]).resolve()):
+        raise ValueError("Scene reader resolved a different native data root")
+    source_hashes = {}
+    for kind, file in expected_paths.items():
+        if file.is_symlink():
+            raise ValueError("Original FITS became a symlink during Scene load")
+        info = _sha256_file(file)
+        if (info["size_bytes"], info["mtime_ns"]) != before[kind]:
+            raise RuntimeError(
+                f"Original {kind} FITS changed during Scene load")
+        source_hashes[kind] = info["sha256_local"]
     data = original["data"]
     shape = original["pixel_shape"]
     if np.prod(shape) > MAX_RENDER_PIXELS:
@@ -180,6 +210,10 @@ def load_scene_original_cutout(project_root: str, band: str,
         "project_field_width_arcmin": project.field.width_arcmin,
         "project_id": project.project_id,
         "hdu_indices": original["hdu_indices"],
+        "original_fits_sha256_local": source_hashes,
+        "original_fits_provenance_status":
+            "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD",
+        "original_fits_sha256_is_archive_authenticity": False,
     }
 
 
