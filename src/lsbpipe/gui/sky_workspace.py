@@ -304,13 +304,34 @@ class SkyWorkspace(QWidget):
                 + f"{cmp['plane_minus_constant_at_target_nMgy_per_pixel']:.7g}",
                 "This difference is NOT a galaxy-flux error estimate.",
             ]
+        zero = result.get("zero_additional_correction_baseline")
+        if zero is not None:
+            lines += [
+                "DR11 baseline: NO further sky correction (not a fitted model)",
+                f"  Original holdout RMS [nMgy/pixel]: "
+                f"{zero['holdout_rms_nMgy_per_pixel']:.8g}",
+                f"  Original holdout median [nMgy/pixel]: "
+                f"{zero['holdout_median_nMgy_per_pixel']:.8g}",
+                "  Same original held-out tiles as the fitted candidates.",
+                "  This does not prove upstream DESI sky subtraction was unbiased.",
+            ]
+            for name, audit in (
+                    result.get("model_improvement_vs_zero_baseline") or {}).items():
+                fraction = audit.get("rms_improvement_fraction")
+                if fraction is not None:
+                    lines += [
+                        f"  {name} heldout RMS reduction vs zero: "
+                        f"{100.*fraction:.3f}% (descriptive, uncalibrated)",
+                    ]
         preferred = result.get("provisional_automatic_model")
         if preferred is not None:
             lines += [
-                f"Automatically preferred diagnostic model: "
+                f"Preferred only BETWEEN fitted nonzero candidates: "
                 f"{preferred['method']}",
                 f"Predicted residual sky at target [nMgy/pixel]: "
                 f"{preferred['predicted_residual_sky_at_target_nMgy_per_pixel']:.7g}",
+                "This heuristic choice does NOT establish a need to subtract it.",
+                "Default science action: retain the original DR11 coadd.",
                 "Selection is provisional and conditional on current Scene masks.",
             ]
         lines += [
