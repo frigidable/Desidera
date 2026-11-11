@@ -552,7 +552,9 @@ def test_p21_same_project_directional_profile_fixed_controls_and_read_only():
     assert report["n_fixed_control_tiles"] == 16
     assert report["n_controls_with_at_least_one_measured_ring"] >= 8
     assert report["source"]["n_rings_measured_with_both_cones"] == 5
-    assert report["schema"] == "desidera.scene.project-only-foreground-sector/2"
+    assert report["schema"] == "desidera.scene.project-only-foreground-sector/3"
+    assert report["conditional_isophote_component_status"] == (
+        "NOT_MEASURED_NO_CURRENT_ISOPHOTE_PROPOSAL")
     assert report["n_source_rings_with_mask_geometry_comparable"] == 5
     assert report["n_source_rings_with_antipodal_matched_pixels"] == 5
     assert report["source"]["per_ring"][3][
@@ -659,3 +661,69 @@ def test_p21_coverage_handles_subpixel_antipodal_reflection():
         assert ring["antipodal_paired_difference_median_nMgy_per_pixel"] == 0.
         assert ring["n_valid_antipodal_facing_to_opposite_pixel_pairs"] >= 30
     assert out["galaxy_light_loss_measured"] is False
+
+
+
+def test_p21_current_project_draft_component_overlap_conditions_paired_result():
+    """Candidate overlap must be conditional and pixel-exact, not adopted."""
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    y, x = np.indices((512,512))
+    sx, sy = 256., 256.
+    fwhm = 2.
+    r = np.hypot(x-sx, y-sy)/fwhm
+    facing = (y-sy)/np.maximum(np.hypot(x-sx, y-sy),1.e-9)
+    draft_component = ((r >= 16.) & (r < 20.) &
+                       (facing >= np.cos(np.pi/4.)))
+    image = np.zeros((512,512), dtype=float)
+    image[draft_component] = .05
+    raw_image = image.copy()
+    ids = np.flatnonzero(draft_component).astype(np.int64)
+    ids.setflags(write=False)
+    out = audit_same_project_foreground_sector_profile(
+        image, np.ones_like(image), np.zeros_like(image,dtype=bool),
+        source_xy=(sx,sy),target_xy=(sx,sy+38.),
+        measured_fwhm_pix=fwhm,
+        candidate_component_indices=ids)
+    assert out["schema"] == "desidera.scene.project-only-foreground-sector/3"
+    assert out["conditional_isophote_component_status"] == (
+        "DRAFT_LOCAL_DETECTED_COMPONENT_NOT_PHYSICAL_GALAXY")
+    assert out["candidate_component_pixel_count"] == int(draft_component.sum())
+    row = out["source"]["per_ring"][3]
+    assert row["n_toward_geometric_pixels_in_draft_component"] == (
+        row["n_geometrically_available_facing_pixels"])
+    assert row["n_toward_valid_pixels_in_draft_component"] == (
+        row["n_original_valid_facing_pixels"])
+    assert row["n_matched_pairs_touching_draft_component"] == (
+        row["n_valid_antipodal_facing_to_opposite_pixel_pairs"])
+    assert row["n_matched_pairs_outside_draft_component"] == 0
+    assert row["paired_median_touching_draft_component_nMgy_pixel"] == .05
+    assert row["paired_median_outside_draft_component_nMgy_pixel"] is None
+    other_ring = out["source"]["per_ring"][2]
+    assert other_ring["n_matched_pairs_touching_draft_component"] == 0
+    assert other_ring["n_matched_pairs_outside_draft_component"] > 30
+    assert other_ring["paired_median_outside_draft_component_nMgy_pixel"] == 0.
+    assert out["draft_isophote_is_not_true_galaxy_boundary"] is True
+    assert out["science_adopted"] is False
+    assert out["galaxy_light_loss_measured"] is False
+    assert np.array_equal(image,raw_image)
+    assert not ids.flags.writeable
+
+
+def test_p21_rejects_invalid_candidate_indices_without_casting():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.zeros((512,512),dtype=float)
+    valid = np.ones_like(image)
+    hard = np.zeros_like(image,dtype=bool)
+    import pytest
+    for ids in (np.array([-1]), np.array([image.size]),
+                np.array([12.1]), np.ones((2,2),dtype=np.int64)):
+        with pytest.raises(ValueError,match="isophote pixel indices"):
+            audit_same_project_foreground_sector_profile(
+                image, valid, hard,
+                source_xy=(256.,256.),target_xy=(256.,300.),
+                measured_fwhm_pix=2.,
+                candidate_component_indices=ids)
