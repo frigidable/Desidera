@@ -75,6 +75,12 @@ def test_aperture_native_worker_retains_masks_and_zero_sky():
     assert not good["masked_light_reconstructed"]
     assert not good["total_galaxy_magnitude_inferred"]
     assert good["source_fits_hashes_verified"] is False
+    assert good["systematics_04_3"]["status"] == (
+        "CONDITIONAL_SYSTEMATICS_DIAGNOSTIC_ONLY")
+    assert good["systematics_04_3"]["blank_apertures"][
+        "covariance_calibrated_for_science"] is False
+    assert good["systematics_04_3"]["sky_response"][
+        "sky_level_uncertainty_assumed"] is None
     assert good["n_sky_target_protection_pixels_not_masked_for_photometry"]>200
     assert all(len(c["cumulative"])==10 for c in good["curves"])
     assert np.array_equal(ds["data"]["image"],original)
@@ -112,6 +118,7 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     assert w._result["status"]=="DIRECT_FINITE_APERTURE_DIAGNOSTICS_NOT_ADOPTED"
     assert "No masked galaxy light" not in w.readout.toPlainText()
     assert "UNADOPTED" in w.readout.toPlainText()
+    assert "04.3 · Conditional uncertainty diagnostics" in w.readout.toPlainText()
     assert len(w.plot._curves)==3
     w.copy_qa()
     copied=QApplication.clipboard().text()
