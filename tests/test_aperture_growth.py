@@ -158,3 +158,20 @@ def test_annulus_no_valid_pixels_does_not_invent_flux():
     assert annulus.signed_flux_nMgy is None
     assert annulus.ab_surface_brightness_mag_arcsec2 is None
     assert annulus.valid_area_pixel2==0
+
+
+
+def test_entirely_masked_growth_sequence_is_not_claimed_measured():
+    f=frame(value=5.)
+    mask=np.ones(f.shape,dtype=bool)
+    out=run_curve(f,source=mask,radii=(1.,2.,4.))
+    assert out["science_status"]==(
+        "UNDERCONSTRAINED_INSUFFICIENT_VALID_RADIAL_SAMPLES")
+    assert out["n_measured_direct_apertures"]==0
+    assert out["n_measured_independent_annuli"]==0
+    assert out["max_abs_annulus_closure_nMgy"] is None
+    assert out["adopted_for_science"] is False
+    assert "NO_USABLE_RADIAL_CURVE_MEASUREMENT" in out["warning_flags"]
+    assert all(r["signed_valid_flux_nMgy"] is None
+               for r in out["cumulative"])
+    json.dumps(out,allow_nan=False)
