@@ -3035,6 +3035,11 @@ class SceneEditor(QWidget):
                 "project_field_width_arcmin":
                     dataset["project_field_width_arcmin"],
                 "hdu_indices": dataset["hdu_indices"],
+                "original_fits_provenance_status": dataset.get(
+                    "original_fits_provenance_status", "NOT_HASHED"),
+                "original_fits_sha256_local": dataset.get(
+                    "original_fits_sha256_local"),
+                "sha256_is_remote_archive_authenticity": False,
                 "native_hard_pixel_count":
                     int(np.count_nonzero(dataset["native_hard"])),
                 "wcs_fits_header": dict(wcs.to_header(relax=True)),
