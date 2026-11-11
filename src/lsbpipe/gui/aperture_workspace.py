@@ -536,6 +536,16 @@ class ApertureWorkspace(QWidget):
                 "Empirical blank covariance is exploratory even when measured.",
                 "",
             ])
+            subscales = systematics.get("smaller_scale_blank_diagnostics")
+            if subscales is not None:
+                lines.append(
+                    "Shorter-radius blank-noise probe (NEVER valid for "
+                    "full aperture): " + str(subscales["status"]))
+                for trial in subscales.get("probes", []):
+                    lines.append(
+                        f"  outer {trial['radii_arcsec'][-1]:.1f} arcsec · "
+                        f"{trial['n_accepted']}/{trial['n_required']} "
+                        f"clean placements · {trial['status']}")
         lines += [
             "SCIENCE HOLD: no missing-area interpolation, no PSF-corrected "
             "total, no calibrated sky/noise covariance.",
