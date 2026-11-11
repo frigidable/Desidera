@@ -1751,6 +1751,14 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
     assert qa["mask_policy_ablation"] is report
     assert "READ-ONLY 5/6" in editor.policy_ablation_status.text()
     assert "NOT galaxy-light loss" in editor.policy_ablation_status.text()
+    # Exercise the actual Qt-worker dispatch as well as pure backend.
+    editor.policy_ablation_btn.click()
+    qtbot.waitUntil(
+        lambda:editor._future is None and
+        editor._policy_ablation_result is not None,
+        timeout=15000)
+    assert len(calls)==12
+    assert "READ-ONLY 5/6" in editor.policy_ablation_status.text()
     # Experimental checkbox state is NOT a policy-ablation input:
     # the worker computes all four policies regardless of the UI toggle.
     editor.iso_gaia_inner_preview.setChecked(True)
