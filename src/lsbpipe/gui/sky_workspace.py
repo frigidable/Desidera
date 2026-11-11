@@ -219,8 +219,12 @@ class SkyWorkspace(QWidget):
         self._result = result
         self._result_identity = identity
         self.copy_btn.setEnabled(True)
+        warning_count = len(
+            (result.get("automatic_sky_spatial_qa") or {}).get(
+                "warning_flags", ()))
         self.status.setText(
             f"{result['status']} · band {identity[2].upper()} · "
+            f"{warning_count} spatial quality warnings · "
             "UNADOPTED · original FITS unchanged.")
         self.readout.setPlainText(self._format_readout(result))
         self.refresh_context()
@@ -267,6 +271,32 @@ class SkyWorkspace(QWidget):
                     for tile in model["tiles"]),
                 "",
             ]
+        spatial = result.get("automatic_sky_spatial_qa")
+        if spatial is not None:
+            lines += [
+                "Spatial tile-quality diagnostic · same coadd, NOT science PASS",
+            ]
+            for role, geometry in spatial["geometry"].items():
+                lines += [
+                    f"  {role}: dominant tile row fraction = "
+                    f"{geometry['dominant_single_row_fraction']}, "
+                    f"partial edge tiles = {geometry['n_partial_edge_tiles']}/"
+                    f"{geometry['n_tiles']}, missing quadrants = "
+                    f"{geometry['missing_quadrants']}",
+                ]
+            for method, audit in spatial["methods"].items():
+                lines += [
+                    f"  {method}: training/holdout pixel RMS ratio = "
+                    f"{audit['training_to_holdout_pixel_rms_ratio']}",
+                    f"  {method}: holdout tile-median range [nMgy/pixel] = "
+                    f"{audit['holdout']['tile_median_peak_to_peak_nMgy_per_pixel']}",
+                ]
+            if spatial["warning_flags"]:
+                lines += [
+                    "QUALITY FLAGS — spatial support not calibrated:",
+                    *["  " + flag for flag in spatial["warning_flags"]],
+                ]
+            lines.append("")
         cmp = result.get("method_comparison")
         if cmp:
             lines += [
