@@ -12,7 +12,7 @@ import json
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from lsbpipe.background import diagnose_current_project_residual_sky
@@ -24,6 +24,10 @@ class SkyWorkspace(QWidget):
     def __init__(self, scene_editor, parent=None):
         super().__init__(parent)
         self.setObjectName("photometry_sky_stage")
+        # A third scientific tab must not impose its QWidget minimum
+        # size hint on the whole Photometry Workspace at narrow widths.
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self._scene = scene_editor
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="desidera-sky")
@@ -70,7 +74,7 @@ class SkyWorkspace(QWidget):
         root.addWidget(setup)
 
         tools = QHBoxLayout()
-        self.run_btn = QPushButton("Build automatic sky candidate · current band")
+        self.run_btn = QPushButton("Build automatic sky")
         self.run_btn.setObjectName("sky_diagnostic_run")
         self.run_btn.setToolTip(
             "Uses only the native Scene image/invvar, current draft and "
@@ -92,6 +96,8 @@ class SkyWorkspace(QWidget):
         root.addWidget(self.status)
         self.readout = QPlainTextEdit(self)
         self.readout.setObjectName("sky_diagnostic_readout")
+        self.readout.setMinimumWidth(0)
+        self.readout.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.readout.setReadOnly(True)
         self.readout.setPlainText(
             "No background result. Sky training/holdout regions will be "
