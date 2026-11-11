@@ -312,6 +312,19 @@ def test_project_stage03_rejects_stale_draft_and_bad_native_grid():
     correct=dict(contamination,source_quartet_key=native_key)
     output=diagnose_current_project_residual_sky(dataset,draft,correct)
     assert output["source_quartet_key"] == native_key
+    hashes={key:str(i)*64 for i,key in enumerate(
+        ("image","invvar","nexp","maskbits"),1)}
+    dataset["original_fits_sha256_local"]=hashes
+    dataset["original_fits_provenance_status"]=(
+        "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD")
+    dataset["image_unit_evidence"]="FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"
+    verified=diagnose_current_project_residual_sky(dataset,draft,correct)
+    assert verified["source_fits_hashes_verified_at_scene_load"] is True
+    assert verified["original_fits_sha256_local"] == hashes
+    assert verified["sky_model_adopted"] is False
+    dataset["image_unit_evidence"]=None
+    with pytest.raises(ValueError,match="Scene FITS provenance"):
+        diagnose_current_project_residual_sky(dataset,draft,correct)
 
 
 def test_project_stage03_source_protection_hides_mistaken_sky_annotation():
