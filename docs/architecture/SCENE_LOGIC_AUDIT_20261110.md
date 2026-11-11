@@ -1940,3 +1940,131 @@ is poor or the asymmetry persists under a
 galaxy-contaminated aperture, preserve
 `SCIENCE HOLD`; do not substitute a star halo
 or galaxy-light-loss value from the report.
+
+
+---
+
+## Twenty-third-pass P21/2 native paired-sector outcome and internal-isophote confound — Leo P (2026-11-11)
+
+**Full researcher-supplied source:** `Copy Scene QA` generated
+`2026-11-11T11:40:46.093185+00:00`,
+2,686,356 bytes, SHA-256
+`268e85c1ceec391c17a9ccfd1838306ded4864867516ac465e34e9a4467ebf93`.
+Parsed as a complete JSON tree, not truncated chat preview.
+`project_id=0876bbc4-7405-481b-88a8-0e3486c7be98`,
+Leo P `DR11/south/1554p180/r` original 1466×1324 pixels.
+Unchanged PSF0 r-kernel
+`70db7f364c944262185fe5e20dfe28bba9ee995f88cc991bf808e51ac70e7824`,
+17 train / 5 holdout, FWHM 4.02927165 native pixels.
+Source Gaia DR3 623919492384922624 / Tractor OBJID 2035,
+star−target 75.84217 native px =18.8228 FWHM.
+No original FITS changed; no additional bricks/cat downloads.
+
+The second P21 `/2` execution completed with
+`SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY`,
+all 5 rings had at least 30 pixel-matched antipodal pairs,
+but **zero of the five** reached the predeclared
+70%-per-cone and 20%-imbalance raw-sector QA gate.
+Source ring results (paired median difference in native
+nMgy/pixel, paired n, median absolute / maximum absolute
+11 same-image fixed-control pair differences):
+
+| Ring, native measured FWHM | Source paired median | Pairs | Control median abs | Control maximum abs | Facing coverage / away coverage |
+|---|---:|---:|---:|---:|---|
+| 6–8 | +0.003920091 | 79 | 0.000637434 | 0.002837330 | 23.68% / 100% |
+| 8–12 | +0.001666299 | 206 | 0.000384111 | 0.000841038 | 20.37% / 100% |
+| 12–16 | +0.005267340 | 620 | 0.000415876 | 0.001420533 | 44.89% / 100% |
+| 16–20 | +0.002599750 | 443 | 0.000319988 | 0.000678075 | 25.03% / 100% |
+| 20–24 | +0.004770129 | 851 | 0.000296523 | 0.000823854 | 50.65% / 79.22% |
+
+The paired source median is larger than the maximum
+absolute control value at every ring, but this is
+**neither an empirical p-value nor a source-specific
+stellar-halo measurement**. Eleven fixed controls
+lack a paired bright star and diffuse galaxy and
+the five radial bins are correlated. The paired method
+reduces unequal-lattice sampling but cannot remove the
+physical target signal or guarantee absence of PSF
+anisotropy and residual sky gradients.
+
+**Direct candidate-contour geometry check from this
+SAME export, no new survey files:** the currently
+selected `r` isophote `trial 0` has
+`LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE`,
+`UNANCHORED_CENTROID_DRIFT`, 28,609 detected component
+pixels, centroid offset 66.6209 px, trial minimum
+IoU 0.7735, area ratio 1.478, `q≈0.349`, and
+provisional SGA-informed `a≈55.285 arcsec`.
+Its published **padded display contour**, analysed
+geometrically against original native pixel centres
+and fixed source-facing/opposite P21 cones,
+contains the following fractions of all geometrically
+available source-facing cone pixels (not quality-masked
+pairs): `0/359=0%` in 6–8 FWHM,
+`0/1021=0%` in 8–12,
+`512/1428=35.85%` in 12–16,
+`1838/1838=100%` in 16–20,
+`2153/2245=95.90%` in 20–24.
+No geometrical pixels from any five **opposite**
+cone annuli lie within this candidate contour.
+The stellar source centre is outside the contour;
+its nearest projected contour boundary is 58.70
+native px (15.38 arcsec), ≈14.57 FWHM.
+Star-to-target-centre is 75.84 px, ≈19.87 arcsec.
+The contour is **provisional** and may contain
+non-galaxy sources or omit genuine LSB light.
+The native `component_indices` are 28,609 distinct
+component pixels, whereas the padded **display contour**
+includes an outward margin: these two geometries
+must not be treated as identical.
+
+This precisely explains why 16–24 FWHM toward-star
+contrasts are **inseparably confounded** by the
+already-detected candidate galaxy structure. It
+does not prove the contrast *is* galaxy flux, and
+the bins 6–12 FWHM outside the present contour still
+cannot be certified galaxy-free given
+low-confidence isophotal extent. The frozen
+63px PSF kernel has **zero finite-support pixels**
+within the detected component, so a claimed
+stellar-wing correction or galaxy-light flux-loss
+from this finite kernel remains unsupported.
+
+**P21/3 corrective extension** (strictly same-project
+conditional sensitivity, no science adoption):
+when the current valid selected local isophote
+trial has a native `component_indices` pixel set
+in memory, the existing explicit source-bound
+P21 worker now classifies each annular antipodal
+pair by whether **either end** lies within that
+preliminary detected component. For every ring it
+reports geometric face overlap, valid-facing
+overlap, number of matched pairs touching/not touching
+the provisional component, and the separate conditional
+median paired differences for both subsets when
+>=30 pairs are available. Uses exact original
+component pixel indices, **not** padded display
+contour nor external images; keeps the original
+P21 unfiltered contrasts and fixed 11-control
+method unchanged. Explicit flags reject a
+physical galaxy-boundary, photometric subtraction,
+sky calibration, source/galaxy membership or
+PSF-wing adoption inferred from the comparison.
+If no current isophote candidate is selected,
+it reports `NOT_MEASURED_NO_CURRENT_ISOPHOTE_PROPOSAL`
+and leaves the former P21 comparisons usable
+as descriptive diagnostics. The GUI passes
+the selected in-memory current trial's
+`component_indices`, bound to same project,
+source and mask digest. Current P21/2 science
+state remains `SCIENCE HOLD`.
+
+**Next actual validation:** update the *same* feature
+branch and run the same r/OBJID2035
+`Probe selected Gaia star · saved PSF-0`,
+after retaining the current valid local isophote
+trial 0, then export `Copy Scene QA`. New P21/3
+numbers are **not yet measured**, and the
+conditional segmentation cannot be converted
+to stellar halo or flux-loss without independent
+injection/recovery and sky/wing identifiability.
