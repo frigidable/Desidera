@@ -3503,6 +3503,24 @@ class SceneEditor(QWidget):
     def _refresh_controls(self):
         ready = self._draft is not None and self._available
         active = ready and self._loaded is not None
+        # An ablation's Future can be done before _poll_load actually
+        # accepts/rejects the result. Disable copying until _future is
+        # cleared: otherwise the exported QA contains a null experiment
+        # even though the expensive worker is still being handled.
+        ablation_pending = (
+            self._work_kind == "policy_ablation"
+            and self._future is not None)
+        self.copy_scene_qa_btn.setEnabled(not ablation_pending)
+        if ablation_pending:
+            self.copy_scene_qa_btn.setToolTip(
+                "Mask-policy experiment has not been accepted yet. "
+                "Use Copy Scene QA after it reports READ-ONLY results "
+                "or a FAILED status. No science result is being adopted.")
+        else:
+            self.copy_scene_qa_btn.setToolTip(
+                "Copy current project/band/Tractor/SGA/mask/isophote "
+                "diagnostics as JSON, including any completed mask-policy "
+                "experiment. No FITS or project writes.")
         self.load_btn.setEnabled(ready and (
             self._future is None or self._future.done()))
         self.mode.setEnabled(active)
