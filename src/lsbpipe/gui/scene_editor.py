@@ -209,6 +209,7 @@ def load_scene_original_cutout(project_root: str, band: str,
         "display_width_arcmin": width_arcmin,
         "project_field_width_arcmin": project.field.width_arcmin,
         "project_id": project.project_id,
+        "source_quartet_key": [release, region, brick, band],
         "hdu_indices": original["hdu_indices"],
         "original_fits_sha256_local": source_hashes,
         "original_fits_provenance_status":
@@ -3030,6 +3031,7 @@ class SceneEditor(QWidget):
                 "dataset_source": dataset["source"],
                 "band": dataset["band"],
                 "project_id": dataset["project_id"],
+                "source_quartet_key": dataset.get("source_quartet_key"),
                 "native_pixel_shape": dataset["pixel_shape"],
                 "display_width_arcmin": dataset["display_width_arcmin"],
                 "project_field_width_arcmin":
