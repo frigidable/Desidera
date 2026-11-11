@@ -271,3 +271,186 @@ def fit_observation_background(observation, scene: SceneState, *, method,
         observation.image_nMgy, observation.inverse_variance_nMgy2,
         scene, method=method, grid_id=scene.grid_id,
         observation_valid=observation.valid, settings=settings)
+
+
+
+def diagnose_current_project_residual_sky(dataset, draft, contamination):
+    """Non-adopted Stage 03 sky candidates, using ONLY loaded Stage 02 inputs.
+
+    No FITS reads, network access, external bricks, implicit sky regions,
+    interpolation, model-subtracted image or filesystem writes. The
+    previously prepared catalogue source masks remain provisional.
+    """
+    from dataclasses import asdict
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    from lsbpipe.scene import LayerKind, MaskLayer, SceneState, grid_fingerprint
+
+    if (not isinstance(dataset, dict) or
+            not isinstance(contamination, dict) or draft is None):
+        raise ValueError("Loaded Scene, draft and prepared masks are required")
+    pid = dataset["project_id"]
+    band = dataset["band"]
+    source = dataset["source"]
+    if (draft.project_id != pid or
+            contamination.get("project_id") != pid or
+            contamination.get("band") != band or
+            contamination.get("dataset_source") != source or
+            contamination.get("draft_digest") != draft.digest or
+            contamination.get("status") !=
+            "CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED"):
+        raise ValueError("Stale project/band/draft/Tractor masking provenance")
+    image = np.asarray(dataset["data"]["image"])
+    ivar = np.asarray(dataset["data"]["invvar"])
+    hard = np.asarray(dataset["native_hard"])
+    shape = tuple(dataset["pixel_shape"])
+    if (len(shape) != 2 or image.shape != shape or ivar.shape != shape
+            or hard.shape != shape or hard.dtype.kind != "b"):
+        raise ValueError("Original native quartet has inconsistent pixel grids")
+    auto = np.asarray(contamination["auto_mask"])
+    protected = np.asarray(contamination["protected"])
+    prepared_hard = np.asarray(contamination["hard"])
+    for array in (auto, protected, prepared_hard):
+        if array.shape != shape or array.dtype.kind != "b":
+            raise ValueError("Prepared masking does not match original native grid")
+    if not np.array_equal(hard, prepared_hard):
+        raise ValueError("Prepared native-hard mask differs from original source")
+    if not isinstance(contamination.get("catalog_sha256"), str):
+        raise ValueError("Prepared catalogue fingerprint missing")
+
+    preview = evaluate_mask_draft(
+        draft, dataset["wcs"], shape, band,
+        native_hard=hard, automatic_contaminants=auto)
+    # Explicit sky annotations are mandatory. Never manufacture random
+    # star-free tiles or silently use the entire rest of the brick as sky.
+    sky_train = np.asarray(preview["sky_train"], dtype=bool)
+    sky_holdout = np.asarray(preview["sky_holdout"], dtype=bool)
+    # The native Source/Tractor target-protection radius must also be
+    # excluded: a manually drawn sky region may cross it.
+    sky_protected = protected | preview["target_protect"]
+    sky_train &= ~sky_protected
+    sky_holdout &= ~sky_protected
+    finite = (np.isfinite(image) & np.isfinite(ivar) & (ivar > 0))
+    sky_train &= finite
+    sky_holdout &= finite
+    if np.any(sky_train & sky_holdout):
+        raise ValueError("Sky training and independent holdout must be disjoint")
+
+    grid = grid_fingerprint(dataset["wcs"], shape)
+    warnings = (
+        "SKY_REGIONS_USER_SELECTED_NOT_INDEPENDENT_EXPOSURES",
+        "PROVISIONAL_CATALOGUE_MASK_NOT_PSF_WING_CALIBRATED",
+        "GALAXY_OUTSKIRTS_MAY_EXTEND_BEYOND_PROTECTED_REGION",
+        "DESI_COADD_PIXEL_COVARIANCE_NOT_CALIBRATED",
+        "UPSTREAM_SURVEY_SKY_SUBTRACTION_IRREVERSIBLE",
+    )
+    base = {
+        "schema": "desidera.sky.project-native-residual-diagnostic/1",
+        "status": "NOT_MEASURED",
+        "science_status": "UNADOPTED_DIAGNOSTIC_ONLY",
+        "project_id": pid,
+        "band": band,
+        "dataset_source": source,
+        "grid_fingerprint": grid,
+        "draft_sha256": draft.digest,
+        "catalog_sha256": contamination["catalog_sha256"],
+        "native_pixel_shape": list(shape),
+        "native_hard_pixels": int(np.count_nonzero(hard)),
+        "provisional_catalogue_mask_pixels": int(np.count_nonzero(auto)),
+        "protected_target_pixels": int(np.count_nonzero(sky_protected)),
+        "sky_train_effective_pixels": int(np.count_nonzero(sky_train)),
+        "sky_holdout_effective_pixels": int(np.count_nonzero(sky_holdout)),
+        "preview_gaia_inner_mask_used":
+            bool(contamination.get("gaia_inner_preview_enabled", False)),
+        "preview_red_extended_mask_used":
+            bool(contamination.get("red_extended_preview_enabled", False)),
+        "uses_only_existing_project_loaded_native_band": True,
+        "additional_bricks_or_catalogues_used": False,
+        "original_fits_or_project_draft_modified": False,
+        "background_subtracted_image_created": False,
+        "sky_model_adopted": False,
+        "psf_wings_validated": False,
+        "noise_covariance_validated": False,
+        "sky_galaxy_degeneracy_resolved": False,
+        "source_masks_scientifically_validated": False,
+        "methods": {},
+        "method_comparison": None,
+        "warnings": list(warnings),
+    }
+    if not np.any(sky_train) or not np.any(sky_holdout):
+        missing = []
+        if not np.any(sky_train):
+            missing.append("SKY_TRAIN_PIXELS_ABSENT_OR_MASKED")
+        if not np.any(sky_holdout):
+            missing.append("SKY_HOLDOUT_PIXELS_ABSENT_OR_MASKED")
+        return dict(base, status="EXPLICIT_DISJOINT_SKY_REGIONS_REQUIRED",
+                    warnings=list(warnings) + missing)
+
+    def layer(name, kind, pixels):
+        return MaskLayer(name, kind, pixels, grid, band, "current-scene-provisional")
+
+    scene = SceneState(
+        target_id=pid, grid_id=grid, band=band, shape=shape,
+        layers=(
+            layer("native_hard", LayerKind.INVALID_DATA, hard),
+            layer("catalogue_provisional", LayerKind.NEIGHBOR, auto),
+            layer("manual_exclusion", LayerKind.MANUAL_EXCLUDE,
+                  preview["manual_exclude"]),
+            layer("target_provisional", LayerKind.TARGET_PROTECT,
+                  sky_protected),
+            layer("sky_train_explicit", LayerKind.SKY_TRAIN, sky_train),
+            layer("sky_holdout_explicit", LayerKind.SKY_HOLDOUT, sky_holdout),
+        ),
+        revision=draft.revision,
+    )
+    # No automatic minimum tuned from Leo P output. These are conservative
+    # sampling requirements, NOT an effective independent-pixel count.
+    settings = BackgroundSettings(
+        min_training_pixels=100, min_holdout_pixels=100,
+        min_holdout_quadrants=3)
+    models = {}
+    candidates = {}
+    for method in ("constant", "tilted_plane"):
+        candidate = fit_residual_background(
+            image, ivar, scene, method=method, grid_id=grid,
+            observation_valid=~hard, settings=settings)
+        candidates[method] = candidate
+        serialized = asdict(candidate)
+        serialized["fit_status"] = candidate.fit_status.value
+        serialized["holdout_status"] = candidate.holdout_status.value
+        serialized["warnings"] = list(candidate.warnings)
+        models[method] = serialized
+    base["methods"] = models
+    fitted = [m for m in candidates.values() if m.fit_status == FitStatus.FITTED]
+    base["status"] = (
+        "TWO_SKY_MODELS_FITTED_HOLDOUT_UNCALIBRATED"
+        if len(fitted) == 2
+        else "SKY_CANDIDATE_FIT_INCOMPLETE_NOT_ADOPTED")
+    if len(fitted) == 2:
+        from math import hypot
+        anchor = contamination.get("anchor_icrs")
+        if anchor is None:
+            raise ValueError("Protected target ICRS anchor is unavailable")
+        x, y = dataset["wcs"].all_world2pix(*map(float, anchor), 0)
+        if not np.isfinite(x) or not np.isfinite(y):
+            raise ValueError("Project target WCS anchor is not finite")
+        b_const = float(candidates["constant"].evaluate_at(x, y))
+        b_plane = float(candidates["tilted_plane"].evaluate_at(x, y))
+        ny, nx = shape
+        corners = ((0, 0), (nx-1, 0), (0, ny-1), (nx-1, ny-1))
+        differences = [
+            float(candidates["tilted_plane"].evaluate_at(cx, cy) -
+                  candidates["constant"].evaluate_at(cx, cy))
+            for cx, cy in corners]
+        base["method_comparison"] = {
+            "target_anchor_native_xy_pix": [float(x), float(y)],
+            "constant_at_target_nMgy_per_pixel": b_const,
+            "plane_at_target_nMgy_per_pixel": b_plane,
+            "plane_minus_constant_at_target_nMgy_per_pixel":
+                b_plane-b_const,
+            "max_abs_plane_minus_constant_corners_nMgy_per_pixel":
+                max(abs(v) for v in differences),
+            "both_methods_share_exact_same_sky_train_and_holdout": True,
+            "not_a_galaxy_flux_bias_estimate": True,
+            "not_a_model_selection_p_value": True,
+        }
+    return base
