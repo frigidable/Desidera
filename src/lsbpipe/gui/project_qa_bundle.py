@@ -117,13 +117,14 @@ def _compact_scene(workspace):
         result["mask_policy_ablation"] = _compact_ablation(ablation)
     # Source-level candidates are essential for diagnosis: keep the full
     # source evidence metadata, not images, cuts, or pixel masks.
-    result["state"] = (
-        "WORKER_IN_PROGRESS" if result["worker"]["in_progress"] else
-        "CURRENT_LOADED" if result.get("native_fits") else
-        "NOT_LOADED")
     result["source_band_is_current"] = (
         result["controls"]["band"] == result["native_fits"]["band"]
         if result.get("native_fits") else None)
+    result["state"] = (
+        "WORKER_IN_PROGRESS" if result["worker"]["in_progress"] else
+        "STALE_SCENE_INPUTS" if result["source_band_is_current"] is False else
+        "CURRENT_LOADED" if result.get("native_fits") else
+        "NOT_LOADED")
     result["ablation_radial_format"] = (
         "EVERY_BIN_COMPACT_COLUMNS_WITH_SELECTED_OCTANT_CONTRAST; "
         "full eight-octant rows available in Copy Scene QA")
@@ -142,6 +143,10 @@ def _stage_result(workspace, name):
         "current_source_ready": current is not None,
         "current_result_provenance_matches": None,
     }
+    failure = getattr(stage, "_last_failure", None)
+    if failure is not None:
+        outcome["last_attempt_failure"] = failure
+        outcome["last_failure_is_historical_not_current_proof"] = True
     result = stage._result
     if stage._future is not None:
         outcome["state"] = "WORKER_IN_PROGRESS"
