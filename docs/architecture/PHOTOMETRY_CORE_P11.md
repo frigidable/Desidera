@@ -556,6 +556,19 @@ do not claim a logarithmic magnitude for a
 negative/zero flux or use symmetric magnitude
 errors at extremely low S/N.
 
+**Photutils sum/statistics asymmetry:** the exact overlap
+weighting of `AperturePhotometry` and the sum properties
+of `ApertureStats` must not be confused with the
+latter class's center-based median/standard-deviation
+statistics. Annular mean intensity is explicitly
+the fractional-area-weighted native sum over
+fractional-area-weighted valid area; any clipped
+median or robust sector statistic is a separate
+labelled estimator with its own geometry and
+error model. Never substitute a median value
+into an exact integrated flux without an
+explicit reconstruction model.
+
 **Direct curve of growth (CoG):** a nested
 sequence of **observed** `F_valid(a)` and
 `A_valid(a)`, with the *same fixed ellipse*
