@@ -154,6 +154,8 @@ def estimate_blank_annulus_covariance(
         "annulus_mean_blank_flux_nMgy": None,
         "annulus_covariance_nMgy2": None,
         "annulus_sigma_empirical_nMgy": None,
+        "cumulative_covariance_nMgy2": None,
+        "cumulative_sigma_empirical_nMgy": None,
         "status": "INSUFFICIENT_INDEPENDENT_BLANK_POSITIONS",
         "covariance_calibrated_for_science": False,
         "warnings": [
@@ -174,6 +176,13 @@ def estimate_blank_annulus_covariance(
             report["annulus_covariance_nMgy2"] = covariance.tolist()
             report["annulus_sigma_empirical_nMgy"] = np.sqrt(
                 diagonal).tolist()
+            # Nested apertures share their inner rings: C_CoG = T C_ring T^T.
+            # No independent-error quadrature and no covariance inversion.
+            transfer = np.tril(np.ones((len(radii), len(radii))))
+            cumulative = transfer @ covariance @ transfer.T
+            report["cumulative_covariance_nMgy2"] = cumulative.tolist()
+            report["cumulative_sigma_empirical_nMgy"] = np.sqrt(
+                np.maximum(0., np.diag(cumulative))).tolist()
         else:
             report["status"] = "DEGENERATE_OR_NONFINITE_BLANK_VARIANCE"
     json.dumps(report, allow_nan=False)
