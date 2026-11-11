@@ -8,11 +8,12 @@ PSF deconvolution, or total-galaxy flux claim.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, fields
 from hashlib import sha256
 import json
 import math
 import re
+from types import MappingProxyType
 
 import numpy as np
 
@@ -148,8 +149,28 @@ class ApertureFluxRecord:
     sky_science_adopted: bool
     warnings: tuple[str, ...]
 
+    def __post_init__(self):
+        # frozen=True is only shallow. Freeze nested QA tables as well so
+        # callers cannot rewrite a science result after its provenance was
+        # computed (to_dict gives a separate, mutable export copy).
+        for name in (
+                "geometry_icrs", "geometry_native", "area_native_pixel2",
+                "area_by_reason_native_pixel2"):
+            object.__setattr__(
+                self, name, MappingProxyType(dict(getattr(self, name))))
+        object.__setattr__(
+            self, "sector_qa",
+            tuple(MappingProxyType(dict(item)) for item in self.sector_qa))
+        object.__setattr__(self,"warnings",tuple(self.warnings))
+
     def to_dict(self):
-        result = asdict(self)
+        result = {entry.name:getattr(self,entry.name)
+                  for entry in fields(self)}
+        for key in ("geometry_icrs","geometry_native",
+                    "area_native_pixel2","area_by_reason_native_pixel2"):
+            result[key] = dict(result[key])
+        result["sector_qa"] = [dict(item) for item in self.sector_qa]
+        result["warnings"] = list(self.warnings)
         json.dumps(result, allow_nan=False)
         return result
 
