@@ -303,6 +303,15 @@ def test_project_stage03_rejects_stale_draft_and_bad_native_grid():
     wrong=dict(contamination,auto_mask=np.zeros((4,4),bool))
     with pytest.raises(ValueError, match="grid"):
         diagnose_current_project_residual_sky(dataset,draft,wrong)
+    native_key=["dr11","south","1554p180","r"]
+    dataset["source_quartet_key"]=native_key
+    wrong=dict(contamination,source_quartet_key=[
+        "dr11","south","1555p180","r"])
+    with pytest.raises(ValueError, match="quartet identity mismatch"):
+        diagnose_current_project_residual_sky(dataset,draft,wrong)
+    correct=dict(contamination,source_quartet_key=native_key)
+    output=diagnose_current_project_residual_sky(dataset,draft,correct)
+    assert output["source_quartet_key"] == native_key
 
 
 def test_project_stage03_source_protection_hides_mistaken_sky_annotation():
