@@ -1,6 +1,7 @@
-"""Project-bound Photometry Workspace: preparation and provenance only.
+"""Project-bound Photometry Workspace: experimental science stages.
 
-No photometric algorithms are exposed before their validation gates exist.
+Stage 04 exposes only finite-aperture observed-area diagnostics; no
+scientific sky, PSF, total luminosity, or color is adopted.
 """
 from __future__ import annotations
 
@@ -76,7 +77,8 @@ class PhotometryWorkspace(QWidget):
         self.title.setStyleSheet("font-size: 21px; font-weight: 600;")
         root.addWidget(self.title)
         self.subtitle = QLabel(
-            "PSF-0 diagnostics are experimental · no adopted PSF, sky or galaxy photometry")
+            "PSF, residual sky and aperture fluxes are diagnostic only · "
+            "no adopted galaxy photometry")
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
