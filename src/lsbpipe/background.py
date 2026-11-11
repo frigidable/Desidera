@@ -786,14 +786,19 @@ def _audit_current_project_sky_grid_sensitivity(
             if row["models"].get(method,{}).get("status") ==
             "FITTED_HOLDOUT_UNCALIBRATED"
         ]
+        original_value = float(
+            original_candidates[method].evaluate_at(ax,ay))
+        # Include the unperturbed baseline when reporting the envelope;
+        # otherwise a sensitivity interval can omit the actual adopted
+        # numerical baseline just because an alternative grid fails.
+        envelope = [original_value]+numbers
         summary[method] = {
             "n_measurable_alternatives": len(numbers),
-            "min_at_target_nMgy_per_pixel": (
-                float(min(numbers)) if numbers else None),
-            "max_at_target_nMgy_per_pixel": (
-                float(max(numbers)) if numbers else None),
-            "peak_to_peak_nMgy_per_pixel": (
-                float(np.ptp(numbers)) if len(numbers) > 1 else None),
+            "original_grid_at_target_nMgy_per_pixel": original_value,
+            "range_includes_original_fixed_grid": True,
+            "min_at_target_nMgy_per_pixel": float(min(envelope)),
+            "max_at_target_nMgy_per_pixel": float(max(envelope)),
+            "peak_to_peak_nMgy_per_pixel": float(np.ptp(envelope)),
             "not_an_uncertainty_interval": True,
         }
     return {
