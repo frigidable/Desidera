@@ -414,6 +414,7 @@ def test_project_stage03_tile_qa_detects_geometric_cluster_and_rms_imbalance():
             mask[y*32+5, x*32+5] = True
             result.append({
                 "tile_index": [x, y],
+                "tile_bounds_native_xyxy": [x*32, y*32, (x+1)*32, (y+1)*32],
                 "quadrant": 0 if y == 0 else 2,
                 "n_sampled_pixels": 1,
             })
@@ -458,7 +459,9 @@ def test_project_stage03_tile_qa_rejects_mismatched_sample_count():
     mask = np.zeros(image.shape, dtype=bool)
     mask[3,3] = True
     records = [{
-        "tile_index":[0,0], "quadrant":0,"n_sampled_pixels":2,
+        "tile_index":[0,0],
+        "tile_bounds_native_xyxy":[0,0,32,32],
+        "quadrant":0,"n_sampled_pixels":2,
     }]
     selection = {
         "tile_edge_native_pix":32,
@@ -478,6 +481,51 @@ def test_project_stage03_tile_qa_rejects_mismatched_sample_count():
             image, mask, np.zeros_like(mask), selection,
             {"constant":candidate})
 
+
+
+def test_shifted_sky_grid_spatial_qa_uses_true_native_pixel_bounds():
+    """QA must not confuse grid indices with unshifted pixel origins."""
+    from types import SimpleNamespace
+    from lsbpipe.background import _audit_automatic_sky_tile_residuals
+
+    image = np.zeros((96, 96), dtype=float)
+    train = np.zeros_like(image, dtype=bool)
+    holdout = np.zeros_like(image, dtype=bool)
+    train[21, 25] = True
+    holdout[21, 57] = True
+    image[21, 25] = .125
+    image[21, 57] = -.075
+    # A tile grid offset (8, 12): grid index [1,1] begins at (24,20),
+    # not at the naive (32,32).
+    selection = {
+        "tile_edge_native_pix": 32,
+        "training_tile_evidence": [
+            {"tile_index":[1,1],
+             "tile_bounds_native_xyxy":[24,20,56,52],
+             "n_sampled_pixels":1,
+             "quadrant":0}],
+        "holdout_tile_evidence": [
+            {"tile_index":[2,1],
+             "tile_bounds_native_xyxy":[56,20,88,52],
+             "n_sampled_pixels":1,
+             "quadrant":1}],
+        "training_quadrants": [0],
+        "holdout_quadrants": [1],
+    }
+    candidate = SimpleNamespace(
+        fit_status=FitStatus.FITTED,
+        training_rms_residual_nMgy=.125,
+        holdout_rms_residual_nMgy=.075,
+        evaluate_at=lambda x,y: np.zeros_like(x, dtype=float),
+    )
+    qa = _audit_automatic_sky_tile_residuals(
+        image, train, holdout, selection, {"constant":candidate})
+    assert qa["methods"]["constant"]["training"]["tiles"][0][
+        "median_residual_nMgy_per_pixel"] == pytest.approx(.125)
+    assert qa["methods"]["constant"]["holdout"]["tiles"][0][
+        "median_residual_nMgy_per_pixel"] == pytest.approx(-.075)
+    assert qa["geometry"]["training"]["n_partial_edge_tiles"] == 0
+    assert qa["geometry"]["holdout"]["n_partial_edge_tiles"] == 0
 
 
 def test_project_stage03_zero_baseline_is_exact_same_heldout_native_pixels():
