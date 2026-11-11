@@ -555,6 +555,69 @@ def _audit_automatic_sky_tile_residuals(image, sky_train, sky_holdout,
     }
 
 
+
+def _audit_zero_sky_baseline(image, training, holdout, selection):
+    """No additional sky subtraction: a mandatory DR11 reference candidate.
+
+    Uses exact same fixed sky tiles, before any fitted model is adopted.
+    Pixel-RMS comparisons are descriptive because coadd pixels correlate.
+    """
+    shape = image.shape
+    ny, nx = shape
+    tile_edge = int(selection["tile_edge_native_pix"])
+    records = []
+    for record in selection["holdout_tile_evidence"]:
+        ix, iy = record["tile_index"]
+        x0, x1 = ix*tile_edge, min(nx,(ix+1)*tile_edge)
+        y0, y1 = iy*tile_edge, min(ny,(iy+1)*tile_edge)
+        values = np.asarray(
+            image[y0:y1,x0:x1][holdout[y0:y1,x0:x1]],
+            dtype=float)
+        if values.size != record["n_sampled_pixels"]:
+            raise ValueError("Zero-background holdout sample lineage differs")
+        records.append({
+            "tile_index": list(record["tile_index"]),
+            "quadrant": int(record["quadrant"]),
+            "n_samples": int(values.size),
+            "median_nMgy_per_pixel": float(np.median(values)),
+            "rms_nMgy_per_pixel": float(np.sqrt(np.mean(values**2))),
+        })
+    vals = np.asarray(image[holdout],dtype=float)
+    train_vals = np.asarray(image[training],dtype=float)
+    if not vals.size or not train_vals.size:
+        raise ValueError("Zero baseline requires same nonempty fixed sky samples")
+    medians = np.array([r["median_nMgy_per_pixel"] for r in records])
+    q = {}
+    for k in range(4):
+        ys, xs = np.nonzero(holdout)
+        chosen = (xs > (nx-1)/2).astype(int) + (
+            2*(ys > (ny-1)/2).astype(int)) == k
+        if np.any(chosen):
+            q[str(k)] = float(np.median(image[ys[chosen],xs[chosen]]))
+    return {
+        "method": "zero_additional_correction_DR11_coadd",
+        "same_original_holdout_as_fitted_candidates": True,
+        "background_subtracted_from_image": False,
+        "additional_correction_nMgy_per_pixel": 0.0,
+        "training_rms_nMgy_per_pixel":
+            float(np.sqrt(np.mean(train_vals**2))),
+        "holdout_rms_nMgy_per_pixel":
+            float(np.sqrt(np.mean(vals**2))),
+        "holdout_median_nMgy_per_pixel": float(np.median(vals)),
+        "n_training_samples": int(train_vals.size),
+        "n_holdout_samples": int(vals.size),
+        "holdout_tile_median_peak_to_peak_nMgy_per_pixel":
+            float(np.ptp(medians)),
+        "holdout_tile_median_of_medians_nMgy_per_pixel":
+            float(np.median(medians)),
+        "holdout_tile_medians_nMgy_per_pixel": records,
+        "holdout_quadrant_medians_nMgy_per_pixel": q,
+        "validates_original_sky_level": False,
+        "original_DR11_may_already_be_oversubtracted": True,
+        "not_an_independent_noise_realization": True,
+    }
+
+
 def diagnose_current_project_residual_sky(dataset, draft, contamination):
     """Automatically select Scene-safe sky tiles and compare residual models.
 
@@ -653,6 +716,10 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "method_comparison": None,
         "provisional_automatic_model": None,
         "automatic_sky_spatial_qa": None,
+        "zero_additional_correction_baseline": None,
+        "model_improvement_vs_zero_baseline": None,
+        "recommended_science_action": "NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED",
+        "automatic_sky_background_correction_authorized": False,
         "warnings": warnings,
     }
     if not selection["geometry_sufficient_for_diagnostic"]:
@@ -700,6 +767,22 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             serialized["warnings"].append("NONFINITE_CONDITION_NUMBER")
         methods[method] = serialized
     base["methods"] = methods
+    baseline = _audit_zero_sky_baseline(
+        image, sky_train, sky_holdout, selection)
+    base["zero_additional_correction_baseline"] = baseline
+    zero_rms = baseline["holdout_rms_nMgy_per_pixel"]
+    # Numeric differences, not significance, are the only permissible
+    # interpretation of a single-correlated-coadd pixel holdout.
+    base["model_improvement_vs_zero_baseline"] = {
+        method: {
+            "rms_improvement_fraction": (
+                float((zero_rms-c.holdout_rms_residual_nMgy)/zero_rms)
+                if zero_rms > 0. and c.holdout_rms_residual_nMgy is not None
+                else None),
+            "improvement_is_not_statistical_significance": True,
+        }
+        for method,c in candidates.items()
+    }
     tile_audit = _audit_automatic_sky_tile_residuals(
         image, sky_train, sky_holdout, selection, candidates)
     base["automatic_sky_spatial_qa"] = tile_audit
@@ -740,6 +823,10 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             "PLANE_IF_HELDOUT_RMS_LESS_THAN_75_PERCENT_OF_CONSTANT_ELSE_CONSTANT"),
         "same_coadd_holdout_not_independent_validation": True,
         "not_a_science_adoption": True,
+        "choice_only_between_two_fitted_nonzero_candidates": True,
+        "zero_correction_reference_was_not_in_the_original_selection_rule": True,
+        "model_selection_25percent_rule_is_heuristic_not_calibrated": True,
+        "scientifically_recommended_for_subtraction": False,
         "spatial_support_warning_flags":
             tile_audit["warning_flags"],
         "spatial_quality_not_certified": True,
