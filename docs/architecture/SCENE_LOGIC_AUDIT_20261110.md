@@ -1006,3 +1006,23 @@ All five scenarios report `LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE`, with cent
 **Radial bin resolution (checked against the implementation):** the radial endpoint is selected from discrete annular outer edges, with effective step `max(max(3, 1.5*smooth_sigma_pix)*pixel_scale, max_a/64)`. In the actual Leo P run, the consecutive sweep deltas are exactly `3.252066311, 6.504132622, 1.626033156, 0` arcsec, i.e. **2, 4, 1, 0 bins** at a radial sampling of **1.626033156 arcsec**. The 70/80 equality therefore only establishes the **same radial bin**, not a better-than-arcsecond measured edge. A new `radial_step_arcsec` provenance field is saved on the SGA radial seed and `sga_radial_bin_step_arcsec` on every sweep scenario; these are sampling resolution metadata, **not an error bar**. Do not publish the unrounded radial extent as a physical radius.
 
 **Instrumented follow-up:** previous-radius pairwise diagnostics were added to `run_scene_protection_radius_sweep` (next source revision), including pixel-wise component IoU, mask Jaccard, XOR pixel count, radial-endpoint delta and source-disposition transitions for each adjacent scenario. This directly tests 70-vs-80 pixel identity on the *next* actual application run; equality of summary values alone is insufficient. Regression tests include a failed contour and an unchanged contour despite differing masks, with no science or file writes. In a future physically meaningful photometric stage, compare sky models and PSF wings independently; test a fixed sky across mask scenarios and model source flux retention before choosing a protection aperture for unattended processing.
+
+
+---
+
+## Twelfth-pass real Leo P adjacent-radius pixel comparison (2026-11-11)
+
+User reran real GUI `Copy Scene QA` at `2026-11-11T00:10:46.868295Z` (native DR11 South brick `1554p180`, g band, catalog SHA-256 `8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`). The new adjacent-radius instrumentation has now been independently exercised on real Leo P inputs. All 5/5 scenarios completed; all remain `ISOPHOTE_PROPOSED_NOT_ADOPTED` and `LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE`.
+
+| Protection change | Mask XOR pixels | Mask Jaccard | Connected component IoU | SGA radial endpoint delta |
+|---|---:|---:|---:|---:|
+| 40→50 arcsec | 11553 | 0.974193 | 0.860727 | +3.252 arcsec (2 bins) |
+| 50→60 arcsec | 14624 | 0.966468 | 0.924326 | +6.504 arcsec (4 bins) |
+| 60→70 arcsec | 11117 | 0.973625 | 0.995555 | +1.626 arcsec (1 bin) |
+| 70→80 arcsec | **12496** | **0.969550** | **1.000000** | **0 arcsec (0 bins)** |
+
+**Confirmed pixel-wise plateau:** for the last pair the same **34,182 native connected-component pixels** were selected (IoU=1.0) despite 12,496 changed contamination-mask pixels and 17 source identities newly categorised as protected overlaps. Both have moment q=0.3602860567 and 64.1351-pixel centroid offset; the SGA-guided radial endpoint is 61.7893 arcsec and the explicitly exported radial annulus step is 1.62603315556 arcsec. This is evidence of segmentation invariance to this *particular* mask enlargement, not a validated isophote or evidence that masks themselves are unchanged. The 60→70 component IoU was 0.99555, contrasting with marked changes at 40→60. The SGA guiding geometry remains parent prior q=0.53187, PA=150.46 degrees; the moment q=0.36029 is a separate masked-contour diagnostic, not an independently fitted isophote shape.
+
+The experiment retains Gaia interior preview **ON**, strict red extended preview **ON**, SGA geometry **ON**, SGA protection **OFF**, contrast 2.2, smoothing 4 pixels, bridge guard 2 px, with no target edits and no science adoption. All scenario local skies remain exactly `2.1435495e-05 nMgy/pixel` and smoothed RMS `0.0002717869 nMgy/pixel`; these are provisional empirical estimates, not a new sky validation. Four threshold/smoothing trials remain sensitive (minimum IoU ≈0.723 at 70/80; area ratio ≈1.57) and centroid drift >64 px carries `UNANCHORED_CENTROID_DRIFT`.
+
+**Next discriminating experiment:** hold g-band image, parent SGA geometry, threshold, smoothing, centre and protection-radius sweep constant, but run the same diagnostic with the experimental red-extended masks OFF (Gaia ON), then with BOTH experimental masks OFF. Compare the **adjacent-radius 70→80 component IoU**, radial endpoints, retained-source IDs and source/galaxy flux-loss risks separately. A later independent PSF-wing and spatial-sky comparison is necessary before choosing an unattended mask policy. Continue SCIENCE HOLD.
