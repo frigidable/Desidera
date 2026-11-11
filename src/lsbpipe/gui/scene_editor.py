@@ -2238,6 +2238,109 @@ class SceneEditor(QWidget):
             + ". Full scenarios in Copy Scene QA. "
             "PSF/independent sky not tested; NOTHING ADOPTED.")
 
+    def _run_mask_policy_ablation(self):
+        if (self._loaded is None or self._project_root is None or
+                self._draft is None or self._future is not None or
+                self._project_target is None):
+            self.policy_ablation_status.setText(
+                "Open a galaxy project and load its original native FITS "
+                "before running mask-policy QA.")
+            return
+        centre=(self._isophote_center_icrs
+                if self._isophote_center_icrs is not None
+                else self._project_target)
+        prior=(self._sga_candidate
+               if self.sga_use_seed.isChecked() else None)
+        protect=(self._sga_candidate
+                 if self.sga_use_prior.isChecked() else None)
+        self._policy_ablation_result=None
+        self._future=self._executor.submit(
+            run_scene_mask_policy_ablation,
+            self._loaded,str(self._project_root),self._draft,centre,
+            protection_radius_arcsec=70.,
+            threshold_contrast=float(self.iso_threshold.value()),
+            smoothing_pix=float(self.iso_smooth.value()),
+            bridge_guard_pix=2 if self.iso_bridge_guard.isChecked() else 0,
+            sga_prior=prior,sga_protection_prior=protect)
+        self._work_kind="policy_ablation"
+        self._active_generation=self._load_generation
+        self.policy_ablation_status.setText(
+            "Read-only cross-policy QA at fixed 70″: four mask policies "
+            "and each Gaia candidate leave-one-out; original image "
+            "and masks remain unchanged…")
+        self._poll_timer.start()
+        self._refresh_controls()
+
+    def _accept_mask_policy_ablation_result(self,result):
+        if (self._loaded is None or self._draft is None or
+                result.get("schema") !=
+                "desidera.gui.mask-policy-ablation/1" or
+                result["project_id"] != self._project_id or
+                result["dataset_source"] != self._loaded["source"] or
+                result["band"] != self._band or
+                result["draft_digest"] != self._draft.digest or
+                result["anchor_icrs"] != list(
+                    self._isophote_center_icrs
+                    if self._isophote_center_icrs is not None
+                    else self._project_target)):
+            raise ValueError("Discarded stale mask-policy experiment")
+        settings=result["fixed_settings"]
+        prior=self._sga_candidate
+        current_sga=(
+            prior.sga_id if prior is not None and
+            self.sga_use_seed.isChecked() else None)
+        current_protect=(
+            prior.sga_id if prior is not None and
+            self.sga_use_prior.isChecked() else None)
+        if (settings["protection_radius_arcsec"] != 70. or
+                settings["contrast"] != float(self.iso_threshold.value()) or
+                settings["smoothing_pix"] != float(self.iso_smooth.value()) or
+                settings["bridge_guard_pix"] !=
+                (2 if self.iso_bridge_guard.isChecked() else 0) or
+                settings["sga_geometry_ref"] != current_sga or
+                settings["sga_protection_ref"] != current_protect):
+            raise ValueError("Discarded mask-policy experiment: controls changed")
+        if (prior is not None and
+                ((settings["sga_geometry_sha256"] is not None and
+                  settings["sga_geometry_sha256"] != prior.source_sha256) or
+                 (settings["sga_protection_sha256"] is not None and
+                  settings["sga_protection_sha256"] != prior.source_sha256))):
+            raise ValueError("Discarded mask-policy experiment: SGA changed")
+        if (self._contamination is not None and
+                self._contamination["catalog_sha256"] !=
+                result["catalog_sha256"]):
+            raise ValueError("Discarded mask-policy experiment: catalogue changed")
+        rows=result["scenarios"]
+        if len(rows) != 4+result["gaia_star_leave_one_out_count"]:
+            raise ValueError("Mask policy ablation has incomplete scenarios")
+        lookup={v["policy"]:v for v in rows}
+        if not all(v in lookup for v in ("none","gaia","red","both")):
+            raise ValueError("Missing one or more baseline mask policies")
+        self._policy_ablation_result=result
+        iou=lookup["both"]["vs_no_experimental_masks"]["component_iou"]
+        iou_label=f"{iou:.4f}" if iou is not None else "unavailable"
+        changes=[]
+        for v in rows[4:]:
+            star=v["skipped_gaia_objids"][0]
+            comparison=v["vs_both_experimental_masks"]
+            changes.append((
+                star,comparison["component_iou"],
+                comparison["mask_xor_pixels"]))
+        changes.sort(key=lambda t:(
+            t[1] is None, t[1] if t[1] is not None else 2.))
+        lead=(f" Strongest leave-one-out: OBJID {changes[0][0]} "
+              f"(IoU={changes[0][1]:.4f}, mask XOR "
+              f"{changes[0][2]} px)." if changes and
+              changes[0][1] is not None else "")
+        good=sum(v["component_status"] ==
+                 "ISOPHOTE_PROPOSED_NOT_ADOPTED" for v in rows)
+        self.policy_ablation_status.setText(
+            f"READ-ONLY {good}/{len(rows)} policy contours at 70″. "
+            f"None↔Both component IoU={iou_label}; "
+            f"{len(changes)} Gaia leave-one-out scenarios."
+            + lead + " Full pixel comparisons in Copy Scene QA. "
+            "NOT galaxy-light loss; NOTHING ADOPTED.")
+
     def _prepare_neighbour_masks(self):
         if (self._loaded is None or self._future is not None or
                 self._project_root is None or self._draft is None or
