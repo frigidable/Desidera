@@ -1754,6 +1754,23 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
     assert qa["mask_policy_ablation"] is not report
     assert "READ-ONLY 5/6" in editor.policy_ablation_status.text()
     assert "NOT galaxy-light loss" in editor.policy_ablation_status.text()
+    # Regression for a real Leo P user exporting null QA during a running
+    # ablation: even a completed Future is not an accepted result until
+    # the GUI has dispatched it on the main Qt thread.
+    from concurrent.futures import Future
+    pending=Future()
+    editor._future=pending
+    editor._work_kind="policy_ablation"
+    editor._refresh_controls()
+    assert not editor.copy_scene_qa_btn.isEnabled()
+    assert "not been accepted" in editor.copy_scene_qa_btn.toolTip()
+    pending.set_result(report)
+    editor._refresh_controls()
+    assert not editor.copy_scene_qa_btn.isEnabled()
+    editor._future=None
+    editor._work_kind=None
+    editor._refresh_controls()
+    assert editor.copy_scene_qa_btn.isEnabled()
     # Exercise the actual Qt-worker dispatch as well as pure backend.
     editor.policy_ablation_btn.click()
     qtbot.waitUntil(
