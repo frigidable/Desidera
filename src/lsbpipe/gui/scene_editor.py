@@ -850,15 +850,7 @@ def run_scene_mask_policy_ablation(
     for spec in policies:
         execute(*spec)
 
-    # Derive actual candidate IDs from current native Tractor evidence.
-    # No hard-coded Leo P objects and no per-object literature searches.
-    candidates = (
-        prepare_id["objid"] for prepare_id in
-        []  # no effect: candidates are read from current masks below
-    )
-    # The Gaia source list belongs to the canonical WITH-GAIA scenario,
-    # not to unvalidated catalogue classifications elsewhere.
-    # It is recovered below from the corresponding stored source inventory.
+    # Source IDs come only from the canonical native Gaia scenario.
     gaia_ids = sorted(
         int(e.rsplit("OBJID=", 1)[-1])
         for e, disposition in inventories["gaia"].items()
@@ -870,22 +862,15 @@ def run_scene_mask_policy_ablation(
     for objid in gaia_ids:
         execute(f"both_without_gaia_{objid}", True, True, (objid,))
 
-    reference = masks["none"]
     reference_component = components["none"]
-    both_mask = masks["both"]
-    both_component = components["both"]
 
     def compare(candidate, baseline):
+        left,right=masks[candidate],masks[baseline]
+        union=int(np.count_nonzero(left | right))
+        intersection=int(np.count_nonzero(left & right))
         return {
-            "mask_xor_pixels":int(np.count_nonzero(
-                masks[candidate] ^ masks[baseline])),
-            "mask_jaccard":(
-                float(np.count_nonzero(
-                    masks[candidate] & masks[baseline]) /
-                    np.count_nonzero(
-                        masks[candidate] | masks[baseline]))
-                if np.count_nonzero(
-                    masks[candidate] | masks[baseline]) else 1.),
+            "mask_xor_pixels":int(np.count_nonzero(left ^ right)),
+            "mask_jaccard":float(intersection/union) if union else 1.,
             "component_iou":None,
             "component_intersection_pixels":None,
         }
