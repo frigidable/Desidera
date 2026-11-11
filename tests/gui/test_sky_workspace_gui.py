@@ -31,6 +31,11 @@ def test_stage03_is_real_and_resumable_without_loading_or_running(qtbot):
     assert w.current_navigation() == ("scene", "i")
     w.restore_navigation(stage="sky",band="i")
     assert w.current_navigation() == ("sky", "i")
+    # Returning from Stage 03 must not overwrite the native Scene band
+    # from a stale PSF tab selector.
+    w.band_tabs.setCurrentIndex(0)
+    w.stage_tabs.setCurrentWidget(w.scene_editor)
+    assert w.current_navigation() == ("scene", "i")
 
 
 def test_stage03_requires_current_scene_and_discards_stale_result(qtbot,monkeypatch):
