@@ -552,6 +552,13 @@ def test_p21_same_project_directional_profile_fixed_controls_and_read_only():
     assert report["n_fixed_control_tiles"] == 16
     assert report["n_controls_with_at_least_one_measured_ring"] >= 8
     assert report["source"]["n_rings_measured_with_both_cones"] == 5
+    assert report["schema"] == "desidera.scene.project-only-foreground-sector/2"
+    assert report["n_source_rings_with_mask_geometry_comparable"] == 5
+    assert report["n_source_rings_with_antipodal_matched_pixels"] == 5
+    assert report["source"]["per_ring"][3][
+        "antipodal_paired_difference_median_nMgy_per_pixel"] > .09
+    assert report["comparison_by_ring"][3][
+        "median_abs_paired_control_difference_nMgy_per_pixel"] is not None
     assert report["comparison_by_ring"][3][
         "source_toward_minus_away_nMgy_per_pixel"] > .09
     assert report["comparison_by_ring"][3][
@@ -601,3 +608,54 @@ def test_p21_same_project_control_masks_catalogue_neighbors_without_backfill():
     assert len(out["controls"]) == 16
     assert out["fixed_control_geometry_not_selected_on_residuals"] is True
     assert out["coadd_controls_share_sky_and_pixel_correlations"] is True
+
+
+
+def test_p21_native_sector_coverage_guard_catches_one_sided_catalog_mask():
+    """A geometric incompleteness cannot be called a validated contrast."""
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.zeros((512,512),dtype=float)
+    invvar = np.ones_like(image)
+    hard = np.zeros_like(image,dtype=bool)
+    sy,sx = 256.,256.
+    yy,xx = np.indices(image.shape)
+    rad = np.hypot(xx-sx,yy-sy)/2.
+    facing = ((yy-sy)/np.maximum(np.hypot(xx-sx,yy-sy),1e-12)
+              >= np.cos(np.pi/4))
+    # Uneven hard-mask coverage on the facing side leaves the original
+    # unpaired sector estimator vulnerable to spatial selection.
+    hard[facing & (rad>=16.) & (rad<20.) & ((xx % 4)!=0)] = True
+    out = audit_same_project_foreground_sector_profile(
+        image,invvar,hard,
+        source_xy=(sx,sy),target_xy=(sx,sy+40.),
+        measured_fwhm_pix=2.)
+    row = out["source"]["per_ring"][3]
+    assert row["mask_coverage_interpretation"] == (
+        "SPARSE_OR_ASYMMETRIC_RAW_SECTOR_MEDIANS_NOT_COMPARABLE")
+    assert row["facing_cone_valid_geometric_fraction"] < .4
+    assert row["opposite_cone_valid_geometric_fraction"] > .99
+    assert (row["n_valid_antipodal_facing_to_opposite_pixel_pairs"]
+            <= row["n_original_valid_facing_pixels"])
+    assert out["n_source_rings_with_mask_geometry_comparable"] < 5
+    assert out["absolute_stellar_wings_identified"] is False
+    assert out["science_adopted"] is False
+
+
+def test_p21_coverage_handles_subpixel_antipodal_reflection():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.full((512,512),.002)
+    invvar = np.ones_like(image)
+    hard = np.zeros(image.shape,dtype=bool)
+    out = audit_same_project_foreground_sector_profile(
+        image,invvar,hard,source_xy=(256.26,255.81),
+        target_xy=(241.1,301.5),measured_fwhm_pix=2.05)
+    assert out["n_source_rings_with_antipodal_matched_pixels"] == 5
+    assert out["n_source_rings_with_mask_geometry_comparable"] == 5
+    for ring in out["source"]["per_ring"]:
+        assert ring["antipodal_paired_difference_median_nMgy_per_pixel"] == 0.
+        assert ring["n_valid_antipodal_facing_to_opposite_pixel_pairs"] >= 30
+    assert out["galaxy_light_loss_measured"] is False
