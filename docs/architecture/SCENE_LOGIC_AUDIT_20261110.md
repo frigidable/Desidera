@@ -1828,3 +1828,115 @@ in `Copy Scene QA` at
 `psf0_foreground_probe.project_only_outer_sector_probe`,
 while the local frozen PSF fit and result status stay
 unchanged. Current work remains in Draft PR #84.
+
+
+---
+
+## Twenty-second-pass actual P21 directional Leo P QA and mask-support correction (2026-11-11)
+
+**Original, complete researcher-supplied export:** `Copy Scene QA`,
+`desidera.gui.scene-complete-qa/1`, generated UTC
+`2026-11-11T11:25:17.120328+00:00`. File SHA-256
+`7f428471d1889a6bf0f90fbcc133450faaf396de17e2b4f757c54e2080c87a14`
+(2,127,241 bytes). Full QA kept in researcher project/upload
+rather than embedded in version control. Scope:
+existing Leo P project UUID
+`0876bbc4-7405-481b-88a8-0e3486c7be98`,
+original DR11 South `1554p180/r` 1466×1324 image,
+0.262 arcsec/native pixel; no new bricks or catalogues.
+Same SHA-verified restored r PSF0 as P15–P20 and earlier
+source probe: kernel
+`70db7f364c944262185fe5e20dfe28bba9ee995f88cc991bf808e51ac70e7824`,
+lineage
+`1d62ef2d2997fadeb85a410f43f72cfbc61ac61024d23ac768b231385a69b500`,
+17 training/5 independent PSF0 holdouts,
+measured FWHM 4.02927px (1.05567 arcsec).
+Source OBJID=2035/Gaia DR3=623919492384922624,
+star→target 75.84217pix (=18.82 FWHM, 19.87 arcsec).
+Source not present among PSF0 training/holdout stars.
+Existing P21 `/1` completed with
+`SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY`,
+16 fixed spatial control tiles, 11 measurable;
+three geometric-target/star exclusions and two
+catalog-centre-origin exclusions.
+
+**Measured original P21 /1 ring results (all conditional and unadopted):**
+
+| Radial range, FWHM | Toward-minus-away, native nMgy/pixel | Median | Maximum absolute of 11 control-sector contrasts, nMgy/pixel | Target-facing native usable / geometric cone | Opposite native usable / geometric cone |
+|---|---:|---:|---:|---:|---:|
+| 6–8 | +0.00437050 | 0.00048748 | 0.00174825 | 85/359 = **23.7%** | 359/359 = **100.0%** |
+| 8–12 | +0.00224626 | 0.00023629 | 0.00111526 | 208/1021 = **20.4%** | 1016/1016 = **100.0%** |
+| 12–16 | +0.00525798 | 0.00024573 | 0.00130471 | 641/1428 = **44.9%** | 1428/1428 = **100.0%** |
+| 16–20 | +0.00226965 | 0.00046450 | 0.00063383 | 460/1838 = **25.0%** | 1834/1834 = **100.0%** |
+| 20–24 | +0.00458695 | 0.00019302 | 0.00063735 | 1137/2245 = **50.6%** | 1777/2243 = **79.2%** |
+
+The full per-ring native geometric capacities were derived
+directly from the source's saved subpixel x,y, measured native
+FWHM, the fixed 90-degree cone and radial bins, i.e. without
+additional FITS access or changing the QA. The 16–20
+FWHM annulus encompasses the target centre (at 18.82 FWHM).
+The source P21 masked **19,662 native pixels** within
+the measured ROI due to fixed 3-FWHM neighbour-centre
+exclusions. Most importantly, the target-facing sector
+loses **55–80%** of its original geometrically eligible
+pixels over the first four bins, whereas the far side
+keeps all of them. In 20–24 FWHM, the target-facing sector
+still retains only ~51%, vs ~79% away.
+The radial **median contrasts use drastically different
+sampling geometries**. Thus the amplitude exceeding
+the maximum measured fixed blank-control contrast
+does **not establish source-specific extended PSF wings,
+galaxy light, significance, or a calibrated upper bound**:
+different masked sky structures could create/erase
+these conditional asymmetries.
+
+The two away-side reference sky medians were
+-0.000481447 and +0.000370152 nMgy/pixel,
+difference -0.000851599. This difference is a
+systematic sensitivity to sky-annulus choice,
+not a Gaussian sigma. A difference of medians
+between two sectors cannot identify an isotropic
+wide-wing component even if masks were balanced.
+The foreground source's 15.18-arcsec geometric
+Gaia-mask preview is **not scientifically validated**
+against true PSF wings or Leo P lost light.
+
+**Corrective implementation, existing project only:** P21
+now emits schema
+`desidera.scene.project-only-foreground-sector/2`,
+without removing `/1` raw descriptive values, and
+adds exact original-pixel geometric capacity per cone,
+unmasked fractions per side, and an explicit
+`SPARSE_OR_ASYMMETRIC_RAW_SECTOR_MEDIANS_NOT_COMPARABLE`
+warning when either side has <70% original geometric
+coverage or the fractions differ by >20 percentage
+points. These fixed QA thresholds are conservative
+**interpretability warnings, not physical acceptance or
+significance gates**. For five radial bins, the native
+source's last observed raw coverage would fail them all.
+The implementation also forms fixed **antipodal matched
+native-pixel pairs**, reflecting across the source
+subpixel centre and requiring both pixels to survive
+the *same original* validity and catalogue masking.
+It records the pair count and median paired difference
+per ring, and runs identical paired measurements in
+the existing predeclared project-only blank-control
+tiles. A paired diagnostic is emitted only when >=30
+pairs exist. It reduces geometric selection bias but
+does not remove galaxy light, uncatalogued sources,
+PSF anisotropy, residual sky, or coadd covariance.
+
+This new code is synthetic-test-covered (including
+asymmetric masks, subpixel centre, edge fail-closed
+and no-mutation). Its r-band observed paired results
+are **NOT YET MEASURED**: researcher must rerun
+the same `Scene & Masks → r → OBJID 2035 →
+Probe selected Gaia star · saved PSF-0 →
+Copy Scene QA` in the existing Leo P project
+after updating the same feature branch. No
+new brick, branch, directory, source model or
+science mask is required. If the paired sample
+is poor or the asymmetry persists under a
+galaxy-contaminated aperture, preserve
+`SCIENCE HOLD`; do not substitute a star halo
+or galaxy-light-loss value from the report.
