@@ -216,6 +216,12 @@ def test_sga_guided_radial_extent_follows_native_light_not_parent_diameter():
     assert result.reference_a_arcsec==pytest.approx(14.)
     assert result.detected_a_arcsec is not None
     assert 26. < result.detected_a_arcsec < 135.
+    assert result.radial_step_arcsec is not None
+    assert result.radial_step_arcsec > 0.
+    # The reported radial endpoint is the outer edge of an integer
+    # annulus, not a continuously resolved isophotal semi-major axis.
+    ring_number=result.detected_a_arcsec/result.radial_step_arcsec
+    assert ring_number==pytest.approx(round(ring_number),abs=1e-9)
     assert result.q_sky==pytest.approx(q)
     assert result.pa_deg==pytest.approx(150.)
     assert 0 < result.masked_fraction < .30
