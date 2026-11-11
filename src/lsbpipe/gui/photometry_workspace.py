@@ -23,6 +23,7 @@ from lsbpipe.photometry.readiness import inspect_photometry_inputs
 from lsbpipe.gui.psf0_panel import PSF0Panel
 from lsbpipe.gui.psf0_full_qa import detailed_band_report
 from lsbpipe.gui.scene_editor import SceneEditor
+from lsbpipe.gui.sky_workspace import SkyWorkspace
 
 
 
@@ -274,6 +275,12 @@ class PhotometryWorkspace(QWidget):
         self.stage_tabs.setTabToolTip(
             1, "Original FITS/WCS editor; editable ICRS mask drafts. "
                "No final galaxy segmentation or adopted photometry.")
+        self.sky_stage = SkyWorkspace(self.scene_editor, self.stage_tabs)
+        self.stage_tabs.addTab(self.sky_stage, "3 · Background")
+        self.stage_tabs.setTabToolTip(
+            2, "Robust residual sky candidates on the existing native Scene "
+               "with explicitly disjoint training/holdout regions. "
+               "All models remain unadopted.")
         root.addWidget(self.stage_tabs, 1)
         self.stage_tabs.currentChanged.connect(self._stage_changed)
         self.stage_tabs.currentChanged.connect(self._emit_navigation)
@@ -284,9 +291,10 @@ class PhotometryWorkspace(QWidget):
         self._apply_science_reflow()
 
     def current_navigation(self):
-        stage = ("scene" if self.stage_tabs.currentWidget() is self.scene_editor
-                 else "psf0")
-        if stage == "scene":
+        current = self.stage_tabs.currentWidget()
+        stage = ("scene" if current is self.scene_editor
+                 else "sky" if current is self.sky_stage else "psf0")
+        if stage in ("scene", "sky"):
             band = self.scene_editor.band.currentData()
         else:
             panel = self.band_tabs.currentWidget()
@@ -301,7 +309,7 @@ class PhotometryWorkspace(QWidget):
 
     def restore_navigation(self, *, stage, band):
         """Restore user location only; never run PSF/scene FITS workers."""
-        if stage not in ("psf0", "scene") or band not in ("g", "r", "i", "z"):
+        if stage not in ("psf0", "scene", "sky") or band not in ("g", "r", "i", "z"):
             raise ValueError("Unknown photometry resume location")
         self._suppress_navigation = True
         try:
@@ -313,15 +321,26 @@ class PhotometryWorkspace(QWidget):
             self.scene_editor.set_band(band)
             self.stage_tabs.setCurrentWidget(
                 self.scene_editor if stage == "scene"
+                else self.sky_stage if stage == "sky"
                 else self.stage_tabs.widget(0))
+            if stage == "sky":
+                self.sky_stage.refresh_context()
         finally:
             self._suppress_navigation = False
 
     def _stage_changed(self, index):
-        if index == self.stage_tabs.indexOf(self.scene_editor):
-            band = self.band_tabs.currentWidget().band.currentData()
-            if band in ("g", "r", "i", "z"):
-                self.scene_editor.set_band(band)
+        if index in (
+                self.stage_tabs.indexOf(self.scene_editor),
+                self.stage_tabs.indexOf(self.sky_stage)):
+            # The Scene is the owner of the source-band view. Coming from
+            # PSF-0 only, synchronize its selected band; moving Scene->Sky
+            # retains the band's loaded native data and masks.
+            if self.stage_tabs.currentWidget() is self.scene_editor:
+                band = self.band_tabs.currentWidget().band.currentData()
+                if band in ("g", "r", "i", "z"):
+                    self.scene_editor.set_band(band)
+            if self.stage_tabs.currentWidget() is self.sky_stage:
+                self.sky_stage.refresh_context()
         # Opening Scene is deliberately read-only: local FITS load needs
         # the explicit Load original FITS button. Mask revision saving
         # also requires a separate explicit researcher action.
@@ -531,6 +550,7 @@ class PhotometryWorkspace(QWidget):
         # Only a new project or explicit Refresh can discard a preview.
         # Re-entering the same project/photometry view is non-destructive.
         self.scene_editor.bind_project(self._project_root)
+        self.sky_stage.refresh_context()
         for panel in self.psf0_panels.values():
             if force and panel._project_root is not None:
                 panel._project_root = self._project_root
