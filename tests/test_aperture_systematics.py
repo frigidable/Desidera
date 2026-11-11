@@ -49,6 +49,12 @@ def test_blank_annulus_covariance_is_deterministic_signed_and_psd():
     matrix = np.asarray(result["annulus_covariance_nMgy2"])
     assert matrix.shape == (3, 3)
     np.testing.assert_allclose(matrix, matrix.T, atol=1e-10)
+    transfer = np.tril(np.ones((3, 3)))
+    cumulative = np.asarray(result["cumulative_covariance_nMgy2"])
+    np.testing.assert_allclose(cumulative, transfer @ matrix @ transfer.T)
+    np.testing.assert_allclose(
+        np.square(result["cumulative_sigma_empirical_nMgy"]),
+        np.diag(cumulative), rtol=1e-10, atol=1e-10)
     assert np.linalg.eigvalsh(matrix).min() >= -1e-8
     assert np.all(np.diag(matrix) > 0)
     assert any(abs(v) > 0 for v in result["annulus_mean_blank_flux_nMgy"])
@@ -70,6 +76,7 @@ def test_missing_independent_blanks_refuses_covariance_instead_of_zero():
     assert result["n_accepted"] == 0
     assert result["annulus_covariance_nMgy2"] is None
     assert result["annulus_sigma_empirical_nMgy"] is None
+    assert result["cumulative_covariance_nMgy2"] is None
     with pytest.raises(ValueError, match="Boolean"):
         estimate_blank_annulus_covariance(
             **dict(kw, manual_exclude=np.zeros((4, 4), bool)))
