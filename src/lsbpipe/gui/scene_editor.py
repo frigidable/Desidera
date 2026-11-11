@@ -998,6 +998,7 @@ class SceneEditor(QWidget):
         self._source_registry = None
         self._source_registry_visible = []
         self._sweep_result = None
+        self._policy_ablation_result = None
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -1276,6 +1277,26 @@ class SceneEditor(QWidget):
         self.radius_sweep_status.setObjectName("scene_radius_sweep_status")
         self.radius_sweep_status.setWordWrap(True)
         iso_layout.addWidget(self.radius_sweep_status)
+        self.policy_ablation_btn = QPushButton(
+            "Mask policy ablation · fixed 70″")
+        self.policy_ablation_btn.setObjectName("scene_mask_policy_ablation")
+        self.policy_ablation_btn.setToolTip(
+            "READ-ONLY comparison on identical native g/r/i/z FITS: "
+            "no experimental masks, Gaia only, red only, both, then "
+            "one Gaia candidate omitted at a time. Computes real "
+            "mask/contour overlap, not inferred galaxy flux loss. "
+            "Uses fixed 70 arcsec target protection; no files or "
+            "project edits. Full diagnostics in Copy Scene QA.")
+        self.policy_ablation_btn.clicked.connect(
+            self._run_mask_policy_ablation)
+        iso_layout.addWidget(self.policy_ablation_btn)
+        self.policy_ablation_status = QLabel(
+            "Mask policy comparison not run. Galaxy-light loss and "
+            "PSF wings remain unmeasured.")
+        self.policy_ablation_status.setObjectName(
+            "scene_mask_policy_ablation_status")
+        self.policy_ablation_status.setWordWrap(True)
+        iso_layout.addWidget(self.policy_ablation_status)
         self.iso_gaia_inner_preview = QCheckBox(
             "Include inner Gaia candidates · QA only")
         self.iso_gaia_inner_preview.setObjectName(
@@ -1696,8 +1717,11 @@ class SceneEditor(QWidget):
         self._source_registry = None
         self._source_registry_visible = []
         self._sweep_result = None
+        self._policy_ablation_result = None
         self.radius_sweep_status.setText(
             "Radius comparison invalidated by project/band switch.")
+        self.policy_ablation_status.setText(
+            "Mask policy comparison invalidated by project/band switch.")
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -1773,6 +1797,8 @@ class SceneEditor(QWidget):
                 self._accept_contamination_result(result)
             elif kind == "radius_sweep":
                 self._accept_radius_sweep_result(result)
+            elif kind == "policy_ablation":
+                self._accept_mask_policy_ablation_result(result)
             else:
                 self._accept_dataset(result)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError,
@@ -1796,6 +1822,11 @@ class SceneEditor(QWidget):
                 self._sweep_result = None
                 self.radius_sweep_status.setText(
                     "Read-only protection-radius sweep FAILED: "
+                    + str(exc) + ". Nothing was saved.")
+            elif kind == "policy_ablation":
+                self._policy_ablation_result = None
+                self.policy_ablation_status.setText(
+                    "Read-only mask policy ablation FAILED: "
                     + str(exc) + ". Nothing was saved.")
             else:
                 self.status.setText(
@@ -2109,6 +2140,9 @@ class SceneEditor(QWidget):
 
     def _invalidate_radius_sweep(self, *_):
         self._sweep_result = None
+        self._policy_ablation_result = None
+        self.policy_ablation_status.setText(
+            "Mask policy comparison invalidated by input change.")
         self.radius_sweep_status.setText(
             "Radius comparison not run for current settings. "
             "No independent PSF or spatial sky experiment.")
@@ -2569,8 +2603,11 @@ class SceneEditor(QWidget):
                 "sga_isophote_comparison": self.iso_sga_summary.text(),
                 "isophote_details_all_trials": self.iso_details.text(),
                 "radius_sweep_status":self.radius_sweep_status.text(),
+                "mask_policy_ablation_status":
+                    self.policy_ablation_status.text(),
             },
             "protection_radius_sweep":self._sweep_result,
+            "mask_policy_ablation":self._policy_ablation_result,
             "native_fits": None,
             "sga_lookup": None,
             "sga_selected_prior": None,
@@ -3398,6 +3435,8 @@ class SceneEditor(QWidget):
         self.iso_gaia_inner_preview.setEnabled(active and worker_idle)
         self.iso_red_extended_preview.setEnabled(active and worker_idle)
         self.radius_sweep_btn.setEnabled(
+            active and worker_idle and self._project_target is not None)
+        self.policy_ablation_btn.setEnabled(
             active and worker_idle and self._project_target is not None)
         self.iso_mask_toggle.setEnabled(self._contamination is not None)
         self.source_registry_toggle.setEnabled(
