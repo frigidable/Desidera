@@ -463,72 +463,92 @@ https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.h
 
 ---
 
-## 2026-11-11 implementation: executable 03 Background diagnostic (not Sky adoption)
+## 2026-11-11 implementation: 03 Background built automatically from 02 Scene
 
-The Photometry Workspace now exposes **three real task tabs**:
-`1 · PSF-0` → `2 · Scene & Masks` → `3 · Background`.
-These are **UI task labels**, not replacements for the eight logical
-scientific stages above. The third UI tab is an exploratory
-**post-Scene residual sky** experiment (logical `Sky Reconstruction`),
-not a shortcut around PSF/background coupling or a final Sky_v1.
+**Corrected operational contract** (supersedes the earlier same-date
+manual-sky-region requirement). Users must **not** draw `sky_train` or
+`sky_holdout` regions to run background modelling. That was an error in
+translating an optional low-level `SceneState` API constraint into the GUI.
+The third UI tab is a *post-Scene residual-sky diagnostic*, not a final
+scientific sky acceptance gate.
 
-**Bounded scope.** The Stage 03 widget holds only a reference to the
-already loaded, currently selected native-band Scene Editor state.
-It does **not** open FITS, change projects, fetch another Legacy brick,
-download a new catalogue, create subdirectories or save a sky model.
-The user must explicitly open original native FITS in 02, prepare
-the provisional Tractor masks there, and annotate **separate**
-`sky_train` and `sky_holdout` ICRS regions outside the candidate
-galaxy and likely stellar halos. Existing Scene mask drafts and the
-current scene identity (project UUID, DR release/brick/band, WCS,
-draft hash and Tractor fingerprint) are reused. New drafts or source
-changes invalidate prior in-memory sky evidence. A persistent UI
-resume pointer may now store `stage="sky"` as a third allowed
-navigation value; it never runs numerical work on navigation.
+Photometry Workspace: `1 · PSF-0`, `2 · Scene & Masks`,
+`3 · Background`. The third tab shares the **currently loaded** native
+per-band Scene image/INVVAR/native validity and the prepared project-local
+catalogue source masks, WCS, draft and target protection. It does not
+fetch another brick, download catalogues, open other FITS, alter masks or
+create a new directory. A project-scoped resume pointer may select
+`stage="sky"`, but only an explicit `Build automatic sky candidate`
+action runs the numerical worker. Changes to project/band/draft/source
+invalidate previous in-memory evidence.
 
-**Numerics.** `diagnose_current_project_residual_sky`
-in existing `lsbpipe.background` connects the already implemented
-robust `fit_residual_background` to original `IMAGE`, `INVVAR`
-and native-hard validity plus the currently prepared *provisional*
-Tractor auto-mask, manual exclude and unadopted target protection.
-It uses source `SkyMaskDraft` annotations for exactly disjoint
-training and holdout samples; neither full-image blank-sky guesses nor
-auto-tuned alternative sky regions are supplied. Sky annotations
-crossing protected target geometry are excluded. Method candidates:
-constant residual level and tilted plane, both fitted to the
-**identical** training pixels and evaluated on the **identical**
-holdout pixels with separate four-quadrant residual summaries.
-Initial descriptive requirements: >=100 native training pixels,
->=100 native holdout pixels, holdout in >=3 spatial quadrants.
-These counts are **not independent-pixel statistics** in a
-correlated coadd. Without both nonempty disjoint regions there
-is **no fit**. Even a converged fit with many holdout pixels has
-`MEASURED_UNCALIBRATED` holdout status, not a scientific PASS
-or acceptance. Method difference at the project target centre
-is reported as sky-model sensitivity, **not estimated lost
-galaxy flux**.
+**Automatic selection, current implementation `SCENE_MASKS_FIXED_SPATIAL_TILES_V1`:**
 
-**Output status.** In-memory `desidera.sky.project-native-residual-diagnostic/1`
-QA includes project, native dataset, WCS grid identity,
-draft/catalogue fingerprints, explicit effective sky sample counts,
-model coefficients, heldout and per-quadrant residuals, warning
-flags and method comparison. The explicit **Copy background QA**
-action exports JSON only; no model-subtracted FITS/map is
-generated, no mask changed, and no sky/PSF/galaxy light
-is scientifically adopted. Model amplitudes on already
-sky-subtracted Legacy coadds cannot restore upstream
-oversubtraction. Coadd covariance, stellar wide wings,
-residual galactic emission in sky regions and PSF/galaxy/sky
-joint degeneracy remain unmeasured, so the science gate
-stays **HOLD**.
+1. Begin with original pixels with positive finite inverse variance and
+   finite image values, excluding the immutable native-hard mask and
+   prepared Stage 02 Tractor/manual source exclusions.
+2. Exclude an expanded target-protection region; also use saved
+   `isophote_candidate` annotations conservatively **as sky vetoes only**,
+   not as adopted science isophotes. The target expansion is the larger
+   of 15 arcsec and 30% of the area-equivalent target radius.
+3. Expand catalogue/manual exclusions by 6 arcsec and, where the
+   *already prepared* Source Registry provides Gaia G photometry,
+   exclude bright-star neighbourhoods using provisional fixed radii
+   from 18 to 60 arcsec for `G ≤ 18`. These heuristics do **not**
+   establish actual PSF halo limits. Without the current source registry,
+   fail closed instead of claiming bright-star cleaning.
+4. Partition the current native Scene crop into a fixed rectangular
+   grid with tile edges from 16 to 96 native pixels. Tiles with
+   insufficient uncontaminated interior (<65% or <40 valid pixels)
+   are rejected *using mask geometry alone*. Choose disjoint spatial
+   training and holdout tiles via the fixed, reproducible rule
+   `(tile_x + 2 * tile_y) % 5 == 0` for holdout; all other
+   eligible tiles train. Use a 2-pixel interior border, and at most
+   384 deterministically spread native pixels per tile to prevent
+   dense coadd sampling from dominating the fit. No selection based
+   on the eventual residual brightness.
+5. Require >=8 training tiles, >=4 holdout tiles, >=100 usable
+   native samples on each side, and at least three full-image
+   quadrants represented on each side. If these are unavailable,
+   **no sky model is fitted**; report
+   `INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY`.
+6. Fit both the existing robust constant and tilted-plane
+   residual sky estimators to the same training samples, then
+   evaluate both on the same heldout spatial tiles. A simple
+   predeclared descriptive preference selects the tilted plane
+   only when its heldout native-pixel RMS is below 75% of the
+   constant model's; otherwise the constant level is preferred.
+   This is **numerical provisional model selection**, not
+   `SCIENCE PASS` or calibrated evidence of preserved galaxy outskirts.
 
-**Validation tests.** Synthetic same-project test images exercise
-a spatially tilted residual sky, a protected target region that
-overlaps an erroneously drawn sky-training annotation,
-disjoint heldout coverage, stale project/band/draft/Tractor
-mismatches, lack of explicit regions, and read-only image/mask
-invariants. Qt tests cover third-tab navigation, explicit run,
-copying a non-adopted report and invalidation after a changed
-scene. The researcher must run the stage against Leo P's
-already available data before any actual galaxy background
-claims can be made.
+Researcher-drawn `sky_train` and `sky_holdout` draft annotations
+are ignored by this automatic selector without editing or removing
+them; the core `fit_residual_background` API still supports explicit
+training/holdout layers for isolated algorithm tests. Source protection
+and manual exclusions from 02 remain binding. The numerical output is
+`desidera.sky.project-native-residual-diagnostic/2`, containing
+the tile identities, eligibility fractions, chosen pixel counts,
+spatial quadrant coverage, exclusion guard radii, Gaia veto counts,
+both sky models and holdout QA, their disagreement at the galaxy
+anchor, and the provisional automated choice when supported.
+`Copy background QA` exports this complete provenance.
+No model-subtracted FITS or derived image is written.
+
+**Science limitations:** these are patches of **the same DESI
+coadd**, not independent exposures or noise-only calibration.
+The detection of faint diffuse galaxy light outside the
+provisional exclusion is unproven; the wide PSF wings and
+mask completeness remain uncalibrated. A bright-star veto
+radius is an engineering precaution, not a physical wing
+model. No recovered galaxy flux, background systematic
+error or final sky adoption can be inferred. Coadd spatial
+covariance and upstream sky oversubtraction remain unresolved.
+Scientific status remains `HOLD` until injection/recovery,
+spatial and mask/sky-sensitivity QA justify adoption.
+
+Automated selection must be tested on Leo P's **already downloaded
+native brick** before reporting observed values. Synthetic unit/Qt
+tests separately exercise no-manual-region success, protected
+galaxy exclusion, withheld tile selection independent of pixel
+brightness, fixed provenance, no usable tiles, absence of source
+registry, GUI invalidation, and unchanged original arrays.
