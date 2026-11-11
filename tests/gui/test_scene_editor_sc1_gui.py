@@ -113,6 +113,57 @@ def test_scene_is_real_second_stage_without_auto_loading_fits(
     assert "NOT validated" in view.scene_editor.warning.text()
 
 
+def test_scene_loader_records_source_quartet_hashes_and_detects_race(
+        tmp_path, monkeypatch):
+    """A loaded Scene carries exact original file hashes, not filenames."""
+    import lsbpipe.gui.scene_editor as module
+    from lsbpipe.surveys.dataset_integrity import _expected_paths
+    from lsbpipe.surveys.object_projects import save_object_project
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path/"session"))
+    project=create_object_project(
+        "Leo P", tmp_path/"Leo_P",
+        field=SkyField(359.999, 60., 6.))
+    project.selected_dataset=("dr11","south","1554p600","r")
+    project.data_root=tmp_path/"originals"
+    project.data_root.mkdir()
+    save_object_project(project)
+    paths=_expected_paths(project.data_root, project.selected_dataset)
+    for kind,path in paths.items():
+        path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(f"original-{kind}-bytes".encode())
+    originals={name:file.read_bytes() for name,file in paths.items()}
+    pixels=np.arange(96*96,dtype=float).reshape(96,96)*1e-6
+    data={"image":pixels,"invvar":np.ones_like(pixels),
+          "nexp":np.ones_like(pixels),
+          "maskbits":np.zeros_like(pixels,dtype=np.int16)}
+    def fake_read(*, directory, field, hit, band):
+        assert band=="r"
+        return {
+            "data_root":str(project.data_root),
+            "data":data, "wcs":_native_wcs(),
+            "pixel_shape":pixels.shape,
+            "source":"DR11 south · 1554p600 · r",
+            "hdu_indices":{kind:0 for kind in paths},
+        }
+    monkeypatch.setattr(module, "prepare_fits_explorer",fake_read)
+    loaded=module.load_scene_original_cutout(str(project.root),"r",4.)
+    assert loaded["original_fits_provenance_status"] == (
+        "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD")
+    assert loaded["original_fits_sha256_is_archive_authenticity"] is False
+    assert loaded["original_fits_sha256_local"] == {
+        kind:hashlib.sha256(payload).hexdigest()
+        for kind,payload in originals.items()}
+    assert all(file.read_bytes()==originals[kind]
+               for kind,file in paths.items())
+    def racing_reader(**kwargs):
+        receipt=fake_read(**kwargs)
+        paths["image"].write_bytes(b"changed-original-during-load")
+        return receipt
+    monkeypatch.setattr(module,"prepare_fits_explorer",racing_reader)
+    with pytest.raises(RuntimeError,match="changed during Scene load"):
+        module.load_scene_original_cutout(str(project.root),"r",4.)
+
+
 def test_icrs_circle_ellipse_and_wraparound_on_native_rotated_wcs():
     w=_native_wcs(flipped=True)
     # Each shape is constructed from *world* positions sampled via the
