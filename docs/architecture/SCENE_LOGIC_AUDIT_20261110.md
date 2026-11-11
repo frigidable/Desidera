@@ -1461,3 +1461,115 @@ correlated-noise/crowded-field stress checks. Only then
 compare background, mask-radius and image-subtraction
 hypotheses at identical protected radii in each band.
 No automatic subtraction or science-mask acceptance authorized.
+
+
+---
+
+## Nineteenth-pass full PSF-0 griz export, independent source/sample audit — Leo P (2026-11-11 10:38 UTC)
+
+**New real GUI evidence.** Researcher-supplied `Copy complete QA`
+(`desidera.psf0-griz-comprehensive-debug/1`), generated
+`2026-11-11T10:38:20.419963Z`. Source-file SHA-256
+`f66618eed41e334fcec1fa4824676e9c0c4fcedeee738c16c5d44a5d2d96930c`
+(11,357,837 bytes). Full data not embedded in Git.
+Project: Leo P `0876bbc4-7405-481b-88a8-0e3486c7be98`,
+DR11 South brick `1554p180`. GUI selected source `g`,
+but the workbench independently restored saved *experimental*
+`r/i/z` kernels. File *presence* and valid saved per-band
+input/kernel SHA must not be conflated; g original path quartet
+exists, but g has **no current accepted/saved PSF-0 model** in
+this export.
+
+| Native band | Current QA outcome | Training | Independent holdout | Frozen PSF finite kernel | Measured native FWHM | Median heldout absolute core residual / peak |
+|---|---|---:|---:|---|---:|---:|
+| g | `PSF0_QUALITY_REJECTED_NOT_ADOPTED` **before fit** | none | none | none | none | none |
+| r | `EXPERIMENTAL_PSF_NOT_ADOPTED` | 17 | 5 | 63 × 63 px | 4.02927 px | 0.21956% |
+| i | `EXPERIMENTAL_PSF_NOT_ADOPTED` | 12 | 3 | 65 × 65 px | 4.07951 px | 0.50586% |
+| z | `EXPERIMENTAL_PSF_NOT_ADOPTED` | 42 | 11 | 51 × 51 px | 3.67558 px | 0.42178% |
+
+**g failure is a selection gate, not an ePSF failure.**
+Current `gaia_strict` recipe, `outer_sky_isolation_footprint`,
+81-px stellar cutout, 81-px neighbour isolation,
+10 minimum training + 3 minimum Gaia holdout stars.
+Of 1,050 detected/screened candidates, only 12 passed; 13
+required. No kernel fit, heldout experiment or saved g PSF
+is represented by the rejected current QA. Selected source
+paths having all four original FITS is not g PSF validity.
+Do not lower `min_train_stars`, holdout count, isolation
+or science flags solely to force a model from 12 stars.
+A different isolation/candidate policy requires externally
+predeclared controls and a true independent withheld sample.
+
+**OBJID 2035 independence check.** Gaia DR3
+`623919492384922624` and literal `tractor_objid=2035`
+or `matched_tractor_objid=2035` do *not* occur in the
+complete export's training/holdout/candidate screening records.
+The real local source-bound probe on r (eighteenth pass)
+therefore is **not an in-sample training-star fit on this
+same Gaia identity**. The QA cannot identify the exact
+selection-stage reason OBJID 2035 is absent; do not fabricate
+a failure category for this star. Nor does holdout separation
+establish validity of the star's far wings, especially at the
+Leo P reference centre.
+
+**P15–P20 execution gate is still CLOSED.** For *each*
+saved `r/i/z` model:
+`diagnostic_metrics.postfit_qa_execution.mode = standard_core`,
+`full_research_requested=false`,
+`research_metrics_completed=[]`, and the exact eight
+research diagnostics were all `research_metrics_not_run`:
+`fixed_psf_joint_native_scene_qa`,
+`original_native_outer_stellar_profile_qa`,
+`disjoint_bright_gaia_outer_profile_qa`,
+`fixed_bright_gaia_neighbor_sky_stress_qa`,
+`extended_bright_gaia_mask_experiment_qa`,
+`catalog_shape_neighbor_sky_qa`,
+`single_brick_empirical_psf_closure_qa`,
+`same_brick_joint_wing_sky_spatial_qa`.
+Source names/method hashes reported in the GUI code are
+**capability descriptions, not observational QA results**.
+The core+holdout and finite-kernel geometry provenance did
+pass their *evidence completeness* stages, but scientific
+stages for core bias, spatial representativity, wide wings,
+sky identifiability, coadd covariance and LSB injection–recovery
+remain `HOLD` in each band.
+
+**Spatial extrapolation hazard.** Approximate angular distances
+from target centre derived exclusively from `ra_deg/dec_deg`
+in stored training/holdout records using
+`60 sqrt((ΔRA cos δ_target)^2 + ΔDec^2)` arcmin:
+- r: nearest **training** star 3.99′; median training 8.52′;
+  nearest holdout 5.38′; median holdout 7.05′.
+- i: nearest training 5.38′, median 7.78′;
+  nearest holdout 2.55′.
+- z: nearest training 1.66′, median 7.78′;
+  nearest holdout 2.55′.
+
+The narrow r training-core validation far from the target
+does not establish a local spatially varying PSF or wing
+profile at the target. PSF-0 was built from the broader
+native brick, while the scene crop is only 4′ wide.
+
+**Required next computation:** Research view → band `R` →
+Experimental methods and provenance →
+`Run full historical P15–P20 research QA (slow)` →
+explicit `Build empirical PSF` **with the unchanged recipe**
+and frozen independent holdout policy. This switch is
+off by default and is a computationally heavier **new run**;
+it does not retroactively add research diagnostics to the
+previous saved r QA. Capture the new complete QA and
+compare exact dataset/input/recipe/kernel hashes before
+equating outcomes. R is the first useful reference because
+OBJID 2035 already has a real source-bound finite-kernel
+probe in r; subsequently run i/z if warranted. Resolve
+the rejected g sample in a separate scientifically
+controlled selection experiment, not by weakening gates
+without validation.
+
+**Outcome:** integrity of the r-band foreground probe
+against its restored PSF-0 identity is corroborated.
+No measured wide-angle scattered-light at Leo P,
+no complete P15–P20 results, no validated g PSF-0,
+no evidence for 15.18″ mask-radius fidelity,
+and no galaxy-light loss estimate. `SCIENCE HOLD`;
+no subtraction/mask/photometry gate change authorized.
