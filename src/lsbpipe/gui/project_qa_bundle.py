@@ -395,11 +395,12 @@ def _foreground_aperture_overlap_qa(stages):
             continue
         offset = item.get("offset_arcsec")
         significance = item.get("parallax_significance")
+        parallax = item.get("parallax_mas")
         flux = item.get("band_model_flux_nMgy")
         if (not all(isinstance(x, (int, float)) and not isinstance(x, bool)
                     and math.isfinite(x)
-                    for x in (offset, significance, flux))
-                or offset < 0 or abs(significance) < 5 or flux <= 0
+                    for x in (offset, significance, parallax, flux))
+                or offset < 0 or parallax <= 0 or significance < 5 or flux <= 0
                 or not item.get("gaia_dr3_source_id")
                 or item.get("tractor_type") != "PSF"):
             continue
@@ -445,6 +446,8 @@ def _foreground_aperture_overlap_qa(stages):
         "sources_ranked_by_tractor_model_flux": sources[:24],
         "truncated_source_count": max(0, len(sources)-24),
         "parallax_significance_threshold": 5.0,
+        "positive_parallax_required": True,
+        "proper_motion_only_foreground_candidates_not_enumerated": True,
         "source_flux_removed": False,
         "psf_wings_or_flux_footprints_calibrated": False,
         "comparisons_are_not_contaminant_flux_measurements": True,
