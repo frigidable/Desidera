@@ -293,8 +293,13 @@ def test_gaia_protected_foreground_spike_is_explicit_not_subtracted():
              "offset_arcsec": 20., "parallax_significance": 0.,
              "band_model_flux_nMgy": 3000.},
             {"objid": 43, "gaia_dr3_source_id": 12345, "tractor_type": "PSF",
-             "offset_arcsec": 25., "parallax_significance": 2.,
+             "offset_arcsec": 25., "parallax_mas": .15,
+             "parallax_significance": 2.,
              "band_model_flux_nMgy": 4000.},
+            {"objid": 44, "gaia_dr3_source_id": 23456, "tractor_type": "PSF",
+             "offset_arcsec": 21., "parallax_mas": -1.5,
+             "parallax_significance": 15.,
+             "band_model_flux_nMgy": 9000.},
         ],
     }
     circle = {
