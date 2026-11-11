@@ -1850,6 +1850,12 @@ def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
                     "heldout_weighted_rms_empirical_not_significance":1.1}},
             "science_adopted":False,"source_light_subtracted":False,
             "original_pixels_modified":False,
+            "project_only_outer_sector_probe":{
+                "schema":"desidera.scene.project-only-foreground-sector/1",
+                "status":"SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY",
+                "additional_bricks_or_catalogues_used":False,
+                "science_adopted":False,
+            },
         }
     monkeypatch.setattr(module,"run_scene_psf0_foreground_probe",fake_probe)
     editor._refresh_controls()
@@ -1861,8 +1867,11 @@ def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
     assert calls==[("g",2035,(359.999,60.),None)]
     assert editor._foreground_psf_result["source_objid"]==2035
     assert "UNKNOWN" in editor.psf0_fg_status.text()
+    assert "Same-project direction/sky control" in editor.psf0_fg_status.text()
     snap=editor._complete_scene_qa_snapshot()
     assert snap["psf0_foreground_probe"]["source_id"]==candidate["source_id"]
+    assert snap["psf0_foreground_probe"]["project_only_outer_sector_probe"][
+        "additional_bricks_or_catalogues_used"] is False
     assert snap["psf0_foreground_probe"]["science_adopted"] is False
     editor.set_band("r")
     assert editor._foreground_psf_result is None
