@@ -274,7 +274,10 @@ def fit_observation_background(observation, scene: SceneState, *, method,
 
 
 
-def _automatic_scene_sky_pixels(dataset, preview, contamination):
+def _automatic_scene_sky_pixels(
+        dataset, preview, contamination, *,
+        tile_edge_native_pix=None, grid_offset_xy_native_pix=(0, 0),
+        target_guard_factor=1.0, source_guard_factor=1.0):
     """Deterministic spatially disjoint source-vetoed tiles, no image-based picking.
 
     Selection is solely based on geometry, validity, existing Scene
@@ -286,6 +289,17 @@ def _automatic_scene_sky_pixels(dataset, preview, contamination):
 
     shape = tuple(dataset["pixel_shape"])
     ny, nx = shape
+    if (not np.isfinite(target_guard_factor) or target_guard_factor < 1.
+            or not np.isfinite(source_guard_factor) or source_guard_factor < 1.):
+        raise ValueError("Sensitivity guards may only extend original exclusions")
+    if (len(grid_offset_xy_native_pix) != 2 or
+            any(not isinstance(k, (int, np.integer)) or k < 0
+                for k in grid_offset_xy_native_pix)):
+        raise ValueError("Fixed sky tile-grid offset must be nonnegative integers")
+    if (tile_edge_native_pix is not None and
+            (not isinstance(tile_edge_native_pix, (int, np.integer))
+             or not 16 <= tile_edge_native_pix <= 256)):
+        raise ValueError("Invalid predeclared sky tile edge")
     hard = np.asarray(dataset["native_hard"], dtype=bool)
     image = np.asarray(dataset["data"]["image"])
     invvar = np.asarray(dataset["data"]["invvar"])
@@ -301,9 +315,10 @@ def _automatic_scene_sky_pixels(dataset, preview, contamination):
     arcsec_per_pixel = float(np.sqrt(scales[0]*scales[1])*3600.)
     # This is an exclusion-only heuristic, not validated galaxy extent.
     equivalent_target_radius = np.sqrt(np.count_nonzero(target)/np.pi)
-    target_guard_px = max(int(np.ceil(15./arcsec_per_pixel)),
-                          int(np.ceil(.30*equivalent_target_radius)))
-    source_guard_px = max(2, int(np.ceil(6./arcsec_per_pixel)))
+    target_guard_px = int(np.ceil(target_guard_factor*max(
+        15./arcsec_per_pixel, .30*equivalent_target_radius)))
+    source_guard_px = int(np.ceil(source_guard_factor*max(
+        2., 6./arcsec_per_pixel)))
 
     def guarded(mask, radius):
         if not np.any(mask):
@@ -350,7 +365,11 @@ def _automatic_scene_sky_pixels(dataset, preview, contamination):
     safe = valid & ~target_veto & ~catalog_veto & ~bright_veto
     # Full spatial tiles, with a 2-native-pixel inner edge guard.
     # The same physical sky pixels are never assigned to train and holdout.
-    tile = max(16, min(96, int(min(shape)/12)))
+    tile = (max(16, min(96, int(min(shape)/12)))
+            if tile_edge_native_pix is None else int(tile_edge_native_pix))
+    offset_x, offset_y = map(int, grid_offset_xy_native_pix)
+    if offset_x >= tile or offset_y >= tile:
+        raise ValueError("Grid offset must be smaller than tile edge")
     border = 2
     train = np.zeros(shape, dtype=bool)
     holdout = np.zeros(shape, dtype=bool)
@@ -359,10 +378,10 @@ def _automatic_scene_sky_pixels(dataset, preview, contamination):
     n_eligible = 0
     # The fixed hash is wholly geometry-based, decided before pixel fluxes
     # are considered. No resampling or cherry-picking after a fit.
-    for y0 in range(0, ny, tile):
-        for x0 in range(0, nx, tile):
-            y1 = min(ny, y0+tile)
-            x1 = min(nx, x0+tile)
+    for grid_y0 in range(-offset_y, ny, tile):
+        for grid_x0 in range(-offset_x, nx, tile):
+            y0, y1 = max(0, grid_y0), min(ny, grid_y0+tile)
+            x0, x1 = max(0, grid_x0), min(nx, grid_x0+tile)
             if min(y1-y0, x1-x0) < .75*tile:
                 continue
             n_candidate += 1
@@ -380,12 +399,14 @@ def _automatic_scene_sky_pixels(dataset, preview, contamination):
             if len(xx) > 384:
                 index = np.linspace(0, len(xx)-1, 384, dtype=np.int64)
                 yy, xx = yy[index], xx[index]
-            ty, tx = y0//tile, x0//tile
+            ty, tx = ((grid_y0+offset_y)//tile,
+                      (grid_x0+offset_x)//tile)
             is_holdout = (tx+2*ty) % 5 == 0
             selected = holdout if is_holdout else train
             selected[yy0+yy,xx0+xx] = True
             record = {
                 "tile_index": [int(tx),int(ty)],
+                "tile_bounds_native_xyxy": [int(x0),int(y0),int(x1),int(y1)],
                 "n_available_valid_pixels": count,
                 "n_sampled_pixels": int(len(xx)),
                 "eligible_fraction_of_interior": float(count/total),
@@ -408,6 +429,9 @@ def _automatic_scene_sky_pixels(dataset, preview, contamination):
         "manual_sky_annotations_ignored_not_deleted": True,
         "native_pixel_scale_arcsec": arcsec_per_pixel,
         "tile_edge_native_pix": tile,
+        "tile_grid_offset_xy_native_pix": [offset_x, offset_y],
+        "target_guard_factor": float(target_guard_factor),
+        "source_guard_factor": float(source_guard_factor),
         "tile_inner_border_native_pix": border,
         "min_eligible_fraction_per_tile": .65,
         "max_sampled_pixels_per_tile": 384,
