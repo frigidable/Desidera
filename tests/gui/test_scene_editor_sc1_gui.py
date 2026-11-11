@@ -1600,3 +1600,162 @@ def test_red_extended_qa_preview_is_opt_in_reversible_and_not_persisted(
     editor.iso_red_extended_preview.setChecked(True)
     editor.set_band("r")
     assert not editor.iso_red_extended_preview.isChecked()
+
+
+
+def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
+        qtbot,tmp_path,monkeypatch):
+    """Four native-mask policies plus two independent star interventions.
+
+    The GUI accepts the worker result, and a setting change invalidates it.
+    No native image, source FITS, mask draft or project setting is modified.
+    """
+    import lsbpipe.gui.scene_editor as module
+    from lsbpipe.photometry.ellipse_seed import EllipseSeed, LocalIsophotalProposal
+
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    assert not (project.root/"analyses").exists()
+    draft_before=editor.draft.digest
+    source_before=editor._loaded["data"]["image"].copy()
+    project_radius=project.target_radius_arcsec
+    calls=[]
+
+    def prepare(dataset,scenario_project,draft,anchor,*,sga_prior=None,
+                gaia_inner_preview=False,red_extended_preview=False,
+                gaia_inner_skip_objids=()):
+        assert scenario_project.target_radius_arcsec==70.
+        assert draft.digest==draft_before
+        gaia=bool(gaia_inner_preview)
+        red=bool(red_extended_preview)
+        skipped=set(gaia_inner_skip_objids)
+        calls.append((gaia,red,tuple(sorted(skipped))))
+        mask=np.zeros(dataset["pixel_shape"],dtype=bool)
+        protected=np.zeros_like(mask)
+        protected[10:80,10:80]=True
+        mask[:2,:2]=True
+        if gaia and 11 not in skipped:
+            mask[10:14,10:14]=True
+        if gaia and 22 not in skipped:
+            mask[18:23,18:23]=True
+        if red:
+            mask[29:33,29:33]=True
+        dispositions=[]
+        for oid in (11,22):
+            dispositions.append({
+                "source_id":f"dr11/south/1554p180/OBJID={oid}",
+                "screening_disposition":(
+                    "GAIA_FOREGROUND_MASK_PREVIEW"
+                    if gaia and oid not in skipped
+                    else "PROTECTED_OVERLAP")})
+        dispositions.append({
+            "source_id":"dr11/south/1554p180/OBJID=1794",
+            "screening_disposition":(
+                "RED_EXTENDED_MASK_PREVIEW"
+                if red else "PROTECTED_OVERLAP")})
+        mask.setflags(write=False)
+        return {
+            "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "project_id":project.project_id,"band":"g",
+            "dataset_source":dataset["source"],"draft_digest":draft.digest,
+            "anchor_icrs":anchor,"mask":mask,"protected":protected,
+            "catalog_sha256":"a"*64,
+            "source_inventory":{
+                "total_relevant_sources":3,"truncated":False,
+                "screening_evidence_incomplete":False,
+                "entries":tuple(dispositions)},
+            "stats":{
+                "masked_catalog_sources":1+int(red)+
+                    (2-len(skipped) if gaia else 0),
+                "skipped_target_overlap":3-int(red)-
+                    (2-len(skipped) if gaia else 0),
+                "gaia_inner_preview_sources":(
+                    2-len(skipped) if gaia else 0),
+                "gaia_inner_preview_pixels":(
+                    (16 if 11 not in skipped else 0)+
+                    (25 if 22 not in skipped else 0)
+                    if gaia else 0),
+                "red_extended_preview_sources":int(red),
+                "red_extended_preview_pixels":16 if red else 0,
+                "native_hard_pixels":1,
+            },
+        }
+
+    def propose(dataset,anchor,contrast,smooth,prepared,
+                bridge_guard_pix=0,sga_prior=None):
+        m=prepared["mask"]
+        first=bool(m[11,11])
+        second=bool(m[20,20])
+        red=bool(m[30,30])
+        n=60-8*int(first)-12*int(second)-2*int(red)
+        if first and not second and red:
+            raise ValueError("Synthetic contour failure for one intervention")
+        seed=EllipseSeed(
+            x_pix=48.,y_pix=48.,sma_pix=12.,q=.6,
+            theta_native_deg=30.,component_pixels=n,
+            centroid_offset_pix=float(60-n)/2)
+        model=LocalIsophotalProposal(
+            seed=seed,contour_xy=((40.,40.),(55.,40.),(49.,55.)),
+            local_sky=2.e-5,raw_sky_rms=.002,
+            smoothed_sky_rms=.0002,sky_pixels=800,
+            threshold_contrast=contrast,smoothing_pix=smooth,
+            flags=("BACKGROUND_CONSTANT_NOT_VALIDATED",),
+            component_indices=np.arange(n,dtype=np.int64))
+        return {"proposal":model,"sga_radial":None,
+                "sensitivity":{
+                    "minimum_spatial_iou":.72,
+                    "confidence":"LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE",
+                    "flags":("UNANCHORED_CENTROID_DRIFT",)},
+                "sga_warning":None}
+
+    monkeypatch.setattr(module,"prepare_scene_contamination",prepare)
+    monkeypatch.setattr(module,"propose_scene_isophote",propose)
+    report=module.run_scene_mask_policy_ablation(
+        editor._loaded,project.root,editor.draft,editor._project_target)
+    assert report["schema"]=="desidera.gui.mask-policy-ablation/1"
+    assert report["status"]=="READ_ONLY_DIAGNOSTIC_NOT_SCIENCE_VALIDATED"
+    assert report["gaia_candidate_objids"]==[11,22]
+    assert report["gaia_star_leave_one_out_count"]==2
+    assert len(report["scenarios"])==6
+    assert calls==[(False,False,()),(True,False,()),
+                   (False,True,()),(True,True,()),
+                   (True,True,(11,)),(True,True,(22,))]
+    entries={v["policy"]:v for v in report["scenarios"]}
+    assert entries["none"]["component_pixels"]==60
+    assert entries["gaia"]["component_pixels"]==40
+    assert entries["red"]["component_pixels"]==58
+    assert entries["both"]["component_pixels"]==38
+    assert entries["both"]["vs_no_experimental_masks"][
+        "component_iou"]==pytest.approx(38/60.)
+    assert entries["both"]["vs_no_experimental_masks"][
+        "mask_xor_pixels"]==57
+    assert entries["both"]["masked_pixels_over_baseline_component"]==61
+    assert entries["both_without_gaia_11"]["component_pixels"]==46
+    assert entries["both_without_gaia_11"][
+        "vs_both_experimental_masks"]["component_iou"]==pytest.approx(38/46.)
+    assert entries["both_without_gaia_22"]["component_status"]==(
+        "ISOPHOTE_NOT_FOUND")
+    assert entries["both_without_gaia_22"][
+        "vs_both_experimental_masks"]["component_iou"] is None
+    assert "Synthetic contour failure" in entries[
+        "both_without_gaia_22"]["component_error"]
+    assert report["fixed_settings"]["protection_radius_arcsec"]==70.
+    assert project.target_radius_arcsec==project_radius
+    assert editor.draft.edits==()
+    assert editor.draft.digest==draft_before
+    assert np.array_equal(editor._loaded["data"]["image"],source_before)
+    editor._accept_mask_policy_ablation_result(report)
+    assert editor._policy_ablation_result is report
+    qa=editor._complete_scene_qa_snapshot()
+    assert qa["mask_policy_ablation"] is report
+    assert "READ-ONLY 5/6" in editor.policy_ablation_status.text()
+    assert "NOT galaxy-light loss" in editor.policy_ablation_status.text()
+    # Experimental checkbox state is NOT a policy-ablation input:
+    # the worker computes all four policies regardless of the UI toggle.
+    editor.iso_gaia_inner_preview.setChecked(True)
+    assert editor._policy_ablation_result is None
+    assert editor.draft.edits==()
+    assert not (project.root/"analyses").exists()
+    with pytest.raises(ValueError,match="Ablation radius"):
+        module.run_scene_mask_policy_ablation(
+            editor._loaded,project.root,editor.draft,editor._project_target,
+            protection_radius_arcsec=1e6)
