@@ -552,3 +552,108 @@ tests separately exercise no-manual-region success, protected
 galaxy exclusion, withheld tile selection independent of pixel
 brightness, fixed provenance, no usable tiles, absence of source
 registry, GUI invalidation, and unchanged original arrays.
+
+
+---
+
+## Actual Leo P DR11 r Stage 03 first automatic QA — 2026-11-11
+
+**Observed source:** user-exported complete
+`desidera.sky.project-native-residual-diagnostic/2` at
+`2026-11-11T14:19:25.949366+00:00`,
+project `0876bbc4-7405-481b-88a8-0e3486c7be98`,
+`DR11 south · 1554p180 · r`,
+native image 1324×1466 pixels at 0.262 arcsec/pixel.
+WCS fingerprint
+`5eee1d9581324371fd042bf848b2cffbbcbef081e3edb8302262324906b000e2`
+(prefixed by `wcs-sha256:`); draft
+`2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619`;
+Tractor catalogue
+`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`.
+No new bricks, catalogs, branches or image changes.
+
+The automatic sky sampler returned **31 eligible tiles of 210
+geometrically examined**, of which 24 train and 7 are
+spatial holdouts; **9216 training native pixels** and
+**2688 holdout native pixels**. Masks: 265 native-hard pixels,
+393,573 preliminary auto-catalogue-mask pixels and
+164,759 protected pixels. There are 540,925 geometrically
+available sky pixels prior to sparse tile subsampling;
+8 existing bright Gaia sources were vetoed.
+The approximate fixed target guard was 69 native pixels;
+catalogue exclusion extension 23 pixels. The radii
+remain heuristics rather than calibrated extended PSF wings.
+
+**Actual fitted comparisons (nMgy per native pixel):**
+
+| Metric | Constant | Tilted plane |
+|---|---:|---:|
+| Residual sky at Leo P anchor | +0.00014247858 | -0.00005439155 |
+| Training pixel RMS residual | 0.03963203 | 0.03962365 |
+| Holdout pixel RMS residual | 0.007283561 | 0.007272366 |
+| Holdout pixel median residual | +0.000005215 | +0.000175846 |
+| Holdout status | MEASURED_UNCALIBRATED | MEASURED_UNCALIBRATED |
+
+The planar model only reduces the holdout RMS by **0.154%**
+relative to constant, so the predeclared 25%-improvement
+gate provisionally chooses the **constant** model.
+The local difference in their inferred sky at the target
+is -0.00019687012 nMgy/pixel and the maximum model
+disagreement at original image corners is 0.00088015471.
+These differences cannot be interpreted as galaxy flux
+loss or calibration uncertainty.
+
+**Unresolved spatial quality:**
+- The RMS of training pixels is **5.44×** the holdout
+  RMS, compatible with substantial mixture/outlier or
+  spatial-coverage differences but not diagnostic of
+  their cause from summary data.
+- Holdout quadrant median residuals for the constant
+  model are Q0=-0.00051869, Q1=-0.00016206,
+  Q2=+0.00111337, Q3=+0.00019200 nMgy/pixel.
+  Their peak-to-peak span is **0.00163206**,
+  approximately 11.5× the provisional fitted constant.
+  The absolute fitted level is therefore much smaller
+  than the spatial variation of the observed heldout
+  medians. This ratio does NOT establish uncertainty
+  without a calibrated sampling/noise model.
+- Training spatial coverage omits quadrant Q1 while
+  holdout covers all four quadrants. On the clipped
+  final tile row y=13, **12/24 (50%)** of all
+  training tiles and **3/7 (43%)** of holdout
+  tiles are concentrated at the image edge.
+  Most training information is therefore
+  spatially unbalanced despite the 3-quadrant minimum.
+- Only **2.20%** of the 540,925 geometry-eligible
+  pixels are selected as sampled pixels; the
+  dominant concern is representativity, not number
+  of pixels or a conventional standard error.
+
+**Immediate P3 follow-up (implemented, observational results pending):**
+retain `SCENE_MASKS_FIXED_SPATIAL_TILES_V1` unchanged
+and append read-only, method-specific **tile-level residual QA**
+to the same current-band `Copy background QA`.
+For each source-selected training and heldout tile,
+measure the residual median and pixel RMS on exactly
+the previously selected original pixels, and summarize
+the unweighted median and peak-to-peak dispersion of
+tile medians. Add exact row-concentration fractions,
+partial-edge-tile counts, missing quadrants and
+training/holdout pixel RMS ratio. Flag >40% of tiles
+in one native image row or >2× training/heldout RMS,
+without treating these heuristic warnings as
+statistical significance tests. Never reselect or
+trim tiles in response to their residuals: preserve
+the predeclared holdout. A targeted future automatic
+sensitivity study may compare *predeclared alternative*
+tile scales/offsets in the **same project's** existing
+native image, rather than searching additional
+DESI bricks or asking researchers to draw sky samples.
+
+The fitted constant is a **preliminary descriptive
+candidate**, not a validated sky model. The earliest
+safe next step is to run this augmented QA on Leo P
+and then quantify tile-scale/sky-area sensitivity
+and injection–recovery within the same native project
+before allowing any sky subtraction of LSB emission.
+`SCIENCE HOLD` remains binding.
