@@ -154,9 +154,12 @@ def build_project_aperture_growth(
 class ApertureCurvePlot(QWidget):
     """Simple read-only native-curve preview; no fitting or smoothing."""
 
-    def __init__(self,parent=None):
+    def __init__(self,parent=None, *, mode="cumulative"):
         super().__init__(parent)
-        self.setObjectName("aperture_stage_growth_plot")
+        if mode not in ("cumulative","annular"):
+            raise ValueError("Unknown signed aperture plot mode")
+        self._mode=mode
+        self.setObjectName("aperture_stage_"+mode+"_plot")
         self.setMinimumHeight(175)
         self._curves=()
         self.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed)
@@ -164,6 +167,20 @@ class ApertureCurvePlot(QWidget):
     def set_curves(self,curves):
         self._curves=tuple(curves)
         self.update()
+
+    def _entries(self,curve):
+        if self._mode=="annular":
+            data=zip(
+                curve["radii_arcsec"][1:],
+                curve["independently_integrated_annuli"])
+            key="signed_mean_intensity_nMgy_per_arcsec2"
+        else:
+            data=zip(curve["radii_arcsec"],curve["cumulative"])
+            key="signed_valid_flux_nMgy"
+        return [
+            (float(rad),float(row[key]))
+            for rad,row in data if row[key] is not None
+        ]
 
     def paintEvent(self,event):
         super().paintEvent(event)
@@ -179,12 +196,7 @@ class ApertureCurvePlot(QWidget):
         p.drawRect(bounds)
         points=[]
         for curve in self._curves:
-            data=[
-                (float(rad),float(rec["signed_valid_flux_nMgy"]))
-                for rad,rec in zip(
-                    curve["radii_arcsec"],curve["cumulative"])
-                if rec["signed_valid_flux_nMgy"] is not None
-            ]
+            data=self._entries(curve)
             points.extend(data)
         if not points:
             p.setPen(self.palette().text().color())
@@ -208,12 +220,7 @@ class ApertureCurvePlot(QWidget):
             p.setPen(QPen(self.palette().mid().color(),1.,Qt.DashLine))
             p.drawLine(int(left),int(y0),int(left+bounds.width()),int(y0))
         for index,curve in enumerate(self._curves):
-            entries=[
-                (float(rad),float(rec["signed_valid_flux_nMgy"]))
-                for rad,rec in zip(
-                    curve["radii_arcsec"],curve["cumulative"])
-                if rec["signed_valid_flux_nMgy"] is not None
-            ]
+            entries=self._entries(curve)
             col=colors[index%len(colors)]
             p.setPen(QPen(col,2.))
             for i,(rad,flux) in enumerate(entries):
@@ -223,7 +230,8 @@ class ApertureCurvePlot(QWidget):
                     x0,y0=pos(*entries[i-1])
                     p.drawLine(int(x0),int(y0),int(x),int(y))
         p.setPen(self.palette().text().color())
-        p.drawText(5,18,"nMgy")
+        p.drawText(5,18,(
+            "nMgy" if self._mode=="cumulative" else "nMgy/arcsec²"))
         p.drawText(3,int(top+12),f"{ymax:.3g}")
         p.drawText(3,int(top+bounds.height()),f"{ymin:.3g}")
         p.drawText(int(left+bounds.width()-72),h-8,
@@ -290,8 +298,12 @@ class ApertureWorkspace(QWidget):
         self.status.setObjectName("aperture_stage_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        self.plot=ApertureCurvePlot(self)
-        root.addWidget(self.plot)
+        plots=QHBoxLayout()
+        self.plot=ApertureCurvePlot(self,mode="cumulative")
+        plots.addWidget(self.plot,1)
+        self.annulus_plot=ApertureCurvePlot(self,mode="annular")
+        plots.addWidget(self.annulus_plot,1)
+        root.addLayout(plots)
         self.readout=QPlainTextEdit(self)
         self.readout.setObjectName("aperture_stage_readout")
         self.readout.setMinimumWidth(0)
@@ -345,6 +357,7 @@ class ApertureWorkspace(QWidget):
             self._result_identity=None
             self.copy_btn.setEnabled(False)
             self.plot.set_curves(())
+            self.annulus_plot.set_curves(())
             self.readout.setPlainText(
                 "Previous aperture curves invalidated by project, band, "
                 "Scene draft, source or geometric hypothesis change.")
@@ -366,6 +379,7 @@ class ApertureWorkspace(QWidget):
         self._result_identity=None
         self.copy_btn.setEnabled(False)
         self.plot.set_curves(())
+        self.annulus_plot.set_curves(())
         self._future=self._executor.submit(
             build_project_aperture_growth,
             dataset,draft,contamination,
@@ -415,6 +429,7 @@ class ApertureWorkspace(QWidget):
         self._result_identity=identity
         self.copy_btn.setEnabled(True)
         self.plot.set_curves(result["curves"])
+        self.annulus_plot.set_curves(result["curves"])
         self.readout.setPlainText(self._format_readout(result))
         self.status.setText(
             f"{len(result['curves'])} fixed-geometry curves on "
@@ -452,6 +467,19 @@ class ApertureWorkspace(QWidget):
                     f"{fl if fl is not None else '—':>15} | "
                     f"{cov:.3f} | {sn if sn is not None else '—'}")
             lines += [
+                "Direct annuli: a_in–a_out [arcsec] | signed intensity "
+                "[nMgy/arcsec²] | AB μ if positive",
+            ])
+            for ring in curve["independently_integrated_annuli"]:
+                inner=ring["a_inner_arcsec"]
+                outer=ring["a_outer_arcsec"]
+                intensity=ring["signed_mean_intensity_nMgy_per_arcsec2"]
+                mu=ring["ab_surface_brightness_mag_arcsec2"]
+                lines.append(
+                    f"{inner:6.2f}–{outer:6.2f} | "
+                    f"{intensity if intensity is not None else '—'} | "
+                    f"{mu if mu is not None else 'undefined'}")
+            lines.extend([
                 "Independent annulus vs CoG closure [nMgy]: "
                 + str(curve["max_abs_annulus_closure_nMgy"]),
                 "Outermost valid-area AB magnitude is conditional "
