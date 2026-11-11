@@ -539,6 +539,7 @@ def run_scene_protection_radius_sweep(
             "native_hard_pixels":counts["native_hard_pixels"],
             "source_evidence_total":inv["total_relevant_sources"],
             "sga_radial_radius_arcsec":None,
+            "sga_radial_bin_step_arcsec":None,
             "sga_radial_flags":[],
             "sga_radial_warning":None,
             "component_pixels":None,
@@ -575,6 +576,9 @@ def run_scene_protection_radius_sweep(
                 "component_sky_training_pixels":model.sky_pixels,
                 "sga_radial_radius_arcsec":
                     radial.detected_a_arcsec if radial is not None else None,
+                "sga_radial_bin_step_arcsec":(
+                    radial.radial_step_arcsec
+                    if radial is not None else None),
                 "sga_radial_flags":
                     list(radial.flags) if radial is not None else [],
                 "sga_radial_warning":proposal.get("sga_warning"),
