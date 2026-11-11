@@ -1748,7 +1748,10 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
     editor._accept_mask_policy_ablation_result(report)
     assert editor._policy_ablation_result is report
     qa=editor._complete_scene_qa_snapshot()
-    assert qa["mask_policy_ablation"] is report
+    # Snapshot normalizes nested diagnostic data for JSON: equivalent
+    # content is required, not shared mutable dictionary identity.
+    assert qa["mask_policy_ablation"] == report
+    assert qa["mask_policy_ablation"] is not report
     assert "READ-ONLY 5/6" in editor.policy_ablation_status.text()
     assert "NOT galaxy-light loss" in editor.policy_ablation_status.text()
     # Exercise the actual Qt-worker dispatch as well as pure backend.
