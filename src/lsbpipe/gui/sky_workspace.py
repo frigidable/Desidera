@@ -57,19 +57,20 @@ class SkyWorkspace(QWidget):
         self.context_label.setWordWrap(True)
         layout.addWidget(self.context_label)
         help_label = QLabel(
-            "In 02 Scene & Masks: (1) explicitly load native FITS, "
-            "(2) prepare provisional neighbour masks, and "
-            "(3) draw separate Sky training and Sky holdout regions "
-            "outside the protected galaxy and bright-source footprints. "
-            "Re-prepare neighbour masks after editing the draft. "
-            "Return here to compare the same held-out pixels under "
-            "constant and tilted-plane sky models.")
+            "In 02 Scene & Masks, load the existing original FITS and "
+            "prepare neighbour masks. Desidera automatically excludes "
+            "the protected target, isophote candidates, catalogued "
+            "neighbours and bright Gaia stars, then selects spatially "
+            "separated sky training and holdout tiles from the SAME "
+            "native image. No manual sky-region drawing is required. "
+            "Review failed geometry or PSF-wing warnings rather than "
+            "forcing a sky fit.")
         help_label.setWordWrap(True)
         layout.addWidget(help_label)
         root.addWidget(setup)
 
         tools = QHBoxLayout()
-        self.run_btn = QPushButton("Evaluate background · current band")
+        self.run_btn = QPushButton("Build automatic sky candidate · current band")
         self.run_btn.setObjectName("sky_diagnostic_run")
         self.run_btn.setToolTip(
             "Uses only the native Scene image/invvar, current draft and "
@@ -93,8 +94,8 @@ class SkyWorkspace(QWidget):
         self.readout.setObjectName("sky_diagnostic_readout")
         self.readout.setReadOnly(True)
         self.readout.setPlainText(
-            "No background result. A numerical model is not created "
-            "until explicit, disjoint training and held-out regions exist.")
+            "No background result. Sky training/holdout regions will be "
+            "selected automatically from the current masked Scene.")
         root.addWidget(self.readout, 1)
         self.refresh_context()
 
@@ -170,8 +171,8 @@ class SkyWorkspace(QWidget):
             dataset, draft, contamination)
         self.run_btn.setEnabled(False)
         self.status.setText(
-            "Evaluating two original-pixel residual sky candidates "
-            "with explicit disjoint holdout regions…")
+            "Automatically selecting safe Scene sky tiles, then "
+            "fitting constant and planar residual sky candidates…")
         self._timer.start()
 
     def _poll_worker(self):
@@ -198,7 +199,7 @@ class SkyWorkspace(QWidget):
             self.status.setText(f"Sky diagnostic failed closed: {exc}")
             self.readout.setPlainText(
                 "No background candidate accepted or subtracted. "
-                "Review source masks and disjoint sky regions.")
+                "Review prepared Scene evidence and mask coverage.")
             self.refresh_context()
             return
         if (result.get("project_id") != identity[0] or
@@ -224,16 +225,24 @@ class SkyWorkspace(QWidget):
             "Residual-sky diagnostic · UNADOPTED",
             f"Source: {result['dataset_source']}",
             f"Scene draft: {result['draft_sha256']}",
-            f"Training pixels: {result['sky_train_effective_pixels']}",
-            f"Holdout pixels: {result['sky_holdout_effective_pixels']}",
+            f"Automatically chosen training pixels: "
+            f"{result['sky_train_effective_pixels']}",
+            f"Automatically chosen holdout pixels: "
+            f"{result['sky_holdout_effective_pixels']}",
+            f"Scene tile policy: "
+            f"{result.get('automatic_sky_selection_qa', {}).get('strategy')}",
+            f"Spatial training / holdout tiles: "
+            f"{result.get('automatic_sky_selection_qa', {}).get('training_tiles')} / "
+            f"{result.get('automatic_sky_selection_qa', {}).get('holdout_tiles')}",
             "Original-image pixels ≠ independent noise realizations.",
             "",
         ]
         if not result["methods"]:
             lines += [
                 "No numerical sky fit performed.",
-                "Draw both Sky training and Sky holdout regions "
-                "on the same native Scene image. Re-prepare masks.",
+                "Automatically eligible clean Scene tiles are "
+                "insufficient or source inventory is unavailable. "
+                "Review the masked field; no manual sky regions required.",
             ]
         for method, model in result["methods"].items():
             coeff = model["coefficients_nMgy"]
@@ -259,10 +268,19 @@ class SkyWorkspace(QWidget):
                 + f"{cmp['plane_minus_constant_at_target_nMgy_per_pixel']:.7g}",
                 "This difference is NOT a galaxy-flux error estimate.",
             ]
+        preferred = result.get("provisional_automatic_model")
+        if preferred is not None:
+            lines += [
+                f"Automatically preferred diagnostic model: "
+                f"{preferred['method']}",
+                f"Predicted residual sky at target [nMgy/pixel]: "
+                f"{preferred['predicted_residual_sky_at_target_nMgy_per_pixel']:.7g}",
+                "Selection is provisional and conditional on current Scene masks.",
+            ]
         lines += [
             "",
-            "Status: SKY SCIENCE HOLD. No automatic best-method "
-            "selection, model subtraction, calibrated covariance or "
+            "Status: SKY SCIENCE HOLD. No scientifically adopted "
+            "model, background subtraction, calibrated covariance or "
             "outer-galaxy light recovery.",
             "Full provenance and warnings: Copy background QA.",
         ]
