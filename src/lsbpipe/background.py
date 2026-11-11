@@ -986,9 +986,25 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     source = dataset["source"]
     loaded_key = dataset.get("source_quartet_key")
     mask_key = contamination.get("source_quartet_key")
-    if (loaded_key is not None and mask_key is not None and
-            tuple(loaded_key) != tuple(mask_key)):
+    if (loaded_key is not None and
+            (mask_key is None or tuple(loaded_key) != tuple(mask_key))):
         raise ValueError("Stage03 native Scene/mask quartet identity mismatch")
+    # Do not claim that arbitrary user-populated SHA strings were verified
+    # unless the native loader also confirmed the BUNIT and source identity.
+    from lsbpipe.surveys.dataset_integrity import KINDS
+    import re
+    hashes=dataset.get("original_fits_sha256_local")
+    hashes_verified=(
+        isinstance(hashes,dict) and set(hashes)==set(KINDS)
+        and all(isinstance(v,str) and re.fullmatch("[0-9a-f]{64}",v)
+                for v in hashes.values())
+        and dataset.get("original_fits_provenance_status") ==
+        "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD"
+        and dataset.get("image_unit_evidence") ==
+        "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"
+        and loaded_key is not None and mask_key is not None)
+    if hashes is not None and not hashes_verified:
+        raise ValueError("Malformed or inconsistent Scene FITS provenance")
     if (draft.project_id != pid or
             contamination.get("project_id") != pid or
             contamination.get("band") != band or
@@ -1051,9 +1067,12 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "native_pixel_shape": list(shape),
         "original_fits_provenance_status": dataset.get(
             "original_fits_provenance_status", "NOT_HASHED"),
-        "original_fits_sha256_local": dataset.get(
-            "original_fits_sha256_local"),
+        "original_fits_sha256_local": (
+            dict(hashes) if hashes_verified else None),
+        "source_fits_hashes_verified_at_scene_load": bool(hashes_verified),
         "source_file_hashes_are_local_not_archive_authenticity": True,
+        "image_unit_evidence":dataset.get("image_unit_evidence"),
+        "invvar_unit_evidence":dataset.get("invvar_unit_evidence"),
         "native_hard_pixels": int(np.count_nonzero(hard)),
         "provisional_catalogue_mask_pixels": int(np.count_nonzero(auto)),
         "protected_target_pixels": int(np.count_nonzero(sky_protected)),
