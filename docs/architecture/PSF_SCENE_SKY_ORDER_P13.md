@@ -990,3 +990,115 @@ and g/r/i/z-specific independent PSF and mask
 dependencies. Do not expand project bricks to perform
 these checks; where existing data cannot identify true
 far wings or galaxy-free sky, continue HOLD.
+
+
+---
+
+## 2026-11-11 Leo P r observed fixed-grid and exponential recovery
+
+**Researcher-provided GUI readout, not a new independent FITS run:**
+`DR11 south · 1554p180 · r`, project
+`0876bbc4-7405-481b-88a8-0e3486c7be98`;
+draft fingerprint
+`2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619`.
+Source has 24 training/7 holdout tiles (9216/2688
+original native pixels). No manual sky annotation was required.
+The complete machine-readable `Copy background QA` (as opposed to
+this GUI readout) is still needed to verify all source-mask,
+trial-sample and injection provenance in a single object.
+
+**Actual conditional sensitivity:**
+`tile_72_origin`: 41/13 train/holdout tiles, both models
+measured; `tile_96_shift48`: 18/4, both measured;
+`tile_128_origin`: only 7/2, appropriately
+`SKIPPED_INSUFFICIENT_FIXED_GEOMETRY`;
+`expanded_target_1p5`: 24/7, both measured;
+`expanded_sources_1p5`: 13/6, both measured.
+Over the original grid plus four measurable perturbations,
+constant target-sky predictions span
+`+0.00002335535..+0.00041074240` nMgy/pixel,
+a full range of `0.00038738704` nMgy/pixel;
+tilted plane spans
+`-0.00007173299..+0.00054140047`,
+range `0.00061313346`. These are **not** statistically
+calibrated confidence limits. The first constant estimate,
+`+0.00014247858`, lies inside a perturbation range
+almost 2.72 times its amplitude. The original 96px
+sky training footprint has 12/24 clipped bottom-row
+tiles, and the holdout has 3/7 clipped bottom-row
+tiles; Q1 has no training region.
+The model-free DR11 coadd remains the safer operational
+default while these structural weaknesses remain.
+
+**Actual frozen-mask artificial-source stress:**
+The user reports unmasked-aperture recovered fractions
+for injected deterministic exponential profiles:
+
+| Injected scale length \(h/R_{\rm protect}\) | Constant fitted sky | Tilted fitted sky |
+|---|---:|---:|
+| 0.5 | 0.96615471 | 0.94854787 |
+| 1.0 | 0.83932383 | 0.78059261 |
+| 2.0 | 0.61203313 | 0.53651548 |
+
+Equivalently, sky-fit-induced *conditional*
+unmasked-aperture losses are 3.38/5.15%,
+16.07/21.94%, and 38.80/46.35%. The source
+protected-mask area in the earlier current-draft
+Leo P QA was 164,759 native pixels, corresponding
+to area-equivalent `R = 229.0` native pixels
+(`≈60 arcsec` at 0.262 arcsec/pixel). Provided
+this same protected mask is unchanged, the three
+injection h are approximately **30, 60 and 120
+arcsec**, and the fixed test-aperture radius is
+approximately **120 arcsec**. These are **not**
+Leo P structural parameters. The 120-arcsec
+profile is intentionally broad enough that a
+nonzero synthetic flux can extend far into
+the nominal sky controls.
+
+**Critical limits:** the experiment injects light
+*after* Legacy's original sky subtraction; it tests
+only additional local residual-sky-fitting bias.
+The fixed scene/training masks, unconvolved
+profile (q=0.65) and unmasked aperture omit
+PSF effects, full source detection, galaxy
+segmentation, neighbour flux filling, photometric
+aperture uncertainty, native coadd covariance
+and historic DR11 source over-subtraction.
+The reported recovered fractions must **never**
+be described as measured Leo P total-galaxy
+flux loss or inverted as a photometric correction.
+The 4/4 apparently measurable variants share one
+original correlated coadd and have unequal sky
+sample geometry. Large differences at the
+target centre are a robust *sensitivity
+warning*, not four independent measurements.
+
+**Follow-up implementation after this QA:**
+the frozen-mask injection now reports
+`injected_signal_on_frozen_sky_samples` with
+original training and holdout sample counts
+and explicit injected-signal medians, maxima,
+and training 90th percentile, computed from
+the *same fixed native Scene masks used by the
+robust fitted sky*. This directly tests the
+source-to-background-sample leakage driving
+the synthetic biases, rather than only the
+end recovery fractions. For float32 input FITS,
+the additive test image is held in float64,
+not quantized back to native float32; original
+image, native mask and inventory remain
+unchanged. No external brick is used. These
+leakage values still need a new Leo P
+`Copy background QA` export; they cannot
+be reconstructed from the current text-only
+readout without the original native pixels.
+
+**Scientific decision:** maintain
+`recommended_science_action =
+NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED`,
+`automatic_sky_background_correction_authorized=false`,
+and `SCIENCE HOLD`. Further development should
+use predeclared large-aperture spatial covariance
+and several PSF-aware artificial dwarf profiles
+on copies of *the same already attached project*.
