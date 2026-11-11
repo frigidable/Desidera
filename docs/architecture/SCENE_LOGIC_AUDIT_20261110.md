@@ -1353,3 +1353,111 @@ source-specific local probe on the user's verified native g FITS,
 then inspect empirical large-radius bright-star P16–P20 data
 against independent blank controls before making any wing or
 missing-light claim.
+
+
+---
+
+## Eighteenth-pass actual r-band PSF-0 foreground probe — Leo P (2026-11-11 10:31 UTC)
+
+**Source and reproducibility.** Researcher-supplied `Copy Scene QA`
+(`desidera.gui.scene-complete-qa/1`), generated
+`2026-11-11T10:31:02.768227Z`, UTF-8 source-file SHA-256
+`10346b689b54496464e32a54efb110f0621019e5d73ec8f93982ff406150ea91`.
+This was a **native r-band**, not g-band, experiment:
+`dr11/south/1554p180/r`, Leo P project
+`0876bbc4-7405-481b-88a8-0e3486c7be98`,
+native frame 1324 × 1466 pixels at 0.262 arcsec/pixel.
+Tractor catalogue SHA
+`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`
+matches the prior g-band ablation's same-brick catalogue.
+Full r-band source inventory: 815 relevant of 815 stored, no truncation.
+Mask settings in this current r state: Gaia inner **ON**, red extended
+**ON**, SGA geometry **ON**, SGA core protection **OFF**,
+target-protection radius **60 arcsec**; no current r-band isophote
+proposal, mask ablation or radius sweep. These cannot be treated as
+the prior g-band **fixed-70 arcsec** sensitivity trial.
+
+**Object and original empirical PSF-0.** Source
+`dr11/south/1554p180/OBJID=2035`,
+Gaia DR3 `623919492384922624`,
+Tractor PSF, reference `G=15.0252`,
+Gaia parallax `1.088081 mas` at 30.696 formal sigma.
+Native star centroid (758.263, 661.798) and
+target (732.232, 733.033): separation
+**75.842 px = 19.871 arcsec**.
+Source `MASKBITS=2064` includes `SATUR_Z` and `MEDIUM`;
+`SATUR_Z` is explicitly *not* r-band saturation evidence.
+Stored, SHA-verified r-band PSF-0:
+lineage `1d62ef2d2997fadeb85a410f43f72cfbc61ac61024d23ac768b231385a69b500`,
+kernel SHA `70db7f364c944262185fe5e20dfe28bba9ee995f88cc991bf808e51ac70e7824`,
+recipe SHA `25e260fb6e4a2e0ff9d3341a3e24f540b5cce1b4b2b0dcf81bb10951bbcfc611`,
+17 training stars and 5 separate PSF-0 holdouts.
+Measured r core FWHM **4.02927 px = 1.05567 arcsec**,
+finite normalized PSF image **63 × 63 px**,
+31 px half-width. The *galaxy centre is outside its finite square*
+(Δx=26.03 px, Δy=71.24 px). No halo surface brightness
+or stellar flux at the galaxy centre can be inferred.
+
+**Executed native-source local probe**:
+`FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED`;
+43 × 43 pixel original stamp; training 504 valid pixels;
+independent withheld radial band 496 valid pixels
+(2.5–4 FWHM, or 2.64–4.22 arcsec); original valid fractions
+100% in both. Star model training radial range 0.8–2.5 FWHM,
+sky-control range 4–4.5 FWHM = 4.22–4.75 arcsec.
+No other Tractor centre within six r FWHM
+(24.18 px); independent inventory shows closest at about
+30.3 px. Absence of a nearby centre is not a guarantee that
+extended neighbour wings or galaxy continuum are absent.
+
+| Fixed kernel + local sky | Constant | Planar |
+|---|---:|---:|
+| Model amplitude, **finite-kernel conditional nMgy** | 1106.6982 | 1106.3719 |
+| Sky at star centre, nMgy/pixel | 0.0061175 | 0.0065452 |
+| Held-out weighted RMS, empirical, **not sigma** | 1.8493 | 1.8106 |
+| Held-out sky-only weighted RMS, empirical | 21.7581 | 21.8733 |
+| Largest absolute held-out octant median residual, nMgy/pixel | 0.00648 | 0.00724 |
+
+Tractor r-band model flux is `1078.7465 nMgy`; planar-model
+finite-kernel amplitude is +**2.561%**. This is *not*
+a measured photometric bias or calibrated flux consistency
+test: the empirical truncated kernel and Tractor's flux
+definitions differ, and fixed-kernel subpixel interpolation
+is not strictly flux-conserving.
+Amplitude changes only **0.0295%** between the two tested
+background parameterizations; held-out weighted RMS changes
+**2.09%**. Sky-only comparison indicates the star supplies
+the dominant local signal; it gives no information on outer wings.
+
+**Crucial scene-model limitation:** the source sits inside the
+galaxy's candidate extended envelope, so the 4–4.5 FWHM
+"sky-control" ring is not demonstrably galaxy-free; a fitted
+planar sky may include Leo P light. The r-band experimental
+Gaia exclusion footprint of OBJID 2035 has radius
+**57.943 px = 15.18 arcsec**, much larger than the
+4.75 arcsec outer limit of the local probe and beyond the
+half-width of the stored PSF-0 (8.12 arcsec). The geometric
+footprint's nearest approach to the reference target centre
+is approximately **4.69 arcsec**, although this geometry
+does **not** quantify actual contaminated or missing
+galaxy light. Neither r-band model has verified the footprint.
+
+**Outcome:** successful integration/restore and source-bound
+fit on real r-band data, but both independent outer PSF
+calibration and galaxy-light loss remain **UNKNOWN**,
+`science_adopted=false`. No r-band isophote component was
+generated, so no finite-kernel/component-overlap metric exists.
+The g-band 8,062-pixel leave-one-out difference concerns
+segmentation geometry and cannot be translated into galaxy
+flux or attached to this r-band probe.
+
+**Next independent gate:** verify PSF-0 training/holdout
+separation for this specific source, examine existing
+P16–P20 *bright-star* annular/blank-control diagnostics on
+a matched native r-band dataset, repeat for the g-band,
+construct a spatially variable, source-brightness-aware
+wide-angle wing model with held-out field stars and
+correlated-noise/crowded-field stress checks. Only then
+compare background, mask-radius and image-subtraction
+hypotheses at identical protected radii in each band.
+No automatic subtraction or science-mask acceptance authorized.
