@@ -91,6 +91,48 @@ def test_aperture_native_worker_retains_masks_and_zero_sky():
             target_icrs=(155.4,18.))
 
 
+def test_aperture_source_sha_propagates_into_each_exact_flux_recipe():
+    """The full original-FITS SHA identity follows Scene -> Stage04."""
+    ds,draft,contam=_inputs()
+    sha={k:(str(i)*64) for i,k in enumerate(
+        ("image","invvar","nexp","maskbits"),1)}
+    ds["original_fits_sha256_local"]=sha
+    ds["original_fits_provenance_status"]=(
+        "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD")
+    result=build_project_aperture_growth(
+        ds,draft,contam,source_triplet=("dr11","south","1554p180"),
+        target_icrs=(155.4,18.))
+    assert result["source_fits_hashes_verified"] is True
+    assert result["original_fits_sha256_local"] == sha
+    assert result["adopted_for_science"] is False
+    first=result["curves"][0]["cumulative"][0]
+    assert "FULL_SOURCE_FITS_HASHES_NOT_VERIFIED" not in first["warnings"]
+    before_recipe=first["recipe_sha256"]
+    second=dict(sha,image="a"*64)
+    ds["original_fits_sha256_local"]=second
+    changed=build_project_aperture_growth(
+        ds,draft,contam,source_triplet=("dr11","south","1554p180"),
+        target_icrs=(155.4,18.))
+    assert changed["curves"][0]["cumulative"][0]["recipe_sha256"] != (
+        before_recipe)
+    for bad in (
+            {"image":"a"*64}, {"image":"not-a-hash",
+                               "invvar":"2"*64,"nexp":"3"*64,
+                               "maskbits":"4"*64}):
+        ds["original_fits_sha256_local"]=bad
+        with pytest.raises(ValueError,match="Malformed or inconsistent"):
+            build_project_aperture_growth(
+                ds,draft,contam,
+                source_triplet=("dr11","south","1554p180"),
+                target_icrs=(155.4,18.))
+    ds["original_fits_sha256_local"]=sha
+    ds["original_fits_provenance_status"]="NOT_HASHED"
+    with pytest.raises(ValueError,match="Malformed or inconsistent"):
+        build_project_aperture_growth(
+            ds,draft,contam,source_triplet=("dr11","south","1554p180"),
+            target_icrs=(155.4,18.))
+
+
 def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     ds,draft,contam=_inputs()
     scene=SimpleNamespace(
