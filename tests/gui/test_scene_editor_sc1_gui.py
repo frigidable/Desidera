@@ -128,11 +128,23 @@ def test_scene_loader_records_source_quartet_hashes_and_detects_race(
     project.data_root.mkdir()
     save_object_project(project)
     paths=_expected_paths(project.data_root, project.selected_dataset)
+    from astropy.io import fits
+    pixels=np.arange(96*96,dtype=float).reshape(96,96)*1e-6
+    source_arrays={
+        "image":pixels.astype("f4"),
+        "invvar":np.ones(pixels.shape,dtype="f4"),
+        "nexp":np.ones(pixels.shape,dtype="i2"),
+        "maskbits":np.zeros(pixels.shape,dtype="i2"),
+    }
     for kind,path in paths.items():
         path.parent.mkdir(parents=True,exist_ok=True)
-        path.write_bytes(f"original-{kind}-bytes".encode())
+        header=_native_wcs().to_header()
+        if kind=="image":
+            header["BUNIT"]="nanomaggies"
+        if kind=="invvar":
+            header["BUNIT"]="1/nanomaggies^2"
+        fits.PrimaryHDU(data=source_arrays[kind],header=header).writeto(path)
     originals={name:file.read_bytes() for name,file in paths.items()}
-    pixels=np.arange(96*96,dtype=float).reshape(96,96)*1e-6
     data={"image":pixels,"invvar":np.ones_like(pixels),
           "nexp":np.ones_like(pixels),
           "maskbits":np.zeros_like(pixels,dtype=np.int16)}
@@ -150,11 +162,20 @@ def test_scene_loader_records_source_quartet_hashes_and_detects_race(
     assert loaded["original_fits_provenance_status"] == (
         "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD")
     assert loaded["original_fits_sha256_is_archive_authenticity"] is False
+    assert loaded["image_unit_evidence"] == (
+        "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED")
+    assert loaded["invvar_unit_evidence"] == "FITS_INVVAR_BUNIT_CONFIRMED"
     assert loaded["original_fits_sha256_local"] == {
         kind:hashlib.sha256(payload).hexdigest()
         for kind,payload in originals.items()}
     assert all(file.read_bytes()==originals[kind]
                for kind,file in paths.items())
+    with fits.open(paths["image"],mode="update") as hdus:
+        hdus[0].header["BUNIT"]="ADU"
+    with pytest.raises(ValueError, match="not nanomaggies"):
+        module.load_scene_original_cutout(str(project.root),"r",4.)
+    with fits.open(paths["image"],mode="update") as hdus:
+        hdus[0].header["BUNIT"]="nanomaggies"
     def racing_reader(**kwargs):
         receipt=fake_read(**kwargs)
         paths["image"].write_bytes(b"changed-original-during-load")
