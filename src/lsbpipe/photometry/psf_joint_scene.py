@@ -773,3 +773,212 @@ def audit_finite_psf0_foreground(
         model_subpixel_interpolation_not_exactly_flux_conserving=True,
     )
     return base
+
+
+
+# P21: a SOURCE-BOUND DIRECTIONAL sensitivity test on original pixels only.
+# It is neither a new PSF, a fitted halo, nor a science-ready sky estimate.
+P21_SECTOR_RINGS_FWHM = ((6., 8.), (8., 12.), (12., 16.),
+                         (16., 20.), (20., 24.))
+P21_OUTER_REFERENCE_RING_FWHM = (26., 30.)
+
+
+def audit_same_project_foreground_sector_profile(
+        image, invvar, native_hard, *, source_xy, target_xy,
+        measured_fwhm_pix, other_catalog_centres=()):
+    """Read-only directional star/sky comparison strictly on the loaded image.
+
+    Use fixed 90-degree cones facing / opposing the target, five radial
+    shells and two *conditional* outer-sky rings. Compare the angular
+    difference with 4x4 fixed-tile catalogue-only controls from the SAME
+    native image. A control is not asserted to be galaxy-free. No star or
+    sky flux, external brick, additional source, PSF wing or mask is fitted.
+
+    Control locations are specified before reading any control pixels.
+    Failed or catalogue-crowded tiles are not replaced using their values.
+    """
+    base = {
+        "schema": "desidera.scene.project-only-foreground-sector/1",
+        "status": "NOT_MEASURED",
+        "science_adopted": False,
+        "only_current_project_loaded_native_image": True,
+        "additional_bricks_or_catalogues_used": False,
+        "original_pixels_modified": False,
+        "absolute_stellar_wings_identified": False,
+        "galaxy_light_loss_measured": False,
+        "background_galaxy_free_certified": False,
+        "noise_covariance_calibrated": False,
+        "fixed_radial_rings_measured_fwhm": [
+            list(v) for v in P21_SECTOR_RINGS_FWHM],
+        "conditional_outer_sky_rings_measured_fwhm":
+            [[24., 26.], list(P21_OUTER_REFERENCE_RING_FWHM)],
+        "control_selection": "FIXED_4x4_NATIVE_CROP_TILES_NO_BACKFILL",
+        "direction": "TOWARD_VS_AWAY_FROM_PROJECT_TARGET_90_DEG_CONES",
+        "warning": ("Galaxy surface brightness and unmodelled stellar wings "
+                    "can both contribute in the target-facing cone. "
+                    "Sky-ring and blank controls are conditional, not "
+                    "independent calibration or a halo upper bound."),
+    }
+    a = np.asarray(image, dtype=float)
+    iv = np.asarray(invvar, dtype=float)
+    hard = np.asarray(native_hard, dtype=bool)
+    if a.ndim != 2 or iv.shape != a.shape or hard.shape != a.shape:
+        raise ValueError("Project-only probe expects matching native image arrays")
+    try:
+        sx, sy = map(float, source_xy)
+        tx, ty = map(float, target_xy)
+        fwhm = float(measured_fwhm_pix)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid native source/target geometry") from exc
+    if (not all(math.isfinite(z) for z in (sx, sy, tx, ty, fwhm))
+            or not 2. <= fwhm <= 25.):
+        raise ValueError("Nonfinite source geometry or unmeasured FWHM")
+    dist = float(math.hypot(tx-sx, ty-sy))
+    if dist <= fwhm:
+        return dict(base, status="SOURCE_TARGET_DIRECTION_NOT_IDENTIFIABLE")
+    ux, uy = (tx-sx)/dist, (ty-sy)/dist
+    neighbours = []
+    for objid, x, y in other_catalog_centres:
+        x, y = float(x), float(y)
+        if math.isfinite(x) and math.isfinite(y):
+            neighbours.append((int(objid), x, y))
+    half = int(math.ceil(P21_OUTER_REFERENCE_RING_FWHM[1]*fwhm))+2
+    rings = P21_SECTOR_RINGS_FWHM
+    cos_limit = math.cos(math.pi/4.)
+    rows, columns = a.shape
+
+    def measure(cx, cy, catalog_centres):
+        x0, y0 = int(round(cx))-half, int(round(cy))-half
+        x1, y1 = x0+2*half+1, y0+2*half+1
+        if x0 < 0 or y0 < 0 or x1 > columns or y1 > rows:
+            return {"status": "OUTER_30_FWHM_PATCH_CROSSES_NATIVE_IMAGE_EDGE"}
+        patch = a[y0:y1, x0:x1]
+        inverse = iv[y0:y1, x0:x1]
+        usable = (~hard[y0:y1, x0:x1] & np.isfinite(patch)
+                  & np.isfinite(inverse) & (inverse > 0))
+        yy, xx = np.indices(patch.shape, dtype=float)
+        xx += x0
+        yy += y0
+        dx, dy = xx-cx, yy-cy
+        radius = np.hypot(dx, dy)/fwhm
+        # The 3-FWHM cores only remove identified catalogue neighbours.
+        # Their unknown outer wings are NOT declared removed.
+        catalogue_masked = 0
+        for _, nx, ny in catalog_centres:
+            if abs(nx-cx) > half+3*fwhm or abs(ny-cy) > half+3*fwhm:
+                continue
+            hit = (xx-nx)**2+(yy-ny)**2 < (3.*fwhm)**2
+            catalogue_masked += int((hit & usable).sum())
+            usable &= ~hit
+        projection = (dx*ux+dy*uy)/np.maximum(np.hypot(dx,dy), 1.e-12)
+        toward = projection >= cos_limit
+        away = projection <= -cos_limit
+
+        def median_in(low, high, direction):
+            selected = (usable & direction & (radius >= low)
+                        & (radius < high))
+            n = int(selected.sum())
+            return (float(np.median(patch[selected])) if n >= 30 else None,
+                    n)
+
+        sky_24, n_24 = median_in(24., 26., away)
+        sky_26, n_26 = median_in(26., 30., away)
+        report = []
+        for low, high in rings:
+            facing, n_facing = median_in(low, high, toward)
+            opposite, n_opposite = median_in(low, high, away)
+            difference = (float(facing-opposite)
+                          if facing is not None and opposite is not None
+                          else None)
+            report.append({
+                "radius_in_measured_fwhm": [low,high],
+                "n_original_valid_facing_pixels": n_facing,
+                "n_original_valid_opposite_pixels": n_opposite,
+                "toward_median_nMgy_per_pixel": facing,
+                "away_median_nMgy_per_pixel": opposite,
+                "toward_minus_away_nMgy_per_pixel": difference,
+                "toward_relative_to_outer_sky_24_26_nMgy_per_pixel": (
+                    float(facing-sky_24)
+                    if facing is not None and sky_24 is not None else None),
+                "toward_relative_to_outer_sky_26_30_nMgy_per_pixel": (
+                    float(facing-sky_26)
+                    if facing is not None and sky_26 is not None else None),
+                "sky_reference_difference_not_statistical_error": (
+                    float(sky_24-sky_26)
+                    if sky_24 is not None and sky_26 is not None else None),
+            })
+        return {
+            "status": "FIXED_DIRECTIONAL_ANNULI_DESCRIPTIVE_ONLY",
+            "n_catalog_neighbour_core_pixels_excluded": catalogue_masked,
+            "outer_reference_away_24_26_nMgy_per_pixel": sky_24,
+            "outer_reference_away_26_30_nMgy_per_pixel": sky_26,
+            "outer_reference_away_pixels": [n_24,n_26],
+            "n_rings_measured_with_both_cones": sum(
+                row["toward_minus_away_nMgy_per_pixel"] is not None
+                for row in report),
+            "per_ring": report,
+        }
+
+    star = measure(sx, sy, neighbours)
+    if star["status"] != "FIXED_DIRECTIONAL_ANNULI_DESCRIPTIVE_ONLY":
+        return dict(base,status=star["status"],source=star)
+    controls = []
+    for tile_y in range(4):
+        for tile_x in range(4):
+            cx = int(round((tile_x+.5)*columns/4.))
+            cy = int(round((tile_y+.5)*rows/4.))
+            entry = {"tile": [tile_x,tile_y],
+                     "center_native_xy_pix": [cx,cy]}
+            if (math.hypot(cx-tx,cy-ty) < 60.*fwhm or
+                    math.hypot(cx-sx,cy-sy) < 60.*fwhm):
+                entry["status"] = "PROJECT_TARGET_OR_STAR_GEOMETRY_EXCLUDED"
+            elif any(math.hypot(cx-nx,cy-ny) < 3.*fwhm
+                     for _,nx,ny in neighbours):
+                entry["status"] = "CATALOG_CENTRE_AT_CONTROL_ORIGIN"
+            else:
+                # Treat the selected star as an additional contaminant
+                # at control locations; never mask the source itself
+                # when measuring its own radial profile above.
+                entry.update(measure(
+                    cx,cy,neighbours+[(-1,sx,sy)]))
+            controls.append(entry)
+    comparison = []
+    for ring_index, (low,high) in enumerate(rings):
+        star_row = star["per_ring"][ring_index]
+        controls_here = [
+            row["per_ring"][ring_index]["toward_minus_away_nMgy_per_pixel"]
+            for row in controls
+            if row["status"] == "FIXED_DIRECTIONAL_ANNULI_DESCRIPTIVE_ONLY"
+            and row["per_ring"][ring_index][
+                "toward_minus_away_nMgy_per_pixel"] is not None
+        ]
+        comparison.append({
+            "radius_in_measured_fwhm": [low,high],
+            "source_toward_minus_away_nMgy_per_pixel":
+                star_row["toward_minus_away_nMgy_per_pixel"],
+            "n_catalog_geometry_fixed_controls_with_valid_cones":
+                len(controls_here),
+            "median_abs_control_asymmetry_nMgy_per_pixel": (
+                float(np.median(np.abs(controls_here)))
+                if controls_here else None),
+            "max_abs_control_asymmetry_nMgy_per_pixel": (
+                float(np.max(np.abs(controls_here)))
+                if controls_here else None),
+            "not_a_wing_detection_or_significance": True,
+        })
+    return dict(
+        base,
+        status="SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY",
+        source_to_target_centre_measured_fwhm=float(dist/fwhm),
+        source=star,
+        controls=controls,
+        n_fixed_control_tiles=16,
+        n_controls_with_at_least_one_measured_ring=sum(
+            r.get("n_rings_measured_with_both_cones",0)>0
+            for r in controls),
+        comparison_by_ring=comparison,
+        fixed_control_geometry_not_selected_on_residuals=True,
+        all_control_centres_from_current_image_only=True,
+        coadd_controls_share_sky_and_pixel_correlations=True,
+        no_empirical_psf_wing_extrapolation=True,
+    )
