@@ -1295,3 +1295,66 @@ retains `covariance_calibrated_for_science=false` and
   foreground candidates) and quantify model-conditioned masked flux.
 - Verify source FITS checksums and run the native Leo P `r` measurement.
   Until then: **SCIENCE HOLD**.
+
+
+---
+
+## 2026-11-12 — One-click project-bound QA bundle
+
+The Photometry Workspace title now exposes **Copy QA** (object name
+`photometry_copy_project_qa`). Its output uses schema
+`desidera.gui.project-diagnostic-bundle/1` and is JSON suitable for a
+single ChatGPT message or a UTF-8 text/JSON attachment.
+
+**Contract.** The button does not start background workers, fetch files,
+read original FITS, create directories, change the Scene draft, adopt a
+fit, or restore previously invalidated results. It snapshots **one
+galaxy project**: current loaded Scene band plus all four independent PSF-0
+band panels. Unavailable stages are reported as `NOT_RUN`,
+`BLOCKED_BY_SCENE_INPUTS`, `WORKER_IN_PROGRESS`, or
+`STALE_RESULT_WITHHELD`. Failure of one stage's report collection is
+isolated as `COLLECTION_FAILED` with its exception class and message;
+this never becomes an empty successful report.
+
+Bundle sections:
+
+* Runtime/package versions and best-effort Git checkout SHA (if a loose
+  local Git branch pointer is present; absence is explicit).
+* Project UUID, local saved dataset triplet, anchor, current GUI stage,
+  navigation and loaded-band identities, draft and catalogue fingerprints,
+  local product-discovery state already shown in the GUI.
+* **01 PSF-0:** independent g/r/i/z current settings, source and
+  recipe provenance, review/stars, science rejection/warnings, and
+  non-adopted QA. Per-band errors do not block other bands.
+* **02 Scene & Masks:** native FITS/WCS metadata, draft and dirty state,
+  Tractor/SGA identification, source registry, candidate decisions, mask
+  population counts, isophote sensitivity, full policy ablation
+  *per scenario*, and leave-one-out statistics. Repeated long per-radius
+  policy traces are stored as compact typed rows with every radius,
+  coverage, sectors-positive and measurement status retained; complete
+  octant arrays remain available in the original `Copy Scene QA`.
+* **03 Background:** native coadd residual-sky diagnostics, candidate
+  fit/holdout results, grid perturbations, injections, explicit
+  non-adoption status. Stale results are withheld by identity check.
+* **04 Aperture:** finite-area flux/area and invalidity breakdown for
+  every provisional geometry/radius, signed independent annuli,
+  closure QA, sky/mask/geometry sensitivity, blank annulus and CoG
+  covariance diagnostics. Repeated source-ID fields are lifted to their
+  containing records; per-aperture octant QA is retained.
+* Last 20 operation-journal **attempts** where present (bounded, read-only,
+  not proof of a completed scientific calculation), and deterministic
+  `diagnostic_findings` triage codes such as absent sky QA, insufficient
+  blank covariance or strong mask-policy dependence.
+
+The bundle intentionally excludes raw FITS, masks, stamps, CCD pixels,
+and any non-trivial numerical image grid. It uses strict JSON serialization
+(`allow_nan=False`); a non-finite or unrepresentable value must fail closed
+rather than putting a misleading partial report on the clipboard. Existing
+individual **Copy Scene/Background/Aperture QA** buttons and explicit PSF
+export remain available for deeper source-specific investigations.
+
+**Scientific boundary:** `science_hold=true`,
+`scientific_adoption=false`, even if every GUI diagnostic is present.
+Missing-band metadata, no source FITS hash, failed source membership,
+unvalidated sky model/PSF and uncalibrated coadd covariance must not be
+silently interpreted as a passed scientific acceptance gate.
