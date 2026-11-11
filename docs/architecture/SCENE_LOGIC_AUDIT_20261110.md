@@ -1026,3 +1026,30 @@ User reran real GUI `Copy Scene QA` at `2026-11-11T00:10:46.868295Z` (native DR1
 The experiment retains Gaia interior preview **ON**, strict red extended preview **ON**, SGA geometry **ON**, SGA protection **OFF**, contrast 2.2, smoothing 4 pixels, bridge guard 2 px, with no target edits and no science adoption. All scenario local skies remain exactly `2.1435495e-05 nMgy/pixel` and smoothed RMS `0.0002717869 nMgy/pixel`; these are provisional empirical estimates, not a new sky validation. Four threshold/smoothing trials remain sensitive (minimum IoU ≈0.723 at 70/80; area ratio ≈1.57) and centroid drift >64 px carries `UNANCHORED_CENTROID_DRIFT`.
 
 **Next discriminating experiment:** hold g-band image, parent SGA geometry, threshold, smoothing, centre and protection-radius sweep constant, but run the same diagnostic with the experimental red-extended masks OFF (Gaia ON), then with BOTH experimental masks OFF. Compare the **adjacent-radius 70→80 component IoU**, radial endpoints, retained-source IDs and source/galaxy flux-loss risks separately. A later independent PSF-wing and spatial-sky comparison is necessary before choosing an unattended mask policy. Continue SCIENCE HOLD.
+
+
+---
+
+## Thirteenth-pass Leo P foreground-mask policy ablation (2026-11-11)
+
+Two full, real on-device g-band QA exports were supplied after a previously verified both-preview-ON sweep: `2026-11-11T00:17:56.857826Z` (Gaia interior ON / red extended OFF) and `2026-11-11T00:18:46.524464Z` (both OFF); comparison run `2026-11-11T00:10:46.868295Z` had both ON. All share project `Leo_P` ID `0876bbc4-7405-481b-88a8-0e3486c7be98`, identical source SHA-256 `8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`, draft digest `2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619`, SGA parent reference 5065058 and SHA, native g DR11 South brick 1554p180, contrast=2.2, smoothing=4 pixels, bridge guard=2, SGA geometry used and core protection disabled. Each completed all five protection radii (40, 50, 60, 70, 80 arcsec), with zero adopted mask edits.
+
+| Radius | Experimental previews | Excluded catalogue pixels | Connected component px | Moment q | Centroid drift px | Radial bin endpoint arcsec | Minimum threshold/smoothing IoU |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 60 | Gaia+red | 421494 | 34054 | .360421 | 64.075 | 60.163 | .72566 |
+| 60 | Gaia only | 413770 | 34057 | .360422 | 64.077 | 63.415 | .72411 |
+| 60 | Neither | 400042 | 45974 | .541076 | 39.859 | 63.415 | .73477 |
+| 70 | Gaia+red | 410377 | 34182 | .360286 | 64.135 | 61.789 | .72348 |
+| 70 | Gaia only | 402626 | 34185 | .360287 | 64.135 | 63.415 | .72194 |
+| 70 | Neither | 388230 | 46102 | .540712 | 39.894 | 63.415 | .73309 |
+| 80 | Gaia+red | 397881 | 34182 | .360286 | 64.135 | 61.789 | .72348 |
+| 80 | Gaia only | 390130 | 34185 | .360287 | 64.135 | 63.415 | .72194 |
+| 80 | Neither | 371674 | 46102 | .540712 | 39.894 | 63.415 | .73309 |
+
+**Key result (fixed-mask-policy stability is NOT cross-policy stability):** for every 40–80 arcsec sweep radius the Gaia-preview-enabled connected component is exactly **11,917 pixels smaller** than the corresponding no-preview component; at radius 70/80 this is 25.85% of the no-preview area, accompanied by moment q changing from .5407 to .3603 and centroid offset increasing 39.89→64.14 pixels. At 70 arcsec, even the theoretically *maximum* possible pixel IoU between no-preview (46,102 px) and both-preview (34,182 px) components is `34182/46102 = 0.741443`, and the actual IoU may be smaller: pixel arrays are intentionally omitted from QA. **Do not claim** precisely 11,917 galaxy-light pixels were removed or that the mask pixels equal the component-area difference; there are foreground sources and topology effects. The red-extended preview changes component *area* only **3 pixels** per radius after Gaia masks, yet changes the *SGA radial endpoint* by two 1.626 arcsec bins at 60 arcsec, one bin at 70/80 arcsec. This independently demonstrates important radial-diagnostic sensitivity despite nearly unchanged component area.
+
+All three policies preserve **within-policy** pixelwise component IoU=1.0 for 70→80 arcsec even while mask pixels continue to change: 12,496 XOR pixels for Gaia+red, 12,496 for Gaia only, and 16,556 for neither. Hence the previously established radial-protection plateau is reproducible *within each mask policy* but cannot validate the mask policy or a scientific galaxy edge. Sky diagnostics (local sky 2.1435495e-05 nMgy/pixel and smoothed RMS 2.717869e-4) are unchanged, with no spatial background or independent PSF model; minimum threshold/smoothing IoUs remain 0.722–0.733 at r=70/80. All candidates remain LOW_CONFIDENCE, read-only and unadopted.
+
+Five Gaia interior candidate OBJIDs are `1763,1870,1876,2034,2035`. Source inventory records significant Gaia astrometry: e.g. OBJID 1763 parallax significance 5.44 and |PMdec| significance 96.98; 1870 parallax 6.38 and |PMra| 147.40; 1876 parallax 5.24 and |PMdec| 77.64; 2034 proper motion |PMra| significance 11.95 even though parallax insignificant; **2035** G≈15.03, parallax significance ≈30.7, bright g-band Tractor model flux ≈607.4 nMgy, angular distance from galaxy centre ≈19.87 arcsec and preview radius ≈52.7 native pixels. These are credible **foreground-source** indicators, *not proof that the whole extended mask can be removed without losing diffuse Leo P light*. Do not infer real-galaxy flux loss from pixel area alone.
+
+**Next useful implementation/test:** obtain exact *cross-policy* pixel overlap by running alternative policies on a fixed original native FITS and fixed radius (70 arcsec), including per-source Gaia mask **leave-one-out ablations** (starting with bright OBJID 2035) and a source/target-light flux budget. Maintain separate contamination removal (including PSF-wing models), masked-target-light recovery and astrophysical isophote fitting; validate with injection/recovery and independent background/PSF assessments before unattended mass photometry. Preserve `SCIENCE HOLD`.
