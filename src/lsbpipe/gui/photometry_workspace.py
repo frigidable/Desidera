@@ -26,6 +26,7 @@ from lsbpipe.gui.psf0_full_qa import detailed_band_report
 from lsbpipe.gui.scene_editor import SceneEditor
 from lsbpipe.gui.sky_workspace import SkyWorkspace
 from lsbpipe.gui.aperture_workspace import ApertureWorkspace
+from lsbpipe.gui.project_qa_bundle import serialize_project_diagnostic_bundle
 
 
 
@@ -70,6 +71,15 @@ class PhotometryWorkspace(QWidget):
             "opening FITS, connecting to the archive or running analysis.")
         self.refresh_btn.clicked.connect(lambda _checked=False: self.refresh(force=True))
         header.addWidget(self.refresh_btn)
+        self.copy_project_qa_btn = QPushButton("Copy QA · all stages")
+        self.copy_project_qa_btn.setObjectName("photometry_copy_project_qa")
+        self.copy_project_qa_btn.setToolTip(
+            "Copy a single current-project JSON report: PSF-0 griz, Scene & "
+            "Masks, residual background, aperture curves/systematics, stale "
+            "evidence, blockers and environment. Missing analyses are marked "
+            "NOT_RUN; this never opens FITS or starts workers.")
+        self.copy_project_qa_btn.clicked.connect(self.copy_project_qa)
+        header.addWidget(self.copy_project_qa_btn)
         root.addLayout(header)
 
         self.title = QLabel("Photometry")
@@ -82,6 +92,12 @@ class PhotometryWorkspace(QWidget):
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
+        self.project_qa_status = QLabel(
+            "One-click project QA is read-only. Run each stage as needed; "
+            "not-run or stale stages are reported explicitly.")
+        self.project_qa_status.setObjectName("photometry_project_qa_status")
+        self.project_qa_status.setWordWrap(True)
+        root.addWidget(self.project_qa_status)
 
         # These are two real user workflows in ONE object-bound
         # Photometry Workspace, not eight non-executable roadmap cards.
@@ -442,6 +458,26 @@ class PhotometryWorkspace(QWidget):
             "requests":requests,
             "skipped_bands":skipped,
         })
+
+    def copy_project_qa(self):
+        """One-click current evidence bundle; never alter stage state."""
+        if self._project_root is None or self._bound_project_id is None:
+            self.project_qa_status.setText(
+                "Open a saved galaxy project before copying project QA.")
+            return
+        try:
+            content = serialize_project_diagnostic_bundle(self)
+        except (TypeError, ValueError, OverflowError, RuntimeError,
+                OSError) as exc:
+            self.project_qa_status.setText(
+                f"Project QA collection failed ({type(exc).__name__}): "
+                f"{exc}. Clipboard not changed.")
+            return
+        QApplication.clipboard().setText(content)
+        self.project_qa_status.setText(
+            f"Copied all-stage project QA: {len(content):,} JSON characters. "
+            "Paste into ChatGPT or save the clipboard as UTF-8 .json. "
+            "No worker, FITS or draft changed. NOT_RUN is not a pass.")
 
     def full_qa_report(self):
         from lsbpipe.photometry.psf_gui_backend import (
