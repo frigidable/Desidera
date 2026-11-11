@@ -221,6 +221,19 @@ def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
         "geometry_sufficient_for_diagnostic"] is True
     assert len(out["automatic_sky_selection_qa"]["holdout_quadrants"])>=3
     assert out["provisional_automatic_model"]["method"]=="tilted_plane"
+    baseline = out["zero_additional_correction_baseline"]
+    assert baseline["method"] == "zero_additional_correction_DR11_coadd"
+    assert baseline["same_original_holdout_as_fitted_candidates"] is True
+    assert baseline["n_holdout_samples"] == out["sky_holdout_effective_pixels"]
+    assert baseline["n_training_samples"] == out["sky_train_effective_pixels"]
+    assert baseline["holdout_rms_nMgy_per_pixel"] > 0.
+    assert out["model_improvement_vs_zero_baseline"]["tilted_plane"][
+        "rms_improvement_fraction"] > 0.99
+    assert out["recommended_science_action"] == (
+        "NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED")
+    assert out["automatic_sky_background_correction_authorized"] is False
+    assert out["provisional_automatic_model"][
+        "choice_only_between_two_fitted_nonzero_candidates"] is True
     qa = out["automatic_sky_spatial_qa"]
     assert qa["schema"] == "desidera.sky.automatic-tile-spatial-qa/1"
     assert qa["no_tile_reselection_after_inspecting_residuals"] is True
@@ -323,6 +336,8 @@ def test_project_stage03_fails_closed_when_no_safe_automatic_sky_tiles():
     bad=dict(contamination,auto_mask=np.ones(dataset["pixel_shape"],dtype=bool))
     out=diagnose_current_project_residual_sky(dataset,draft,bad)
     assert out["status"]=="INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY"
+    assert out["zero_additional_correction_baseline"] is None
+    assert out["automatic_sky_background_correction_authorized"] is False
     assert out["methods"]=={}
     assert out["provisional_automatic_model"] is None
     assert out["sky_model_adopted"] is False
@@ -462,3 +477,50 @@ def test_project_stage03_tile_qa_rejects_mismatched_sample_count():
         _audit_automatic_sky_tile_residuals(
             image, mask, np.zeros_like(mask), selection,
             {"constant":candidate})
+
+
+
+def test_project_stage03_zero_baseline_is_exact_same_heldout_native_pixels():
+    """The model-free DR11 coadd is always compared fairly with fitted sky."""
+    from lsbpipe.background import (
+        _audit_zero_sky_baseline, _automatic_scene_sky_pixels)
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
+    image = dataset["data"]["image"]
+    masks = evaluate_mask_draft(
+        draft,dataset["wcs"],dataset["pixel_shape"],"r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    train,held,selection = _automatic_scene_sky_pixels(
+        dataset,masks,contamination)
+    original = image.copy()
+    baseline = _audit_zero_sky_baseline(image,train,held,selection)
+    assert baseline["holdout_rms_nMgy_per_pixel"] == pytest.approx(
+        np.sqrt(np.mean(image[held]**2)),abs=1e-13)
+    assert baseline["training_rms_nMgy_per_pixel"] == pytest.approx(
+        np.sqrt(np.mean(image[train]**2)),abs=1e-13)
+    assert baseline["holdout_median_nMgy_per_pixel"] == pytest.approx(
+        np.median(image[held]))
+    assert sum(t["n_samples"] for t in
+               baseline["holdout_tile_medians_nMgy_per_pixel"]) == held.sum()
+    assert not baseline["background_subtracted_from_image"]
+    assert not baseline["validates_original_sky_level"]
+    assert np.array_equal(original,image)
+
+
+def test_project_stage03_fit_preference_is_not_sky_subtraction_authorization():
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
+    # This sky image has a perfectly real non-zero plane. Even if the
+    # numerical plane fits it exactly, this is not independent evidence
+    # that the already sky-subtracted DESI coadd may be altered in science.
+    out=diagnose_current_project_residual_sky(dataset,draft,contamination)
+    assert out["provisional_automatic_model"]["method"] == "tilted_plane"
+    assert out["provisional_automatic_model"][
+        "scientifically_recommended_for_subtraction"] is False
+    assert out["automatic_sky_background_correction_authorized"] is False
+    assert out["sky_model_adopted"] is False
+    assert out["background_subtracted_image_created"] is False
+    assert out["zero_additional_correction_baseline"] is not None
+    assert out["model_improvement_vs_zero_baseline"]["tilted_plane"][
+        "improvement_is_not_statistical_significance"] is True
