@@ -604,6 +604,8 @@ class SGAInformedRadialSeed:
     # inferred semimajor axis is suspect, not a confirmed mask artifact.
     target_protection_radius_arcsec: float | None = None
     status: str = "SGA_INFORMED_RADIAL_SEED_NOT_ADOPTED"
+    # Effective discretization, not an uncertainty or photometric precision.
+    radial_step_arcsec: float | None = None
 
 
 def sga_informed_radial_seed(
@@ -682,7 +684,8 @@ def sga_informed_radial_seed(
             sga_shape.a_arcsec,None,sga_shape.q,sga_shape.pa_deg,
             (ra0,dec0),(),0.,
             ("SGA_PRIOR_TOO_LARGE_FOR_NATIVE_SEARCH","NO_DETECTED_OUTER_RADIUS"),
-            target_protection_radius_arcsec=protected_radius)
+            target_protection_radius_arcsec=protected_radius,
+            radial_step_arcsec=step)
     good = okay & np.isfinite(arr)
     numerator = gaussian_filter(
         np.where(good,arr-local_sky,0.),smooth_sigma_pix)
@@ -794,4 +797,5 @@ def sga_informed_radial_seed(
         q_sky=float(sga_shape.q),pa_deg=float(sga_shape.pa_deg),
         centre_icrs=(ra0,dec0),bins=tuple(bins),
         masked_fraction=masked_fraction,flags=tuple(flags),
-        target_protection_radius_arcsec=protected_radius)
+        target_protection_radius_arcsec=protected_radius,
+        radial_step_arcsec=step)
