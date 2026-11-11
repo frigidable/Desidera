@@ -1360,3 +1360,88 @@ export remain available for deeper source-specific investigations.
 Missing-band metadata, no source FITS hash, failed source membership,
 unvalidated sky model/PSF and uncalibrated coadd covariance must not be
 silently interpreted as a passed scientific acceptance gate.
+
+
+---
+
+## 2026-11-12 — Real Leo P r audit and follow-up diagnostic contracts
+
+The first all-stage, native-`r` `Copy QA` from Leo P shows that
+**astrometrically supported foreground sources inside protected target
+light** are a first-order photometric limitation. The existing automatic
+source screening correctly prevents blanket mask removal of protected
+pixels; however, direct finite-aperture flux includes those unmasked
+stellar cores. The project report must make this consequence unmistakable.
+
+### Source evidence × circular annular flux (read-only)
+
+The all-stage bundle now includes
+`stages.foreground_aperture_overlap`. It joins **current matching**
+Scene inventory records with the native, neutral-circle Stage 04 growth
+curve. Only Tractor `PSF` sources with Gaia DR3 reference IDs, finite
+positive Tractor model-band fluxes, and
+`abs(parallax_significance) >= 5` are listed. The source's spherical
+angular offset from the saved project target selects the enclosing
+neutral circular ring. For each such source, retain its Tractor
+OBJID/Gaia ID, parallax, offset, protected-area flag, band model flux,
+measured signed ring flux, and ratio of model flux to signed ring flux.
+
+The **ratio is a heuristic red flag, NOT the flux fraction attributable
+to that source**. The catalog model and observed rings have different
+footprints, the sky/background was not calibrated, and the band PSF
+wings have not been scientifically validated. No star is automatically
+masked or subtracted. Multiple sources and galaxy light may contribute
+to the same ring. If a protected source's model/ring ratio exceeds 0.25,
+the report adds the explicit triage
+`PROTECTED_BRIGHT_GAIA_SOURCE_MAY_DOMINATE_APERTURE_RING`.
+This is conditional on same-band, same-source provenance; absent or
+stale inputs fail closed.
+
+For the initial Leo P `r` QA, OBJID 2035 is at 19.87 arcsec with
+Gaia parallax 1.088 mas (30.7-sigma relative to reported uncertainty).
+Its Tractor `r` model flux is ~1078.75 nMgy, while the fixed
+18--25.2 arcsec neutral ring has signed flux ~1126.17 nMgy.
+The new report identifies this pairing automatically, without
+asserting that their near coincidence establishes a valid
+decontaminated Leo P magnitude.
+
+### Stage 03 sky candidate × exact Stage 04 response (read-only)
+
+The all-stage bundle additionally evaluates each *fitted but
+unadopted* Stage 03 constant/plane model through the exact Stage 04
+sky-response derivatives, transforming the plane's reference origin to
+the aperture's target anchor. Outputs are stored as
+`stages.conditional_sky_aperture_response` with explicit
+`correction_applied=false`,
+`sky_uncertainty_inferred=false`,
+`science_adopted=false`. These are hypothetical flux shifts if that
+model were subtracted, NOT measured sky bias or a calibrated error
+bar. Project, band, draft, catalogue and native source identities must
+match. Missing or stale states remain explicit.
+
+### Smaller-scale native-coadd blank diagnostics
+
+A single 105-arcsec diameter-scale blank annulus rarely fits in
+the 4-arcmin Leo P cutout while remaining independent of the target.
+Stage 04.3 now tests a bounded, predeclared decreasing set of radial
+prefixes if the full-scale diagnostic is unavailable. **The target
+exclusion for every such probe uses the full 105-arcsec galaxy aperture,
+not the smaller probe radius.** A conservative centre-distance veto
+excludes overlap between the full target ellipse and smaller blank
+ellipse. Candidate blank placements must still be disjoint, and
+must remain entirely on unmasked, valid native pixels.
+
+The result `smaller_scale_blank_diagnostics` reports the tested
+radii, number of accepted placements and sample covariance, if any,
+with `must_not_replace_full_scale_covariance=true`. No smaller-scale
+covariance is allowed to stand in for the full CoG covariance;
+`covariance_calibrated_for_science` remains false. No PSF wings, target
+outskirts, spatial nonstationarity, or historical coadd sky subtraction
+are certified by this exercise.
+
+**Next scientific actions**: perform the existing GUI
+`Probe selected Gaia star · saved PSF-0` on OBJID 2035 and validate
+a foreground star wing model; independently test the unadopted residual
+sky planes in repeated blank regions; develop membership-aware, PSF
+conditioned star handling before interpreting any apparent CoG plateau.
+Scientific hold remains mandatory.
