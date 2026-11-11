@@ -56,7 +56,8 @@ def _compact_radial_bins(bins):
     for i, bin_data in enumerate(bins):
         if i > 0 and bin_data.get("supported") != bins[i-1].get("supported"):
             special.update((i-1, i))
-        if bin_data.get("coverage", 1.) < .7:
+        coverage = bin_data.get("coverage")
+        if isinstance(coverage, (float, int)) and coverage < .7:
             special.add(i)
     contrasts = [{
         "radial_index": i,
@@ -80,8 +81,10 @@ def _compact_ablation(result):
     for scenario in result.get("scenarios", []):
         item = dict(scenario)
         if "sga_radial_bins" in item:
-            item["sga_radial_trace"] = _compact_radial_bins(
-                item.pop("sga_radial_bins"))
+            bins = item.pop("sga_radial_bins")
+            item["sga_radial_trace"] = (
+                _compact_radial_bins(bins) if isinstance(bins, list)
+                else None)
         out["scenarios"].append(item)
     return out
 
