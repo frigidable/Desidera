@@ -100,7 +100,14 @@ def test_exact_fractional_ellipse_constant_image_flux_and_signed_calibration():
     assert len(r.sector_qa)==8
     assert sum(s["valid_area_pixel2_by_centre_sector"] for s in r.sector_qa) == (
         pytest.approx(area["valid_native_pixel2"]))
-    json.dumps(r.to_dict(),allow_nan=False)
+    exported = r.to_dict()
+    json.dumps(exported,allow_nan=False)
+    with pytest.raises(TypeError):
+        r.area_native_pixel2["valid_native_pixel2"] = -999
+    with pytest.raises(TypeError):
+        r.sector_qa[0]["valid_area_pixel2_by_centre_sector"] = -999
+    exported["area_native_pixel2"]["valid_native_pixel2"] = -999
+    assert r.area_native_pixel2["valid_native_pixel2"] > 0
 
 
 def test_exact_fractional_weights_not_center_only():
@@ -149,6 +156,12 @@ def test_hard_invalid_and_nexp_take_priority_over_empty_source_masks():
     f=frame(image=im,ivar=inv,nexp=exp)
     r=measure(f)
     assert r.area_by_reason_native_pixel2["frame_hard_or_invalid"]>=2
+    split = r.frame_invalid_by_reason_native_pixel2
+    assert split["NONFINITE_IMAGE"] > 0
+    assert split["BAD_INVERSE_VARIANCE"] > 0
+    assert split["BAD_NEXP"] > 0
+    assert sum(split.values()) == pytest.approx(
+        r.area_by_reason_native_pixel2["frame_hard_or_invalid"])
     assert np.isfinite(r.signed_valid_flux_nMgy)
     assert r.signed_valid_flux_nMgy==pytest.approx(
         r.area_native_pixel2["valid_native_pixel2"],abs=1.e-8)
