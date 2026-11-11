@@ -97,9 +97,11 @@ def test_scene_is_real_second_stage_without_auto_loading_fits(
     qtbot.addWidget(view)
     view.show()
     view.bind_project(p)
-    assert view.stage_tabs.count()==2
+    assert view.stage_tabs.count()==3
     assert view.stage_tabs.tabText(0)=="1 · PSF-0"
     assert view.stage_tabs.tabText(1)=="2 · Scene & Masks"
+    assert view.stage_tabs.tabText(2)=="3 · Background"
+    assert view.sky_stage._result is None
     assert view.scene_editor._project_id==p.project_id
     view.stage_tabs.setCurrentWidget(view.scene_editor)
     assert calls==[]
