@@ -540,6 +540,7 @@ def run_scene_protection_radius_sweep(
             "source_evidence_total":inv["total_relevant_sources"],
             "sga_radial_radius_arcsec":None,
             "sga_radial_bin_step_arcsec":None,
+            "sga_radial_bins":[],
             "sga_radial_flags":[],
             "sga_radial_warning":None,
             "component_pixels":None,
@@ -579,6 +580,9 @@ def run_scene_protection_radius_sweep(
                 "sga_radial_bin_step_arcsec":(
                     radial.radial_step_arcsec
                     if radial is not None else None),
+                "sga_radial_bins":(
+                    [_scene_qa_json_value(b) for b in radial.bins]
+                    if radial is not None else []),
                 "sga_radial_flags":
                     list(radial.flags) if radial is not None else [],
                 "sga_radial_warning":proposal.get("sga_warning"),
@@ -809,6 +813,8 @@ def run_scene_mask_policy_ablation(
             "component_centroid_offset_pix":None,
             "sga_radius_arcsec":None,
             "sga_radial_bin_step_arcsec":None,
+            "sga_radial_bins":[],
+            "sga_radial_flags":[],
             "local_sky_nMgy_pixel":None,
             "smoothed_sky_rms_nMgy_pixel":None,
             "minimum_trial_iou":None,
@@ -834,6 +840,11 @@ def run_scene_mask_policy_ablation(
                     radial.detected_a_arcsec if radial else None),
                 "sga_radial_bin_step_arcsec":(
                     radial.radial_step_arcsec if radial else None),
+                "sga_radial_bins":(
+                    [_scene_qa_json_value(b) for b in radial.bins]
+                    if radial else []),
+                "sga_radial_flags":(
+                    list(radial.flags) if radial else []),
                 "local_sky_nMgy_pixel":float(model.local_sky),
                 "smoothed_sky_rms_nMgy_pixel":
                     float(model.smoothed_sky_rms),

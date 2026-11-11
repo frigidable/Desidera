@@ -722,11 +722,15 @@ def sga_informed_radial_seed(
             continue
         coverage_fraction = n_good/n_pix
         sector_medians = []
+        # Preserve the fixed octant identity: a compacted list loses
+        # which sky sectors changed when source masks are ablated.
+        sector_contrasts = [None] * 8
         for k in range(8):
             sel = ring & subgood & (sectors == k)
             if np.count_nonzero(sel) >= 7:
-                sector_medians.append(
-                    float(np.median(subsmoothed[sel])/smoothed_rms))
+                value = float(np.median(subsmoothed[sel])/smoothed_rms)
+                sector_contrasts[k] = value
+                sector_medians.append(value)
         valid_sectors = len(sector_medians)
         positive_sectors = sum(
             x >= .4*median_contrast for x in sector_medians)
@@ -743,6 +747,9 @@ def sga_informed_radial_seed(
             "coverage":float(coverage_fraction),
             "sectors_with_data":valid_sectors,
             "sectors_positive":positive_sectors,
+            # Dimensionless smoothed residual divided by provisional RMS,
+            # not a significance after correlated-noise calibration.
+            "sector_contrast_by_octant":tuple(sector_contrasts),
             "median_smoothed_rms":median,
             "supported":bool(supported_ring),
         })

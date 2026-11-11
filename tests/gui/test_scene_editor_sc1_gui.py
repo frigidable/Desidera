@@ -1619,6 +1619,14 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
     source_before=editor._loaded["data"]["image"].copy()
     project_radius=project.target_radius_arcsec
     calls=[]
+    from types import SimpleNamespace
+    radial_bins=({
+        "outer_arcsec":63.,"sectors_positive":6,
+        "sector_contrast_by_octant":(1.2, None, .9, .8, 1.1, .7, .8, .7),
+    },)
+    radial=SimpleNamespace(
+        detected_a_arcsec=63.,radial_step_arcsec=1.5,
+        flags=("CONSTANT_LOCAL_SKY_NOT_VALIDATED",),bins=radial_bins)
 
     def prepare(dataset,scenario_project,draft,anchor,*,sga_prior=None,
                 gaia_inner_preview=False,red_extended_preview=False,
@@ -1700,7 +1708,7 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
             threshold_contrast=contrast,smoothing_pix=smooth,
             flags=("BACKGROUND_CONSTANT_NOT_VALIDATED",),
             component_indices=np.arange(n,dtype=np.int64))
-        return {"proposal":model,"sga_radial":None,
+        return {"proposal":model,"sga_radial":radial,
                 "sensitivity":{
                     "minimum_spatial_iou":.72,
                     "confidence":"LOW_CONFIDENCE_REQUIRES_EXPLICIT_OVERRIDE",
@@ -1724,6 +1732,12 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
     assert entries["gaia"]["component_pixels"]==40
     assert entries["red"]["component_pixels"]==58
     assert entries["both"]["component_pixels"]==38
+    assert entries["both"]["sga_radial_bins"]==[{
+        "outer_arcsec":63.,"sectors_positive":6,
+        "sector_contrast_by_octant":[1.2,None,.9,.8,1.1,.7,.8,.7]}]
+    assert entries["both"]["sga_radial_flags"]==[
+        "CONSTANT_LOCAL_SKY_NOT_VALIDATED"]
+    assert entries["both_without_gaia_22"]["sga_radial_bins"]==[]
     assert entries["both"]["vs_no_experimental_masks"][
         "component_iou"]==pytest.approx(38/60.)
     assert entries["both"]["vs_no_experimental_masks"][

@@ -1074,3 +1074,86 @@ This is READ-ONLY and NOT SCIENCE VALIDATED: no native FITS, project, mask draft
 **Expected next user run:** open Leo_P, load current original g FITS, choose SGA2025-PARENT Leo P initial geometry, SGA core protection OFF, contrast=2.2, smoothing=4 pixels, bridge guard ON. Press **Mask policy ablation · fixed 70″** and then **Copy Scene QA**. Previous real radius=70 Gaia-only scenario had six Gaia candidate centres, so 4+6=10 scenarios are expected *if the same catalogue/inputs are used*. This must be verified from the new exported report. Current opt-in preview checkbox states do not affect which four policies the experiment tests.
 
 **Before production unattended aperture photometry:** independently validate PSF/wing handling and galaxy light hidden behind contaminants; spatial sky and correlated-noise uncertainty; reproducible multi-band common ICRS aperture and valid-pixel fraction; injection/recovery and held-out source truth tests; explicit QC/uncertainty flags to skip failed objects rather than accepting unstable photometry. The current SC1 SCIENCE HOLD remains.
+
+
+---
+
+## Fifteenth-pass real fixed-radius Gaia leave-one-out — Leo P (2026-11-11)
+
+**Observed input:** full real `Copy Scene QA` JSON at
+`2026-11-11T00:55:25.308325Z` (31,578 bytes, SHA-256
+`83f237e128039dfa01a962c0c3b77756e13d47309aca10bca8552ac2a245f846`).
+Native DR11 South brick `1554p180`, `g` band, project ID
+`0876bbc4-7405-481b-88a8-0e3486c7be98`, Tractor catalogue SHA
+`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`,
+SGA parent PGC 5065058 / source SHA
+`4ed9faa3b3ea039ef714d766e657698e0c12246dff831b7d7899f812973506e1`,
+mask draft digest `2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619`,
+revision 2, no edits and not dirty. All runs use radius 70", contrast
+2.2, smoothing 4 pix, bridge guard 2, SGA geometry ON and SGA source
+protection OFF. The QA explicitly lacks independent FITS pixel hashes,
+native array exports, adopted sky/PSF, and any science mask.
+
+**Result:** exactly **10/10 successful unadopted scenarios**:
+4 baseline mask policies plus leave-one-out for six Gaia candidates
+1763,1870,1876,2034,2035,2074. The sixth candidate 2074 arises in the
+70" configuration and must not be omitted based on older 60" notes.
+
+| 70" policy | Connected component (px) | q | Centroid offset (px) | IoU vs none | Radial endpoint |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| none | 46102 | .540712 | 39.894 | 1.000000 | 63.4153" |
+| Gaia only | 34185 | .360287 | 64.135 | .741432 | 63.4153" |
+| Red only | 44872 | .486734 | 37.461 | .973277 | 63.4153" |
+| Gaia + Red | 34182 | .360286 | 64.135 | .741367 | 61.7893" |
+
+For none versus both, **34,180** native component pixels intersect,
+the union is **46,104**, and exact IoU = **0.741367**. This resolves the
+previous area-only upper bound. Red alone changes area by 1,230 px,
+while Red added on top of Gaia changes area by only 3 px, yet the
+radial endpoint changes by one discrete bin of 1.62603 arcsec. A nearly
+identical component area does **not** guarantee radial-diagnostic
+stability. Four-trial minimum contour IoU remains ~0.72–0.73.
+
+| Leave out Gaia OBJID from `both` | Component px | Change vs `both` | IoU vs `both` | q | Radial endpoint |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1763 | 34182 | 0 | 1.000000 | .360286 | 63.4153" |
+| 1870 | 35077 | +895 | .974372 | .432937 | 61.7893" |
+| 1876 | 35813 | +1631 | .954458 | .517503 | 61.7893" |
+| 2034 | 34182 | 0 | 1.000000 | .360285 | 63.4153" |
+| **2035** | **42244** | **+8062** | **.809114** | **.365995** | **61.7893"** |
+| 2074 | 34182 | 0 | 1.000000 | .360286 | 61.7893" |
+
+**Strongest geometric influence:** leaving out foreground candidate
+OBJID 2035 changes 8,604 native Boolean mask pixels and raises the
+component area by 8,062 px. Centroid displacement drops from
+64.135 to 35.976 native pixels. This identifies a priority for
+physical PSF-wing and missing-light modelling; it is **NOT** a
+measurement of galaxy-light loss. Removing 1876 or 1870 alters the
+apparent q substantially. Removing 1763 or 2034 changes no component
+pixels (IoU=1) but shifts the SGA-oriented radial endpoint by one
+quantized ring; 2074 changes neither the component nor endpoint.
+
+**QA-only readout state:** following the ablation, the source inventory,
+ordinary neighbour masks and reference isophote are invalidated in
+the exported GUI state, and `source_inventory=null`. The historical
+811-entry inventory and pixel-masking screen cannot be reverified
+from *this* compact ablation snapshot; it does verify its per-scenario
+catalogue digest, mask comparison and project/draft metadata.
+
+**Next technical diagnostic implemented on this branch:** radial seeds
+now retain the eight fixed azimuthal octant contrasts in the provisional
+smoothed-flux/RMS normalization; both protection-radius sweeps and
+policy ablations export all available radial annular-bin summaries
+(`sga_radial_bins`) and radial flags per scenario. Octants with too
+few pixels remain explicit nulls. The existing legacy radial-bin
+`median_smoothed_rms` field remains unchanged for compatibility:
+its numerical meaning is a dimensionless median smoothed-flux/RMS
+contrast, **not** a calibrated per-ring detection significance.
+This adds diagnostic metadata only, no new mask or science acceptance.
+Future Leo P reruns can test why 1763/2034 alter radial continuity
+without changing the segmented connected component.
+
+**Decision:** SCIENCE HOLD. Preserve the full PSF/wing modelling,
+residual-sky alternatives, astrophysical component/membership
+uncertainty, correlated-noise and injection/recovery requirements
+before accepting photometry. Do not tune the present policy on Leo P.

@@ -226,6 +226,15 @@ def test_sga_guided_radial_extent_follows_native_light_not_parent_diameter():
     assert result.pa_deg==pytest.approx(150.)
     assert 0 < result.masked_fraction < .30
     assert len(result.bins)>10
+    # New diagnostic octants are position-preserving: missing sectors
+    # remain null rather than shifting the identity of later sectors.
+    for ring in result.bins:
+        octants=ring["sector_contrast_by_octant"]
+        assert len(octants)==8
+        assert sum(v is not None for v in octants)==ring["sectors_with_data"]
+        assert all(np.isfinite(v) for v in octants if v is not None)
+        assert sum(v >= .4*.65 for v in octants if v is not None)==(
+            ring["sectors_positive"])
     assert np.array_equal(image,original)
 
 
