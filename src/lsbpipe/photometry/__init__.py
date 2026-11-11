@@ -86,3 +86,12 @@ __all__ += [
     "geometry_hypotheses", "predeclared_growth_radii",
     "measure_native_annulus", "measure_growth_diagnostic",
 ]
+
+# Stage 04.3: exploratory sky/mask/geometry sensitivity and native-coadd
+# blank-aperture covariance. No science error-bar adoption.
+from .aperture_systematics import (
+    estimate_blank_annulus_covariance, diagnose_aperture_systematics,
+)
+__all__ += [
+    "estimate_blank_annulus_covariance", "diagnose_aperture_systematics",
+]
