@@ -14,7 +14,8 @@ from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.gui.project_qa_bundle import (
     build_project_diagnostic_bundle, serialize_project_diagnostic_bundle,
     _compact_ablation, _compact_apertures, _guard_raw_arrays,
-    _foreground_aperture_overlap_qa, _diagnostic_findings)
+    _foreground_aperture_overlap_qa, _diagnostic_findings,
+    _conditional_sky_aperture_response_qa)
 from lsbpipe.photometry.sky_masks import SkyMaskDraft
 
 
@@ -57,8 +58,10 @@ def test_single_copy_includes_all_stages_and_reproducibility(qtbot, tmp_path):
     assert bundle["scientific_adoption"] is False
     assert bundle["workers_started_by_copy"] is False
     assert list(bundle["stages"]) == [
-        "aperture", "background", "foreground_aperture_overlap",
-        "psf0", "scene_masks"]
+        "aperture", "background", "conditional_sky_aperture_response",
+        "foreground_aperture_overlap", "psf0", "scene_masks"]
+    assert bundle["stages"]["conditional_sky_aperture_response"]["state"] == (
+        "BACKGROUND_OR_APERTURE_NOT_CURRENT")
     assert bundle["stages"]["foreground_aperture_overlap"]["state"] == (
         "BLOCKED_BY_MISSING_OR_STALE_STAGE")
     assert bundle["stages"]["scene_masks"]["state"] == "NOT_LOADED"
@@ -353,3 +356,48 @@ def test_foreground_aperture_diagnostic_fails_closed_on_stale_band():
     r = _foreground_aperture_overlap_qa(base)
     assert r["state"] == "SOURCE_INVENTORY_NOT_CURRENT"
     assert r["source_flux_removed"] is False
+
+
+def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
+    stages = {
+        "background": {"state": "CURRENT_DIAGNOSTIC", "result": {
+            "band": "r", "project_id": "p", "draft_sha256": "a",
+            "catalog_sha256": "b", "dataset_source": "coadd-r",
+            "methods": {
+                "constant": {"fit_status": "FITTED",
+                             "coefficients_nMgy": [0.002, 0., 0.],
+                             "reference_xy_pix": [100., 200.]},
+                "tilted_plane": {"fit_status": "FITTED",
+                                 "coefficients_nMgy": [.002, .0001, -.0002],
+                                 "reference_xy_pix": [100., 200.]},
+            }}},
+        "aperture": {"state": "CURRENT_DIAGNOSTIC", "result": {
+            "band": "r", "project_id": "p", "scene_draft_sha256": "a",
+            "catalog_sha256": "b", "dataset_source": "coadd-r",
+            "dataset_id": "dr11/south/test/r",
+            "systematics_04_3": {
+                "reference_semimajor_arcsec": 100.,
+                "sky_response": {
+                    "reference_native_xy": [105., 195.],
+                    "dflux_db0_native_pixel2": -1000.,
+                    "dflux_dbx_native_pixel3": -500.,
+                    "dflux_dby_native_pixel3": 250.}}}}
+    }
+    response = _conditional_sky_aperture_response_qa(stages)
+    assert response["state"] == "FITTED_SKY_COUNTERFACTUALS_AVAILABLE"
+    assert response["methods"]["constant"][
+        "conditional_flux_change_if_subtracted_nMgy"] == pytest.approx(-2.)
+    at_target = .002 + .0001*5 + (-.0002)*(-5)
+    expected = -1000*at_target + (-500)*.0001 + 250*(-.0002)
+    assert response["methods"]["tilted_plane"][
+        "conditional_flux_change_if_subtracted_nMgy"] == pytest.approx(
+            expected)
+    assert response["sky_uncertainty_inferred"] is False
+    assert response["correction_applied"] is False
+    assert response["science_adopted"] is False
+    stages["conditional_sky_aperture_response"] = response
+    assert "APERTURE_SENSITIVE_TO_UNADOPTED_SKY_FITS" in (
+        _diagnostic_findings(stages, {}))
+    stages["background"]["result"]["draft_sha256"] = "other"
+    assert _conditional_sky_aperture_response_qa(stages)["state"] == (
+        "SCENE_OR_BAND_PROVENANCE_MISMATCH")
