@@ -469,7 +469,7 @@ class ApertureWorkspace(QWidget):
             lines += [
                 "Direct annuli: a_in–a_out [arcsec] | signed intensity "
                 "[nMgy/arcsec²] | AB μ if positive",
-            ])
+            ]
             for ring in curve["independently_integrated_annuli"]:
                 inner=ring["a_inner_arcsec"]
                 outer=ring["a_outer_arcsec"]
@@ -479,7 +479,7 @@ class ApertureWorkspace(QWidget):
                     f"{inner:6.2f}–{outer:6.2f} | "
                     f"{intensity if intensity is not None else '—'} | "
                     f"{mu if mu is not None else 'undefined'}")
-            lines.extend([
+            lines += [
                 "Independent annulus vs CoG closure [nMgy]: "
                 + str(curve["max_abs_annulus_closure_nMgy"]),
                 "Outermost valid-area AB magnitude is conditional "
