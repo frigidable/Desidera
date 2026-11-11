@@ -1710,18 +1710,32 @@ not an established PSF-wing detection,
 background prior, or permission for science
 subtraction.
 
-**Prioritized independent gate.** Derive/verify
-original-pixel source-specific wide-angle
-radial profiles for bright Gaia stars matching
-OBJID 2035's flux/quality and location while
-excluding its overlapping Leo P field; obtain
-independent galaxy-free/blank controls across
-additional DR11 bricks, frozen before their
-pixels are inspected; use independent sky
-constraints and injection–recovery for bias and
-correlated-error calibration. Only after these
-tests compare mask, subtraction, and no-subtraction
-strategies for Leo P at the same protected
-radius, separately by band. Do not replace
-science `HOLD` by `PASS` as a consequence
-of engineering QA completeness.
+**Prioritized internal same-project gate (binding data scope).**
+Use **only the DR11 brick(s) already downloaded and
+attached to the Leo P project**, including the existing
+native r-band brick `1554p180`. Do not search, fetch,
+download or require further DR11 bricks or external
+star fields. Freeze the star/blank-control identities
+and radial bins from the **already available project's
+own original FITS and exact Tractor/Gaia catalogue**
+before inspecting their target diagnostics. Audit
+source-specific radial profiles for the brightest
+clean Gaia stars *within this brick*, stratifying by
+brightness and usable uncontaminated annular pixels;
+exclude regions containing Leo P's probable diffuse
+envelope from blank-sky controls. Preserve distinct
+core/heldout and P20 bright-star holdout identities.
+Compare constant, planar and sector-exclusion
+background hypotheses; use within-brick spatial
+leave-one-out checks, and injection–recovery on copies
+of these same project images for method-bias and
+correlated-noise sensitivity. Distinguish these
+**internal** controls from independent external
+validation: without new data, absolute far-wing PSF
+and sky may remain non-identifiable, in which case
+report an explicit upper bound/unknown and keep
+`SCIENCE HOLD`. Compare mask, subtraction and
+no-subtraction strategies for Leo P only at fixed
+identical protection radii and within each band;
+do not change original FITS or silently weaken
+holdout/sky gates.
