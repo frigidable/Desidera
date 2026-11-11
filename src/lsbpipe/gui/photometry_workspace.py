@@ -282,6 +282,7 @@ class PhotometryWorkspace(QWidget):
                "with explicitly disjoint training/holdout regions. "
                "All models remain unadopted.")
         root.addWidget(self.stage_tabs, 1)
+        self._last_stage_widget = psf_stage
         self.stage_tabs.currentChanged.connect(self._stage_changed)
         self.stage_tabs.currentChanged.connect(self._emit_navigation)
         self.band_tabs.currentChanged.connect(self._emit_navigation)
@@ -329,18 +330,19 @@ class PhotometryWorkspace(QWidget):
             self._suppress_navigation = False
 
     def _stage_changed(self, index):
-        if index in (
-                self.stage_tabs.indexOf(self.scene_editor),
-                self.stage_tabs.indexOf(self.sky_stage)):
-            # The Scene is the owner of the source-band view. Coming from
-            # PSF-0 only, synchronize its selected band; moving Scene->Sky
-            # retains the band's loaded native data and masks.
-            if self.stage_tabs.currentWidget() is self.scene_editor:
-                band = self.band_tabs.currentWidget().band.currentData()
-                if band in ("g", "r", "i", "z"):
-                    self.scene_editor.set_band(band)
-            if self.stage_tabs.currentWidget() is self.sky_stage:
-                self.sky_stage.refresh_context()
+        current = self.stage_tabs.widget(index)
+        previous = self._last_stage_widget
+        self._last_stage_widget = current
+        psf = self.stage_tabs.widget(0)
+        # Synchronize from PSF only when LEAVING the PSF tab. Returning
+        # from 03 Background to 02 Scene must preserve the loaded native
+        # band, annotations and prepared masks, regardless of PSF tab.
+        if previous is psf and current in (self.scene_editor, self.sky_stage):
+            band = self.band_tabs.currentWidget().band.currentData()
+            if band in ("g", "r", "i", "z"):
+                self.scene_editor.set_band(band)
+        if current is self.sky_stage:
+            self.sky_stage.refresh_context()
         # Opening Scene is deliberately read-only: local FITS load needs
         # the explicit Load original FITS button. Mask revision saving
         # also requires a separate explicit researcher action.
