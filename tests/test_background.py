@@ -221,6 +221,16 @@ def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
         "geometry_sufficient_for_diagnostic"] is True
     assert len(out["automatic_sky_selection_qa"]["holdout_quadrants"])>=3
     assert out["provisional_automatic_model"]["method"]=="tilted_plane"
+    qa = out["automatic_sky_spatial_qa"]
+    assert qa["schema"] == "desidera.sky.automatic-tile-spatial-qa/1"
+    assert qa["no_tile_reselection_after_inspecting_residuals"] is True
+    assert qa["spatial_support_complete_for_science"] is False
+    hold_tiles = qa["methods"]["tilted_plane"]["holdout"]["tiles"]
+    assert len(hold_tiles) == out["automatic_sky_selection_qa"]["holdout_tiles"]
+    assert sum(t["n_samples"] for t in hold_tiles) == (
+        out["sky_holdout_effective_pixels"])
+    assert max(abs(t["median_residual_nMgy_per_pixel"])
+               for t in hold_tiles) < 1.e-9
     assert out["band"]=="r"
     assert out["project_id"]=="stage03-project"
     assert out["sky_train_effective_pixels"]>100
@@ -373,3 +383,82 @@ def test_project_stage03_automatic_selection_independent_of_image_brightness():
         "sky_holdout_effective_pixels"]
     assert first["automatic_sky_selection_qa"][
         "selection_predeclared_geometry_only_not_flux_optimized"] is True
+
+
+
+def test_project_stage03_tile_qa_detects_geometric_cluster_and_rms_imbalance():
+    from types import SimpleNamespace
+    from lsbpipe.background import _audit_automatic_sky_tile_residuals
+    img = np.zeros((96, 96), dtype=float)
+    train = np.zeros(img.shape, dtype=bool)
+    holdout = np.zeros(img.shape, dtype=bool)
+
+    def make(tiles, mask):
+        result = []
+        for x, y in tiles:
+            mask[y*32+5, x*32+5] = True
+            result.append({
+                "tile_index": [x, y],
+                "quadrant": 0 if y == 0 else 2,
+                "n_sampled_pixels": 1,
+            })
+        return result
+
+    train_rows = make([(0,0),(1,0),(2,0)], train)
+    holdout_rows = make([(0,1),(1,1),(2,1)], holdout)
+    selection = {
+        "tile_edge_native_pix": 32,
+        "training_tile_evidence": train_rows,
+        "holdout_tile_evidence": holdout_rows,
+        "training_quadrants": [0],
+        "holdout_quadrants": [2],
+    }
+    candidate = SimpleNamespace(
+        fit_status=FitStatus.FITTED,
+        training_rms_residual_nMgy=.05,
+        holdout_rms_residual_nMgy=.005,
+        evaluate_at=lambda x, y: np.zeros_like(x, dtype=float),
+    )
+    qa = _audit_automatic_sky_tile_residuals(
+        img, train, holdout, selection, {"constant":candidate})
+    assert qa["geometry"]["training"]["dominant_single_row_fraction"] == 1.
+    assert qa["geometry"]["holdout"]["dominant_single_row_fraction"] == 1.
+    assert qa["geometry"]["training"]["missing_quadrants"] == [1,2,3]
+    assert qa["methods"]["constant"]["training_to_holdout_pixel_rms_ratio"] == 10.
+    assert "TRAINING_TILES_CLUSTERED_IN_SINGLE_ROW" in qa["warning_flags"]
+    assert "HOLDOUT_TILES_CLUSTERED_IN_SINGLE_ROW" in qa["warning_flags"]
+    assert "CONSTANT_TRAINING_RMS_OVER_TWICE_HOLDOUT" in qa["warning_flags"]
+    assert "TRAINING_QUADRANTS_NOT_ALL_REPRESENTED" in qa["warning_flags"]
+    assert all(not row["n_partial_edge_tiles"]
+               for row in qa["geometry"].values())
+    assert len(qa["methods"]["constant"]["holdout"]["tiles"]) == 3
+    assert qa["science_holds_even_without_warning"] is True
+    assert not np.any(img)
+
+
+def test_project_stage03_tile_qa_rejects_mismatched_sample_count():
+    from types import SimpleNamespace
+    from lsbpipe.background import _audit_automatic_sky_tile_residuals
+    image = np.zeros((64,64))
+    mask = np.zeros(image.shape, dtype=bool)
+    mask[3,3] = True
+    records = [{
+        "tile_index":[0,0], "quadrant":0,"n_sampled_pixels":2,
+    }]
+    selection = {
+        "tile_edge_native_pix":32,
+        "training_tile_evidence":records,
+        "holdout_tile_evidence":[],
+        "training_quadrants":[0],
+        "holdout_quadrants":[],
+    }
+    candidate = SimpleNamespace(
+        fit_status=FitStatus.FITTED,
+        training_rms_residual_nMgy=0.,
+        holdout_rms_residual_nMgy=0.,
+        evaluate_at=lambda x, y: np.zeros_like(x, dtype=float),
+    )
+    with pytest.raises(ValueError, match="tile geometry/provenance"):
+        _audit_automatic_sky_tile_residuals(
+            image, mask, np.zeros_like(mask), selection,
+            {"constant":candidate})
