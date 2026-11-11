@@ -55,7 +55,8 @@ def _ring_aperture(x, y, projected, radii, index):
 def estimate_blank_annulus_covariance(
         frame: NativeBandFrame, outer: ApertureGeometryICRS,
         radii_arcsec, *, effective_source_mask, manual_exclude,
-        min_placements=12, max_placements=48):
+        min_placements=12, max_placements=48,
+        full_target_exclusion_outer: ApertureGeometryICRS | None = None):
     """Empirical covariance of signed fluxes in non-overlapping blank rings.
 
     Candidates have the same native-pixel shape as the galaxy rings; they
@@ -90,6 +91,23 @@ def estimate_blank_annulus_covariance(
         frame, effective_source_mask, manual_exclude)
     invalid = ~frame.valid | source | manual
     projected = project_icrs_ellipse_to_native(outer, frame.wcs)
+    # A smaller-scale blank probe must STILL avoid the full galaxy aperture.
+    # The centre-distance test is deliberately conservative for ellipses.
+    if full_target_exclusion_outer is None:
+        full_radius_pix = projected.a_pix
+    else:
+        if not isinstance(full_target_exclusion_outer, ApertureGeometryICRS):
+            raise TypeError("Full target exclusion must be ICRS ellipse")
+        full_projection = project_icrs_ellipse_to_native(
+            full_target_exclusion_outer, frame.wcs)
+        if (math.hypot(
+                full_projection.x_center - projected.x_center,
+                full_projection.y_center - projected.y_center) > 1e-3):
+            raise ValueError("Full target exclusion must share project anchor")
+        full_radius_pix = full_projection.a_pix
+        if full_radius_pix < projected.a_pix:
+            raise ValueError("Full target exclusion cannot be smaller than blank rings")
+    exclusion_distance_pix = full_radius_pix + projected.a_pix + 3.
     margin = int(math.ceil(projected.a_pix + 3))
     step = max(2 * margin + 2, 8)
     ny, nx = frame.shape
@@ -111,8 +129,7 @@ def estimate_blank_annulus_covariance(
             # from the putative target. Extended LSB light is NOT excluded.
             if math.hypot(
                     x - projected.x_center,
-                    y - projected.y_center) <= (
-                    2. * projected.a_pix + 3.):
+                    y - projected.y_center) <= exclusion_distance_pix:
                 rejected += 1
                 continue
             vector = []
@@ -156,6 +173,10 @@ def estimate_blank_annulus_covariance(
         "n_accepted": len(centres),
         "n_required": int(required),
         "n_candidate_budget": int(candidate_budget),
+        "target_exclusion_radius_native_pix": float(full_radius_pix),
+        "blank_outer_radius_native_pix": float(projected.a_pix),
+        "target_plus_blank_exclusion_distance_native_pix": float(
+            exclusion_distance_pix),
         "candidate_search_budget_exhausted": examined >= candidate_budget,
         "centres_native_xy": centres,
         "annulus_mean_blank_flux_nMgy": None,
@@ -195,6 +216,55 @@ def estimate_blank_annulus_covariance(
             report["status"] = "DEGENERATE_OR_NONFINITE_BLANK_VARIANCE"
     json.dumps(report, allow_nan=False)
     return report
+
+
+def _smaller_blank_scales(frame, full_outer, full_radii, source, manual, *,
+                          full_scale_available):
+    """Fixed prefix tests, never represent them as full-size covariance.
+
+    A 105-arcsec blank ellipse cannot be tiled in a 4-arcmin cutout. Smaller
+    apertures can still constrain native-coadd fluctuations at shorter scales
+    IF they remain outside the *full* target footprint and are clean.
+    """
+    result = {
+        "status": "NOT_REQUIRED_FULL_SCALE_DIAGNOSTIC_AVAILABLE"
+        if full_scale_available else "SMALLER_SCALES_NOT_YET_ESTABLISHED",
+        "full_target_semimajor_arcsec": full_outer.semimajor_arcsec,
+        "full_scale_covariance_available": bool(full_scale_available),
+        "probes": [],
+        "first_available_probe_outer_arcsec": None,
+        "must_not_replace_full_scale_covariance": True,
+        "no_target_mask_or_fits_modified": True,
+        "covariance_calibrated_for_science": False,
+        "adopted_for_science": False,
+    }
+    if full_scale_available or len(full_radii) < 3:
+        return result
+    # Predeclared, decreasing radii: no data-dependent sampling selection.
+    indices = []
+    for value in (
+            len(full_radii) - 4, len(full_radii) // 2 - 1, 2, 1):
+        if 1 <= value < len(full_radii) - 1 and value not in indices:
+            indices.append(value)
+    indices.sort(reverse=True)
+    for index in indices:
+        radius = float(full_radii[index])
+        small_outer = ApertureGeometryICRS(
+            ra_deg=full_outer.ra_deg, dec_deg=full_outer.dec_deg,
+            semimajor_arcsec=radius, axis_ratio=full_outer.axis_ratio,
+            pa_deg_east_of_north=full_outer.pa_deg_east_of_north)
+        probe = estimate_blank_annulus_covariance(
+            frame, small_outer, full_radii[:index+1],
+            effective_source_mask=source, manual_exclude=manual,
+            full_target_exclusion_outer=full_outer)
+        result["probes"].append(probe)
+        if probe["annulus_covariance_nMgy2"] is not None:
+            result["status"] = "SMALL_SCALE_COVARIANCE_DIAGNOSTIC_ONLY"
+            result["first_available_probe_outer_arcsec"] = radius
+            break
+    if result["first_available_probe_outer_arcsec"] is None:
+        result["status"] = "NO_CLEAN_SMALL_SCALE_COVARIANCE_AVAILABLE"
+    return result
 
 
 def diagnose_aperture_systematics(
@@ -265,6 +335,9 @@ def diagnose_aperture_systematics(
     blanks = estimate_blank_annulus_covariance(
         frame, outer, first["radii_arcsec"],
         effective_source_mask=source, manual_exclude=manual)
+    small_scale = _smaller_blank_scales(
+        frame, outer, first["radii_arcsec"], source, manual,
+        full_scale_available=(blanks["annulus_covariance_nMgy2"] is not None))
     report = {
         "schema": _SCHEMA,
         "project_id": provenance.project_id,
@@ -305,6 +378,7 @@ def diagnose_aperture_systematics(
             "not_a_statistical_uncertainty": True,
         },
         "blank_apertures": blanks,
+        "smaller_scale_blank_diagnostics": small_scale,
         "adopted_for_science": False,
         "covariance_calibrated_for_science": False,
         "status": "CONDITIONAL_SYSTEMATICS_DIAGNOSTIC_ONLY",
