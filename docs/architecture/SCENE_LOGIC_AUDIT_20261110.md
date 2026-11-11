@@ -1631,7 +1631,7 @@ as an **engineering completion marker**;
 sky-conditional radial residual/individual stellar peak
 is `3.8011e-5`, while the median *signed* residual is
 `4.026e-6`; neither is a calibrated wing measurement.
-Five-millimag-level stellar core fitting and
+Small normalized stellar core residuals and
 long-range wing accuracy are different tasks.
 
 **P20 original-brick conditional joint profiles**:
