@@ -553,6 +553,71 @@ def _conditional_sky_aperture_response_qa(stages):
     }
 
 
+def _cross_stage_source_lineage_qa(stages):
+    """Read-only full-FITS provenance consistency: not science approval.
+
+    A hash from the original quartet is meaningful only when the
+    original Scene loader also recorded the exact release/brick/band
+    and explicit IMAGE nanomaggy units. Background and Aperture must
+    have consumed that *same* in-memory native source snapshot.
+    """
+    scene=stages.get("scene_masks") or {}
+    native=scene.get("native_fits") or {}
+    if scene.get("state") != "CURRENT_LOADED" or not native:
+        return {"state":"SCENE_SOURCE_NOT_CURRENT",
+                "science_adopted":False}
+    source=native.get("source_quartet_key")
+    hashes=native.get("original_fits_sha256_local")
+    status=native.get("original_fits_provenance_status")
+    unit=native.get("image_unit_evidence")
+    if (not isinstance(source,(tuple,list)) or len(source)!=4 or
+            not isinstance(hashes,dict) or set(hashes)!=set(
+                ("image","invvar","nexp","maskbits")) or
+            status!="FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD" or
+            unit!="FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"):
+        return {"state":"SCENE_SOURCE_NOT_FULLY_VERIFIED",
+                "original_fits_hashes_present":isinstance(hashes,dict),
+                "image_unit_evidence":unit,
+                "science_adopted":False}
+    examined={}
+    inconsistent=[]
+    for name in ("background","aperture"):
+        stage=stages.get(name) or {}
+        if stage.get("state")!="CURRENT_DIAGNOSTIC" or not stage.get("result"):
+            examined[name]={"state":"NOT_CURRENT"}
+            continue
+        result=stage["result"]
+        key=result.get("source_quartet_key")
+        digest=result.get("original_fits_sha256_local")
+        matches=(list(key)==list(source)
+                 if isinstance(key,(tuple,list)) else False)
+        hashes_match=(digest==hashes
+                      if isinstance(digest,dict) else False)
+        unit_match=result.get("image_unit_evidence")==unit
+        examined[name]={
+            "state":"MATCH" if matches and hashes_match and unit_match
+            else "SOURCE_IDENTITY_MISMATCH",
+            "quartet_matches":bool(matches),
+            "full_original_sha256_matches":bool(hashes_match),
+            "image_unit_evidence_matches":bool(unit_match)}
+        if examined[name]["state"]!="MATCH":
+            inconsistent.append(name)
+    return {
+        "state":(
+            "CROSS_STAGE_SOURCE_IDENTITY_MISMATCH" if inconsistent
+            else "CURRENT_AVAILABLE_STAGES_MATCH_ORIGINAL_SCENE"
+            if any(v["state"]=="MATCH" for v in examined.values())
+            else "NO_CURRENT_DEPENDENT_STAGE_TO_COMPARE"),
+        "scene_source_quartet_key":list(source),
+        "scene_original_fits_sha256_local":dict(hashes),
+        "scene_image_unit_evidence":unit,
+        "stage_comparisons":examined,
+        "inconsistent_stages":inconsistent,
+        "sha_is_local_byte_identity_not_archive_authenticity":True,
+        "science_adopted":False,
+    }
+
+
 def _diagnostic_findings(stages, project):
     """Deterministic triage hints; never claim a calibrated error or fit."""
     findings = []
@@ -605,6 +670,11 @@ def _diagnostic_findings(stages, project):
     sky_response = stages.get("conditional_sky_aperture_response") or {}
     if sky_response.get("state") == "FITTED_SKY_COUNTERFACTUALS_AVAILABLE":
         findings.append("APERTURE_SENSITIVE_TO_UNADOPTED_SKY_FITS")
+    provenance=stages.get("cross_stage_source_lineage") or {}
+    if provenance.get("state")=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH":
+        findings.append("CROSS_STAGE_SOURCE_FITS_PROVENANCE_MISMATCH")
+    if provenance.get("state")=="SCENE_SOURCE_NOT_FULLY_VERIFIED":
+        findings.append("SCENE_FITS_OR_UNITS_NOT_FULLY_VERIFIED")
     foreground = stages.get("foreground_aperture_overlap") or {}
     if foreground.get("state") == "FOREGROUND_ASTROMETRY_APERTURE_OVERLAP_QA_ONLY":
         if foreground.get("n_qualifying_sources_within_outer_aperture", 0) > 0:
@@ -684,6 +754,9 @@ def build_project_diagnostic_bundle(workspace):
     report["stages"]["conditional_sky_aperture_response"] = _safe_stage(
         "conditional_sky_aperture_response",
         lambda: _conditional_sky_aperture_response_qa(report["stages"]))
+    report["stages"]["cross_stage_source_lineage"] = _safe_stage(
+        "cross_stage_source_lineage",
+        lambda: _cross_stage_source_lineage_qa(report["stages"]))
     report["diagnostic_findings"] = _diagnostic_findings(
         report["stages"], report["project"])
     # Preserve non-finite diagnostics as explicit JSON-safe failure markers.
