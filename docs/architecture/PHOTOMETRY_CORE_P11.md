@@ -1445,3 +1445,120 @@ a foreground star wing model; independently test the unadopted residual
 sky planes in repeated blank regions; develop membership-aware, PSF
 conditioned star handling before interpreting any apparent CoG plateau.
 Scientific hold remains mandatory.
+
+
+---
+
+## 2026-11-12 — End-to-end workflow and scientific gate audit
+
+**Scope:** native DESI Legacy DR11-South Leo P project, Stage01 PSF-0,
+Stage02 Scene/Masks, Stage03 Background, Stage04 finite aperture,
+and the all-stage Copy QA collector. The baseline real-`r` bundle at
+source revision `11513b7a` is an experimental diagnostic and remains
+unadopted. All statements below refer to this scope, not to independent
+raw-exposure reprocessing or a validated `g/r/i/z` catalog.
+
+### Correct operator order and distinct meanings
+
+1. **Project identity:** open the saved Leo P project; inspect the DR11
+   source triplet and target ICRS anchor. GUI file-presence discovery
+   is not FITS/WCS or SHA verification. The selected manifest source
+   band displayed in the source table may be `g` while Stage02--04
+   deliberately operate on a separately loaded, verified native `r`.
+2. **PSF-0:** a per-band, independent, read-only/saved *finite-kernel*
+   diagnostic. A saved per-band kernel is a prerequisite for the
+   explicit Stage02 bright-star PSF probe but **not** a prerequisite
+   for Stage03 sky candidate diagnostics or the Stage04 zero-additional-
+   correction flux calculation. Review source hashes, star counts,
+   holdout spatial coverage and finite kernel support; never assume
+   PSF wings are measured. The real Leo P report had saved `r/i/z`
+   results and `g: NOT_RUN`; “build available” does not guarantee `griz`.
+3. **Stage02 Scene:** choose the exact same native `r` band explicitly,
+   load its four FITS/WCS layers and prepare a fresh, same-band
+   catalogue mask. Target protection is a source-screening safeguard,
+   **not** a photometry exclusion. Baseline experimental Gaia/red
+   checkboxes are OFF. Only now run a conditional isophote trial,
+   40--80 arcsec source-protection radius sweep or 70-arcsec policy
+   ablation. Those experiment radii refer to *distinct purposes* and
+   must never be treated as a measured physical galaxy extent.
+4. **Stage02 source review:** inspect bright Gaia foreground candidates
+   within protected target area, especially OBJID 2035. The saved PSF
+   foreground probe must be run **after** final isophote proposal and
+   all desired source-mask experiments: re-preparing masks, loading
+   a different band or clearing/rebuilding an isophote can invalidate
+   its result. Do not derive a star subtraction or science mask directly
+   from a Tractor `PSF` model flux or the finite-kernel probe.
+5. **Stage03:** fit the zero, constant and tilted-plane *residual sky
+   candidates* from the unchanged, source-bound native scene; verify
+   independent tile spatial placement as far as the same coadd allows.
+   Avoid presenting a held-out same-coadd pixel as independent exposure
+   validation, or a 25%-RMS model-selection rule as a significance test.
+   The fitter does not adopt or subtract any of its candidates.
+6. **Stage04:** measure fixed project-anchored geometric hypotheses
+   on original native, already upstream-sky-subtracted coadd pixels.
+   The current Stage04 uses **zero additional sky correction** and
+   does **not** consume a Stage03 fitted background or Stage01 PSF
+   correction. Stage04's exact fractional per-pixel overlap validates
+   geometric integration; independent ring-vs-cumulative closure is
+   internal numerical consistency, not a check of foreground source
+   membership, absolute sky level or total flux.
+7. **Copy QA:** copy once while still on the loaded `r` scene and
+   after completed workers; its complete in-memory content may be
+   several MB and is best shared as a JSON attachment. It marks
+   missing/blocked/stale computations, but should not be interpreted
+   as an automatic run of all photometric prerequisites. Switching
+   to another Scene band invalidates that band's native masks, sky and
+   aperture results; make a new report after explicitly reloading
+   and re-running for `i`.
+8. **Any science use:** STILL BLOCKED pending PSF-wing/foreground
+   treatment, source membership model, residual-sky uncertainty and
+   subtraction policy, multi-scale correlated-noise covariance,
+   flux under masked regions, full input file hashes and
+   matched-footprint/matched-PSF multi-band photometry.
+
+### Audit findings and dispositions
+
+* **FIXED (code-level):** Stage04 incorrectly read
+  `SceneEditor.sga_use_prior` (target protection) to enable an
+  SGA geometry hypothesis. It now reads `sga_use_seed` (shape seed).
+  Synthetic GUI regression covers both mutually independent controls.
+* **FIXED (sequence/GUI):** leaving PSF-0 after inspecting another
+  band could silently reselect that band in an already loaded Scene
+  and invalidate masks/sky/aperture. Existing loaded Scene is now
+  preserved; choose the Scene band explicitly. PSF still initializes
+  an empty Scene's band on first entry. A GUI transition regression
+  covers both paths.
+* **FIXED (QA evidence):** a negative but formally significant Gaia
+  parallax is no longer described as positive foreground-distance
+  evidence. The new annular bright-star QA requires a positive
+  significant parallax. Sources with proper-motion-only evidence are
+  not exhaustively enumerated by that subsection; the complete
+  Tractor source inventory remains available.
+* **INTENTIONAL HOLD (not a code bug):** Stage01 and Stage03 are not
+  currently science-adopted dependencies of Stage04. Cross-stage
+  sky-response/foreground-overlap reports are conditional consistency
+  checks and apply no correction.
+* **SCIENTIFIC BLOCKER:** sky training is spatially nonuniform (24
+  training vs 7 holdout tiles on the Leo P r cutout; training RMS
+  exceeds holdout by >5x). Model-selection differences in nMgy/pixel
+  are coherent offsets that scale with the large source-unmasked
+  aperture area; diagonal IVAR alone understates uncertainty.
+* **SCIENTIFIC BLOCKER:** OBJID 2035 is a high-significance Gaia
+  foreground candidate at about 19.87 arcsec. Its Tractor r-band
+  model flux (~1078.75 nMgy) is of the same order as the directly
+  observed 18--25.2 arcsec ring flux (~1126.17 nMgy). Equality of
+  these values is *not* an independently fitted star contamination
+  estimate and does not validate an adjusted galaxy flux.
+* **SCIENTIFIC BLOCKER:** full-scale blank-aperture covariance is
+  unavailable in the current image cutout. Shorter-scale background
+  probes are diagnostics at the reported smaller radii, not covariance
+  for the 105-arcsec integrated aperture.
+* **REPRODUCIBILITY LIMIT:** Stage01 saved PSF includes source layer
+  hashes; the Stage02--04 in-memory native cutout still reports no
+  verified full source FITS SHA256. The source table is only a
+  last-discovery path-presence report, not a hash or WCS cross-check.
+
+**Science release rule:** no total Leo P magnitude, uncertainty,
+color, `SBF` measurement or adopted model subtraction may follow from
+these diagnostics. A green CI run checks programmed contracts, not
+photometric validity on the sky.
