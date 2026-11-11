@@ -184,7 +184,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         # anisotropic native WCS: bound *both* axes by the smallest
         # singular value of the local east/north pixel Jacobian.
         min_scale = (float(np.min(np.linalg.svd(jacobian, compute_uv=False)))
-                     if pa is not None else arcsec_per_pixel)
+                     if jacobian is not None else arcsec_per_pixel)
         r_pix = major/min_scale
         if (x+r_pix < 0 or x-r_pix >= nx or
                 y+r_pix < 0 or y-r_pix >= ny):
@@ -200,7 +200,17 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             along = east*math.sin(pa)+north*math.cos(pa)
             across = east*math.cos(pa)-north*math.sin(pa)
             disk = (along/major)**2+(across/minor)**2 <= 1.
+        elif jacobian is not None:
+            # A nominally round source is round in tangent-plane sky
+            # coordinates, NOT necessarily in sheared native pixel space.
+            # The geometric-mean scalar scale can leave the mask too
+            # narrow along the low-angular-scale pixel direction.
+            east = jacobian[0,0]*dx+jacobian[0,1]*dy
+            north = jacobian[1,0]*dx+jacobian[1,1]*dy
+            disk = east*east+north*north <= major*major
         else:
+            # Legacy WCS-less standalone mask preview: not a native
+            # astrometrically validated field.
             disk = dx*dx+dy*dy <= r_pix**2
         if np.any(disk & protected[y1:y2, x1:x2]):
             # Red extended interlopers need three independent signals:
