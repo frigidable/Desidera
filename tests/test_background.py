@@ -524,3 +524,108 @@ def test_project_stage03_fit_preference_is_not_sky_subtraction_authorization():
     assert out["zero_additional_correction_baseline"] is not None
     assert out["model_improvement_vs_zero_baseline"]["tilted_plane"][
         "improvement_is_not_statistical_significance"] is True
+
+
+
+def test_project_stage03_fixed_grid_sensitivity_and_frozen_aperture_injections():
+    """Automatic checks use the same Scene and never adopt sky or alter pixels."""
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset, draft, contamination = _stage03_project_fixture(with_regions=False)
+    original_image = dataset["data"]["image"].copy()
+    original_invvar = dataset["data"]["invvar"].copy()
+    original_hard = dataset["native_hard"].copy()
+    original_auto = contamination["auto_mask"].copy()
+    report = diagnose_current_project_residual_sky(
+        dataset, draft, contamination)
+    assert report["status"] == "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
+    grid = report["sky_grid_sensitivity_qa"]
+    assert grid["schema"] == "desidera.sky.internal-grid-sensitivity/1"
+    assert grid["n_predeclared_variants"] == 5
+    assert len(grid["trials"]) == 5
+    assert grid["original_tile_selection_unchanged"] is True
+    assert grid["no_science_adoption"] is True
+    assert {r["name"] for r in grid["trials"]} == {
+        "tile_72_origin", "tile_96_shift48", "tile_128_origin",
+        "expanded_target_1p5", "expanded_sources_1p5"}
+    assert all(r["parameters"]["target_guard_factor"] >= 1.
+               and r["parameters"]["source_guard_factor"] >= 1.
+               for r in grid["trials"])
+    assert all(r["no_reselection_based_on_pixel_brightness"]
+               for r in grid["trials"])
+    assert grid["summary"]["constant"]["not_an_uncertainty_interval"] is True
+    assert grid["summary"]["tilted_plane"]["not_an_uncertainty_interval"] is True
+
+    injection = report["sky_injection_recovery_qa"]
+    assert injection["schema"] == (
+        "desidera.sky.frozen-mask-exponential-injection/1")
+    assert injection["status"] == (
+        "SAME_COADD_FROZEN_MASK_INJECTION_DIAGNOSTIC_ONLY")
+    assert len(injection["scenarios"]) == 3
+    assert injection["not_full_galaxy_detections_or_photometric_pipeline"]
+    assert injection["does_not_test_historic_DR11_sky_subtraction"] is True
+    assert injection["no_noise_or_psf_realization_synthesized"] is True
+    assert injection["original_arrays_mutated"] is False
+    for scenario in injection["scenarios"]:
+        assert scenario["injected_flux_in_unmasked_aperture_nMgy"] > 0.
+        assert scenario["zero_additional_correction_recovery_fraction"] == 1.
+        assert scenario["unmasked_aperture_fraction"] <= 1.
+        for method in ("constant", "tilted_plane"):
+            candidate = scenario["models"][method]
+            assert candidate["status"] == "INJECTED_FIT_MEASURED_UNCALIBRATED"
+            assert np.isfinite(candidate[
+                "injection_flux_recovery_fraction_fixed_aperture"])
+            assert candidate["absolute_galaxy_flux_bias_identified"] is False
+    assert report["automatic_sky_background_correction_authorized"] is False
+    assert report["sky_model_adopted"] is False
+    assert report["background_subtracted_image_created"] is False
+    assert np.array_equal(dataset["data"]["image"], original_image)
+    assert np.array_equal(dataset["data"]["invvar"], original_invvar)
+    assert np.array_equal(dataset["native_hard"], original_hard)
+    assert np.array_equal(contamination["auto_mask"], original_auto)
+    assert (report["sky_grid_sensitivity_qa"] ==
+            diagnose_current_project_residual_sky(
+                dataset, draft, contamination)["sky_grid_sensitivity_qa"])
+
+
+def test_project_stage03_sensitivity_selector_rejects_smaller_source_guards():
+    from lsbpipe.background import _automatic_scene_sky_pixels
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    dataset, draft, contamination = _stage03_project_fixture(with_regions=False)
+    preview = evaluate_mask_draft(
+        draft, dataset["wcs"], dataset["pixel_shape"], "r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    for options in (
+            {"source_guard_factor":.5},
+            {"target_guard_factor":.9},
+            {"grid_offset_xy_native_pix":(96,0),
+             "tile_edge_native_pix":96},
+            {"tile_edge_native_pix":0}):
+        with pytest.raises(ValueError):
+            _automatic_scene_sky_pixels(
+                dataset, preview, contamination, **options)
+    a,b,base = _automatic_scene_sky_pixels(
+        dataset,preview,contamination)
+    x,y,expanded = _automatic_scene_sky_pixels(
+        dataset,preview,contamination,target_guard_factor=1.5)
+    assert expanded["target_outskirts_guard_native_pix"] >= (
+        base["target_outskirts_guard_native_pix"])
+    assert expanded["geometry_eligible_pixels_before_tile_sampling"] <= (
+        base["geometry_eligible_pixels_before_tile_sampling"])
+    assert not np.any((x|y) & ~(a|b))
+    assert not np.any(x & y)
+
+
+def test_project_stage03_frozen_mask_injection_fails_without_target_geometry():
+    from lsbpipe.background import _audit_current_project_sky_injection_recovery
+    image = np.zeros((80, 80), dtype=float)
+    valid = np.ones_like(image)
+    exclude = np.zeros(image.shape, dtype=bool)
+    out = _audit_current_project_sky_injection_recovery(
+        image, valid, None, {},
+        anchor_native_xy=(40.,40.), protected=exclude,
+        source_mask=exclude, manual_mask=exclude, hard=exclude,
+        settings=None)
+    assert out["status"] == "NOT_MEASURED_NO_TARGET_PROTECTION"
+    assert out["science_adopted"] is False
+    assert out["scenarios"] == []
