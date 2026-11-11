@@ -54,6 +54,13 @@ def build_project_aperture_growth(
     if len(source_triplet) != 3:
         raise ValueError("Source identity must be release/region/brick")
     release,region,brick = source_triplet
+    expected_key=(release,region,brick,dataset["band"])
+    loaded_key=dataset.get("source_quartet_key")
+    mask_key=contamination.get("source_quartet_key")
+    if (loaded_key is not None and tuple(loaded_key)!=expected_key):
+        raise ValueError("Stage04 source-triplet mismatch with loaded native FITS")
+    if (mask_key is not None and tuple(mask_key)!=expected_key):
+        raise ValueError("Stage04 source-triplet mismatch with prepared source masks")
     if dataset["band"] not in "griz":
         raise ValueError("Unknown native optical band")
     data=dataset["data"]
@@ -137,6 +144,7 @@ def build_project_aperture_growth(
         "project_id":dataset["project_id"],
         "dataset_source":dataset["source"],
         "dataset_id":f.dataset_id,
+        "source_quartet_key":list(expected_key),
         "grid_fingerprint":curves[0]["grid_fingerprint"],
         "scene_draft_sha256":draft.digest,
         "catalog_sha256":contamination["catalog_sha256"],
