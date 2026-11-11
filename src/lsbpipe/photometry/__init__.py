@@ -73,3 +73,16 @@ __all__ += [
     "ApertureFluxRecord", "PixelEllipse",
     "project_icrs_ellipse_to_native", "measure_native_aperture",
 ]
+
+
+# Stage 04.2 fixed-ellipse curves of growth and exact annular diagnostics.
+from .aperture_growth import (
+    GrowthHypothesis, AnnulusFluxRecord,
+    geometry_hypotheses, predeclared_growth_radii,
+    measure_native_annulus, measure_growth_diagnostic,
+)
+__all__ += [
+    "GrowthHypothesis", "AnnulusFluxRecord",
+    "geometry_hypotheses", "predeclared_growth_radii",
+    "measure_native_annulus", "measure_growth_diagnostic",
+]
