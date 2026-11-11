@@ -98,3 +98,42 @@ def test_stage03_requires_current_scene_and_discards_stale_result(qtbot,monkeypa
     scene._band="g"
     w.copy_qa()
     assert w._result is None
+
+
+
+def test_stage03_readout_exposes_synthetic_sky_leakage_not_only_recovery():
+    result = {
+        "dataset_source": "DR11 south sample r",
+        "draft_sha256": "a"*64,
+        "sky_train_effective_pixels": 120,
+        "sky_holdout_effective_pixels": 64,
+        "methods": {},
+        "method_comparison": None,
+        "sky_injection_recovery_qa": {
+            "status": "SAME_COADD_FROZEN_MASK_INJECTION_DIAGNOSTIC_ONLY",
+            "scenarios": [{
+                "scale_length_as_protected_area_radius": 1.0,
+                "scale_length_arcsec": 60.,
+                "unmasked_aperture_pixels": 700,
+                "geometric_aperture_pixels": 1000,
+                "unmasked_aperture_fraction": .7,
+                "models": {
+                    "constant": {
+                        "injection_flux_recovery_fraction_fixed_aperture": .8,
+                    }
+                },
+                "injected_signal_on_frozen_sky_samples": {
+                    "training_median_nMgy_per_pixel": .0004,
+                    "holdout_median_nMgy_per_pixel": .0005,
+                },
+            }],
+        },
+    }
+    displayed = SkyWorkspace._format_readout(result)
+    assert "h=60.00 arcsec" in displayed
+    assert "700/1000 pixels (70.0%)" in displayed
+    assert "training median=0.0004" in displayed
+    assert "holdout median=0.0005" in displayed
+    assert "NOT total galaxy light" in displayed
+    assert "signal leakage, NOT a sky pedestal" in displayed
+    assert "SKY SCIENCE HOLD" in displayed
