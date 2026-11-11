@@ -146,6 +146,33 @@ def test_tractor_ellipticity_creates_native_wcs_ellipses_not_round_disks():
     assert stats["masked_catalog_sources"]==1
 
 
+def test_circular_point_source_mask_uses_sky_plane_for_anisotropic_wcs():
+    """A circular sky mask projects as an ellipse on anisotropic pixels.
+
+    Regression: scalar geometric-mean px scales under-mask a foreground
+    PSF on the narrow-angular-scale pixel axis.
+    """
+    wcs = _wcs()
+    wcs.wcs.cd = np.diag([-1., .2])/3600.
+    shape = (241, 241)
+    protected = np.zeros(shape, dtype=bool)
+    points = np.array([[120.,120.]])
+    rows = [_row("PSF", flux=100.)]
+    before_points = points.copy()
+    mask, stats = conservative_catalogue_mask(
+        shape, points, rows, protected=protected, wcs=wcs,
+        arcsec_per_pixel=1.)
+    # For m=17.5, the provisional round angular footprint is 9.5 arcsec.
+    # Along y, 40 pixels are only 8 arcsec; along x, 20 pixels
+    # are about 19 arcsec.
+    assert mask[160, 120]
+    assert not mask[120, 140]
+    assert mask[120, 120]
+    assert stats["masked_catalog_sources"] == 1
+    assert not mask.flags.writeable
+    assert np.array_equal(points, before_points)
+
+
 def test_tractor_missing_or_unphysical_shape_falls_back_without_guessing_pa():
     protected=np.zeros((241,241),bool)
     rows=[{**_row("SER",flux=100.,shape_r=6.),
