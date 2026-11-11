@@ -174,6 +174,46 @@ def test_gui_preview_refuses_export_after_original_fits_changed(tmp_path, monkey
     assert not (project.root/"analyses"/"psf-pilots").exists()
 
 
+def test_saved_psf_cannot_survive_changed_project_target_anchor(
+        tmp_path, monkeypatch):
+    """Same original FITS and brick do not excuse a moved PSF target mask."""
+    from lsbpipe.photometry.psf_gui_backend import (
+        run_gui_psf0, save_gui_psf0, read_saved_psf0_bands,
+        _same_target_anchor)
+
+    assert _same_target_anchor((155.438012, 18.088025),
+                               (155.438012, 18.088025))
+    assert not _same_target_anchor((155.438012, 18.088025),
+                                   (155.438012, 18.088025 + 10./3600.))
+    assert _same_target_anchor((359.9999999, 18.), (-.0000001, 18.))
+    assert not _same_target_anchor((155.438012, 18.088025), None)
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = _project(tmp_path)
+    paths = _synthetic_legacy_files(project)
+    original_hashes = {name: data.read_bytes() for name,data in paths.items()}
+    preview = run_gui_psf0(
+        project.root, band="r",
+        config=PSF0Config(max_training_stars=30,
+                          min_train_stars=6, min_holdout_stars=2),
+        protection_arcsec=12.)
+    assert preview["status"] == "EXPERIMENTAL_PSF_NOT_ADOPTED"
+    saved = save_gui_psf0(preview)
+    assert Path(saved).is_dir()
+    assert "r" in read_saved_psf0_bands(project.root)["restored"]
+    project.field = SkyField(
+        155.438012, 18.088025 + 10./3600., 6.)
+    save_object_project(project)
+    result = read_saved_psf0_bands(project.root)
+    assert not result["restored"]
+    assert any("target ICRS anchor differs" in message
+               for message in result["warnings"].values())
+    with pytest.raises(ValueError, match="target ICRS anchor changed"):
+        save_gui_psf0(preview)
+    assert all(path.read_bytes() == original_hashes[name]
+               for name,path in paths.items())
+
+
 def test_explicit_manual_psf_star_exclusions_persist_without_modifying_fits(
         tmp_path, monkeypatch):
     from dataclasses import replace
