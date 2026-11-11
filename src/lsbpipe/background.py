@@ -817,7 +817,7 @@ def _audit_current_project_sky_grid_sensitivity(
 def _audit_current_project_sky_injection_recovery(
         image, inverse_variance, scene, candidates, *,
         anchor_native_xy, protected, source_mask, manual_mask, hard,
-        settings):
+        settings, pixel_scale_arcsec=None):
     """Artificial exponential-light sensitivity on copied image arrays.
 
     Freeze the exact Scene, train/holdout and aperture for each experiment.
@@ -857,6 +857,17 @@ def _audit_current_project_sky_injection_recovery(
             "science_adopted": False,
         }
     ax_ap, ay_ap = xx[aperture],yy[aperture]
+    # Frozen training and holdout are queried through exactly the same
+    # Scene operation masks as fit_residual_background. Synthetic light
+    # leaking into these samples is the mechanism this experiment probes.
+    sky_training = evaluate_mask(
+        scene, original, ivar, grid_id=scene.grid_id,
+        operation=Operation.SKY_FIT, observation_valid=~hard).valid
+    sky_holdout = evaluate_mask(
+        scene, original, ivar, grid_id=scene.grid_id,
+        operation=Operation.SKY_HOLDOUT, observation_valid=~hard).valid
+    if not np.any(sky_training) or not np.any(sky_holdout):
+        raise ValueError("Frozen source sky controls became unavailable")
     scenarios = []
     # Fixed by protocol and labelled as uncalibrated, not a Leo P
     # morphological/stellar population model. q=0.65 test ellipse.
@@ -869,9 +880,14 @@ def _audit_current_project_sky_injection_recovery(
         simulated = np.array(original, dtype=np.float64, copy=True)
         simulated += signal
         aperture_input = float(np.sum(signal[aperture]))
+        train_signal = signal[sky_training]
+        holdout_signal = signal[sky_holdout]
         scenario = {
             "scale_length_as_protected_area_radius": factor,
             "scale_length_native_pix": h,
+            "scale_length_arcsec": (
+                float(h*pixel_scale_arcsec)
+                if pixel_scale_arcsec is not None else None),
             "axis_ratio": .65,
             "central_amplitude_nMgy_per_pixel": .005,
             "psf_convolution_applied": False,
@@ -882,6 +898,22 @@ def _audit_current_project_sky_injection_recovery(
             "injected_total_image_flux_nMgy":
                 float(np.sum(signal)),
             "injected_flux_in_unmasked_aperture_nMgy": aperture_input,
+            "injected_signal_on_frozen_sky_samples": {
+                "n_training_pixels": int(train_signal.size),
+                "n_holdout_pixels": int(holdout_signal.size),
+                "training_median_nMgy_per_pixel":
+                    float(np.median(train_signal)),
+                "training_max_nMgy_per_pixel":
+                    float(np.max(train_signal)),
+                "training_90th_percentile_nMgy_per_pixel":
+                    float(np.percentile(train_signal,90)),
+                "holdout_median_nMgy_per_pixel":
+                    float(np.median(holdout_signal)),
+                "holdout_max_nMgy_per_pixel":
+                    float(np.max(holdout_signal)),
+                "training_signal_is_not_sky_or_noise": True,
+                "sampled_synthetic_flux_not_an_integrated_source_flux": True,
+            },
             "zero_additional_correction_recovery_fraction": 1.,
             "models": {},
         }
@@ -1165,7 +1197,8 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             image, ivar, scene, candidates,
             anchor_native_xy=(x,y), protected=sky_protected,
             source_mask=auto, manual_mask=preview["manual_exclude"],
-            hard=hard, settings=settings))
+            hard=hard, settings=settings,
+            pixel_scale_arcsec=selection["native_pixel_scale_arcsec"]))
     if sum(row["status"] == "BOTH_MODELS_MEASURED_UNCALIBRATED"
            for row in base["sky_grid_sensitivity_qa"]["trials"]) < 2:
         base["warnings"].append(
