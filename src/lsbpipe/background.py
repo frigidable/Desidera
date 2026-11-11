@@ -274,14 +274,181 @@ def fit_observation_background(observation, scene: SceneState, *, method,
 
 
 
-def diagnose_current_project_residual_sky(dataset, draft, contamination):
-    """Non-adopted Stage 03 sky candidates, using ONLY loaded Stage 02 inputs.
+def _automatic_scene_sky_pixels(dataset, preview, contamination):
+    """Deterministic spatially disjoint source-vetoed tiles, no image-based picking.
 
-    No FITS reads, network access, external bricks, implicit sky regions,
-    interpolation, model-subtracted image or filesystem writes. The
-    previously prepared catalogue source masks remain provisional.
+    Selection is solely based on geometry, validity, existing Scene
+    provenance and fixed design constants. We do NOT choose tiles after
+    comparing their residual intensities, or assume they are galaxy-free.
     """
-    from dataclasses import asdict
+    from scipy.ndimage import distance_transform_edt
+    from astropy.wcs.utils import proj_plane_pixel_scales
+
+    shape = tuple(dataset["pixel_shape"])
+    ny, nx = shape
+    hard = np.asarray(dataset["native_hard"], dtype=bool)
+    image = np.asarray(dataset["data"]["image"])
+    invvar = np.asarray(dataset["data"]["invvar"])
+    auto = np.asarray(contamination["auto_mask"], dtype=bool)
+    manual = np.asarray(preview["manual_exclude"], dtype=bool)
+    target = (np.asarray(contamination["protected"], dtype=bool)
+              | preview["target_protect"] | preview["isophote_candidate"])
+    source = auto | manual
+    scales = np.asarray(proj_plane_pixel_scales(
+        dataset["wcs"].celestial), dtype=float)
+    if scales.shape != (2,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+        raise ValueError("Cannot determine Scene native pixel scale")
+    arcsec_per_pixel = float(np.sqrt(scales[0]*scales[1])*3600.)
+    # This is an exclusion-only heuristic, not validated galaxy extent.
+    equivalent_target_radius = np.sqrt(np.count_nonzero(target)/np.pi)
+    target_guard_px = max(int(np.ceil(15./arcsec_per_pixel)),
+                          int(np.ceil(.30*equivalent_target_radius)))
+    source_guard_px = max(2, int(np.ceil(6./arcsec_per_pixel)))
+
+    def guarded(mask, radius):
+        if not np.any(mask):
+            return np.zeros(shape, dtype=bool)
+        return distance_transform_edt(~mask) <= radius
+
+    target_veto = guarded(target, target_guard_px)
+    catalog_veto = guarded(source, source_guard_px)
+
+    # Existing Tractor/Gaia sources only. These radii are intentionally
+    # conservative pilot vetoes and NOT a measured bright-star halo model.
+    inventory = contamination.get("source_inventory")
+    entries = inventory.get("entries", ()) if isinstance(inventory, dict) else ()
+    bright_veto = np.zeros(shape, dtype=bool)
+    bright_n = 0
+    for entry in entries:
+        mag = entry.get("gaia_g_mag")
+        if mag is None:
+            continue
+        try:
+            mag = float(mag)
+            sx, sy = float(entry["x"]), float(entry["y"])
+        except (TypeError, ValueError, KeyError, OverflowError):
+            continue
+        if not (np.isfinite(mag) and np.isfinite(sx) and np.isfinite(sy)
+                and 0. < mag <= 18.):
+            continue
+        guard_arcsec = (60. if mag <= 13. else
+                        40. if mag <= 15. else
+                        30. if mag <= 16.5 else 18.)
+        radius = guard_arcsec/arcsec_per_pixel
+        x0, x1 = max(0, int(np.floor(sx-radius))), min(
+            nx, int(np.ceil(sx+radius))+1)
+        y0, y1 = max(0, int(np.floor(sy-radius))), min(
+            ny, int(np.ceil(sy+radius))+1)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        xx, yy = np.meshgrid(np.arange(x0,x1), np.arange(y0,y1))
+        bright_veto[y0:y1,x0:x1] |= (xx-sx)**2+(yy-sy)**2 <= radius**2
+        bright_n += 1
+
+    valid = ((~hard) & np.isfinite(image) &
+             np.isfinite(invvar) & (invvar > 0))
+    safe = valid & ~target_veto & ~catalog_veto & ~bright_veto
+    # Full spatial tiles, with a 2-native-pixel inner edge guard.
+    # The same physical sky pixels are never assigned to train and holdout.
+    tile = max(16, min(96, int(min(shape)/12)))
+    border = 2
+    train = np.zeros(shape, dtype=bool)
+    holdout = np.zeros(shape, dtype=bool)
+    tiles_train, tiles_holdout = [], []
+    n_candidate = 0
+    n_eligible = 0
+    # The fixed hash is wholly geometry-based, decided before pixel fluxes
+    # are considered. No resampling or cherry-picking after a fit.
+    for y0 in range(0, ny, tile):
+        for x0 in range(0, nx, tile):
+            y1 = min(ny, y0+tile)
+            x1 = min(nx, x0+tile)
+            if min(y1-y0, x1-x0) < .75*tile:
+                continue
+            n_candidate += 1
+            yy0, yy1 = y0+border, y1-border
+            xx0, xx1 = x0+border, x1-border
+            footprint = safe[yy0:yy1, xx0:xx1]
+            count = int(np.count_nonzero(footprint))
+            total = int(footprint.size)
+            if total < 25 or count < 40 or count / total < .65:
+                continue
+            n_eligible += 1
+            yy, xx = np.nonzero(footprint)
+            # Cap the nominal pixel weighting per tile. This is a
+            # deterministic spatial subsample, not sigma clipping.
+            if len(xx) > 384:
+                index = np.linspace(0, len(xx)-1, 384, dtype=np.int64)
+                yy, xx = yy[index], xx[index]
+            ty, tx = y0//tile, x0//tile
+            is_holdout = (tx+2*ty) % 5 == 0
+            selected = holdout if is_holdout else train
+            selected[yy0+yy,xx0+xx] = True
+            record = {
+                "tile_index": [int(tx),int(ty)],
+                "n_available_valid_pixels": count,
+                "n_sampled_pixels": int(len(xx)),
+                "eligible_fraction_of_interior": float(count/total),
+                "quadrant": int((x0+x1)/2 > (nx-1)/2) +
+                            2*int((y0+y1)/2 > (ny-1)/2),
+            }
+            (tiles_holdout if is_holdout else tiles_train).append(record)
+
+    def coverage(rows):
+        return sorted({r["quadrant"] for r in rows})
+
+    enough = (len(tiles_train) >= 8 and len(tiles_holdout) >= 4
+              and len(coverage(tiles_train)) >= 3
+              and len(coverage(tiles_holdout)) >= 3
+              and int(train.sum()) >= 100 and int(holdout.sum()) >= 100)
+    qa = {
+        "strategy": "SCENE_MASKS_FIXED_SPATIAL_TILES_V1",
+        "selection_predeclared_geometry_only_not_flux_optimized": True,
+        "sky_regions_drawn_by_user_required": False,
+        "manual_sky_annotations_ignored_not_deleted": True,
+        "native_pixel_scale_arcsec": arcsec_per_pixel,
+        "tile_edge_native_pix": tile,
+        "tile_inner_border_native_pix": border,
+        "min_eligible_fraction_per_tile": .65,
+        "max_sampled_pixels_per_tile": 384,
+        "target_outskirts_guard_native_pix": target_guard_px,
+        "source_neighbour_guard_native_pix": source_guard_px,
+        "bright_gaia_veto_is_unvalidated_radius_heuristic": True,
+        "n_existing_bright_gaia_sources_vetoed": bright_n,
+        "bright_gaia_inventory_present": isinstance(inventory, dict),
+        "candidate_tiles": n_candidate,
+        "eligible_tiles": n_eligible,
+        "training_tiles": len(tiles_train),
+        "holdout_tiles": len(tiles_holdout),
+        "training_quadrants": coverage(tiles_train),
+        "holdout_quadrants": coverage(tiles_holdout),
+        "training_tile_evidence": tiles_train,
+        "holdout_tile_evidence": tiles_holdout,
+        "native_valid_pixels": int(np.count_nonzero(valid)),
+        "geometry_eligible_pixels_before_tile_sampling":
+            int(np.count_nonzero(safe)),
+        "target_guard_veto_pixels": int(np.count_nonzero(target_veto)),
+        "catalogue_guard_veto_pixels": int(np.count_nonzero(catalog_veto)),
+        "bright_star_veto_pixels": int(np.count_nonzero(bright_veto)),
+        "training_pixels": int(np.count_nonzero(train)),
+        "holdout_pixels": int(np.count_nonzero(holdout)),
+        "geometry_sufficient_for_diagnostic": bool(enough),
+        "galaxy_free_certified": False,
+        "psf_wings_calibrated": False,
+        "independent_exposure_holdout": False,
+    }
+    assert not np.any(train & holdout)
+    assert not np.any((train | holdout) & ~safe)
+    return train, holdout, qa
+
+
+def diagnose_current_project_residual_sky(dataset, draft, contamination):
+    """Automatically select Scene-safe sky tiles and compare residual models.
+
+    No manual sky drawing, FITS reads, network access or new survey bricks.
+    All fitted results remain explicitly non-adopted research diagnostics.
+    """
+    from dataclasses import asdict, replace
     from lsbpipe.photometry.sky_masks import evaluate_mask_draft
     from lsbpipe.scene import LayerKind, MaskLayer, SceneState, grid_fingerprint
 
@@ -317,34 +484,30 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     if not isinstance(contamination.get("catalog_sha256"), str):
         raise ValueError("Prepared catalogue fingerprint missing")
 
+    # Sky annotations from previous experiments are optional and are
+    # ignored by the automatic selector; no draft edits are deleted.
+    working_draft = replace(
+        draft, edits=tuple(edit for edit in draft.edits
+                           if edit.purpose not in ("sky_train","sky_holdout")))
     preview = evaluate_mask_draft(
-        draft, dataset["wcs"], shape, band,
+        working_draft, dataset["wcs"], shape, band,
         native_hard=hard, automatic_contaminants=auto)
-    # Explicit sky annotations are mandatory. Never manufacture random
-    # star-free tiles or silently use the entire rest of the brick as sky.
-    sky_train = np.asarray(preview["sky_train"], dtype=bool)
-    sky_holdout = np.asarray(preview["sky_holdout"], dtype=bool)
-    # The native Source/Tractor target-protection radius must also be
-    # excluded: a manually drawn sky region may cross it.
-    sky_protected = protected | preview["target_protect"]
-    sky_train &= ~sky_protected
-    sky_holdout &= ~sky_protected
-    finite = (np.isfinite(image) & np.isfinite(ivar) & (ivar > 0))
-    sky_train &= finite
-    sky_holdout &= finite
-    if np.any(sky_train & sky_holdout):
-        raise ValueError("Sky training and independent holdout must be disjoint")
-
+    sky_train, sky_holdout, selection = _automatic_scene_sky_pixels(
+        dataset, preview, contamination)
+    sky_protected = protected | preview["target_protect"] | preview["isophote_candidate"]
     grid = grid_fingerprint(dataset["wcs"], shape)
-    warnings = (
-        "SKY_REGIONS_USER_SELECTED_NOT_INDEPENDENT_EXPOSURES",
+    warnings = [
+        "AUTOMATIC_SKY_SAMPLE_SELECTION_INTERNAL_SAME_COADD_ONLY",
         "PROVISIONAL_CATALOGUE_MASK_NOT_PSF_WING_CALIBRATED",
         "GALAXY_OUTSKIRTS_MAY_EXTEND_BEYOND_PROTECTED_REGION",
+        "BRIGHT_GAIA_EXCLUSION_HEURISTIC_NOT_A_PSF_WING_MODEL",
         "DESI_COADD_PIXEL_COVARIANCE_NOT_CALIBRATED",
         "UPSTREAM_SURVEY_SKY_SUBTRACTION_IRREVERSIBLE",
-    )
+    ]
+    if not selection["bright_gaia_inventory_present"]:
+        warnings.append("BRIGHT_GAIA_SOURCE_INVENTORY_ABSENT")
     base = {
-        "schema": "desidera.sky.project-native-residual-diagnostic/1",
+        "schema": "desidera.sky.project-native-residual-diagnostic/2",
         "status": "NOT_MEASURED",
         "science_status": "UNADOPTED_DIAGNOSTIC_ONLY",
         "project_id": pid,
@@ -357,8 +520,9 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "native_hard_pixels": int(np.count_nonzero(hard)),
         "provisional_catalogue_mask_pixels": int(np.count_nonzero(auto)),
         "protected_target_pixels": int(np.count_nonzero(sky_protected)),
-        "sky_train_effective_pixels": int(np.count_nonzero(sky_train)),
-        "sky_holdout_effective_pixels": int(np.count_nonzero(sky_holdout)),
+        "sky_train_effective_pixels": selection["training_pixels"],
+        "sky_holdout_effective_pixels": selection["holdout_pixels"],
+        "automatic_sky_selection_qa": selection,
         "preview_gaia_inner_mask_used":
             bool(contamination.get("gaia_inner_preview_enabled", False)),
         "preview_red_extended_mask_used":
@@ -374,19 +538,20 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "source_masks_scientifically_validated": False,
         "methods": {},
         "method_comparison": None,
-        "warnings": list(warnings),
+        "provisional_automatic_model": None,
+        "warnings": warnings,
     }
-    if not np.any(sky_train) or not np.any(sky_holdout):
-        missing = []
-        if not np.any(sky_train):
-            missing.append("SKY_TRAIN_PIXELS_ABSENT_OR_MASKED")
-        if not np.any(sky_holdout):
-            missing.append("SKY_HOLDOUT_PIXELS_ABSENT_OR_MASKED")
-        return dict(base, status="EXPLICIT_DISJOINT_SKY_REGIONS_REQUIRED",
-                    warnings=list(warnings) + missing)
+    if not selection["geometry_sufficient_for_diagnostic"]:
+        return dict(
+            base, status="INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY",
+            warnings=warnings+["NO_SPATIALLY_DISTRIBUTED_CLEAN_SKY_TILES"])
+    if not selection["bright_gaia_inventory_present"]:
+        return dict(
+            base, status="SOURCE_INVENTORY_REQUIRED_FOR_AUTOMATIC_SKY",
+            warnings=warnings+["BRIGHT_SOURCE_HALO_VETO_UNAVAILABLE"])
 
     def layer(name, kind, pixels):
-        return MaskLayer(name, kind, pixels, grid, band, "current-scene-provisional")
+        return MaskLayer(name, kind, pixels, grid, band, "automated-scene-diagnostic")
 
     scene = SceneState(
         target_id=pid, grid_id=grid, band=band, shape=shape,
@@ -397,19 +562,16 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
                   preview["manual_exclude"]),
             layer("target_provisional", LayerKind.TARGET_PROTECT,
                   sky_protected),
-            layer("sky_train_explicit", LayerKind.SKY_TRAIN, sky_train),
-            layer("sky_holdout_explicit", LayerKind.SKY_HOLDOUT, sky_holdout),
-        ),
-        revision=draft.revision,
+            layer("sky_train_automatic_tiles", LayerKind.SKY_TRAIN, sky_train),
+            layer("sky_holdout_automatic_tiles", LayerKind.SKY_HOLDOUT, sky_holdout),
+        ), revision=draft.revision,
     )
-    # No automatic minimum tuned from Leo P output. These are conservative
-    # sampling requirements, NOT an effective independent-pixel count.
     settings = BackgroundSettings(
         min_training_pixels=100, min_holdout_pixels=100,
         min_holdout_quadrants=3)
-    models = {}
     candidates = {}
-    for method in ("constant", "tilted_plane"):
+    methods = {}
+    for method in ("constant","tilted_plane"):
         candidate = fit_residual_background(
             image, ivar, scene, method=method, grid_id=grid,
             observation_valid=~hard, settings=settings)
@@ -418,46 +580,64 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         serialized["fit_status"] = candidate.fit_status.value
         serialized["holdout_status"] = candidate.holdout_status.value
         serialized["warnings"] = list(candidate.warnings)
-        # A degenerate sky design may report an infinite condition
-        # number. QA export must remain strict RFC-8259 JSON.
-        condition = serialized.get("design_condition")
-        if condition is not None and not np.isfinite(condition):
+        cond = serialized.get("design_condition")
+        if cond is not None and not np.isfinite(cond):
             serialized["design_condition"] = None
-            serialized["warnings"].append(
-                "NONFINITE_CONDITION_NUMBER_NOT_A_VALID_MEASUREMENT")
-        models[method] = serialized
-    base["methods"] = models
-    fitted = [m for m in candidates.values() if m.fit_status == FitStatus.FITTED]
-    base["status"] = (
-        "TWO_SKY_MODELS_FITTED_HOLDOUT_UNCALIBRATED"
-        if len(fitted) == 2
-        else "SKY_CANDIDATE_FIT_INCOMPLETE_NOT_ADOPTED")
-    if len(fitted) == 2:
-        from math import hypot
-        anchor = contamination.get("anchor_icrs")
-        if anchor is None:
-            raise ValueError("Protected target ICRS anchor is unavailable")
-        x, y = dataset["wcs"].all_world2pix(*map(float, anchor), 0)
-        if not np.isfinite(x) or not np.isfinite(y):
-            raise ValueError("Project target WCS anchor is not finite")
-        b_const = float(candidates["constant"].evaluate_at(x, y))
-        b_plane = float(candidates["tilted_plane"].evaluate_at(x, y))
-        ny, nx = shape
-        corners = ((0, 0), (nx-1, 0), (0, ny-1), (nx-1, ny-1))
-        differences = [
-            float(candidates["tilted_plane"].evaluate_at(cx, cy) -
-                  candidates["constant"].evaluate_at(cx, cy))
-            for cx, cy in corners]
-        base["method_comparison"] = {
-            "target_anchor_native_xy_pix": [float(x), float(y)],
-            "constant_at_target_nMgy_per_pixel": b_const,
-            "plane_at_target_nMgy_per_pixel": b_plane,
-            "plane_minus_constant_at_target_nMgy_per_pixel":
-                b_plane-b_const,
-            "max_abs_plane_minus_constant_corners_nMgy_per_pixel":
-                max(abs(v) for v in differences),
-            "both_methods_share_exact_same_sky_train_and_holdout": True,
-            "not_a_galaxy_flux_bias_estimate": True,
-            "not_a_model_selection_p_value": True,
-        }
+            serialized["warnings"].append("NONFINITE_CONDITION_NUMBER")
+        methods[method] = serialized
+    base["methods"] = methods
+    if not all(c.fit_status == FitStatus.FITTED for c in candidates.values()):
+        base["status"] = "SKY_CANDIDATE_FIT_INCOMPLETE_NOT_ADOPTED"
+        return base
+    if not all(c.holdout_status == HoldoutStatus.MEASURED_UNCALIBRATED
+               for c in candidates.values()):
+        base["status"] = "SKY_HOLDOUT_GEOMETRY_FAILED_NOT_ADOPTED"
+        return base
+
+    anchor = contamination.get("anchor_icrs")
+    if anchor is None:
+        raise ValueError("Protected target ICRS anchor is unavailable")
+    x, y = dataset["wcs"].all_world2pix(*map(float, anchor), 0)
+    x, y = float(x), float(y)
+    if not (np.isfinite(x) and np.isfinite(y)):
+        raise ValueError("Project target WCS anchor is not finite")
+    const, plane = candidates["constant"], candidates["tilted_plane"]
+    b_const = float(const.evaluate_at(x,y))
+    b_plane = float(plane.evaluate_at(x,y))
+    ny, nx = shape
+    corners = ((0,0),(nx-1,0),(0,ny-1),(nx-1,ny-1))
+    differences = [
+        float(plane.evaluate_at(cx,cy)-const.evaluate_at(cx,cy))
+        for cx,cy in corners]
+    # Select ONLY the provisional numerical candidate from the spatial
+    # same-coadd holdout; never assert a scientific / noise-calibrated PASS.
+    score_const = float(const.holdout_rms_residual_nMgy)
+    score_plane = float(plane.holdout_rms_residual_nMgy)
+    preferred = ("tilted_plane" if score_plane < .75*score_const
+                 else "constant")
+    base["status"] = "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
+    base["provisional_automatic_model"] = {
+        "method": preferred,
+        "selection_rule": (
+            "PLANE_IF_HELDOUT_RMS_LESS_THAN_75_PERCENT_OF_CONSTANT_ELSE_CONSTANT"),
+        "same_coadd_holdout_not_independent_validation": True,
+        "not_a_science_adoption": True,
+        "coefficients_nMgy": list(candidates[preferred].coefficients_nMgy),
+        "reference_xy_pix": list(candidates[preferred].reference_xy_pix),
+        "predicted_residual_sky_at_target_nMgy_per_pixel":
+            float(candidates[preferred].evaluate_at(x,y)),
+    }
+    base["method_comparison"] = {
+        "target_anchor_native_xy_pix":[x,y],
+        "constant_at_target_nMgy_per_pixel":b_const,
+        "plane_at_target_nMgy_per_pixel":b_plane,
+        "plane_minus_constant_at_target_nMgy_per_pixel":b_plane-b_const,
+        "max_abs_plane_minus_constant_corners_nMgy_per_pixel":
+            max(abs(v) for v in differences),
+        "both_methods_share_exact_same_sky_train_and_holdout":True,
+        "not_a_galaxy_flux_bias_estimate":True,
+        "not_a_model_selection_p_value":True,
+        "holdout_rms_constant_nMgy_per_pixel":score_const,
+        "holdout_rms_plane_nMgy_per_pixel":score_plane,
+    }
     return base
