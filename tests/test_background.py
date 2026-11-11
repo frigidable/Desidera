@@ -565,8 +565,20 @@ def test_project_stage03_fixed_grid_sensitivity_and_frozen_aperture_injections()
     assert injection["does_not_test_historic_DR11_sky_subtraction"] is True
     assert injection["no_noise_or_psf_realization_synthesized"] is True
     assert injection["original_arrays_mutated"] is False
+    measured_medians = []
     for scenario in injection["scenarios"]:
         assert scenario["injected_flux_in_unmasked_aperture_nMgy"] > 0.
+        leakage = scenario["injected_signal_on_frozen_sky_samples"]
+        assert leakage["n_training_pixels"] == (
+            report["sky_train_effective_pixels"])
+        assert leakage["n_holdout_pixels"] == (
+            report["sky_holdout_effective_pixels"])
+        assert leakage["training_median_nMgy_per_pixel"] > 0.
+        assert leakage["holdout_median_nMgy_per_pixel"] > 0.
+        assert leakage["training_max_nMgy_per_pixel"] <= .005
+        assert leakage["training_90th_percentile_nMgy_per_pixel"] <= .005
+        assert leakage["training_signal_is_not_sky_or_noise"] is True
+        measured_medians.append(leakage["training_median_nMgy_per_pixel"])
         assert scenario["zero_additional_correction_recovery_fraction"] == 1.
         assert scenario["unmasked_aperture_fraction"] <= 1.
         for method in ("constant", "tilted_plane"):
@@ -575,6 +587,8 @@ def test_project_stage03_fixed_grid_sensitivity_and_frozen_aperture_injections()
             assert np.isfinite(candidate[
                 "injection_flux_recovery_fraction_fixed_aperture"])
             assert candidate["absolute_galaxy_flux_bias_identified"] is False
+    assert measured_medians == sorted(measured_medians)
+    assert len(set(measured_medians)) == 3
     assert report["automatic_sky_background_correction_authorized"] is False
     assert report["sky_model_adopted"] is False
     assert report["background_subtracted_image_created"] is False
