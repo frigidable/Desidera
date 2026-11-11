@@ -968,3 +968,146 @@ specific typed aperture contract above;
 all status flags and source provenance
 must be test-covered before the UI
 may display integrated magnitudes.
+
+
+---
+
+## 2026-11-11 — First Stage 04 science-core implementation
+
+**Scope: implemented numerical engine only, GUI and real Leo P run
+NOT yet claimed.** The preceding specification and Q0–Q6 gate
+remain authoritative.
+
+Added `src/lsbpipe/photometry/aperture_flux.py`, with a public
+import through the existing `lsbpipe.photometry` package:
+`ApertureGeometryICRS`, `ApertureSkyScenario`,
+`ApertureProvenance`, `PixelEllipse`,
+`ApertureFluxRecord`,
+`project_icrs_ellipse_to_native`, and
+`measure_native_aperture`.
+
+**Input contract.** `measure_native_aperture` takes a validated
+immutable `NativeBandFrame` from the existing native quartet
+loader, a project- and source-bound Scene/catalogue fingerprint,
+the observed source-pixel-availability mask AFTER any explicit
+Scene restore operations, and the separate manual-exclusion mask.
+The existing `NativeBandFrame.valid` captures
+image/INVVAR/NEXP/MASKBITS hard validity. No native-hard
+restoration is allowed; no sky/target-protection geometry is
+interpreted as a photometric exclusion.
+The current `02 Scene & Masks` GUI does not yet provide a
+full science-trusted membership receipt. This function
+therefore reports **diagnostic valid-area flux only**.
+
+**Projection.** The ICRS geometry stores
+(ra,dec,a in arcsec,q=b/a,PA east-of-north). At the
+target ICRS centre, Astropy `SkyCoord.spherical_offsets_by`
+constructs local +east and +north one-arcsec celestial
+offsets. The original WCS maps both onto the native
+pixel basis. SVD maps the on-sky ellipse to a
+locally affine pixel ellipse with the actual axis lengths,
+pixel handedness and photutils CCW angle; NO assumption
+that celestial PA and pixel theta coincide.
+Sixteen on-sky perimeter checkpoints must agree
+with local affine pixel predictions within **0.15
+native pixel** (engineering tolerance, not
+an external calibration). If this fails
+or WCS has unsupported SIP-like distortion,
+fail closed rather than advertise an exact
+celestial boundary.
+
+**Pixel integration.** Photutils
+`EllipticalAperture.to_mask(method="exact")`
+provides the overlap fraction of each native
+pixel. Only an aperture-local cutout is
+materialized; no resampling or interpolation
+of source FITS occurs. The product distinguishes
+analytic ideal area, in-frame exact-overlap area,
+valid unmasked area, outside-frame area and
+disjoint/priority-counted hard, source and
+manual-exclusion areas. Hard-invalid pixels
+are further partitioned exclusively into
+nonfinite IMAGE, nonpositive INVVAR, invalid NEXP,
+saturation, allmask, configurable contextual
+flags, user-exclusion and an explicit
+other-invalid category. The raw frame validity
+policy is not silently strengthened or
+weakened by sky fitting.
+
+The measured finite-aperture flux is signed,
+with exact fractional native pixel weights,
+and the only default residual sky is
+`zero_additional_correction` on the
+already sky-subtracted DR11 data.
+Optional project-scoped constant and tilted
+planes are **conditional non-adopted
+sensitivity scenarios**, whose `b_0,b_x,b_y`
+coefficients and reference pixel must be
+passed explicitly. Rejection and mask
+areas are never used as an implicit
+corrective denominator. A native circle
+is an ICRS ellipse with `q=1`.
+
+**Formal uncertainty, explicit limits.**
+The diagonal-only uncertainty is
+`sqrt(sum(w_geom^2 / INVVAR))` on exactly
+the usable source pixels. This is NOT
+calibrated total uncertainty for correlated
+coadd pixels. Positive signed integrated
+flux permits a **valid-area-only** AB
+magnitude with zero point 22.5; negative/zero
+flux remains signed and has no magnitude.
+Mean surface intensity uses the local
+projection-plane pixel area and is
+marked approximate. Eight pixel-centre
+on-sky sectors report diagnostic
+in-frame/valid area but their angular
+sector assignment is not exact
+wedge–pixel intersection.
+
+**Lineage and immutability.** Records include
+native dataset ID, source/project/draft and
+Tractor fingerprints, WCS grid fingerprint,
+chosen ICRS/native geometry, all non-adopted
+sky parameters, overlap method and a
+SHA-256 recipe fingerprint. When the
+existing validated quartet's FOUR source
+FITS hashes are missing, the record
+explicitly flags that it cannot
+validate the FITS identity. QA fields
+are frozen against in-place mutation
+and `to_dict` creates a detached
+RFC-8259-compatible JSON payload.
+The `recipe_sha256` is an input/recipe
+identity **not** an independent proof
+of source authenticity or total flux.
+
+**Deliberately not implemented yet:**
+- No Stage 04 GUI, no aperture-geometry discovery
+  or fully automated radial grid, no computed
+  curves of growth, no independent galaxy
+  source-membership decisions.
+- No numerical masked-area reconstruction,
+  corrected total, outer extrapolation,
+  Sérsic or PSF-deconvolved model.
+- No empirical coadd covariance or
+  aperture-matched blank-sky calibration;
+  no Science `PASS`, no all-band color
+  or `TOTAL_VALIDATED` product.
+- No project FITS writes or downloads.
+
+**Regression tests:** `tests/test_aperture_flux.py`
+exercises exact uniform/rotated/subpixel ellipse
+area and signed flux, mutually exclusive
+mask accounting, hard NEXP/IVAR defects,
+negative/zero flux magnitudes, constant
+and plane background algebra, WCS reflection/
+rotation/RA wrap, off-frame no-flux
+semantics, strict provenance/geometry and
+deeply immutable QA JSON.
+
+**Next ordered step after verified CI:**
+build 04.2 fixed anchored ICRS radial grids,
+direct cumulative and annular flux sums with
+shared exact masks; only then stage 04.4 GUI
+and later correlated-noise/membership QA.
