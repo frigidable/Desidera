@@ -53,7 +53,7 @@ def test_stage03_requires_current_scene_and_discards_stale_result(qtbot,monkeypa
     )
     def fake(dataset,draft,contamination):
         return {
-            "status":"EXPLICIT_DISJOINT_SKY_REGIONS_REQUIRED",
+            "status":"INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY",
             "science_status":"UNADOPTED_DIAGNOSTIC_ONLY",
             "project_id":dataset["project_id"],"dataset_source":dataset["source"],
             "band":dataset["band"],"draft_sha256":draft.digest,
@@ -61,6 +61,11 @@ def test_stage03_requires_current_scene_and_discards_stale_result(qtbot,monkeypa
             "sky_train_effective_pixels":0,
             "sky_holdout_effective_pixels":0,
             "methods":{},"method_comparison":None,
+            "automatic_sky_selection_qa":{
+                "strategy":"SCENE_MASKS_FIXED_SPATIAL_TILES_V1",
+                "training_tiles":0,"holdout_tiles":0,
+                "sky_regions_drawn_by_user_required":False,
+            },
             "sky_model_adopted":False,
             "original_fits_or_project_draft_modified":False,
         }
@@ -75,8 +80,12 @@ def test_stage03_requires_current_scene_and_discards_stale_result(qtbot,monkeypa
     assert w._result["methods"] == {}
     assert w.copy_btn.isEnabled()
     w.copy_qa()
-    assert "EXPLICIT_DISJOINT_SKY_REGIONS_REQUIRED" in (
+    assert "INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY" in (
         QApplication.clipboard().text())
+    assert "sky_regions_drawn_by_user_required" in (
+        QApplication.clipboard().text())
+    assert "No manual sky regions required" in w.readout.toPlainText() or (
+        "no manual sky regions required" in w.readout.toPlainText().lower())
     assert "No numerical sky fit performed" in w.readout.toPlainText()
     # Current background model cannot survive a new draft revision.
     scene._draft=SimpleNamespace(project_id=project,digest="c"*64)
