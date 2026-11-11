@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import math
+import traceback
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, QRectF
@@ -270,6 +271,7 @@ class ApertureWorkspace(QWidget):
         self._active_identity=None
         self._result_identity=None
         self._result=None
+        self._last_failure=None
         self._timer=QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._poll_worker)
@@ -393,6 +395,7 @@ class ApertureWorkspace(QWidget):
         self._active_identity=identity
         self._result=None
         self._result_identity=None
+        self._last_failure=None
         self.copy_btn.setEnabled(False)
         self.plot.set_curves(())
         self.annulus_plot.set_curves(())
@@ -426,6 +429,14 @@ class ApertureWorkspace(QWidget):
             result=future.result()
         except (OSError,ValueError,KeyError,TypeError,ArithmeticError,
                 RuntimeError,ImportError) as exc:
+            self._last_failure={
+                "error_type":type(exc).__name__,
+                "message":str(exc)[:1600],
+                "traceback":"".join(traceback.format_exception(
+                    type(exc),exc,exc.__traceback__))[-5000:],
+                "scene_identity_at_attempt":list(identity[:5]),
+                "status":"WORKER_FAILED_CLOSED",
+            }
             self.status.setText(f"Aperture diagnostic refused: {exc}")
             self.readout.setPlainText(
                 "No adopted photometry. Review original Scene, "
