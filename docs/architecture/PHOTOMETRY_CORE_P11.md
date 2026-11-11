@@ -1562,3 +1562,22 @@ raw-exposure reprocessing or a validated `g/r/i/z` catalog.
 color, `SBF` measurement or adopted model subtraction may follow from
 these diagnostics. A green CI run checks programmed contracts, not
 photometric validity on the sky.
+
+
+### Additional coordinate-frame audit: selected isophote centre versus project anchor
+
+An operator may pick a centre for Stage02 *isophote detection* that is
+different from the saved target ICRS anchor. The Stage02 source inventory
+can then contain angular `offset_arcsec` relative to this picked
+detection centre, whereas Stage04's fixed neutral circular apertures
+always use the **saved project target anchor**. Reusing a Stage02
+inventory offset to assign a source to a Stage04 annulus is therefore
+incorrect and could yield a false contamination diagnosis.
+
+**Fixed:** the all-stage foreground/annulus QA now independently
+computes the source great-circle separation from the exact
+`Stage04.target_anchor_icrs` using its catalogued ICRS RA/Dec. The
+Stage02 inventory's original offset is retained *separately* and
+labelled potentially different-anchor. Missing fixed target centre
+fails closed. An explicit regression supplies contradictory centres and
+verifies that the project-anchored radial bin is chosen.
