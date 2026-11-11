@@ -781,6 +781,11 @@ def audit_finite_psf0_foreground(
 P21_SECTOR_RINGS_FWHM = ((6., 8.), (8., 12.), (12., 16.),
                          (16., 20.), (20., 24.))
 P21_OUTER_REFERENCE_RING_FWHM = (26., 30.)
+# Conservatively label annuli with sparse or strongly unequal mask support.
+# These are QA warnings, never significance/wing certification thresholds.
+P21_MIN_CONE_GEOMETRIC_COVERAGE = 0.70
+P21_MAX_CONE_COVERAGE_DIFFERENCE = 0.20
+P21_MIN_ANTIPODAL_PAIRS = 30
 
 
 def audit_same_project_foreground_sector_profile(
@@ -798,7 +803,7 @@ def audit_same_project_foreground_sector_profile(
     Failed or catalogue-crowded tiles are not replaced using their values.
     """
     base = {
-        "schema": "desidera.scene.project-only-foreground-sector/1",
+        "schema": "desidera.scene.project-only-foreground-sector/2",
         "status": "NOT_MEASURED",
         "science_adopted": False,
         "only_current_project_loaded_native_image": True,
@@ -814,6 +819,13 @@ def audit_same_project_foreground_sector_profile(
             [[24., 26.], list(P21_OUTER_REFERENCE_RING_FWHM)],
         "control_selection": "FIXED_4x4_NATIVE_CROP_TILES_NO_BACKFILL",
         "direction": "TOWARD_VS_AWAY_FROM_PROJECT_TARGET_90_DEG_CONES",
+        "matched_opposite_pixel_method":
+            "NEAREST_NATIVE_PIXEL_REFLECTED_ABOUT_SUBPIXEL_CENTER",
+        "min_cone_geometric_coverage_for_descriptive_comparison":
+            P21_MIN_CONE_GEOMETRIC_COVERAGE,
+        "max_cone_coverage_fraction_difference":
+            P21_MAX_CONE_COVERAGE_DIFFERENCE,
+        "min_antipodal_matched_pairs": P21_MIN_ANTIPODAL_PAIRS,
         "warning": ("Galaxy surface brightness and unmodelled stellar wings "
                     "can both contribute in the target-facing cone. "
                     "Sky-ring and blank controls are conditional, not "
@@ -873,6 +885,21 @@ def audit_same_project_foreground_sector_profile(
         projection = (dx*ux+dy*uy)/np.maximum(np.hypot(dx,dy), 1.e-12)
         toward = projection >= cos_limit
         away = projection <= -cos_limit
+        # Pair a surviving toward-side pixel with the nearest original
+        # pixel at its antipodal location, using exactly the same native
+        # neighbour-core and hard-pixel masks. Reflection of the integer
+        # pixel lattice is one-to-one, including at subpixel star centres.
+        reflected_x = np.rint(2.*cx-xx).astype(np.int64)-x0
+        reflected_y = np.rint(2.*cy-yy).astype(np.int64)-y0
+        on_patch = ((reflected_x >= 0) & (reflected_y >= 0)
+                    & (reflected_x < patch.shape[1])
+                    & (reflected_y < patch.shape[0]))
+        mirrored_x = np.clip(reflected_x, 0, patch.shape[1]-1)
+        mirrored_y = np.clip(reflected_y, 0, patch.shape[0]-1)
+        mirrored_usable = usable[mirrored_y, mirrored_x] & on_patch
+        mirrored_radius = radius[mirrored_y, mirrored_x]
+        mirrored_away = away[mirrored_y, mirrored_x]
+        reflected_pixels = patch[mirrored_y, mirrored_x]
 
         def median_in(low, high, direction):
             selected = (usable & direction & (radius >= low)
@@ -890,10 +917,47 @@ def audit_same_project_foreground_sector_profile(
             difference = (float(facing-opposite)
                           if facing is not None and opposite is not None
                           else None)
+            in_ring = (radius >= low) & (radius < high)
+            total_facing = int((in_ring & toward).sum())
+            total_away = int((in_ring & away).sum())
+            coverage_facing = (float(n_facing/total_facing)
+                               if total_facing else None)
+            coverage_away = (float(n_opposite/total_away)
+                             if total_away else None)
+            mask_asymmetric = (
+                coverage_facing is None or coverage_away is None
+                or min(coverage_facing, coverage_away) <
+                P21_MIN_CONE_GEOMETRIC_COVERAGE
+                or abs(coverage_facing-coverage_away) >
+                P21_MAX_CONE_COVERAGE_DIFFERENCE)
+            matched = (in_ring & toward & usable & mirrored_usable
+                       & mirrored_away
+                       & (mirrored_radius >= low)
+                       & (mirrored_radius < high))
+            n_matched = int(matched.sum())
+            paired_difference = (
+                float(np.median((patch-reflected_pixels)[matched]))
+                if n_matched >= P21_MIN_ANTIPODAL_PAIRS else None)
             report.append({
                 "radius_in_measured_fwhm": [low,high],
+                "n_geometrically_available_facing_pixels": total_facing,
+                "n_geometrically_available_opposite_pixels": total_away,
                 "n_original_valid_facing_pixels": n_facing,
                 "n_original_valid_opposite_pixels": n_opposite,
+                "facing_cone_valid_geometric_fraction": coverage_facing,
+                "opposite_cone_valid_geometric_fraction": coverage_away,
+                "coverage_difference_facing_minus_opposite": (
+                    float(coverage_facing-coverage_away)
+                    if coverage_facing is not None and coverage_away is not None
+                    else None),
+                "mask_coverage_interpretation": (
+                    "SPARSE_OR_ASYMMETRIC_RAW_SECTOR_MEDIANS_NOT_COMPARABLE"
+                    if mask_asymmetric else
+                    "MASK_GEOMETRY_COMPARABLE_NOT_SCIENCE_VALIDATION"),
+                "n_valid_antipodal_facing_to_opposite_pixel_pairs": n_matched,
+                "antipodal_paired_difference_median_nMgy_per_pixel":
+                    paired_difference,
+                "antipodal_paired_native_geometry_not_calibrated": True,
                 "toward_median_nMgy_per_pixel": facing,
                 "away_median_nMgy_per_pixel": opposite,
                 "toward_minus_away_nMgy_per_pixel": difference,
@@ -952,10 +1016,24 @@ def audit_same_project_foreground_sector_profile(
             and row["per_ring"][ring_index][
                 "toward_minus_away_nMgy_per_pixel"] is not None
         ]
+        paired_controls_here = [
+            row["per_ring"][ring_index][
+                "antipodal_paired_difference_median_nMgy_per_pixel"]
+            for row in controls
+            if row["status"] == "FIXED_DIRECTIONAL_ANNULI_DESCRIPTIVE_ONLY"
+            and row["per_ring"][ring_index][
+                "antipodal_paired_difference_median_nMgy_per_pixel"] is not None
+        ]
         comparison.append({
             "radius_in_measured_fwhm": [low,high],
             "source_toward_minus_away_nMgy_per_pixel":
                 star_row["toward_minus_away_nMgy_per_pixel"],
+            "source_mask_coverage_interpretation":
+                star_row["mask_coverage_interpretation"],
+            "source_antipodal_paired_difference_median_nMgy_per_pixel":
+                star_row["antipodal_paired_difference_median_nMgy_per_pixel"],
+            "source_n_antipodal_pixel_pairs":
+                star_row["n_valid_antipodal_facing_to_opposite_pixel_pairs"],
             "n_catalog_geometry_fixed_controls_with_valid_cones":
                 len(controls_here),
             "median_abs_control_asymmetry_nMgy_per_pixel": (
@@ -964,6 +1042,14 @@ def audit_same_project_foreground_sector_profile(
             "max_abs_control_asymmetry_nMgy_per_pixel": (
                 float(np.max(np.abs(controls_here)))
                 if controls_here else None),
+            "n_fixed_controls_with_valid_antipodal_pairs":
+                len(paired_controls_here),
+            "median_abs_paired_control_difference_nMgy_per_pixel": (
+                float(np.median(np.abs(paired_controls_here)))
+                if paired_controls_here else None),
+            "max_abs_paired_control_difference_nMgy_per_pixel": (
+                float(np.max(np.abs(paired_controls_here)))
+                if paired_controls_here else None),
             "not_a_wing_detection_or_significance": True,
         })
     return dict(
@@ -971,6 +1057,13 @@ def audit_same_project_foreground_sector_profile(
         status="SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY",
         source_to_target_centre_measured_fwhm=float(dist/fwhm),
         source=star,
+        n_source_rings_with_mask_geometry_comparable=sum(
+            row["mask_coverage_interpretation"] ==
+            "MASK_GEOMETRY_COMPARABLE_NOT_SCIENCE_VALIDATION"
+            for row in star["per_ring"]),
+        n_source_rings_with_antipodal_matched_pixels=sum(
+            row["antipodal_paired_difference_median_nMgy_per_pixel"]
+            is not None for row in star["per_ring"]),
         controls=controls,
         n_fixed_control_tiles=16,
         n_controls_with_at_least_one_measured_ring=sum(
