@@ -77,9 +77,11 @@ class SkyWorkspace(QWidget):
         self.run_btn = QPushButton("Build automatic sky")
         self.run_btn.setObjectName("sky_diagnostic_run")
         self.run_btn.setToolTip(
-            "Uses only the native Scene image/invvar, current draft and "
-            "provisional Tractor masks in memory; background worker. "
-            "No image subtraction, model adoption or new downloads.")
+            "Uses only the loaded Scene/native image and prepared masks. "
+            "Includes automatically chosen fixed tile grids, wider mask "
+            "stress tests and frozen-mask exponential injection/recovery "
+            "on copies of the native image. No sky adoption, subtraction "
+            "of original FITS or new DR11 bricks.")
         self.run_btn.clicked.connect(self.run_diagnostic)
         tools.addWidget(self.run_btn)
         self.copy_btn = QPushButton("Copy background QA")
@@ -333,6 +335,53 @@ class SkyWorkspace(QWidget):
                 "This heuristic choice does NOT establish a need to subtract it.",
                 "Default science action: retain the original DR11 coadd.",
                 "Selection is provisional and conditional on current Scene masks.",
+            ]
+        trials = result.get("sky_grid_sensitivity_qa")
+        if trials is not None:
+            lines += [
+                "",
+                "Predeclared SAME-PROJECT grid/guard sensitivity:",
+                f"  {trials['n_predeclared_variants']} fixed alternative "
+                "trials, no sky tile re-picking after inspecting flux.",
+            ]
+            for trial in trials["trials"]:
+                lines.append(
+                    f"  {trial['name']}: {trial['status']}; "
+                    f"training/holdout tiles = "
+                    f"{trial['training_tiles']}/{trial['holdout_tiles']}")
+            for method, stat in trials["summary"].items():
+                lines += [
+                    f"  {method}: {stat['n_measurable_alternatives']} "
+                    "measurable variants; target-background range "
+                    "[nMgy/pixel] = "
+                    f"{stat['min_at_target_nMgy_per_pixel']} … "
+                    f"{stat['max_at_target_nMgy_per_pixel']}",
+                ]
+            lines += ["  These ranges are NOT calibrated error bars."]
+        injection = result.get("sky_injection_recovery_qa")
+        if injection is not None:
+            lines += [
+                "",
+                f"Frozen-mask exponential injection/recovery: "
+                f"{injection['status']}",
+                "  Synthetic profiles are NOT Leo P morphology or "
+                "full photometric pipeline calibration.",
+            ]
+            for case in injection.get("scenarios", ()):
+                fractions = [
+                    f"{method}="
+                    f"{data.get('injection_flux_recovery_fraction_fixed_aperture')}"
+                    for method,data in case["models"].items()
+                ]
+                lines += [
+                    "  Exponential h / target-protect radius = "
+                    f"{case['scale_length_as_protected_area_radius']}; "
+                    "fixed unmasked-aperture recovery fractions: "
+                    + ", ".join(fractions),
+                ]
+            lines += [
+                "  These tests do not measure historic DR11 sky "
+                "oversubtraction or total masked galaxy flux."
             ]
         lines += [
             "",
