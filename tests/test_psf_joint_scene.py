@@ -522,3 +522,82 @@ def test_scene_foreground_probe_fails_closed_for_small_kernel_and_close_neighbor
     assert out["status"]=="CLOSE_CATALOG_NEIGHBOR_PREVENTS_ISOLATED_FIT"
     assert out["science_adopted"] is False
     assert out["galaxy_centre_stellar_wing_flux_nMgy_pixel"] is None
+
+
+
+def test_p21_same_project_directional_profile_fixed_controls_and_read_only():
+    """Facing an injected LOCAL signal is descriptive, never a stellar halo."""
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+
+    h = w = 512
+    y, x = np.indices((h,w), dtype=float)
+    sx, sy = 256., 256.
+    tx, ty = 256., 294.
+    fwhm = 2.
+    image = 0.01 + 1.e-4*y + 3.e-5*x
+    radial = np.hypot(x-sx,y-sy)/fwhm
+    facing = (y-sy)/np.maximum(np.hypot(x-sx,y-sy),1.e-9)
+    image[(radial >= 16.) & (radial < 20.) &
+          (facing >= np.cos(np.pi/4.))] += .1
+    ivar = np.ones_like(image)*100.
+    hard = np.zeros_like(image, dtype=bool)
+    original = image.copy()
+    kwargs = dict(source_xy=(sx,sy),target_xy=(tx,ty),
+                  measured_fwhm_pix=fwhm,other_catalog_centres=())
+    report = audit_same_project_foreground_sector_profile(
+        image,ivar,hard,**kwargs)
+    assert report["status"] == "SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY"
+    assert report["n_fixed_control_tiles"] == 16
+    assert report["n_controls_with_at_least_one_measured_ring"] >= 8
+    assert report["source"]["n_rings_measured_with_both_cones"] == 5
+    assert report["comparison_by_ring"][3][
+        "source_toward_minus_away_nMgy_per_pixel"] > .09
+    assert report["comparison_by_ring"][3][
+        "median_abs_control_asymmetry_nMgy_per_pixel"] is not None
+    assert report["additional_bricks_or_catalogues_used"] is False
+    assert report["absolute_stellar_wings_identified"] is False
+    assert report["galaxy_light_loss_measured"] is False
+    assert report["science_adopted"] is False
+    assert np.array_equal(image,original)
+    assert np.array_equal(ivar,np.ones_like(ivar)*100.)
+    assert not np.any(hard)
+    assert report == audit_same_project_foreground_sector_profile(
+        image,ivar,hard,**kwargs)
+
+
+def test_p21_same_project_directional_profile_fails_closed_at_native_edge():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.zeros((100,100))
+    ivar = np.ones_like(image)
+    hard = np.zeros(image.shape,dtype=bool)
+    report = audit_same_project_foreground_sector_profile(
+        image,ivar,hard,source_xy=(10.,10.),target_xy=(35.,35.),
+        measured_fwhm_pix=2.)
+    assert report["status"] == "OUTER_30_FWHM_PATCH_CROSSES_NATIVE_IMAGE_EDGE"
+    assert report["absolute_stellar_wings_identified"] is False
+    assert report["science_adopted"] is False
+
+
+def test_p21_same_project_control_masks_catalogue_neighbors_without_backfill():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.ones((512,512))
+    ivar = np.ones_like(image)
+    hard = np.zeros(image.shape,dtype=bool)
+    # Tile (0,0) has fixed center (64,64) and must be left unmeasured,
+    # not silently replaced by a more favorable image location.
+    out = audit_same_project_foreground_sector_profile(
+        image,ivar,hard,source_xy=(256.,256.),target_xy=(256.,294.),
+        measured_fwhm_pix=2.,
+        other_catalog_centres=((999,64.,64.),))
+    entry = next(c for c in out["controls"] if c["tile"] == [0,0])
+    assert entry["center_native_xy_pix"] == [64,64]
+    assert entry["status"] == "CATALOG_CENTRE_AT_CONTROL_ORIGIN"
+    assert len(out["controls"]) == 16
+    assert out["fixed_control_geometry_not_selected_on_residuals"] is True
+    assert out["coadd_controls_share_sky_and_pixel_correlations"] is True
