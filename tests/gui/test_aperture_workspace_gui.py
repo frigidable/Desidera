@@ -136,3 +136,32 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     assert w._result is None
     assert not w.copy_btn.isEnabled()
     assert not w.plot._curves
+
+
+def test_sga_aperture_geometry_uses_seed_not_protection(qtbot):
+    """Stage02 protection and shape-seed toggles must stay independent."""
+    ds, draft, contamination = _inputs()
+    scene = SimpleNamespace(
+        _project_target=(155.4, 18.),
+        _source_key=("root", ds["project_id"],
+                     ("dr11", "south", "1554p180", "r"), "source"),
+        _sga_candidate=SimpleNamespace(ba=.47, pa_deg=73.),
+        sga_use_prior=SimpleNamespace(isChecked=lambda: False),
+        sga_use_seed=SimpleNamespace(isChecked=lambda: True),
+    )
+    def sky_snapshot():
+        return ((ds["project_id"], ds["source"], ds["band"],
+                 draft.digest, contamination["catalog_sha256"],
+                 id(ds), id(contamination)),
+                ds, draft, contamination)
+    sky = SimpleNamespace(_snapshot=sky_snapshot)
+    w = ApertureWorkspace(scene, sky)
+    qtbot.addWidget(w)
+    snapshot = w._snapshot()
+    assert snapshot is not None
+    assert snapshot[-2:] == (.47, 73.)
+    scene.sga_use_seed = SimpleNamespace(isChecked=lambda: False)
+    scene.sga_use_prior = SimpleNamespace(isChecked=lambda: True)
+    snapshot2 = w._snapshot()
+    assert snapshot2[-2:] == (None, None)
+    assert snapshot2[0] != snapshot[0]
