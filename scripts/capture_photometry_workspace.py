@@ -169,6 +169,33 @@ def capture(output_dir: Path) -> list[dict]:
                                 "scientific_status":"NOT_MEASURED_NOT_ADOPTED",
                                 "visual_reviewed":False,
                             })
+            # Stage 03 UX evidence is captured without opening even the
+            # synthetic non-FITS placeholders. Empty sky context MUST
+            # fail closed rather than suggest any calculated background.
+            widget.restore_navigation(stage="sky", band="r")
+            widget.resize(1366, 768)
+            widget.show()
+            app.processEvents()
+            if widget.sky_stage.run_btn.isEnabled():
+                raise RuntimeError(
+                    "Background stage enabled fitting without a loaded Scene")
+            sky_shot = widget.grab()
+            sky_path = output_dir / "photometry_background_STAGE03_1366x768.png"
+            if sky_shot.isNull() or not sky_shot.save(str(sky_path),"PNG"):
+                raise RuntimeError(f"Cannot capture {sky_path}")
+            manifest.append({
+                "path":str(sky_path),
+                "state":"stage03_background_no_native_scene",
+                "fixture":"SYNTHETIC_NON_FITS_METADATA",
+                "scientific_status":"UNADOPTED_DIAGNOSTIC_ONLY",
+                "source_fits_read":False,
+                "sky_model_fitted":False,
+                "run_enabled":widget.sky_stage.run_btn.isEnabled(),
+                "size_logical":[1366,768],
+                "size_image":[sky_shot.width(),sky_shot.height()],
+                "visual_reviewed":False,
+            })
+            widget.restore_navigation(stage="psf0", band="r")
             # Explicitly synthetic gallery: no real Leo P image bytes are
             # accessible to CI. Capture equal-square cutout, PSF and radial
             # previews plus manual exclusion controls at practical sizes.
