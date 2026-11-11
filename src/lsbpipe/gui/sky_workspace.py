@@ -373,12 +373,27 @@ class SkyWorkspace(QWidget):
                     f"{data.get('injection_flux_recovery_fraction_fixed_aperture')}"
                     for method,data in case["models"].items()
                 ]
+                extra = case.get("injected_signal_on_frozen_sky_samples")
+                h_arcsec = case.get("scale_length_arcsec")
                 lines += [
                     "  Exponential h / target-protect radius = "
-                    f"{case['scale_length_as_protected_area_radius']}; "
-                    "fixed unmasked-aperture recovery fractions: "
+                    f"{case['scale_length_as_protected_area_radius']}"
+                    + (f" (h={h_arcsec:.2f} arcsec)" if h_arcsec is not None
+                       else "")
+                    + "; fixed unmasked-aperture recovery fractions: "
                     + ", ".join(fractions),
+                    f"  Unmasked aperture: {case['unmasked_aperture_pixels']}/"
+                    f"{case['geometric_aperture_pixels']} pixels "
+                    f"({100*case['unmasked_aperture_fraction']:.1f}%)"
+                    " — NOT total galaxy light.",
                 ]
+                if extra:
+                    lines += [
+                        "  Injected light on original sky samples: "
+                        f"training median={extra['training_median_nMgy_per_pixel']:.6g}, "
+                        f"holdout median={extra['holdout_median_nMgy_per_pixel']:.6g}"
+                        " nMgy/pixel. This is signal leakage, NOT a sky pedestal.",
+                    ]
             lines += [
                 "  These tests do not measure historic DR11 sky "
                 "oversubtraction or total masked galaxy flux."
