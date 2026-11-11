@@ -418,6 +418,13 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         serialized["fit_status"] = candidate.fit_status.value
         serialized["holdout_status"] = candidate.holdout_status.value
         serialized["warnings"] = list(candidate.warnings)
+        # A degenerate sky design may report an infinite condition
+        # number. QA export must remain strict RFC-8259 JSON.
+        condition = serialized.get("design_condition")
+        if condition is not None and not np.isfinite(condition):
+            serialized["design_condition"] = None
+            serialized["warnings"].append(
+                "NONFINITE_CONDITION_NUMBER_NOT_A_VALID_MEASUREMENT")
         models[method] = serialized
     base["methods"] = models
     fitted = [m for m in candidates.values() if m.fit_status == FitStatus.FITTED]
