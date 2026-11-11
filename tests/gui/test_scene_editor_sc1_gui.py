@@ -1728,7 +1728,9 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
         "component_iou"]==pytest.approx(38/60.)
     assert entries["both"]["vs_no_experimental_masks"][
         "mask_xor_pixels"]==57
-    assert entries["both"]["masked_pixels_over_baseline_component"]==61
+    # Component-index sampling on the flattened grid is exact; the
+    # synthetic baseline component occupies only the first image row.
+    assert entries["both"]["masked_pixels_over_baseline_component"]==2
     assert entries["both_without_gaia_11"]["component_pixels"]==46
     assert entries["both_without_gaia_11"][
         "vs_both_experimental_masks"]["component_iou"]==pytest.approx(38/46.)
