@@ -1821,8 +1821,10 @@ def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
     }
     editor._source_registry={
         "catalog_sha256":"a"*64,"entries":[candidate]}
+    zero=np.zeros(editor._loaded["pixel_shape"],dtype=bool)
     editor._contamination={
-        "catalog_sha256":"a"*64,"draft_digest":editor.draft.digest}
+        "catalog_sha256":"a"*64,"draft_digest":editor.draft.digest,
+        "mask":zero,"auto_mask":zero.copy()}
     editor._source_registry_visible=[candidate]
     editor.source_registry_list.blockSignals(True)
     editor.source_registry_list.addItem("OBJID 2035")
