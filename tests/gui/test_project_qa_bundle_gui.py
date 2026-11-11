@@ -282,7 +282,8 @@ def test_gaia_protected_foreground_spike_is_explicit_not_subtracted():
         "entries": [
             {"objid": 2035,
              "gaia_dr3_source_id": 623919492384922624,
-             "tractor_type": "PSF", "offset_arcsec": 19.8706,
+             "tractor_type": "PSF", "offset_arcsec": 3.0,
+             "ra_deg": 155.4, "dec_deg": 18. + 19.870608956040662 / 3600.,
              "parallax_significance": 30.6958, "parallax_mas": 1.08808,
              "gaia_g_mag": 15.0252, "band_model_flux_nMgy": 1078.746,
              "centre_in_target_protection": True,
@@ -326,6 +327,7 @@ def test_gaia_protected_foreground_spike_is_explicit_not_subtracted():
         "background": {"state": "CURRENT_DIAGNOSTIC"},
         "aperture": {"state": "CURRENT_DIAGNOSTIC",
                      "result": {"dataset_id": "dr11/south/1554p180/r",
+                                "target_anchor_icrs": [155.4, 18.],
                                 "curves": [circle], "systematics_04_3": {}}},
     }
     diag = _foreground_aperture_overlap_qa(stages)
@@ -333,6 +335,11 @@ def test_gaia_protected_foreground_spike_is_explicit_not_subtracted():
     assert diag["n_qualifying_sources_within_outer_aperture"] == 1
     star = diag["sources_ranked_by_tractor_model_flux"][0]
     assert star["objid"] == 2035
+    assert star["distance_to_project_anchor_arcsec"] == (
+        pytest.approx(19.870608956040662, abs=1e-7))
+    # Deliberately contradictory source-inventory offset is from another
+    # reference centre and MUST NOT determine the Stage04 ring.
+    assert star["source_inventory_offset_arcsec_potentially_different_anchor"] == 3.0
     assert star["ring_inner_arcsec"] == 18.
     assert star["ring_outer_arcsec"] == 25.2
     assert star["ring_measured_signed_flux_nMgy"] == 1126.
