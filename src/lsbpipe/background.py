@@ -864,7 +864,9 @@ def _audit_current_project_sky_injection_recovery(
         h = factor*effective_target_radius
         elliptical_radius = np.hypot(xx-ax,(yy-ay)/0.65)
         signal = 0.005*np.exp(-elliptical_radius/h)
-        simulated = np.array(original,copy=True)
+        # Promote FITS float32 to float64 before injection so the known
+        # synthetic increment is not rounded away on brighter coadd pixels.
+        simulated = np.array(original, dtype=np.float64, copy=True)
         simulated += signal
         aperture_input = float(np.sum(signal[aperture]))
         scenario = {
