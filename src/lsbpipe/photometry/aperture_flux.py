@@ -137,6 +137,7 @@ class ApertureFluxRecord:
     geometry_native: dict
     area_native_pixel2: dict
     area_by_reason_native_pixel2: dict
+    frame_invalid_by_reason_native_pixel2: dict
     sector_qa: tuple[dict, ...]
     signed_valid_flux_nMgy: float | None
     formal_diagonal_sigma_nMgy: float | None
@@ -155,7 +156,8 @@ class ApertureFluxRecord:
         # computed (to_dict gives a separate, mutable export copy).
         for name in (
                 "geometry_icrs", "geometry_native", "area_native_pixel2",
-                "area_by_reason_native_pixel2"):
+                "area_by_reason_native_pixel2",
+                "frame_invalid_by_reason_native_pixel2"):
             object.__setattr__(
                 self, name, MappingProxyType(dict(getattr(self, name))))
         object.__setattr__(
@@ -167,7 +169,8 @@ class ApertureFluxRecord:
         result = {entry.name:getattr(self,entry.name)
                   for entry in fields(self)}
         for key in ("geometry_icrs","geometry_native",
-                    "area_native_pixel2","area_by_reason_native_pixel2"):
+                    "area_native_pixel2","area_by_reason_native_pixel2",
+                    "frame_invalid_by_reason_native_pixel2"):
             result[key] = dict(result[key])
         result["sector_qa"] = [dict(item) for item in self.sector_qa]
         result["warnings"] = list(self.warnings)
@@ -314,6 +317,14 @@ def measure_native_aperture(
         "source_excluded_after_valid": 0.,
         "manual_excluded_after_source": 0.,
     }
+    native_reasons = {
+        name: 0. for name in (
+            "NONFINITE_IMAGE", "BAD_INVERSE_VARIANCE", "BAD_NEXP",
+            "SATUR_" + frame.band.upper(),
+            "ALLMASK_" + frame.band.upper(),
+            "NPRIMARY", "BRIGHT", "GALAXY",
+            "USER_EXCLUSION", "OTHER_INVALID")
+    }
     sectors = []
     inframe = 0.
     valid_area = 0.
@@ -338,6 +349,21 @@ def measure_native_aperture(
         inframe = float(np.sum(weights))
         reasons["frame_hard_or_invalid"] = float(
             np.sum(weights[frame_invalid]))
+        remaining = frame_invalid.copy()
+        for key in tuple(native_reasons)[:-1]:
+            layer = frame.mask_reasons.get(key)
+            if layer is None:
+                continue
+            chosen = remaining & layer[large]
+            native_reasons[key] = float(np.sum(weights[chosen]))
+            remaining &= ~chosen
+        native_reasons["OTHER_INVALID"] = float(
+            np.sum(weights[remaining]))
+        if not math.isclose(
+                sum(native_reasons.values()),
+                reasons["frame_hard_or_invalid"],
+                abs_tol=1e-7,rel_tol=1e-10):
+            raise ValueError("Native invalidity accounting is not exclusive")
         reasons["source_excluded_after_valid"] = float(
             np.sum(weights[source_ex]))
         reasons["manual_excluded_after_source"] = float(
@@ -454,6 +480,7 @@ def measure_native_aperture(
         geometry_native=native_dict,
         area_native_pixel2=area,
         area_by_reason_native_pixel2=reasons,
+        frame_invalid_by_reason_native_pixel2=native_reasons,
         sector_qa=tuple(sectors),
         signed_valid_flux_nMgy=flux,
         formal_diagonal_sigma_nMgy=sigma_diag,
