@@ -642,6 +642,287 @@ def _audit_zero_sky_baseline(image, training, holdout, selection):
     }
 
 
+
+
+def _make_automatic_sky_scene(
+        *, project_id, grid, band, shape, revision,
+        hard, source_mask, manual_mask, target_mask,
+        sky_train, sky_holdout):
+    """Construct diagnostic masks; never change supplied native arrays."""
+    from lsbpipe.scene import LayerKind, MaskLayer, SceneState
+
+    def layer(name, kind, values):
+        return MaskLayer(
+            name, kind, values, grid, band, "auto-sky-fixed-evidence")
+
+    return SceneState(
+        target_id=project_id, grid_id=grid, band=band, shape=shape,
+        layers=(
+            layer("native_hard", LayerKind.INVALID_DATA, hard),
+            layer("catalogue_provisional", LayerKind.NEIGHBOR, source_mask),
+            layer("manual_exclusion", LayerKind.MANUAL_EXCLUDE, manual_mask),
+            layer("target_provisional", LayerKind.TARGET_PROTECT, target_mask),
+            layer("sky_train_automatic_tiles", LayerKind.SKY_TRAIN, sky_train),
+            layer("sky_holdout_automatic_tiles", LayerKind.SKY_HOLDOUT, sky_holdout),
+        ), revision=revision,
+    )
+
+
+# These sensitivity trials are predeclared, not chosen from the best result.
+# The baseline is the default 96px grid on Leo P; none can reduce its
+# original source/galaxy protection. No new bricks, downloads or files.
+_SKY_FIXED_SENSITIVITY_TRIALS = (
+    ("tile_72_origin", {"tile_edge_native_pix": 72}),
+    ("tile_96_shift48", {
+        "tile_edge_native_pix": 96,
+        "grid_offset_xy_native_pix": (48,48)}),
+    ("tile_128_origin", {"tile_edge_native_pix": 128}),
+    ("expanded_target_1p5", {"target_guard_factor": 1.5}),
+    ("expanded_sources_1p5", {"source_guard_factor": 1.5}),
+)
+
+
+def _audit_current_project_sky_grid_sensitivity(
+        dataset, preview, contamination, *, grid, band, shape,
+        revision, original_hard, source_mask, manual_mask, target_mask,
+        original_image, inverse_variance, anchor_native_xy,
+        original_candidates, settings):
+    """Predeclared same-project sky-grid perturbations, all non-adopted."""
+    result = []
+    ax, ay = map(float, anchor_native_xy)
+    for name, overrides in _SKY_FIXED_SENSITIVITY_TRIALS:
+        train, hold, selection = _automatic_scene_sky_pixels(
+            dataset, preview, contamination, **overrides)
+        item = {
+            "name": name,
+            "parameters": {
+                "tile_edge_native_pix": selection["tile_edge_native_pix"],
+                "tile_grid_offset_xy_native_pix": selection[
+                    "tile_grid_offset_xy_native_pix"],
+                "target_guard_factor": selection["target_guard_factor"],
+                "source_guard_factor": selection["source_guard_factor"],
+            },
+            "training_tiles": selection["training_tiles"],
+            "holdout_tiles": selection["holdout_tiles"],
+            "training_quadrants": selection["training_quadrants"],
+            "holdout_quadrants": selection["holdout_quadrants"],
+            "training_pixels": selection["training_pixels"],
+            "holdout_pixels": selection["holdout_pixels"],
+            "geometry_sufficient": selection[
+                "geometry_sufficient_for_diagnostic"],
+            "status": "NOT_FITTED",
+            "models": {},
+            "no_reselection_based_on_pixel_brightness": True,
+            "sky_areas_are_same_project_not_independent_data": True,
+        }
+        centers = []
+        edge = selection["tile_edge_native_pix"]
+        for record in selection["training_tile_evidence"]:
+            x0,y0,x1,y1 = record["tile_bounds_native_xyxy"]
+            centers.append(((x0+x1)/2.,(y0+y1)/2.))
+        if centers:
+            center_array = np.asarray(centers,dtype=float)
+            item["target_inside_training_tile_center_bbox"] = bool(
+                center_array[:,0].min() <= ax <= center_array[:,0].max()
+                and center_array[:,1].min() <= ay <= center_array[:,1].max())
+            item["nearest_training_tile_center_distance_native_pix"] = float(
+                np.min(np.hypot(
+                    center_array[:,0]-ax,center_array[:,1]-ay)))
+        else:
+            item["target_inside_training_tile_center_bbox"] = False
+            item["nearest_training_tile_center_distance_native_pix"] = None
+        if not selection["geometry_sufficient_for_diagnostic"]:
+            item["status"] = "SKIPPED_INSUFFICIENT_FIXED_GEOMETRY"
+            result.append(item)
+            continue
+        if not selection["bright_gaia_inventory_present"]:
+            item["status"] = "SKIPPED_MISSING_SOURCE_INVENTORY"
+            result.append(item)
+            continue
+        trial_scene = _make_automatic_sky_scene(
+            project_id=dataset["project_id"], grid=grid, band=band,
+            shape=shape, revision=revision, hard=original_hard,
+            source_mask=source_mask, manual_mask=manual_mask,
+            target_mask=target_mask, sky_train=train, sky_holdout=hold)
+        for method in ("constant","tilted_plane"):
+            fit = fit_residual_background(
+                original_image, inverse_variance, trial_scene,
+                method=method, grid_id=grid,
+                observation_valid=~original_hard, settings=settings)
+            if (fit.fit_status == FitStatus.FITTED
+                    and fit.holdout_status == HoldoutStatus.MEASURED_UNCALIBRATED):
+                baseline = original_candidates[method]
+                item["models"][method] = {
+                    "status": "FITTED_HOLDOUT_UNCALIBRATED",
+                    "background_at_target_nMgy_per_pixel":
+                        float(fit.evaluate_at(ax,ay)),
+                    "change_vs_original_grid_at_target_nMgy_per_pixel":
+                        float(fit.evaluate_at(ax,ay) -
+                              baseline.evaluate_at(ax,ay)),
+                    "holdout_pixel_rms_nMgy_per_pixel":
+                        float(fit.holdout_rms_residual_nMgy),
+                    "within_trial_zero_correction_rms_nMgy_per_pixel":
+                        float(np.sqrt(np.mean(
+                            np.asarray(original_image)[hold]**2))),
+                }
+            else:
+                item["models"][method] = {
+                    "status": "FIT_OR_HOLDOUT_REJECTED",
+                    "fit_status": fit.fit_status.value,
+                    "holdout_status": fit.holdout_status.value,
+                }
+        item["status"] = (
+            "BOTH_MODELS_MEASURED_UNCALIBRATED"
+            if all(v["status"] == "FITTED_HOLDOUT_UNCALIBRATED"
+                   for v in item["models"].values())
+            else "INCOMPLETE_TRIAL_NOT_ADOPTED")
+        result.append(item)
+
+    summary = {}
+    for method in ("constant","tilted_plane"):
+        numbers = [
+            row["models"][method]["background_at_target_nMgy_per_pixel"]
+            for row in result
+            if row["models"].get(method,{}).get("status") ==
+            "FITTED_HOLDOUT_UNCALIBRATED"
+        ]
+        summary[method] = {
+            "n_measurable_alternatives": len(numbers),
+            "min_at_target_nMgy_per_pixel": (
+                float(min(numbers)) if numbers else None),
+            "max_at_target_nMgy_per_pixel": (
+                float(max(numbers)) if numbers else None),
+            "peak_to_peak_nMgy_per_pixel": (
+                float(np.ptp(numbers)) if len(numbers) > 1 else None),
+            "not_an_uncertainty_interval": True,
+        }
+    return {
+        "schema": "desidera.sky.internal-grid-sensitivity/1",
+        "status": "FIXED_TRIALS_DIAGNOSTIC_NOT_ADOPTED",
+        "n_predeclared_variants": len(_SKY_FIXED_SENSITIVITY_TRIALS),
+        "trials": result,
+        "summary": summary,
+        "original_tile_selection_unchanged": True,
+        "galaxy_extinction_or_missing_upstream_flux_not_identified": True,
+        "no_absolute_sky_calibration": True,
+        "no_science_adoption": True,
+    }
+
+
+def _audit_current_project_sky_injection_recovery(
+        image, inverse_variance, scene, candidates, *,
+        anchor_native_xy, protected, source_mask, manual_mask, hard,
+        settings):
+    """Artificial exponential-light sensitivity on copied image arrays.
+
+    Freeze the exact Scene, train/holdout and aperture for each experiment.
+    This tests sky-fit-induced flux bias in a fixed *unmasked* aperture,
+    NOT the actual galaxy photometry pipeline or historic DR11 sky removal.
+    """
+    from math import hypot, pi
+
+    original = np.asarray(image)
+    ivar = np.asarray(inverse_variance)
+    ny,nx = original.shape
+    ax,ay = map(float, anchor_native_xy)
+    yy,xx = np.indices(original.shape,dtype=float)
+    rr = np.hypot(xx-ax,yy-ay)
+    effective_target_radius = float(
+        np.sqrt(np.count_nonzero(protected)/pi))
+    if effective_target_radius < 3.:
+        return {
+            "schema": "desidera.sky.frozen-mask-exponential-injection/1",
+            "status": "NOT_MEASURED_NO_TARGET_PROTECTION",
+            "scenarios": [],
+            "science_adopted": False,
+        }
+    aperture_radius = 2.*effective_target_radius
+    aperture = ((rr <= aperture_radius) & (~hard) & (~source_mask)
+                & (~manual_mask) & np.isfinite(original)
+                & np.isfinite(ivar) & (ivar > 0))
+    n_geometric = int(np.count_nonzero(rr <= aperture_radius))
+    n_usable = int(np.count_nonzero(aperture))
+    if n_usable < 100:
+        return {
+            "schema": "desidera.sky.frozen-mask-exponential-injection/1",
+            "status": "NOT_MEASURED_APERTURE_TOO_MASKED",
+            "scenarios": [],
+            "geometric_aperture_pixels": n_geometric,
+            "unmasked_aperture_pixels": n_usable,
+            "science_adopted": False,
+        }
+    ax_ap, ay_ap = xx[aperture],yy[aperture]
+    scenarios = []
+    # Fixed by protocol and labelled as uncalibrated, not a Leo P
+    # morphological/stellar population model. q=0.65 test ellipse.
+    for factor in (0.5, 1.0, 2.0):
+        h = factor*effective_target_radius
+        elliptical_radius = np.hypot(xx-ax,(yy-ay)/0.65)
+        signal = 0.005*np.exp(-elliptical_radius/h)
+        simulated = np.array(original,copy=True)
+        simulated += signal
+        aperture_input = float(np.sum(signal[aperture]))
+        scenario = {
+            "scale_length_as_protected_area_radius": factor,
+            "scale_length_native_pix": h,
+            "axis_ratio": .65,
+            "central_amplitude_nMgy_per_pixel": .005,
+            "psf_convolution_applied": False,
+            "fixed_aperture_radius_native_pix": aperture_radius,
+            "geometric_aperture_pixels": n_geometric,
+            "unmasked_aperture_pixels": n_usable,
+            "unmasked_aperture_fraction": float(n_usable/n_geometric),
+            "injected_total_image_flux_nMgy":
+                float(np.sum(signal)),
+            "injected_flux_in_unmasked_aperture_nMgy": aperture_input,
+            "zero_additional_correction_recovery_fraction": 1.,
+            "models": {},
+        }
+        for method, base in candidates.items():
+            fitted = fit_residual_background(
+                simulated, ivar, scene,
+                method=method, grid_id=scene.grid_id,
+                observation_valid=~hard, settings=settings)
+            if (fitted.fit_status != FitStatus.FITTED or
+                    fitted.holdout_status != HoldoutStatus.MEASURED_UNCALIBRATED):
+                scenario["models"][method] = {
+                    "status": "INJECTED_FIT_NOT_VALIDATED",
+                    "fit_status": fitted.fit_status.value,
+                    "holdout_status": fitted.holdout_status.value,
+                }
+                continue
+            fit_change = fitted.evaluate_at(ax_ap,ay_ap) - (
+                base.evaluate_at(ax_ap,ay_ap))
+            modeled_flux_loss = float(np.sum(fit_change))
+            fraction = (1.-modeled_flux_loss/aperture_input
+                        if aperture_input > 0 else None)
+            scenario["models"][method] = {
+                "status": "INJECTED_FIT_MEASURED_UNCALIBRATED",
+                "sky_fit_shift_at_target_nMgy_per_pixel": float(
+                    fitted.evaluate_at(ax,ay)-base.evaluate_at(ax,ay)),
+                "induced_sky_flux_bias_in_unmasked_aperture_nMgy":
+                    modeled_flux_loss,
+                "injection_flux_recovery_fraction_fixed_aperture":
+                    float(fraction) if fraction is not None else None,
+                "zero_sky_correction_control_fraction": 1.,
+                "absolute_galaxy_flux_bias_identified": False,
+            }
+        scenarios.append(scenario)
+    return {
+        "schema": "desidera.sky.frozen-mask-exponential-injection/1",
+        "status": "SAME_COADD_FROZEN_MASK_INJECTION_DIAGNOSTIC_ONLY",
+        "same_native_original_scene_and_heldout_tiles": True,
+        "original_arrays_mutated": False,
+        "model_selection_and_scene_masks_frozen": True,
+        "no_noise_or_psf_realization_synthesized": True,
+        "not_full_galaxy_detections_or_photometric_pipeline": True,
+        "does_not_test_historic_DR11_sky_subtraction": True,
+        "unmasked_aperture_only_not_total_galaxy_flux": True,
+        "scenarios": scenarios,
+        "science_adopted": False,
+    }
+
+
 def diagnose_current_project_residual_sky(dataset, draft, contamination):
     """Automatically select Scene-safe sky tiles and compare residual models.
 
