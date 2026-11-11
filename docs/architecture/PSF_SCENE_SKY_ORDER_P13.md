@@ -863,3 +863,130 @@ already downloaded Leo P project:**
    keep original FITS untouched. Do not interpret
    any numeric fit or diagnostic 'preferred method'
    as a final sky solution.
+
+
+---
+
+## 2026-11-11 same-brick Stage 03 grid and exponential-injection experiments
+
+**Status: implemented as automatically executed research diagnostics; no
+scientific sky correction is adopted.** This extension operates solely
+on the current loaded galaxy project's native DR11 brick, WCS,
+`IMAGE`, `INVVAR`, `native_hard`, provisional Tractor/Gaia
+source registry, original Scene draft and target protection.
+No other brick, independent star field, downloaded source data,
+new directory, changed original FITS or changed adopted mask is
+created or required. The worker remains background-threaded
+in the existing `3 · Background` tab.
+
+**1. Prespecified spatial-support and mask-sensitivity trials.**
+The original algorithm, its 0.262-arcsec/pixel coadd and its
+existing training/holdout tiles are **frozen**, then the same
+automatic mask-driven sampler is rerun from scratch under
+exactly five predeclared perturbations:
+
+- `tile_72_origin`: 72-native-pixel tiles, original origin
+- `tile_96_shift48`: 96px tiles shifted by (48,48) original
+  native pixels (edge-partial tiles excluded at the original
+  75%-coverage gate)
+- `tile_128_origin`: 128px tiles, original origin
+- `expanded_target_1p5`: 1.5× original target-veto dilation
+- `expanded_sources_1p5`: 1.5× original source-veto dilation
+
+All catalogue/target/bright-Gaia exclusions still apply
+and remain **at least** as conservative as the original.
+Each experiment constructs its own **fixed** spatially
+separate training and holdout pixels from predeclared
+geometry without inspecting their brightness or picking
+a better-performing set after fit. If the stricter
+geometry fails the >=8 training/4 holdout tile or
+three-quadrant conditions, record
+`SKIPPED_INSUFFICIENT_FIXED_GEOMETRY` and do **not**
+replace the trial with another mask or grid.
+
+Both constant and tilted-plane candidates are refitted
+to the same current project's ORIGINAL unmodified
+sky-subtracted coadd, with the zero-correction control
+reported on that variant's own original heldout pixels.
+Report each trial's target-centre prediction, its
+difference from the original fixed-grid model,
+number of accepted regions, approximate nearest
+training-tile distance, and whether the target falls
+within the bounding box of the training-tile centres.
+The min/max/peak-to-peak sensitivity envelope
+**includes the original grid**, even if all alternative
+grids are unavailable. It is neither an uncertainty
+interval nor significance because the trial predictions
+are correlated and the model-family bias is unknown.
+Holdout RMS on different variants uses DIFFERENT
+spatial samples, so cross-variant RMS is not a
+controlled paired score. The sensitivity experiments
+cannot alone authorize model subtraction.
+
+**2. Controlled exponential artificial-galaxy injection.**
+On *temporary in-memory copies* of the current native
+`IMAGE` (never written to disk), add three deterministic
+two-dimensional exponential light distributions with
+axis ratio 0.65, central amplitude
+0.005 nMgy/native pixel and scale lengths
+0.5, 1 and 2 times the area-equivalent radius of
+the current *provisional* target-protected region.
+The injection is centred at the same verified native
+project target anchor. Each artificial profile is
+**intentionally NOT a PSF-convolved physical galaxy
+model**; its morphology and luminosity are test
+parameters, not estimates for Leo P.
+
+Hold the EXACT original Source/Scene masks, original
+training/heldout sky pixel identities and an unmasked
+aperture of radius twice the original target-area-
+equivalent radius fixed. Fit the same constant and
+tilted-plane estimators to each injected image. Compare
+the fitted sky field to the pre-injection fitted sky at
+the *same* aperture pixel coordinates and compute
+
+\[
+F_{\rm in,usable}=\sum_{p\in A_{\rm valid}}S(p),\qquad
+\widehat{F}_{\rm rec,usable} =
+F_{\rm in,usable}-\sum_{p\in A_{\rm valid}}
+\left[B_{\rm injected}(p)-B_{\rm original}(p)\right].
+\]
+
+The ratio \(\widehat{F}_{\rm rec,usable}/F_{\rm in,usable}\)
+is explicitly a **fixed-unmasked-aperture estimate of
+the sky-estimator's response**, not a full image
+reduction, detection, segmentation, PSF/model subtraction,
+uncertainty or unbiased real-galaxy flux recovery.
+Pixels excluded by original neighbour/hard masks are
+reported as missing from the synthetic aperture rather
+than silently assigned interpolated galaxy flux.
+The **zero-additional-sky-correction** control always
+recovers exactly 1 by linearity, which is a definition
+of this controlled experiment, not evidence that the
+already sky-subtracted DR11 input is unbiased.
+No upstream lost galaxy light can be reconstructed.
+
+**3. Scientific acceptance barrier.** New
+`sky_grid_sensitivity_qa` and
+`sky_injection_recovery_qa` fields are nested in
+the existing current-band `Copy background QA`,
+with full fixed recipes, per-trial skipped statuses,
+source/mask provenance and non-adoption flags.
+Neither exercise supplies a reliable **absolute sky
+accuracy**, true galaxy morphology or native-coadd
+noise covariance. The automatic numerical preferred
+constant/plane estimator remains an **engineering
+candidate only**. The science recommendation stays
+`NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED`,
+with `automatic_sky_background_correction_authorized=false`
+and `SCIENCE HOLD`.
+
+**4. The next possible methodological step** requires
+a comprehensive, predeclared error budget over spatially
+separated sky blocks (effective large-aperture
+fluctuations), signal-to-noise and flux biases under
+more realistic PSF-convolved dwarf galaxy injections,
+and g/r/i/z-specific independent PSF and mask
+dependencies. Do not expand project bricks to perform
+these checks; where existing data cannot identify true
+far wings or galaxy-free sky, continue HOLD.
