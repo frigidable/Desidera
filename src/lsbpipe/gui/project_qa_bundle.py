@@ -356,6 +356,102 @@ def _operation_journal_excerpt(workspace):
     }
 
 
+def _foreground_aperture_overlap_qa(stages):
+    """Cross-identify Gaia foreground candidates with *measured* annuli.
+
+    This is a catalogue/source-position diagnostic, NOT a PSF subtraction,
+    membership solution or a measurement of contaminant flux in the aperture.
+    The neutral circular apertures are used because `offset_arcsec` is a
+    great-circle distance, not an elliptical semimajor-axis coordinate.
+    """
+    scene = stages.get("scene_masks") or {}
+    phot = stages.get("aperture") or {}
+    if (scene.get("state") != "CURRENT_LOADED" or
+            phot.get("state") != "CURRENT_DIAGNOSTIC"):
+        return {"state": "BLOCKED_BY_MISSING_OR_STALE_STAGE",
+                "source_flux_removed": False, "science_adopted": False}
+    source_evidence = scene.get("source_inventory") or {}
+    aperture = phot.get("result") or {}
+    if (source_evidence.get("status") != "SOURCE_EVIDENCE_REVIEW_ONLY" or
+            source_evidence.get("dataset_id") != aperture.get("dataset_id")):
+        return {"state": "SOURCE_INVENTORY_NOT_CURRENT",
+                "source_flux_removed": False, "science_adopted": False}
+    circle = next((c for c in aperture.get("curves", [])
+                   if (c.get("geometry_hypothesis") or {}).get("name")
+                   == "anchor_circle"), None)
+    if circle is None:
+        return {"state": "NO_MATCHING_NEUTRAL_CIRCULAR_GROWTH",
+                "source_flux_removed": False, "science_adopted": False}
+    radii = circle.get("radii_arcsec") or []
+    annuli = circle.get("independently_integrated_annuli") or []
+    cumulative = circle.get("cumulative") or []
+    if (len(radii) < 2 or len(annuli) != len(radii)-1 or
+            len(cumulative) != len(radii)):
+        return {"state": "INCONSISTENT_ANNULAR_PROFILE_WITHHELD",
+                "source_flux_removed": False, "science_adopted": False}
+    sources, n_screened = [], 0
+    for item in source_evidence.get("entries") or []:
+        if not isinstance(item, dict):
+            continue
+        offset = item.get("offset_arcsec")
+        significance = item.get("parallax_significance")
+        flux = item.get("band_model_flux_nMgy")
+        if (not all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                    and math.isfinite(x)
+                    for x in (offset, significance, flux))
+                or offset < 0 or abs(significance) < 5 or flux <= 0
+                or not item.get("gaia_dr3_source_id")
+                or item.get("tractor_type") != "PSF"):
+            continue
+        n_screened += 1
+        ring = next((i for i, edge in enumerate(radii) if offset <= edge),
+                    None)
+        if ring is None:
+            continue
+        ring_flux = (cumulative[0].get("signed_valid_flux_nMgy")
+                     if ring == 0 else
+                     annuli[ring-1].get("signed_flux_nMgy"))
+        ratio = (flux / abs(ring_flux) if
+                 isinstance(ring_flux, (float, int)) and
+                 math.isfinite(ring_flux) and abs(ring_flux) > 0
+                 else None)
+        sources.append({
+            "objid": item.get("objid"),
+            "gaia_dr3_source_id": item.get("gaia_dr3_source_id"),
+            "distance_to_project_anchor_arcsec": float(offset),
+            "ring_index": ring,
+            "ring_inner_arcsec": 0.0 if ring == 0 else float(radii[ring-1]),
+            "ring_outer_arcsec": float(radii[ring]),
+            "ring_measured_signed_flux_nMgy": ring_flux,
+            "tractor_model_flux_nMgy_not_aperture_flux": float(flux),
+            "model_to_signed_ring_flux_ratio_not_a_fraction": ratio,
+            "gaia_parallax_significance": float(significance),
+            "gaia_parallax_mas": item.get("parallax_mas"),
+            "gaia_g_mag": item.get("gaia_g_mag"),
+            "source_screening_disposition": item.get("screening_disposition"),
+            "source_centre_protected": item.get("centre_in_target_protection"),
+            "candidate_mask_preview_active": item.get(
+                "diagnostic_inner_gaia_mask_preview_active"),
+            "evidence_flags": item.get("evidence_flags", []),
+        })
+    sources.sort(key=lambda x: x["tractor_model_flux_nMgy_not_aperture_flux"],
+                 reverse=True)
+    return {
+        "state": "FOREGROUND_ASTROMETRY_APERTURE_OVERLAP_QA_ONLY",
+        "dataset_id": aperture.get("dataset_id"),
+        "geometry": "FIXED_ANCHOR_CIRCLE",
+        "n_astrometric_psf_sources_screened": n_screened,
+        "n_qualifying_sources_within_outer_aperture": len(sources),
+        "sources_ranked_by_tractor_model_flux": sources[:24],
+        "truncated_source_count": max(0, len(sources)-24),
+        "parallax_significance_threshold": 5.0,
+        "source_flux_removed": False,
+        "psf_wings_or_flux_footprints_calibrated": False,
+        "comparisons_are_not_contaminant_flux_measurements": True,
+        "science_adopted": False,
+    }
+
+
 def _diagnostic_findings(stages, project):
     """Deterministic triage hints; never claim a calibrated error or fit."""
     findings = []
@@ -405,6 +501,16 @@ def _diagnostic_findings(stages, project):
                    for ring in curve.get("independently_integrated_annuli", [])):
                 findings.append("SIGNED_NEGATIVE_ANNULAR_FLUX_REQUIRES_SKY_QA")
                 break
+    foreground = stages.get("foreground_aperture_overlap") or {}
+    if foreground.get("state") == "FOREGROUND_ASTROMETRY_APERTURE_OVERLAP_QA_ONLY":
+        if foreground.get("n_qualifying_sources_within_outer_aperture", 0) > 0:
+            findings.append("GAIA_ASTROMETRIC_FOREGROUND_CANDIDATES_INSIDE_APERTURE")
+        if any((source.get("source_centre_protected") and
+                source.get("model_to_signed_ring_flux_ratio_not_a_fraction")
+                is not None and
+                source["model_to_signed_ring_flux_ratio_not_a_fraction"] > .25)
+               for source in foreground.get("sources_ranked_by_tractor_model_flux", [])):
+            findings.append("PROTECTED_BRIGHT_GAIA_SOURCE_MAY_DOMINATE_APERTURE_RING")
     # All current findings are triage flags, never scientific acceptance.
     return list(dict.fromkeys(findings))
 
@@ -468,6 +574,9 @@ def build_project_diagnostic_bundle(workspace):
             "recent_operation_attempts",
             lambda: _operation_journal_excerpt(workspace)),
     }
+    report["stages"]["foreground_aperture_overlap"] = _safe_stage(
+        "foreground_aperture_overlap",
+        lambda: _foreground_aperture_overlap_qa(report["stages"]))
     report["diagnostic_findings"] = _diagnostic_findings(
         report["stages"], report["project"])
     # Preserve non-finite diagnostics as explicit JSON-safe failure markers.
