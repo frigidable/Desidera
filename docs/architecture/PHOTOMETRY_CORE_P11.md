@@ -1348,8 +1348,10 @@ Bundle sections:
 
 The bundle intentionally excludes raw FITS, masks, stamps, CCD pixels,
 and any non-trivial numerical image grid. It uses strict JSON serialization
-(`allow_nan=False`); a non-finite or unrepresentable value must fail closed
-rather than putting a misleading partial report on the clipboard. Existing
+(`allow_nan=False`); NaN/Infinity values are represented as explicitly
+flagged `diagnostic_nonfinite_float` objects rather than silent numeric
+substitutions. Unrepresentable or broken stages are surfaced as
+`COLLECTION_FAILED` with an error message. Existing
 individual **Copy Scene/Background/Aperture QA** buttons and explicit PSF
 export remain available for deeper source-specific investigations.
 
