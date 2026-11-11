@@ -101,6 +101,12 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
     assert not result["mask"].flags.writeable
     assert np.array_equal(image,original)
     assert np.array_equal(dataset["data"]["maskbits"],bits)
+    dataset["source_quartet_key"] = ["dr11","south","1555p180","g"]
+    with pytest.raises(ValueError, match="differs from current project manifest"):
+        prepare_scene_contamination(dataset, project, draft, (155.,18.))
+    dataset["source_quartet_key"] = ["dr11","south","1554p180","g"]
+    current=prepare_scene_contamination(dataset,project,draft,(155.,18.))
+    assert current["source_quartet_key"] == dataset["source_quartet_key"]
 
 
 def test_missing_catalogue_and_unsupported_release_fail_closed(
