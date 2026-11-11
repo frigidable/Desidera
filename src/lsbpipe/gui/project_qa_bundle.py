@@ -96,8 +96,22 @@ def _compact_scene(workspace):
             "reported_project_id": result["project"]["project_id"],
             "visible_status": result.get("display_messages"),
         }
-    result["mask_policy_ablation"] = _compact_ablation(
-        result.get("mask_policy_ablation"))
+    ablation = result.get("mask_policy_ablation")
+    if ablation is not None and (
+            ablation.get("project_id") != workspace._bound_project_id or
+            ablation.get("band") != stage._band or
+            ablation.get("draft_digest") != (
+                stage._draft.digest if stage._draft is not None else None) or
+            (stage._contamination is not None and
+             ablation.get("catalog_sha256") !=
+                stage._contamination.get("catalog_sha256"))):
+        result["mask_policy_ablation"] = {
+            "state": "STALE_RESULT_WITHHELD",
+            "reason": "PROJECT_BAND_DRAFT_OR_CATALOGUE_MISMATCH",
+            "previous_experiment_available_in_memory": True,
+        }
+    else:
+        result["mask_policy_ablation"] = _compact_ablation(ablation)
     # Source-level candidates are essential for diagnosis: keep the full
     # source evidence metadata, not images, cuts, or pixel masks.
     result["state"] = (
@@ -276,6 +290,101 @@ def _git_revision():
         return None
 
 
+def _saved_input_status(workspace):
+    """Snapshot existing GUI discovery; no repeat FITS verification."""
+    table = workspace.table
+    rows = []
+    for index in range(table.rowCount()):
+        rows.append({
+            "kind": table.item(index, 0).text() if table.item(index, 0) else None,
+            "status": table.item(index, 1).text() if table.item(index, 1) else None,
+            "path": table.item(index, 2).text() if table.item(index, 2) else None,
+        })
+    return {
+        "state": "GUI_LAST_DISCOVERY_NOT_REVERIFIED_AT_COPY",
+        "saved_identity": workspace.source_identity.text(),
+        "source_state": workspace.source_state.text(),
+        "original_fits_root": workspace.source_path.text(),
+        "native_products": rows,
+    }
+
+
+def _operation_journal_excerpt(workspace):
+    """Bounded read-only operation *attempt* history, never science evidence."""
+    root = workspace._project_root
+    if root is None:
+        return {"state": "NO_PROJECT"}
+    folder = root / "operations"
+    if folder.is_symlink():
+        return {"state": "UNSAFE_SYMLINK_REFUSED"}
+    if not folder.is_dir():
+        return {"state": "NO_OPERATION_JOURNAL"}
+    files = sorted(folder.glob("*.json"), reverse=True)[:20]
+    entries = []
+    for path in files:
+        if path.is_symlink():
+            entries.append({"status": "SYMLINK_SKIPPED"})
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if (data.get("project_id") != workspace._bound_project_id or
+                    data.get("schema") != "lsbpipe.operation-journal/1"):
+                entries.append({"status": "FOREIGN_OR_CORRUPT_SKIPPED"})
+                continue
+            entries.append({k: data.get(k) for k in (
+                "operation_id", "action", "state", "started_utc",
+                "updated_utc", "message")})
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            entries.append({"status": "CORRUPT_OR_UNREADABLE",
+                            "error_type": type(exc).__name__})
+    return {
+        "state": "READ_ONLY_ATTEMPTS_NOT_SCIENCE_EVIDENCE",
+        "limit": 20,
+        "entries": entries,
+    }
+
+
+def _diagnostic_findings(stages, project):
+    """Deterministic triage hints; never claim a calibrated error or fit."""
+    findings = []
+    scene = stages.get("scene_masks", {})
+    sky = stages.get("background", {})
+    aper = stages.get("aperture", {})
+    if scene.get("state") != "CURRENT_LOADED":
+        findings.append("SCENE_NATIVE_FITS_NOT_CURRENTLY_READY")
+    if scene.get("contaminant_screening") is None:
+        findings.append("SOURCE_MASKS_NOT_PREPARED_IN_CURRENT_SCENE")
+    if scene.get("source_band_is_current") is False:
+        findings.append("SCENE_BAND_MISMATCH")
+    if scene.get("scene_draft", {}).get("dirty") is True:
+        findings.append("UNSAVED_SCENE_DRAFT")
+    ablation = scene.get("mask_policy_ablation")
+    if ablation and isinstance(ablation.get("scenarios"), list):
+        lookup = {row.get("policy"): row for row in ablation["scenarios"]}
+        none, both = lookup.get("none"), lookup.get("both")
+        if none and both and none.get("component_pixels") and both.get("component_pixels") is not None:
+            if abs(none["component_pixels"] - both["component_pixels"]) /
+                    max(1, none["component_pixels"]) > .2:
+                findings.append("EXPERIMENTAL_MASKS_CHANGE_COMPONENT_AREA_OVER_20_PERCENT")
+    if sky.get("state") != "CURRENT_DIAGNOSTIC":
+        findings.append("RESIDUAL_SKY_NO_CURRENT_MEASUREMENT")
+    if aper.get("state") != "CURRENT_DIAGNOSTIC":
+        findings.append("APERTURE_NO_CURRENT_MEASUREMENT")
+    elif aper.get("result"):
+        systematic = aper["result"].get("systematics_04_3") or {}
+        blank = systematic.get("blank_apertures") or {}
+        if blank.get("annulus_covariance_nMgy2") is None:
+            findings.append("BLANK_ANNULUS_COVARIANCE_UNAVAILABLE")
+        for curve in aper["result"].get("curves", []):
+            if any((ring.get("signed_flux_nMgy") is not None and
+                    ring["signed_flux_nMgy"] < 0)
+                   for ring in curve.get("independently_integrated_annuli", [])):
+                findings.append("SIGNED_NEGATIVE_ANNULAR_FLUX_REQUIRES_SKY_QA")
+                break
+    # All current findings are triage flags, never scientific acceptance.
+    return list(dict.fromkeys(findings))
+
+
 def build_project_diagnostic_bundle(workspace):
     """Capture current in-memory evidence without triggering any worker."""
     project_id = workspace._bound_project_id
@@ -329,7 +438,14 @@ def build_project_diagnostic_bundle(workspace):
             "aperture": _safe_stage("aperture",
                                     lambda: _stage_result(workspace, "aperture")),
         },
+        "saved_inputs": _safe_stage(
+            "saved_inputs", lambda: _saved_input_status(workspace)),
+        "recent_operation_attempts": _safe_stage(
+            "recent_operation_attempts",
+            lambda: _operation_journal_excerpt(workspace)),
     }
+    report["diagnostic_findings"] = _diagnostic_findings(
+        report["stages"], report["project"])
     # Only fully JSON-serializable, finite numerical values are permissible.
     # Failing serialization must NEVER produce a misleading partial copy.
     report = _guard_raw_arrays(report)
