@@ -984,6 +984,11 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     pid = dataset["project_id"]
     band = dataset["band"]
     source = dataset["source"]
+    loaded_key = dataset.get("source_quartet_key")
+    mask_key = contamination.get("source_quartet_key")
+    if (loaded_key is not None and mask_key is not None and
+            tuple(loaded_key) != tuple(mask_key)):
+        raise ValueError("Stage03 native Scene/mask quartet identity mismatch")
     if (draft.project_id != pid or
             contamination.get("project_id") != pid or
             contamination.get("band") != band or
@@ -1039,6 +1044,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "project_id": pid,
         "band": band,
         "dataset_source": source,
+        "source_quartet_key": loaded_key,
         "grid_fingerprint": grid,
         "draft_sha256": draft.digest,
         "catalog_sha256": contamination["catalog_sha256"],
