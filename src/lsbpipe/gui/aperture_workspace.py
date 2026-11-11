@@ -346,8 +346,10 @@ class ApertureWorkspace(QWidget):
         source_tuple=tuple(scene._source_key[2][:3])
         if len(source_tuple)!=3:
             return None
+        # The Stage04 ellipse is an explicit geometry hypothesis, not
+        # the separate Stage02 SGA target-protection policy.
         prior=scene._sga_candidate if (
-            scene.sga_use_prior.isChecked()) else None
+            scene.sga_use_seed.isChecked()) else None
         q=getattr(prior,"ba",None) if prior is not None else None
         pa=getattr(prior,"pa_deg",None) if prior is not None else None
         if q is None or pa is None:
