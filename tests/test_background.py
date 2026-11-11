@@ -281,7 +281,7 @@ def test_project_stage03_source_protection_hides_mistaken_sky_annotation():
     # same effective pixel footprints and both models unchanged.
     central=next(e.edit_id for e in draft.edits
                  if e.purpose=="sky_train" and
-                 tuple(round(x) for x in dataset["wcs"].all_world2pix(
+                 tuple(round(float(x)) for x in dataset["wcs"].all_world2pix(
                      *e.shape.center,0))==(60,60))
     clean=draft.without_edit(central)
     aligned=dict(contamination,draft_digest=clean.digest)
