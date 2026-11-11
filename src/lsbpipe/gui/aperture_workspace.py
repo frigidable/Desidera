@@ -101,9 +101,14 @@ def build_project_aperture_growth(
             effective_source_mask=source,manual_exclude=manual,
             radii_arcsec=radii,hypothesis=hypo,
             sky=ApertureSkyScenario()))
+    measured=sum(
+        c["science_status"]=="DIAGNOSTIC_MEASURED_PARTIAL_NOT_ADOPTED"
+        for c in curves)
     result={
         "schema":"desidera.photometry.project-aperture-growth/1",
-        "status":"DIRECT_FINITE_APERTURE_DIAGNOSTICS_NOT_ADOPTED",
+        "status":(
+            "DIRECT_FINITE_APERTURE_DIAGNOSTICS_NOT_ADOPTED" if measured
+            else "UNDERCONSTRAINED_NO_USABLE_DIRECT_APERTURE_CURVES"),
         "project_id":dataset["project_id"],
         "dataset_source":dataset["source"],
         "dataset_id":f.dataset_id,
@@ -137,7 +142,10 @@ def build_project_aperture_growth(
         "psf_science_validated":False,
         "adopted_for_science":False,
         "curves":curves,
-        "warnings":[
+        "n_measurable_geometry_hypotheses":int(measured),
+        "warnings":([
+            "NO_GEOMETRY_HAS_TWO_VALID_MEASURED_APERTURES"
+        ] if not measured else []) + [
             "FIRST_STAGE04_DIAGNOSTIC_CURVE_NOT_FINAL_GALAXY_PHOTOMETRY",
             "PROJECT_ANCHOR_FIXED_NOT_A_FITTED_PHOTOMETRIC_CENTRE",
             "PROVISIONAL_SOURCE_MEMBERSHIP_CAN_REMOVE_TARGET_KNOTS",
@@ -441,6 +449,7 @@ class ApertureWorkspace(QWidget):
     def _format_readout(result):
         lines=[
             "04 · Native signed aperture photometry — UNADOPTED",
+            f"Status: {result['status']}",
             f"Source: {result['dataset_source']}",
             f"Project anchor (ICRS): {result['target_anchor_icrs']}",
             f"Radial policy: {result['radial_policy']['strategy']}",
