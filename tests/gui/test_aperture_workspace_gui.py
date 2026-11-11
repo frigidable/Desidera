@@ -68,6 +68,7 @@ def test_aperture_native_worker_retains_masks_and_zero_sky():
         ds,draft,contam,source_triplet=("dr11","south","1554p180"),
         target_icrs=(155.4,18.))
     assert good["status"]=="DIRECT_FINITE_APERTURE_DIAGNOSTICS_NOT_ADOPTED"
+    assert good["source_quartet_key"] == ["dr11","south","1554p180","r"]
     assert good["band"]=="r"
     assert len(good["curves"])==3
     assert good["sky_method"]=="zero_additional_correction"
@@ -89,6 +90,26 @@ def test_aperture_native_worker_retains_masks_and_zero_sky():
             ds,draft,dict(contam,draft_digest="b"*64),
             source_triplet=("dr11","south","1554p180"),
             target_icrs=(155.4,18.))
+
+
+def test_aperture_refuses_foreign_source_quartet_even_if_display_label_matches():
+    ds,draft,contam=_inputs()
+    ds["source_quartet_key"]=["dr11","south","1555p180","r"]
+    with pytest.raises(ValueError,match="source-triplet mismatch"):
+        build_project_aperture_growth(
+            ds,draft,contam,source_triplet=("dr11","south","1554p180"),
+            target_icrs=(155.4,18.))
+    ds["source_quartet_key"]=["dr11","south","1554p180","r"]
+    contam["source_quartet_key"]=["dr11","south","1555p180","r"]
+    with pytest.raises(ValueError,match="source-triplet mismatch"):
+        build_project_aperture_growth(
+            ds,draft,contam,source_triplet=("dr11","south","1554p180"),
+            target_icrs=(155.4,18.))
+    contam["source_quartet_key"]=list(ds["source_quartet_key"])
+    good=build_project_aperture_growth(
+        ds,draft,contam,source_triplet=("dr11","south","1554p180"),
+        target_icrs=(155.4,18.))
+    assert good["source_quartet_key"] == ds["source_quartet_key"]
 
 
 def test_aperture_source_sha_propagates_into_each_exact_flux_recipe():
