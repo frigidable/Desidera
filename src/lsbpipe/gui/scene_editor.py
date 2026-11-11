@@ -179,6 +179,37 @@ def load_scene_original_cutout(project_root: str, band: str,
     if str(native_root.resolve()) != str(
             Path(original["data_root"]).resolve()):
         raise ValueError("Scene reader resolved a different native data root")
+    # The generic FITS viewer validates shape/WCS but not every unit.
+    # Scientific aperture flux is meaningless if IMAGE units differ from
+    # nanomaggies; verify the exact same HDU selected by the cutout reader.
+    # Astropy accesses only FITS headers here, never alters source arrays.
+    from astropy.io import fits
+    from lsbpipe.photometry.native_fits import (
+        _norm, _ALLOWED_IMAGE_UNITS, _ALLOWED_IVAR_UNITS)
+    observed_units = {}
+    for kind in ("image", "invvar"):
+        index = original["hdu_indices"][kind]
+        with fits.open(expected_paths[kind], memmap=True) as hdus:
+            if type(index) is not int or not 0 <= index < len(hdus):
+                raise ValueError("Scene source science HDU identity invalid")
+            observed_units[kind] = hdus[index].header.get("BUNIT")
+    image_unit = observed_units["image"]
+    if image_unit is None or not str(image_unit).strip():
+        raise ValueError(
+            "Scene IMAGE BUNIT missing: refuse unverified nanomaggy scale")
+    if _norm(image_unit) not in _ALLOWED_IMAGE_UNITS:
+        raise ValueError(
+            f"Scene IMAGE BUNIT is not nanomaggies: {image_unit!r}")
+    ivar_unit = observed_units["invvar"]
+    if (ivar_unit is not None and str(ivar_unit).strip() and
+            _norm(ivar_unit) not in _ALLOWED_IVAR_UNITS):
+        raise ValueError(
+            f"Scene INVVAR BUNIT does not describe inverse nMgy squared: "
+            f"{ivar_unit!r}")
+    ivar_units_evidence = (
+        "FITS_INVVAR_BUNIT_CONFIRMED"
+        if ivar_unit is not None and str(ivar_unit).strip()
+        else "INVVAR_UNITS_FROM_SURVEY_DOCUMENTATION_ASSUMPTION")
     source_hashes = {}
     for kind, file in expected_paths.items():
         if file.is_symlink():
@@ -212,6 +243,9 @@ def load_scene_original_cutout(project_root: str, band: str,
         "source_quartet_key": [release, region, brick, band],
         "hdu_indices": original["hdu_indices"],
         "original_fits_sha256_local": source_hashes,
+        "observed_header_units": observed_units,
+        "image_unit_evidence": "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED",
+        "invvar_unit_evidence": ivar_units_evidence,
         "original_fits_provenance_status":
             "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD",
         "original_fits_sha256_is_archive_authenticity": False,
@@ -3041,6 +3075,9 @@ class SceneEditor(QWidget):
                     "original_fits_provenance_status", "NOT_HASHED"),
                 "original_fits_sha256_local": dataset.get(
                     "original_fits_sha256_local"),
+                "observed_header_units": dataset.get("observed_header_units"),
+                "image_unit_evidence": dataset.get("image_unit_evidence"),
+                "invvar_unit_evidence": dataset.get("invvar_unit_evidence"),
                 "sha256_is_remote_archive_authenticity": False,
                 "native_hard_pixel_count":
                     int(np.count_nonzero(dataset["native_hard"])),
