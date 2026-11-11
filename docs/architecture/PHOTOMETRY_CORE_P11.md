@@ -1195,3 +1195,103 @@ sky/geometry/source-membership sensitivity,
 PSF-aware injection, then separately gated total
 and multi-filter products. No new branch or
 project directory is required.
+
+
+---
+
+## 2026-11-11 — Stage 04.3a conditional systematics and blank covariance
+
+**Scope:** exploratory, project-bound *diagnostic* implemented in
+`src/lsbpipe/photometry/aperture_systematics.py`; no total photometry,
+noise calibration claim, sky adoption or change to existing FITS / masks.
+
+The existing Stage 04 worker now attaches `systematics_04_3` to the
+source- and Scene-revision-bound JSON. The aperture GUI shows the results
+under a separate `04.3 · Conditional uncertainty diagnostics` heading
+and includes full arrays in `Copy aperture QA`. It runs only on the
+existing explicitly loaded native optical coadd and only when the user
+requests aperture curves. Previously recorded 04.2 signed fluxes and
+formally diagonal `INVVAR` errors retain their original definitions.
+
+### 04.3a.1 Conditional sky-response derivatives
+
+For a frozen native aperture and effective valid-pixel weight
+`w_p=G_p V_p`, with reference origin at the native pixel
+coordinates of its project anchor, the flux response to a *hypothetical*
+residual plane `delta B_p=b0+bx(x_p-x0)+by(y_p-y0)` is
+
+```text
+dF/db0 = -sum(w)
+dF/dbx = -sum(w * (x - x0))
+dF/dby = -sum(w * (y - y0)).
+```
+
+These derivatives are calculated from the same exact fractional
+aperture weights and mask policy as the baseline flux. They permit
+direct, reproducible comparison against finite differences to the
+existing `ApertureSkyScenario`. **They are not background error bars**:
+a defensible distribution or bound for `b0,bx,by` has not yet been
+obtained. In particular, do not set `sigma_sky` from
+`RMS/sqrt(N_pixel)` or use the current Stage 03 diagnostic fit as
+an automatically adopted correction.
+
+### 04.3a.2 Mask and geometry hypotheses
+
+At the largest common semimajor axis, the code computes a new
+*counterfactual* native pixel sum with only provisional catalogue-source
+exclusions disabled. The immutable `NativeBandFrame.valid` rejection
+and manual exclusions are retained. The delta measures the consequence
+of a different policy; **it cannot be identified with lost galaxy light**,
+because it may include contaminating sources or target members.
+
+Likewise, the observed outer-aperture flux span across the existing
+predeclared circle / SGA q-PA / exploratory q-PA geometries compares
+different sky footprints. It is explicitly **not a 1-sigma geometry
+uncertainty**, nor can it be added in quadrature to sky/noise errors.
+
+### 04.3a.3 Native-coadd blank annuli
+
+`estimate_blank_annulus_covariance` creates a deterministic grid of
+candidate non-overlapping native-pixel placements, with the same exact
+`EllipticalAperture` / `EllipticalAnnulus` shapes as the project
+apertures. Candidate centres are separated by more than the outer
+diameter and cannot intersect the nominal project ellipse; any area
+covered by hard-invalid pixels, current automated source exclusions or
+explicit manual exclusions rejects a candidate. No pixels are
+resampled, no masked pixels are filled, and the source arrays are copied
+at entry.
+
+For each accepted placement the full signed vector of annular sums is
+stored in memory. Where at least `max(12,2N_rings+2)` placements are
+available (with a deterministic maximum of 48), a sample covariance
+matrix between **disjoint annular sums** is returned. It captures
+some spatially correlated coadd noise and residual background
+structure without assuming that coadd `INVVAR` is its full covariance.
+Nested CoG covariance can subsequently be constructed from this matrix
+via `C_CoG = T C_annulus T^T`; that transformation is **not yet an
+adopted science uncertainty**.
+
+If too few non-overlapping clean positions exist, the module returns
+`INSUFFICIENT_INDEPENDENT_BLANK_POSITIONS`, a null covariance and the
+explicit count — **never a zero variance or falsely precise CoG error**.
+Constant or degenerate residuals likewise do not become zero-valued
+science errors. Geometric exclusion of the nominal ellipse cannot rule
+out diffuse galaxy light outside it, Galactic cirrus, undetected
+background objects or large-scale gradients. These are limitations even
+when the sample covariance is nondegenerate. The result therefore
+retains `covariance_calibrated_for_science=false` and
+`adopted_for_science=false`.
+
+### Remaining 04.3 science gates
+
+- Test sky-response uncertainties against independently constrained
+  background models, including low-frequency spatial modes.
+- Validate blank-position independence, sample size, local stationarity,
+  and empirical covariance through repeated injections and held-out
+  regions, then compare to per-pixel `INVVAR` predictions.
+- Compute robust annular / cumulative joint covariance and propagate it
+  through fits without double-counting one sky nuisance parameter.
+- Review ambiguous source memberships (particularly the Leo P Gaia
+  foreground candidates) and quantify model-conditioned masked flux.
+- Verify source FITS checksums and run the native Leo P `r` measurement.
+  Until then: **SCIENCE HOLD**.
