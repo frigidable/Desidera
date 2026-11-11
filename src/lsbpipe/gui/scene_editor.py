@@ -462,6 +462,7 @@ def run_scene_psf0_foreground_probe(
     from lsbpipe.photometry.psf_gui_backend import read_saved_psf0_bands
     from lsbpipe.photometry.psf_joint_scene import (
         audit_finite_psf0_foreground,
+        audit_same_project_foreground_sector_profile,
     )
 
     project = read_object_project(project_root)
@@ -539,6 +540,17 @@ def run_scene_psf0_foreground_probe(
         catalog_flux_nMgy=source_entry.get("band_model_flux_nMgy"),
         other_catalog_centres=neighbors,
         component_indices=component_indices)
+    # Follow up the local, strictly finite PSF-0 fit with an independent
+    # *descriptive* directional test on these same loaded project pixels.
+    # No model is extrapolated beyond its saved empirical kernel.
+    if probe["status"] == "FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED":
+        probe["project_only_outer_sector_probe"] = (
+            audit_same_project_foreground_sector_profile(
+                dataset["data"]["image"], dataset["data"]["invvar"],
+                dataset["native_hard"],
+                source_xy=(sx,sy), target_xy=(tx,ty),
+                measured_fwhm_pix=measured,
+                other_catalog_centres=neighbors))
     return dict(
         output,**{k:v for k,v in probe.items()
                   if k not in output or k == "status"},
@@ -1568,12 +1580,14 @@ class SceneEditor(QWidget):
             "Probe selected Gaia star · saved PSF-0")
         self.psf0_fg_btn.setObjectName("scene_psf0_foreground_probe")
         self.psf0_fg_btn.setToolTip(
-            "Read-only fit of the existing per-band empirical PSF-0 "
-            "on original star pixels, with a reserved holdout annulus "
-            "and constant/planar sky alternatives. Requires a current "
-            "Gaia-astrometry foreground candidate and a SHA-verified "
-            "saved PSF-0. Does NOT extrapolate distant wings, subtract "
-            "pixels or change the science mask.")
+            "Read-only fit of saved empirical PSF-0 on original star "
+            "pixels, followed by original-image directional comparison "
+            "toward / away from the target and predeclared 4x4 same-"
+            "project blank controls. Uses ONLY currently loaded project "
+            "FITS and original Tractor inventory; requires a selected "
+            "Gaia foreground source and verified per-band saved PSF-0. "
+            "Does not extrapolate PSF wings, infer galaxy flux loss, "
+            "subtract pixels or adopt a science mask.")
         self.psf0_fg_btn.clicked.connect(
             self._run_foreground_psf_probe)
         registry_layout.addWidget(self.psf0_fg_btn)
@@ -2585,7 +2599,11 @@ class SceneEditor(QWidget):
                "Galaxy centre within finite kernel square; physical "
                "wing contribution still UNVALIDATED. ")
             + "No subtraction, no sky adoption or science photometry. "
-              "Full provenance in Copy Scene QA.")
+            + (f"Same-project direction/sky control: "
+               f"{result['project_only_outer_sector_probe']['status']}; "
+               f"original FITS only. "
+               if result.get("project_only_outer_sector_probe") else "")
+            + "Full provenance in Copy Scene QA.")
 
     def _prepare_neighbour_masks(self):
         if (self._loaded is None or self._future is not None or
