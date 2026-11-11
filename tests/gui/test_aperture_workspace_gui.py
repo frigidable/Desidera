@@ -99,6 +99,7 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
                      ("dr11","south","1554p180","r"),"source"),
         _sga_candidate=None,
         sga_use_prior=SimpleNamespace(isChecked=lambda:False),
+        sga_use_seed=SimpleNamespace(isChecked=lambda:False),
     )
     def sky_snapshot():
         return ((
