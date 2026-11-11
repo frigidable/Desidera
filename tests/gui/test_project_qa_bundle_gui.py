@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication
 from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.gui.project_qa_bundle import (
     build_project_diagnostic_bundle, serialize_project_diagnostic_bundle,
-    _compact_ablation, _compact_apertures)
+    _compact_ablation, _compact_apertures, _guard_raw_arrays)
 from lsbpipe.photometry.sky_masks import SkyMaskDraft
 
 
@@ -244,3 +244,19 @@ def test_loaded_synthetic_scene_collects_current_sky_and_aperture_then_vetoes_st
     assert "SCENE_BAND_MISMATCH" in stale["diagnostic_findings"]
     assert widget.sky_stage._result is not None
     assert widget.aperture_stage._result is not None
+
+
+def test_nonfinite_debug_values_and_pixel_grids_never_break_qa_copy():
+    incoming = {
+        "sky_nonfinite": float("nan"),
+        "annulus_nonfinite": np.float64("-inf"),
+        "raw_fits_pixel_grid": np.ones((400, 400)),
+        "signed_negative": -8.5,
+    }
+    result = _guard_raw_arrays(incoming)
+    assert result["sky_nonfinite"]["diagnostic_nonfinite_float"] == "nan"
+    assert result["annulus_nonfinite"]["diagnostic_nonfinite_float"] == "-inf"
+    assert result["raw_fits_pixel_grid"]["omitted_raw_array"]
+    assert result["raw_fits_pixel_grid"]["shape"] == [400, 400]
+    assert result["signed_negative"] == -8.5
+    json.dumps(result, allow_nan=False)
