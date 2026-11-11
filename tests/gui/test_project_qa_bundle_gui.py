@@ -15,7 +15,7 @@ from lsbpipe.gui.project_qa_bundle import (
     build_project_diagnostic_bundle, serialize_project_diagnostic_bundle,
     _compact_ablation, _compact_apertures, _guard_raw_arrays,
     _foreground_aperture_overlap_qa, _diagnostic_findings,
-    _conditional_sky_aperture_response_qa)
+    _conditional_sky_aperture_response_qa, _cross_stage_source_lineage_qa)
 from lsbpipe.photometry.sky_masks import SkyMaskDraft
 
 
@@ -59,7 +59,10 @@ def test_single_copy_includes_all_stages_and_reproducibility(qtbot, tmp_path):
     assert bundle["workers_started_by_copy"] is False
     assert list(bundle["stages"]) == [
         "aperture", "background", "conditional_sky_aperture_response",
-        "foreground_aperture_overlap", "psf0", "scene_masks"]
+        "cross_stage_source_lineage", "foreground_aperture_overlap",
+        "psf0", "scene_masks"]
+    assert bundle["stages"]["cross_stage_source_lineage"]["state"] == (
+        "SCENE_SOURCE_NOT_CURRENT")
     assert bundle["stages"]["conditional_sky_aperture_response"]["state"] == (
         "BACKGROUND_OR_APERTURE_NOT_CURRENT")
     assert bundle["stages"]["foreground_aperture_overlap"]["state"] == (
@@ -442,3 +445,51 @@ def test_psf_band_navigation_never_discards_loaded_scene(qtbot, tmp_path):
     widget.stage_tabs.setCurrentWidget(widget.stage_tabs.widget(0))
     widget.stage_tabs.setCurrentWidget(scene)
     assert scene._band == "i"
+
+
+def test_cross_stage_source_lineage_qa_rejects_foreign_fits_and_units():
+    local_hashes={
+        "image":"1"*64, "invvar":"2"*64,
+        "nexp":"3"*64, "maskbits":"4"*64}
+    key=["dr11","south","1554p180","r"]
+    scene={"state":"CURRENT_LOADED","native_fits":{
+        "source_quartet_key":key,
+        "original_fits_provenance_status":
+            "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD",
+        "original_fits_sha256_local":local_hashes,
+        "image_unit_evidence":
+            "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"}}
+    target={"source_quartet_key":list(key),
+            "original_fits_sha256_local":dict(local_hashes),
+            "image_unit_evidence":
+                "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"}
+    stages={"scene_masks":scene,
+            "background":{"state":"CURRENT_DIAGNOSTIC",
+                          "result":dict(target)},
+            "aperture":{"state":"CURRENT_DIAGNOSTIC",
+                        "result":dict(target)}}
+    result=_cross_stage_source_lineage_qa(stages)
+    assert result["state"]=="CURRENT_AVAILABLE_STAGES_MATCH_ORIGINAL_SCENE"
+    assert all(row["state"]=="MATCH" for row in
+               result["stage_comparisons"].values())
+    assert result["science_adopted"] is False
+    # A stage cannot be relabelled as the original simply because its
+    # target display name, brick text or band agrees.
+    stages["aperture"]["result"]=dict(target,
+        original_fits_sha256_local=dict(local_hashes,image="f"*64))
+    mismatch=_cross_stage_source_lineage_qa(stages)
+    assert mismatch["state"]=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH"
+    assert mismatch["inconsistent_stages"]==["aperture"]
+    stages["cross_stage_source_lineage"]=mismatch
+    assert "CROSS_STAGE_SOURCE_FITS_PROVENANCE_MISMATCH" in (
+        _diagnostic_findings(stages, {}))
+    stages["aperture"]["result"]=dict(target,image_unit_evidence="ADU")
+    assert _cross_stage_source_lineage_qa(stages)["state"] == (
+        "CROSS_STAGE_SOURCE_IDENTITY_MISMATCH")
+    stages["background"]["state"]="NOT_RUN"
+    stages["aperture"]["state"]="NOT_RUN"
+    assert _cross_stage_source_lineage_qa(stages)["state"] == (
+        "NO_CURRENT_DEPENDENT_STAGE_TO_COMPARE")
+    scene["native_fits"]["original_fits_sha256_local"]=None
+    assert _cross_stage_source_lineage_qa(stages)["state"] == (
+        "SCENE_SOURCE_NOT_FULLY_VERIFIED")
