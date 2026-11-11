@@ -75,7 +75,11 @@ def build_project_aperture_growth(
         "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD"
         and isinstance(hashes,dict) and set(hashes)==set(KINDS)
         and all(isinstance(value,str) and re.fullmatch("[0-9a-f]{64}",value)
-                for value in hashes.values()))
+                for value in hashes.values())
+        and loaded_key is not None and tuple(loaded_key)==expected_key
+        and mask_key is not None and tuple(mask_key)==expected_key
+        and dataset.get("image_unit_evidence") ==
+        "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED")
     if hashes is not None and not content_hashed:
         raise ValueError("Malformed or inconsistent original FITS SHA lineage")
     f=NativeBandFrame(
@@ -171,6 +175,8 @@ def build_project_aperture_growth(
         "source_fits_hash_scope":(
             "LOCAL_FULL_ORIGINAL_BYTES_AT_SCENE_LOAD_NOT_ARCHIVE_AUTHENTICITY"
             if content_hashed else "NOT_AVAILABLE"),
+        "image_unit_evidence":dataset.get("image_unit_evidence"),
+        "invvar_unit_evidence":dataset.get("invvar_unit_evidence"),
         "original_fits_modified":False,
         "background_subtracted_fits_created":False,
         "masked_light_reconstructed":False,
