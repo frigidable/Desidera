@@ -1157,3 +1157,111 @@ without changing the segmented connected component.
 residual-sky alternatives, astrophysical component/membership
 uncertainty, correlated-noise and injection/recovery requirements
 before accepting photometry. Do not tune the present policy on Leo P.
+
+
+---
+
+## Sixteenth-pass Leo P radial-octant threshold audit — live GUI (2026-11-11)
+
+**Actual user-supplied full export:** \`desidera.gui.scene-complete-qa/1\`,
+generated \`2026-11-11T09:52:32.107806Z\`, 3,079,355 file bytes,
+SHA-256 \`ba44b29008a2433e3ca2a70f42a955a7f3190451bc47b3fb4e40ffebaa4dd3d7\`.
+The report contains 10/10 fully instrumented fixed-70" ablation rows
+(4 mask policies plus 6 Gaia leave-one-out), each with **63 radial
+annular bins**, and 8 indexed, nullable sector contrasts per bin.
+The original native per-pixel FITS arrays remain unavailable in this
+report; this is independent *metadata arithmetic and code-rule*
+verification, not a pixel-level rerun or PSF photometry validation.
+
+**Run identity and state:** DR11 South brick \`1554p180\`, \`g\`,
+project ID \`0876bbc4-7405-481b-88a8-0e3486c7be98\`,
+Tractor SHA \`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c\`,
+SGA parent 5065058 / source SHA
+\`4ed9faa3b3ea039ef714d766e657698e0c12246dff831b7d7899f812973506e1\`,
+contrast 2.2, smoothing 4px, bridge guard 2px, initial SGA
+geometry ON and SGA mask protection OFF. Mask draft revision 2,
+\`edits=[]\`, \`dirty=false\`, digest unchanged
+\`2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619\`.
+The full snapshot now includes all **811** source-inventory entries
+(785 native centres + 26 exterior mask contributors), not just
+the compact ablation subsection. Current GUI screening:
+493 ordinary proposed exclusions, 5 experimental Gaia, 6
+experimental red sources, 103 unresolved screened overlaps and 204
+unscreened/unfitted; 504 total excluded candidates and 421,494
+excluded candidate pixels at the GUI's 60" source protection circle.
+The ablation independently fixes **70"**; thus GUI base component
+34,054 px at 60" and \`both\` ablation component 34,182 px at 70"
+are different configurations, not inconsistent counts.
+
+**Internal verification:** all ten rows have 63 bins with exactly
+eight ordered octant slots; every \`sectors_with_data\` equals the count
+of non-null slots and every \`sectors_positive\` equals the count of
+sector contrasts >=0.26 (=0.4*0.65). Reconstructed each ring's
+\`supported\` Boolean from
+coverage >=0.55, valid sectors >=5, positive sectors >=4 and
+median smoothed-flux/RMS contrast >=0.65; **630/630 pass**.
+Reimplemented the source-code continuity rule (at least two
+consecutive supported rings, stopping after two consecutive failures)
+and recovered **10/10 reported radial endpoints**.
+
+### Exact threshold mechanism at the outer ring
+
+The candidate outer annulus \`a_outer=63.4152930669"\`
+has valid measurements in all 8 octants for every scenario.
+Unlike an independently significant detection, its decision depends
+on the fixed **0.65 dimensionless contrast cutoff**:
+
+| Scenario | Contrast at 61.789" | Contrast at 63.415" | Coverage at 63.415" | Positive octants | Accepted at 63.415"? |
+|---|---:|---:|---:|---:|---|
+| No experimental previews | 0.891306 | 0.787801 | 1.0000 | 7 | YES |
+| Gaia only | 0.726672 | 0.722805 | 0.9059 | 6 | YES |
+| Red extended only | 0.828167 | 0.715560 | 0.9381 | 7 | YES |
+| Gaia + red | 0.674088 | **0.643923** | 0.8441 | 6 | **NO** |
+| Both except Gaia 1763 | 0.739582 | **0.711866** | 0.8772 | 6 | YES |
+| Both except Gaia 2034 | 0.721224 | **0.665096** | 0.8701 | 7 | YES |
+| Both except Gaia 1876 | 0.692798 | 0.638462 | 0.8788 | 6 | NO |
+
+Under \`both\`, the deficit against 0.65 is only
+**0.006077** (dimensionless). \`both_without_gaia_1763\` raises
+the annulus contrast by 0.067943 and restores 3.317 percentage
+points of coverage; only octant index **6** changes its stored
+contrast at that radius (+0.558023). Removing 2034 raises median
+contrast by 0.021174 and coverage by 2.609 percentage points:
+octant **0** rises by +0.163298 and octant **1** by +0.147393.
+Both operations move the accepted radius by exactly one radial bin
+of **1.626033"** without changing *any* thresholded connected-component
+pixel (reported component IoU = 1.0).
+
+The \`both\` policy has another isolated below-threshold bin at
+\`56.911"\`: contrast 0.647269 and \`supported=false\`, while
+\`58.537"\`, \`60.163"\` and \`61.789"\` are supported.
+That isolated failure does *not* terminate the continuity run.
+The \`63.415"\` and \`65.041"\` bins both fail, so the last supported
+continuity endpoint is \`61.789"\`.
+An absent outer-bin result cannot be equated to physical truncation.
+
+For OBJID 2035, 1870 and 1876 the strongest effect remains on
+connected-component segmentation and moment geometry, not this
+63.415" threshold. Leaving out 2035 changes 8,604 Boolean mask
+pixels and restores 8,062 component pixels (34,182 → 42,244),
+but its 63.415" contrast remains 0.643923 and the endpoint
+61.789". With 1870 removed the contrast is unchanged at that
+ring; with 1876 removed it falls to 0.638462. OBJID 2074
+changes neither component nor outer-bin acceptance.
+
+**What this establishes:** strong conditional sensitivity to
+foreground-source geometric masking, with near-threshold bin flips
+from 1763 and 2034; \`red_extended_v1\` changes the radial decision
+when combined with Gaia despite just three fewer component pixels.
+The results **do not** quantify target-flux loss, support a physical
+outer edge at 61.8"/63.4", validate the Gaia fit/PSF, or calibrate
+the significance of a noisy smoothed radial contrast. No threshold
+should be tuned to make Leo P match its literature stellar extent.
+
+**Disposition:** SC1 ablation and radial-bin bookkeeping validated
+at exported-metadata level; continue **SCIENCE HOLD** and Draft PR #84.
+The next useful scientific step is a source-specific PSF-wing/residual
+treatment and independent spatial-sky sensitivity, ideally comparing
+held-out MUSE/HST sources and real native-band pixels. No new code,
+science mask, project edit, dependency, directory or branch is
+authorized by this QA snapshot.
