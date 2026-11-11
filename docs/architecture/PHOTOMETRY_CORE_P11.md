@@ -1581,3 +1581,132 @@ Stage02 inventory's original offset is retained *separately* and
 labelled potentially different-anchor. Missing fixed target centre
 fails closed. An explicit regression supplies contradictory centres and
 verifies that the project-anchored radial bin is chosen.
+
+
+---
+
+## 2026-11-12 — Deep follow-on code audit (Stage01–04)
+
+This follow-on review inspected the actual backends and regression contracts,
+not only the displayed pilot QA. Distinguish **confirmed code-level
+defects** below from **still-unvalidated scientific assumptions**. All
+fixes remain in Draft PR #84; no source FITS, existing user mask drafts,
+or `main` branch are modified.
+
+### Confirmed defects corrected
+
+**Stage01 PSF target geometry / lineage (P1).** The GUI backend first
+verified that a Leo P project centre lay within 45 arcsec of the canonical
+Leo P coordinate, but then supplied the *canonical coordinate* to the
+PSF-star target-exclusion step. Stage02/03/04 use the saved project
+centre. A user moving the project centre by, say, 20 arcsec without
+changing the brick would have obtained inconsistent star-selection
+protection between stages. PSF build now uses the saved
+`project.field.ra_deg, dec_deg`; the canonical coordinate remains only
+the Leo P identity gate. Regression explicitly creates a shifted but
+eligible Leo P project and checks the actual PSF fit's input anchor.
+
+**Stage01 saved PSF stale-target guard (P1).** Existing PSF checkpoint
+restoration verified the FITS quartet, Tractor catalogue, kernel checksum,
+source brick/band and recipe, but did not verify that the current saved
+project *target centre* was the one used to train the PSF. A moved
+project could therefore restore a result protected around a different
+centre. Explicit save and read-only restore now require the original
+`target_icrs_deg` to agree with the current project field within
+`1e-9 deg` per coordinate (wrapped RA). A mismatched saved result is
+withheld, recorded in restore warnings, not deleted. Synthetic FITS
+regression covers a successfully saved PSF followed by project-centre
+editing, source-hash invariance, and rejection at both boundaries.
+
+**Stage02 circular Tractor mask WCS (P1 for anisotropic fields).** The
+point-source and degenerate extended-source circular footprints had used
+the *geometric mean* pixel scale, even when the native WCS is
+anisotropic/sheared. Elliptic catalogue footprints already used the
+local full east/north pixel Jacobian. Consequently the circular
+footprint could leave contaminating pixels unmasked on the fine-scale
+axis. Circular footprints with a celestial WCS now rasterize the
+**on-sky circle** in the local east/north tangent plane and bound its
+native pixel box with the minimum singular value. WCS-less legacy
+diagnostics retain the explicitly approximate scalar fallback.
+Synthetic anisotropic-WCS regression exercises the previously missed
+region. This fixes geometric coverage, **not** membership, appropriate
+PSF wing-mask radii or missing galaxy-light reconstruction.
+
+**Stage03 sky spatial QA tile coordinates (P1 for shifted grids).**
+The selector saves native `tile_bounds_native_xyxy` for each sampled
+spatial tile. The residual audit incorrectly regenerated bounds
+`tile_index * tile_edge`, valid only for an unshifted grid. Since fixed
+grid-offset perturbations are supported, this could sample other pixels
+or throw a false `Sky sample tile geometry/provenance changed`
+exception when used on shifted selections. The QA now reads saved
+actual bounds and verifies they lie inside the raster. Edge-tile
+counting uses actual dimensions. Tests cover a nonzero offset,
+separate train/holdout medians and mismatch rejection.
+
+### Scientific and operational limits, not silently fixed
+
+* **PSF-0 is currently a Leo P-only pilot.** `_leo_p_project`
+  explicitly rejects other galaxy names and projects >45 arcsec from the
+  hardcoded Leo P centre. Unlike Stage02–04, it is *not a general
+  per-object service*. Its finite kernel cannot establish far stellar
+  wings or spatial PSF variation. Generalization requires its own
+  explicit project-target identity and acceptance workflow.
+* **Different target protections have distinct purposes:** PSF-0's
+  stellar-training exclusion radius is user-adjustable and need not
+  equal Stage02's source-screening protection or Stage04's last
+  measured aperture. A larger PSF radius cannot be interpreted as a
+  measured photometric galaxy radius.
+* **Stage02 catalogue-source footprints are heuristic and source-type
+  dependent.** They are neither fitted Tractor model residuals nor
+  all-flux wings. Even with geometrically correct footprints, their
+  science use needs contamination/galaxy-light-loss experiments and
+  high-confidence foreground/target membership separation.
+* **Stage03 holdout is only spatially disjoint within one resampled
+  coadd.** It is not an independent exposure, covariance model, nor
+  proof that its sky tiles are galaxy-free. The nominal same-coadd
+  RMS-based constant/plane preference is not a science decision.
+  Grid perturbations remain uncalibrated sensitivity experiments.
+* **Stage04 zero-additional-correction is intentionally not coupled
+  to Stage03's sky fit**, and is independent of whether Stage01 has
+  a reconstructed PSF. Valid-area flux with some missing pixels is not
+  a full galaxy flux. Its formal diagonal IVAR sigma excludes
+  correlated coadd noise and covariance from foreground subtraction,
+  masked-pixel inference and sky estimation.
+* **Cross-band `r-i` cannot be adopted** until identical apertures,
+  compatible PSF response, consistent target/contaminant policy and
+  jointly calibrated covariance/sky corrections have been demonstrated.
+  Current radius grids depend on the provisional target-protection
+  pixel count and finite cutout extent; separate bands can therefore
+  differ in the actual sampled radii.
+* **Native input identity still differs between PSF0 and Stage02–04:**
+  Stage01 hashes all four original native FITS input layers; Stage02
+  checks native FITS/WCS cutout metadata but does not currently expose
+  complete full-file SHA256 provenance to Stage04. Do not interpret
+  the all-stage QA's `source` label as equivalent to a verified
+  full-input content digest.
+* **The imaging PSF and sky systematics are coupled.** A PSF-star
+  kernel fitted with a contaminated local annulus cannot automatically
+  be treated as independent evidence for large-radius galaxy
+  photometry or foreground-star subtraction. Dedicated wing,
+  injection and joint star/galaxy/sky validation are science gates.
+
+### High-value next independent tests
+
+1. On the same native brick and frozen Scene, compare modelled stellar
+   subtraction versus conservative masked-pixel photometry for bright
+   Gaia foreground candidates (especially Leo P OBJID 2035), with
+   heldout stellar wings and galaxy-light-loss injection tests.
+2. Acquire sufficiently wide native context or independent overlapping
+   sky fields to estimate large-scale background structure and the
+   full-aperture coadd covariance. Do not bootstrap 105-arcsec covariance
+   from 10–30-arcsec probes without externally validated scaling.
+3. Run a common-aperture, common-geometry, PSF-conditioned
+   `griz` synthetic challenge (known injected galaxy flux, realistic
+   contaminants, gradients and masks) before reporting AB totals,
+   colours or SBF distances.
+4. Introduce an explicit source-manifest hash gate for Stage02–04 and
+   per-band run provenance before durable science-result exports.
+
+**Scientific acceptance status remains HOLD.** A passing test suite
+validates the currently encoded contracts and tested synthetic cases;
+it is not validation against independent external galaxy photometry.
