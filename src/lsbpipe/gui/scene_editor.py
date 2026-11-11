@@ -550,7 +550,8 @@ def run_scene_psf0_foreground_probe(
                 dataset["native_hard"],
                 source_xy=(sx,sy), target_xy=(tx,ty),
                 measured_fwhm_pix=measured,
-                other_catalog_centres=neighbors))
+                other_catalog_centres=neighbors,
+                candidate_component_indices=component_indices))
     return dict(
         output,**{k:v for k,v in probe.items()
                   if k not in output or k == "status"},
