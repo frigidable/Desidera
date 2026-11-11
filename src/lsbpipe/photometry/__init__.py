@@ -58,3 +58,18 @@ __all__ += [
     "PSF0Config", "PSF0Star", "PSF0Result",
     "build_empirical_coadd_psf", "export_psf0_diagnostic",
 ]
+
+
+# Stage 04.0–04.1 read-only finite signed native-aperture measurements.
+# photutils/astropy remain lazy numerical requirements: GUI imports do not
+# acquire a global FITS/photometry dependency or execute measurements.
+from .aperture_flux import (
+    ApertureGeometryICRS, ApertureSkyScenario, ApertureProvenance,
+    ApertureFluxRecord, PixelEllipse,
+    project_icrs_ellipse_to_native, measure_native_aperture,
+)
+__all__ += [
+    "ApertureGeometryICRS", "ApertureSkyScenario", "ApertureProvenance",
+    "ApertureFluxRecord", "PixelEllipse",
+    "project_icrs_ellipse_to_native", "measure_native_aperture",
+]
