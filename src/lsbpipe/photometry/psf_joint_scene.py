@@ -790,7 +790,8 @@ P21_MIN_ANTIPODAL_PAIRS = 30
 
 def audit_same_project_foreground_sector_profile(
         image, invvar, native_hard, *, source_xy, target_xy,
-        measured_fwhm_pix, other_catalog_centres=()):
+        measured_fwhm_pix, other_catalog_centres=(),
+        candidate_component_indices=None):
     """Read-only directional star/sky comparison strictly on the loaded image.
 
     Use fixed 90-degree cones facing / opposing the target, five radial
@@ -803,7 +804,7 @@ def audit_same_project_foreground_sector_profile(
     Failed or catalogue-crowded tiles are not replaced using their values.
     """
     base = {
-        "schema": "desidera.scene.project-only-foreground-sector/2",
+        "schema": "desidera.scene.project-only-foreground-sector/3",
         "status": "NOT_MEASURED",
         "science_adopted": False,
         "only_current_project_loaded_native_image": True,
@@ -811,6 +812,7 @@ def audit_same_project_foreground_sector_profile(
         "original_pixels_modified": False,
         "absolute_stellar_wings_identified": False,
         "galaxy_light_loss_measured": False,
+        "draft_isophote_is_not_true_galaxy_boundary": True,
         "background_galaxy_free_certified": False,
         "noise_covariance_calibrated": False,
         "fixed_radial_rings_measured_fwhm": [
@@ -858,6 +860,21 @@ def audit_same_project_foreground_sector_profile(
     rings = P21_SECTOR_RINGS_FWHM
     cos_limit = math.cos(math.pi/4.)
     rows, columns = a.shape
+    candidate_mask = None
+    if candidate_component_indices is not None:
+        ids = np.asarray(candidate_component_indices)
+        if (ids.ndim != 1 or ids.dtype.kind not in "iu" or
+                np.any(ids < 0) or np.any(ids >= a.size)):
+            raise ValueError("Invalid current-project isophote pixel indices")
+        candidate_mask = np.zeros(a.shape, dtype=bool)
+        candidate_mask.ravel()[ids] = True
+    base["conditional_isophote_component_status"] = (
+        "DRAFT_LOCAL_DETECTED_COMPONENT_NOT_PHYSICAL_GALAXY"
+        if candidate_mask is not None else
+        "NOT_MEASURED_NO_CURRENT_ISOPHOTE_PROPOSAL")
+    base["candidate_component_pixel_count"] = (
+        int(np.count_nonzero(candidate_mask))
+        if candidate_mask is not None else None)
 
     def measure(cx, cy, catalog_centres):
         x0, y0 = int(round(cx))-half, int(round(cy))-half
@@ -900,6 +917,15 @@ def audit_same_project_foreground_sector_profile(
         mirrored_radius = radius[mirrored_y, mirrored_x]
         mirrored_away = away[mirrored_y, mirrored_x]
         reflected_pixels = patch[mirrored_y, mirrored_x]
+        # Only the SOURCE receives the opt-in same-project candidate audit.
+        # Controls remain fixed-sky locations, without galaxy identification.
+        source_candidate = (
+            candidate_mask[y0:y1, x0:x1]
+            if candidate_mask is not None and cx == sx and cy == sy
+            else None)
+        reflected_candidate = (
+            source_candidate[mirrored_y, mirrored_x]
+            if source_candidate is not None else None)
 
         def median_in(low, high, direction):
             selected = (usable & direction & (radius >= low)
@@ -935,9 +961,34 @@ def audit_same_project_foreground_sector_profile(
                        & (mirrored_radius >= low)
                        & (mirrored_radius < high))
             n_matched = int(matched.sum())
+            paired_delta = patch-reflected_pixels
             paired_difference = (
-                float(np.median((patch-reflected_pixels)[matched]))
+                float(np.median(paired_delta[matched]))
                 if n_matched >= P21_MIN_ANTIPODAL_PAIRS else None)
+            component_audit = {}
+            if source_candidate is not None:
+                pair_touches_draft = (
+                    matched & (source_candidate | reflected_candidate))
+                pair_outside_draft = (
+                    matched & ~source_candidate & ~reflected_candidate)
+                n_touches = int(pair_touches_draft.sum())
+                n_outside = int(pair_outside_draft.sum())
+                component_audit = {
+                    "n_toward_geometric_pixels_in_draft_component":
+                        int((in_ring & toward & source_candidate).sum()),
+                    "n_toward_valid_pixels_in_draft_component":
+                        int((in_ring & toward & usable &
+                             source_candidate).sum()),
+                    "n_matched_pairs_touching_draft_component": n_touches,
+                    "n_matched_pairs_outside_draft_component": n_outside,
+                    "paired_median_touching_draft_component_nMgy_pixel":
+                        (float(np.median(paired_delta[pair_touches_draft]))
+                         if n_touches >= P21_MIN_ANTIPODAL_PAIRS else None),
+                    "paired_median_outside_draft_component_nMgy_pixel":
+                        (float(np.median(paired_delta[pair_outside_draft]))
+                         if n_outside >= P21_MIN_ANTIPODAL_PAIRS else None),
+                    "outside_draft_does_not_mean_no_galaxy_light": True,
+                }
             report.append({
                 "radius_in_measured_fwhm": [low,high],
                 "n_geometrically_available_facing_pixels": total_facing,
@@ -958,6 +1009,7 @@ def audit_same_project_foreground_sector_profile(
                 "antipodal_paired_difference_median_nMgy_per_pixel":
                     paired_difference,
                 "antipodal_paired_native_geometry_not_calibrated": True,
+                **component_audit,
                 "toward_median_nMgy_per_pixel": facing,
                 "away_median_nMgy_per_pixel": opposite,
                 "toward_minus_away_nMgy_per_pixel": difference,
@@ -1057,6 +1109,7 @@ def audit_same_project_foreground_sector_profile(
         status="SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY",
         source_to_target_centre_measured_fwhm=float(dist/fwhm),
         source=star,
+        candidate_component_is_draft_only=True,
         n_source_rings_with_mask_geometry_comparable=sum(
             row["mask_coverage_interpretation"] ==
             "MASK_GEOMETRY_COMPARABLE_NOT_SCIENCE_VALIDATION"
