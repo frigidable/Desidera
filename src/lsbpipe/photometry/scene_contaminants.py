@@ -369,6 +369,14 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         raise ValueError("Scene, draft and original project identities differ")
     release, region, brick, _ = project.selected_dataset
     band = dataset["band"]
+    # A view may already be loaded when the manifest source changes.
+    # A visible source label is insufficient to prove which original
+    # image was loaded. Refuse a cross-brick, cross-release catalogue.
+    origin_key = dataset.get("source_quartet_key")
+    expected_key = (release, region, brick, band)
+    if origin_key is not None and tuple(origin_key) != expected_key:
+        raise ValueError(
+            "Loaded Scene native quartet differs from current project manifest")
     if (release, region) != ("dr11", "south"):
         raise ValueError(
             "Catalogued-neighbour masking currently supports DR11 South only; "
@@ -522,6 +530,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "project_id": project.project_id,
         "draft_digest": draft.digest,
         "dataset_source": dataset["source"],
+        "source_quartet_key": list(expected_key),
         "band": band,
         "anchor_icrs": anchor,
         "sga_prior_id": sga_prior.sga_id if sga_prior is not None else None,
