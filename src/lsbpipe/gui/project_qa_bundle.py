@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import json
+import math
 import platform
 import sys
 
@@ -217,7 +218,7 @@ def _guard_raw_arrays(value, depth=0):
                     "dtype": str(value.dtype)}
         return value.tolist()
     if isinstance(value, np.generic):
-        return value.item()
+        return _guard_raw_arrays(value.item(), depth+1)
     if isinstance(value, dict):
         return {str(k): _guard_raw_arrays(v, depth+1)
                 for k, v in value.items()}
@@ -225,6 +226,9 @@ def _guard_raw_arrays(value, depth=0):
         return [_guard_raw_arrays(v, depth+1) for v in value]
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return {"diagnostic_nonfinite_float": repr(value),
+                "not_a_measured_scientific_value": True}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return {"unserializable_type": type(value).__name__,
@@ -409,7 +413,7 @@ def build_project_diagnostic_bundle(workspace):
         "scientific_adoption": False,
         "science_hold": True,
         "read_only_snapshot": True,
-        "original_fits_modified": False,
+        "fits_modified_by_copy": False,
         "workers_started_by_copy": False,
         "snapshot_scope": (
             "CURRENT_PROJECT_LOADED_SCENE_BAND_PLUS_INDEPENDENT_PSF_GRIZ"),
@@ -456,8 +460,8 @@ def build_project_diagnostic_bundle(workspace):
     }
     report["diagnostic_findings"] = _diagnostic_findings(
         report["stages"], report["project"])
-    # Only fully JSON-serializable, finite numerical values are permissible.
-    # Failing serialization must NEVER produce a misleading partial copy.
+    # Preserve non-finite diagnostics as explicit JSON-safe failure markers.
+    # Never silently turn NaN/Inf into an adopted numerical measurement.
     report = _guard_raw_arrays(report)
     json.dumps(report, ensure_ascii=False, allow_nan=False)
     return report
