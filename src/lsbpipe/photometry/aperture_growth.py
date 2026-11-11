@@ -257,7 +257,11 @@ def measure_growth_diagnostic(
             residuals.append(deviation)
         else:
             residuals.append(None)
-    # CoG is not forcibly monotonic, and loss of S/N or area is reported.
+    # CoG is not forcibly monotonic. A sequence of entirely masked
+    # apertures is UNDERCONSTRAINED, not a valid partial measurement.
+    n_measured=sum(
+        rec.signed_valid_flux_nMgy is not None for rec in cumulative)
+    complete=n_measured >= 2
     qa={
         "schema":"desidera.photometry.native-growth-diagnostic/1",
         "project_id":provenance.project_id,
@@ -277,13 +281,20 @@ def measure_growth_diagnostic(
         "max_abs_annulus_closure_nMgy":(
             max(abs(v) for v in residuals if v is not None)
             if any(v is not None for v in residuals) else None),
+        "n_measured_direct_apertures":int(n_measured),
+        "n_measured_independent_annuli":int(sum(
+            rec.signed_flux_nMgy is not None for rec in annuli)),
         "independent_coadd_covariance_calibrated":False,
         "masked_galaxy_light_restored":False,
         "aperture_total_magnitude_validated":False,
         "source_membership_scientifically_validated":False,
-        "science_status":"DIAGNOSTIC_MEASURED_PARTIAL_NOT_ADOPTED",
+        "science_status":(
+            "DIAGNOSTIC_MEASURED_PARTIAL_NOT_ADOPTED" if complete
+            else "UNDERCONSTRAINED_INSUFFICIENT_VALID_RADIAL_SAMPLES"),
         "adopted_for_science":False,
-        "warning_flags":[
+        "warning_flags":([
+            "NO_USABLE_RADIAL_CURVE_MEASUREMENT"
+        ] if not complete else []) + [
             "FIXED_ELLIPSE_HYPOTHESIS_NOT_MEASURED_ISOPHOTE",
             "NEIGHBOUR_MEMBERSHIP_PROVISIONAL",
             "COADD_NOISE_COVARIANCE_UNCALIBRATED",
