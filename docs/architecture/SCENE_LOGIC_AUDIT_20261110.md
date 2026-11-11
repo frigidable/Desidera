@@ -1265,3 +1265,91 @@ treatment and independent spatial-sky sensitivity, ideally comparing
 held-out MUSE/HST sources and real native-band pixels. No new code,
 science mask, project edit, dependency, directory or branch is
 authorized by this QA snapshot.
+
+
+---
+
+## Seventeenth-pass PSF-0 foreground bridge: read-only pilot (2026-11-11)
+
+Implementation reuses the **existing** per-native-band PSF-0 from
+`src/lsbpipe/photometry/psf_empirical.py` and the immutable archive
+in `analyses/psf-pilots`; no new PSF builder, calibration,
+project directory or Git branch is introduced. PSF-0 is already
+integrated in `main`; this work remains in Scene & Masks Draft PR #84.
+
+**Motivation, Leo P:** real fixed-radius ablation identifies
+`dr11/south/1554p180/OBJID=2035` as the dominant candidate
+affecting the provisional connected component (8,062 component
+pixels reappear without its geometric Gaia mask).
+Source registry establishes `Tractor TYPE=PSF`,
+Gaia DR3 `623919492384922624`, `G=15.0252`,
+parallax `1.0881 mas` (~30.7 sigma, catalogue evidence),
+separation from the Leo P reference centre `19.8706"`,
+and g-band Tractor model flux `607.4 nMgy`.
+These are **not** a calibrated stellar PSF amplitude, membership
+assignment or galaxy light-loss estimate.
+
+**Existing g PSF-0 context:** an experimental finite coadd kernel
+with measured native FWHM approximately 5.137 px was previously
+reported; previous QA is not a wing-validated or science-adopted
+wide-angle PSF. For the 81-pixel PSF-0 stamp,
+the finite square's half-width is 40 px: a star–target separation
+on the order of 76 px lies **outside the measured kernel**.
+Extrapolating its faint-light halo to the target centre is prohibited.
+
+**New strictly optional GUI experiment:** expand
+Scene → Source evidence, search `2035`, select its Gaia foreground
+row and press **Probe selected Gaia star · saved PSF-0**.
+It reads the historical PSF-0 FITS and QA through
+`read_saved_psf0_bands`, which re-verifies the original four
+band-specific native FITS SHA-256s, PSF FITS checksum, kernel lineage,
+recipe and, where present, Gaia/Tractor catalogue SHA.
+An absent/stale stored g PSF returns
+`SAVED_VERIFIED_PSF0_UNAVAILABLE`; it never generates a new
+kernel, uses Tractor PSF as a fallback, or writes a project snapshot.
+
+**Fit contract (diagnostic, not photometric):**
+- source must be selected explicitly from the current native
+  Tractor inventory, TYPE=PSF, Gaia reference and astrometric
+  foreground evidence; source coordinates must agree with native WCS.
+- fixed already-normalized finite PSF-0 kernel and measured FWHM;
+  original unmodified native image, inverse variance and hard validity.
+- fit-star pixels at 0.8–2.5 measured FWHM and local sky-control
+  pixels at 4–4.5 FWHM; reserve **2.5–4 FWHM** as fully held-out
+  residual inspection, with eight azimuthal octants.
+- run both constant and planar free-sky nuisance hypotheses
+  with nonnegative frozen-kernel amplitude, all on the same valid
+  native pixels. The model never changes the empirical PSF.
+- reject truncated native patches, insufficient fit/holdout pixels,
+  numerically unidentifiable amplitudes, and other catalogued
+  source centres closer than 2.8 FWHM. More distant neighbours
+  remain an explicitly unknown wing-contamination risk.
+- if an existing current-band *provisional* component is present,
+  report the fitted finite-kernel overlap with its native pixel
+  indices; this is a conditional **star-model** quantity, not
+  measured galaxy flux or galaxy-light loss.
+- report source PSF lineage, current-band recipe/kernel SHA,
+  measured FWHM, Tractor fingerprint, native source/target separation,
+  fit and held-out residual metadata, finite-support overlap,
+  and diagnostic failure reasons in `Copy Scene QA` under
+  `psf0_foreground_probe`; no raw image arrays exported.
+
+**Scientific limitations:** local sky is not independently
+validated; faint galaxy wings/young stars may contaminate its
+training annuli; saturated native centres remain rejected by
+validity; no correlated-noise covariance, wide-angle halo,
+PSF spatial variation, missing-light correction or independent
+stellar holdout calibration can be inferred from this local fit.
+The numerical held-out RMS is not a statistical significance,
+and an apparent improvement is not proof that the distant halo
+is correct. The measured g PSF-0 does not support extrapolating
+OBJID 2035's wings to the Leo P reference centre.
+
+**Disposition:** diagnostics **READ_ONLY**, `SCIENCE HOLD`.
+No automatic foreground subtraction or mask replacement, no
+change to the PSF-0 full-research audit opt-in defaults, no
+photometry gate relaxation. Next step is to run the actual
+source-specific local probe on the user's verified native g FITS,
+then inspect empirical large-radius bright-star P16–P20 data
+against independent blank controls before making any wing or
+missing-light claim.

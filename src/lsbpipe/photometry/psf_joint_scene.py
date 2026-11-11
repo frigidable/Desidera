@@ -568,3 +568,208 @@ def audit_fixed_psf_joint_scenes(
         "not_used_to_select_psf_recipe_or_science_thresholds": True,
         "science_adopted": False,
     }
+
+
+
+def audit_finite_psf0_foreground(
+        image, invvar, native_hard, *, kernel, source_xy, target_xy,
+        measured_fwhm_pix, source_id, catalog_flux_nMgy=None,
+        other_catalog_centres=(), component_indices=None):
+    """Read-only local *finite* PSF-0 star probe, never wing subtraction.
+
+    A source-anchored fit uses two predeclared sky hypotheses. Training
+    consists of 0.8..2.5 FWHM stellar pixels and 4..4.5 FWHM sky-control
+    pixels; 2.5..4 FWHM is reserved as a held-out check. The locally
+    normalized coadd ePSF is immutable. Neither hypothesis estimates
+    flux outside that kernel, true stellar wings or target missing light.
+    """
+    schema = "desidera.scene.psf0-foreground-finite-probe/1"
+    base = {
+        "schema": schema, "source_id": str(source_id),
+        "status": "UNASSESSED",
+        "science_adopted": False, "psf_wings_validated": False,
+        "background_validated": False, "correlated_noise_validated": False,
+        "source_light_subtracted": False, "original_pixels_modified": False,
+        "physical_target_flux_loss_measured": False,
+        "model_support_beyond_stored_psf": "UNKNOWN_NOT_EXTRAPOLATED",
+        "training_fwhm_intervals": [[0.8, 2.5], [4., 4.5]],
+        "holdout_fwhm_interval": [2.5, 4.],
+        "sky_hypotheses": ["constant", "planar"],
+        "warning": ("An experimental empirical coadd core is not a calibrated "
+                    "bright-star wide-angle PSF. No science-mask, sky or "
+                    "photometry update follows from this diagnostic."),
+    }
+    a, iv, hard = (np.asarray(image, dtype=float),
+                   np.asarray(invvar, dtype=float),
+                   np.asarray(native_hard, dtype=bool))
+    k = np.asarray(kernel, dtype=float)
+    if (a.ndim != 2 or iv.shape != a.shape or hard.shape != a.shape or
+            k.ndim != 2 or k.shape[0] != k.shape[1] or
+            k.shape[0] < 15 or k.shape[0] % 2 != 1 or
+            not np.isfinite(k).all() or (k < 0).any() or
+            not np.isclose(k.sum(), 1., rtol=1e-8, atol=1e-8)):
+        raise ValueError("Native arrays or restored normalized PSF0 invalid")
+    try:
+        sx, sy = map(float, source_xy)
+        tx, ty = map(float, target_xy)
+        fwhm = float(measured_fwhm_pix)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Invalid source, target or PSF0 geometry") from exc
+    if not (all(math.isfinite(z) for z in (sx, sy, tx, ty, fwhm))
+            and 2. <= fwhm <= 25. and bool(source_id)):
+        raise ValueError("Invalid measured PSF0 FWHM or coordinates")
+    half_kernel = (k.shape[0]-1)//2
+    offset = float(math.hypot(sx-tx, sy-ty))
+    base.update(
+        measured_fwhm_native_pix=fwhm,
+        finite_kernel_width_pix=int(k.shape[0]),
+        finite_kernel_half_width_native_pix=int(half_kernel),
+        star_to_target_centre_native_pix=offset,
+        source_xy_native_pix=[sx, sy],
+        target_xy_native_pix=[tx, ty],
+        catalog_flux_nMgy=(float(catalog_flux_nMgy)
+                           if _finite_float(catalog_flux_nMgy) is not None
+                           else None),
+        galaxy_centre_outside_finite_kernel_square=bool(
+            abs(sx-tx) > half_kernel or abs(sy-ty) > half_kernel),
+        galaxy_centre_stellar_wing_flux_nMgy_pixel=None,
+    )
+    if half_kernel < math.ceil(4.5*fwhm)+2:
+        return dict(base, status="FINITE_KERNEL_TOO_SMALL_FOR_HELDOUT_TEST")
+    half = int(math.ceil(4.5*fwhm)+2)
+    x0, y0 = int(np.rint(sx))-half, int(np.rint(sy))-half
+    n = 2*half+1
+    if x0 < 0 or y0 < 0 or x0+n > a.shape[1] or y0+n > a.shape[0]:
+        return dict(base, status="FULL_NATIVE_STAR_PATCH_OUTSIDE_VIEW")
+    base["probe_width_native_pix"] = n
+    nearby = []
+    for entry in other_catalog_centres:
+        objid, ox, oy = entry
+        if all(math.isfinite(float(z)) for z in (ox,oy)):
+            separation = math.hypot(sx-float(ox), sy-float(oy))
+            if separation < 6*fwhm:
+                nearby.append({
+                    "objid":int(objid),
+                    "distance_native_pix":float(separation),
+                })
+    nearby.sort(key=lambda e:e["distance_native_pix"])
+    base["other_tractor_centres_within_six_fwhm"] = nearby[:20]
+    if nearby and nearby[0]["distance_native_pix"] < 2.8*fwhm:
+        return dict(base, status="CLOSE_CATALOG_NEIGHBOR_PREVENTS_ISOLATED_FIT")
+    yy, xx = np.indices((n,n), dtype=float)
+    xx += x0
+    yy += y0
+    radial = np.hypot(xx-sx, yy-sy)/fwhm
+    stamp = a[y0:y0+n,x0:x0+n]
+    ivs = iv[y0:y0+n,x0:x0+n]
+    usable = (~hard[y0:y0+n,x0:x0+n] &
+              np.isfinite(stamp) & np.isfinite(ivs) & (ivs > 0))
+    train = usable & (((radial >= .8) & (radial < 2.5)) |
+                      ((radial >= 4.) & (radial <= 4.5)))
+    held = usable & (radial >= 2.5) & (radial < 4.)
+    base["native_training_pixels"] = int(train.sum())
+    base["native_heldout_pixels"] = int(held.sum())
+    base["native_training_valid_fraction"] = float(
+        train.sum()/max(1, np.count_nonzero(
+            ((radial >= .8) & (radial < 2.5)) |
+            ((radial >= 4.) & (radial <= 4.5)))))
+    base["native_heldout_valid_fraction"] = float(
+        held.sum()/max(1,np.count_nonzero(
+            (radial >= 2.5) & (radial < 4.))))
+    if train.sum() < 80 or held.sum() < 80:
+        return dict(base, status="INSUFFICIENT_NATIVE_TRAIN_OR_HELDOUT_PIXELS")
+    template = _shifted_native_kernel(k, xx, yy, sx, sy)
+    if not np.any(template[train] > 0):
+        return dict(base, status="NO_EMPIRICAL_PSF_SUPPORT_IN_TRAINING_RING")
+    # Two fits use IDENTICAL original pixels and a strictly held-out ring.
+    results = {}
+    for sky_name in ("constant", "planar"):
+        if sky_name == "constant":
+            sky_matrix = np.ones((n,n,1),dtype=float)
+        else:
+            sky_matrix = np.stack((
+                np.ones((n,n),dtype=float),
+                (xx-sx)/half, (yy-sy)/half),axis=-1)
+        B = sky_matrix[train]
+        w = np.sqrt(ivs[train])
+        w /= np.median(w)
+        Bw = B*w[:,None]
+        yw = stamp[train]*w
+        pw = template[train]*w
+        q, rank = np.linalg.qr(Bw,mode="reduced")
+        if np.linalg.matrix_rank(rank) != B.shape[1]:
+            return dict(base,status="DEGENERATE_FOREGROUND_SKY_GEOMETRY")
+        projected = pw-q@(q.T@pw)
+        response = yw-q@(q.T@yw)
+        denom = float(projected@projected)
+        if not denom > np.finfo(float).eps*max(1.,float(pw@pw)):
+            return dict(base,status="NON_IDENTIFIABLE_FOREGROUND_PSF_AMPLITUDE")
+        amplitude = max(0.,float((projected@response)/denom))
+        sky = np.linalg.lstsq(Bw,yw-amplitude*pw,rcond=None)[0]
+        sky_null = np.linalg.lstsq(Bw,yw,rcond=None)[0]
+        Bh = sky_matrix[held]
+        observed = stamp[held]
+        model = Bh@sky + amplitude*template[held]
+        model_null = Bh@sky_null
+        held_w = np.sqrt(ivs[held])
+        residual = observed-model
+        residual_null = observed-model_null
+        angle = np.mod(np.arctan2((yy-sy)[held],
+                                  (xx-sx)[held]),2*np.pi)
+        sectors = np.minimum((angle/(np.pi/4)).astype(int),7)
+        octants = [
+            (float(np.median(residual[sectors == octant]))
+             if np.any(sectors == octant) else None)
+            for octant in range(8)]
+        results[sky_name] = {
+            "frozen_finite_psf_amplitude_nMgy":float(amplitude),
+            "sky_at_source_nMgy_pixel":float(sky[0]),
+            "sky_gradient_x_nMgy_pixel_per_pix":(
+                float(sky[1]/half) if len(sky)>1 else None),
+            "sky_gradient_y_nMgy_pixel_per_pix":(
+                float(sky[2]/half) if len(sky)>1 else None),
+            "heldout_weighted_rms_empirical_not_significance":float(
+                np.sqrt(np.mean((residual*held_w)**2))),
+            "heldout_sky_only_weighted_rms_empirical":float(
+                np.sqrt(np.mean((residual_null*held_w)**2))),
+            "heldout_median_residual_nMgy_pixel_by_octant":octants,
+            "same_heldout_pixels_as_other_sky_hypothesis":True,
+        }
+    if not all(math.isfinite(r["frozen_finite_psf_amplitude_nMgy"])
+               for r in results.values()):
+        return dict(base,status="NONFINITE_FOREGROUND_PSF_PROBE")
+    amplitude = results["planar"]["frozen_finite_psf_amplitude_nMgy"]
+    if component_indices is not None:
+        inds = np.asarray(component_indices)
+        if (inds.ndim != 1 or not np.issubdtype(inds.dtype,np.integer)
+                or np.any(inds < 0) or np.any(inds >= a.size)):
+            raise ValueError("Candidate component indices not on native image")
+        cx = inds%a.shape[1]
+        cy = inds//a.shape[1]
+        covered = ((np.abs(cx-sx) <= half_kernel) &
+                   (np.abs(cy-sy) <= half_kernel))
+        if np.any(covered):
+            finite_template = _shifted_native_kernel(
+                k,cx[covered].astype(float),cy[covered].astype(float),sx,sy)
+            in_support = int(np.count_nonzero(finite_template > 0))
+            finite_flux = float(amplitude*np.sum(finite_template))
+        else:
+            in_support = 0
+            finite_flux = 0.
+        base["candidate_component_finite_psf0_probe"] = {
+            "component_pixels":int(inds.size),
+            "pixels_with_positive_finite_kernel":in_support,
+            "model_flux_nMgy_within_positive_finite_kernel":finite_flux,
+            "missing_flux_and_true_physical_star_wings_unconstrained":True,
+            "not_an_estimate_of_galaxy_flux_or_flux_loss":True,
+        }
+    base.update(
+        status="FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED",
+        sky_fit_comparison=results,
+        nearest_catalog_neighbour_distance_native_pix=(
+            nearby[0]["distance_native_pix"] if nearby else None),
+        near_neighbour_wing_risk_unquantified=True,
+        target_light_in_star_fit_region_not_independently_excluded=True,
+        model_subpixel_interpolation_not_exactly_flux_conserving=True,
+    )
+    return base

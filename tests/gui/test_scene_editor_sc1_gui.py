@@ -1803,3 +1803,65 @@ def test_policy_ablation_fixed_radius_exact_pixels_and_starwise_leave_one_out(
         module.run_scene_mask_policy_ablation(
             editor._loaded,project.root,editor.draft,editor._project_target,
             protection_radius_arcsec=1e6)
+
+
+
+def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
+        qtbot,tmp_path,monkeypatch):
+    import lsbpipe.gui.scene_editor as module
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    assert editor.psf0_fg_btn.objectName()=="scene_psf0_foreground_probe"
+    assert not editor.psf0_fg_btn.isEnabled()
+    candidate={
+        "source_id":"dr11/south/1554p600/OBJID=2035",
+        "objid":2035, "x":48., "y":48., "tractor_type":"PSF",
+        "gaia_dr3_source_id":623919492384922624,
+        "foreground_evidence_assessment":
+            "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW",
+    }
+    editor._source_registry={
+        "catalog_sha256":"a"*64,"entries":[candidate]}
+    editor._contamination={
+        "catalog_sha256":"a"*64,"draft_digest":editor.draft.digest}
+    editor._source_registry_visible=[candidate]
+    editor.source_registry_list.blockSignals(True)
+    editor.source_registry_list.addItem("OBJID 2035")
+    editor.source_registry_list.setCurrentRow(0)
+    editor.source_registry_list.blockSignals(False)
+    calls=[]
+    def fake_probe(dataset,root,source,inventory,centre,indices):
+        calls.append((dataset["band"],source["objid"],centre,indices))
+        return {
+            "status":"FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED",
+            "project_id":project.project_id,
+            "source_id":candidate["source_id"],
+            "source_objid":2035,"dataset_source":dataset["source"],
+            "band":"g","tractor_catalog_sha256":"a"*64,
+            "measured_fwhm_native_pix":5.137,
+            "star_to_target_centre_native_pix":76.,
+            "finite_kernel_half_width_native_pix":40,
+            "galaxy_centre_outside_finite_kernel_square":True,
+            "sky_fit_comparison":{
+                "constant":{
+                    "heldout_weighted_rms_empirical_not_significance":1.2},
+                "planar":{
+                    "heldout_weighted_rms_empirical_not_significance":1.1}},
+            "science_adopted":False,"source_light_subtracted":False,
+            "original_pixels_modified":False,
+        }
+    monkeypatch.setattr(module,"run_scene_psf0_foreground_probe",fake_probe)
+    editor._refresh_controls()
+    assert editor.psf0_fg_btn.isEnabled()
+    editor.psf0_fg_btn.click()
+    assert editor._work_kind=="psf_foreground"
+    assert not editor.copy_scene_qa_btn.isEnabled()
+    qtbot.waitUntil(lambda: editor._future is None,timeout=5000)
+    assert calls==[("g",2035,(359.999,60.),None)]
+    assert editor._foreground_psf_result["source_objid"]==2035
+    assert "UNKNOWN" in editor.psf0_fg_status.text()
+    snap=editor._complete_scene_qa_snapshot()
+    assert snap["psf0_foreground_probe"]["source_id"]==candidate["source_id"]
+    assert snap["psf0_foreground_probe"]["science_adopted"] is False
+    editor.set_band("r")
+    assert editor._foreground_psf_result is None
+    assert not editor.psf0_fg_btn.isEnabled()

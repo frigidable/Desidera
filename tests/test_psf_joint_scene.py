@@ -449,3 +449,76 @@ def test_distant_catalog_psf_can_change_core_rss_only_through_global_sky_star_re
         - inner["weighted_squared_residual_full"], abs=1e-9)
     assert inner["gain_partition_is_algebraic_noncausal_with_symmetric_cross_terms"]
     assert result["science_adopted"] is False
+
+
+
+def test_scene_foreground_finite_psf0_is_heldout_and_does_not_extrapolate():
+    from lsbpipe.photometry.psf_joint_scene import (
+        _shifted_native_kernel, audit_finite_psf0_foreground)
+    ny = nx = 201
+    yy, xx = np.indices((ny,nx),dtype=float)
+    k_y,k_x=np.indices((81,81),dtype=float)
+    kernel = np.exp(-.5*((k_x-40)**2+(k_y-40)**2)/2.2**2)
+    kernel /= kernel.sum()
+    kernel.setflags(write=False)
+    star=(95.27,98.38)
+    galaxy=(148.,145.)
+    true_amplitude=820.
+    image = (.035+.0009*(xx-star[0])-.0004*(yy-star[1])+
+             true_amplitude*_shifted_native_kernel(
+                 kernel,xx,yy,*star))
+    original=image.copy()
+    invvar=np.full(image.shape,1e6)
+    hard=np.zeros(image.shape,bool)
+    hard[int(round(star[1])),int(round(star[0]))]=True
+    component=np.array([98*nx+95, 102*nx+101, 151*nx+149],
+                       dtype=np.int64)
+    output=audit_finite_psf0_foreground(
+        image,invvar,hard,kernel=kernel,
+        source_xy=star,target_xy=galaxy,
+        measured_fwhm_pix=2.355*2.2,
+        source_id="dr11/south/1554p180/OBJID=2035",
+        catalog_flux_nMgy=810.,
+        other_catalog_centres=((2010,125.,98.),),
+        component_indices=component)
+    assert output["status"]=="FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED"
+    assert output["galaxy_centre_outside_finite_kernel_square"]
+    assert output["galaxy_centre_stellar_wing_flux_nMgy_pixel"] is None
+    assert output["model_support_beyond_stored_psf"]=="UNKNOWN_NOT_EXTRAPOLATED"
+    assert output["sky_fit_comparison"]["planar"][
+        "frozen_finite_psf_amplitude_nMgy"]==pytest.approx(
+            true_amplitude,rel=.025)
+    assert len(output["sky_fit_comparison"]["constant"][
+        "heldout_median_residual_nMgy_pixel_by_octant"])==8
+    assert output["native_heldout_pixels"]>80
+    assert output["candidate_component_finite_psf0_probe"][
+        "missing_flux_and_true_physical_star_wings_unconstrained"]
+    assert output["science_adopted"] is False
+    assert output["source_light_subtracted"] is False
+    assert output["original_pixels_modified"] is False
+    assert np.array_equal(image,original)
+    assert not kernel.flags.writeable
+
+
+def test_scene_foreground_probe_fails_closed_for_small_kernel_and_close_neighbor():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_finite_psf0_foreground)
+    image=np.ones((151,151),dtype=float)
+    ivar=np.ones_like(image)
+    hard=np.zeros(image.shape,bool)
+    yy,xx=np.indices((31,31))
+    short=np.exp(-.5*((xx-15)**2+(yy-15)**2)/2.**2)
+    short/=short.sum()
+    args=dict(source_xy=(75.,75.),target_xy=(110.,105.),
+              measured_fwhm_pix=5.,source_id="OBJID=2035")
+    out=audit_finite_psf0_foreground(
+        image,ivar,hard,kernel=short,**args)
+    assert out["status"]=="FINITE_KERNEL_TOO_SMALL_FOR_HELDOUT_TEST"
+    wide=np.zeros((81,81),dtype=float)
+    wide[40,40]=1.
+    out=audit_finite_psf0_foreground(
+        image,ivar,hard,kernel=wide,
+        other_catalog_centres=((2010,78.,77.),),**args)
+    assert out["status"]=="CLOSE_CATALOG_NEIGHBOR_PREVENTS_ISOLATED_FIT"
+    assert out["science_adopted"] is False
+    assert out["galaxy_centre_stellar_wing_flux_nMgy_pixel"] is None

@@ -449,6 +449,112 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
 
 
 
+
+def run_scene_psf0_foreground_probe(
+        dataset, project_root, source_entry, source_inventory,
+        center_icrs, component_indices=None):
+    """Use an EXISTING verified per-band PSF-0; never refit or save a PSF.
+
+    Only the original native cutout and immutable restored ePSF are
+    inspected. The GUI runs this source-bound I/O and fit in its worker.
+    An absent, stale or rejected PSF fails closed without a proxy model.
+    """
+    from lsbpipe.photometry.psf_gui_backend import read_saved_psf0_bands
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_finite_psf0_foreground,
+    )
+
+    project = read_object_project(project_root)
+    if (project.project_id != dataset["project_id"] or
+            source_entry.get("tractor_type") != "PSF" or
+            source_entry.get("gaia_dr3_source_id") is None or
+            source_entry.get("foreground_evidence_assessment") !=
+            "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW" or
+            not isinstance(source_inventory,dict)):
+        raise ValueError("Current-project Gaia foreground PSF source required")
+    if not any(source_entry["source_id"] == entry["source_id"]
+               for entry in source_inventory["entries"]):
+        raise ValueError("Selected source absent from current Tractor inventory")
+    source = dataset["source"]
+    band = dataset["band"]
+    output = {
+        "schema":"desidera.scene.psf0-foreground-finite-probe/1",
+        "status":"NOT_RUN",
+        "source_id":source_entry["source_id"],
+        "source_objid":int(source_entry["objid"]),
+        "gaia_dr3_source_id":str(source_entry["gaia_dr3_source_id"]),
+        "project_id":project.project_id,
+        "dataset_source":source,
+        "band":band,
+        "tractor_catalog_sha256":source_inventory.get("catalog_sha256"),
+        "science_adopted":False,
+        "source_light_subtracted":False,
+        "original_pixels_modified":False,
+    }
+    restored = read_saved_psf0_bands(project_root)
+    psf = restored["restored"].get(band)
+    if psf is None:
+        return dict(output,status="SAVED_VERIFIED_PSF0_UNAVAILABLE",
+                    psf0_restore_warnings=restored["warnings"],
+                    warning="Run and save PSF-0 for this native band first.")
+    if (psf["project_id"] != project.project_id or
+            psf["review_band"] != band or
+            psf["status"] != "EXPERIMENTAL_PSF_NOT_ADOPTED" or
+            psf["dataset"] != (*project.selected_dataset[:3],band)):
+        raise ValueError("Stored PSF0 provenance does not match current band")
+    psf_result = psf["result"]
+    catalog_sha = (psf_result.metrics.get("catalog_selection_qa") or {}
+                   ).get("catalog_source_sha256")
+    if (catalog_sha is not None and
+            catalog_sha != source_inventory.get("catalog_sha256")):
+        raise ValueError("PSF0 and scene Tractor catalogue fingerprints differ")
+    geom = (psf_result.metrics.get("core_wings_validation_qa") or {}
+            ).get("core_geometry") or {}
+    measured = geom.get("measured_core_fwhm_axis_geometric_mean_native_pix")
+    if (geom.get("status") != "FINITE_NATIVE_CORE_GEOMETRY_MEASURED" or
+            measured is None):
+        return dict(output,status="PSF0_FINITE_CORE_GEOMETRY_UNAVAILABLE",
+                    warning="PSF0 core failed measured-FWHM QA; no fallback.")
+    wcs = dataset["wcs"]
+    sx, sy = wcs.all_world2pix(
+        float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0)
+    if (not all(math.isfinite(float(v)) for v in (sx,sy)) or
+            math.hypot(float(sx)-float(source_entry["x"]),
+                       float(sy)-float(source_entry["y"])) > .75):
+        raise ValueError("Tractor source coordinates and native WCS disagree")
+    tx, ty = wcs.all_world2pix(*map(float,center_icrs),0)
+    if not all(math.isfinite(float(v)) for v in (tx,ty)):
+        raise ValueError("Target anchor cannot be projected in current WCS")
+    neighbors = tuple(
+        (int(entry["objid"]),float(entry["x"]),float(entry["y"]))
+        for entry in source_inventory["entries"]
+        if entry["source_id"] != source_entry["source_id"]
+        and entry.get("centre_in_native_frame",False)
+        and all(entry.get(k) is not None for k in ("x","y")))
+    probe = audit_finite_psf0_foreground(
+        dataset["data"]["image"],dataset["data"]["invvar"],
+        dataset["native_hard"],kernel=psf_result.kernel,
+        source_xy=(sx,sy),target_xy=(tx,ty),
+        measured_fwhm_pix=measured,source_id=source_entry["source_id"],
+        catalog_flux_nMgy=source_entry.get("band_model_flux_nMgy"),
+        other_catalog_centres=neighbors,
+        component_indices=component_indices)
+    return dict(
+        output,**{k:v for k,v in probe.items()
+                  if k not in output or k == "status"},
+        psf0_lineage_id=psf_result.lineage_id,
+        psf0_recipe_digest=psf["recipe_sha256"],
+        psf0_kernel_sha256=psf_result.report()["kernel_sha256"],
+        psf0_n_train=len(psf_result.training),
+        psf0_n_holdout=len(psf_result.holdout),
+        current_band_psf0_science_accepted=False,
+        source_maskbits=source_entry.get("maskbits"),
+        source_maskbit_names=source_entry.get("maskbits_names"),
+        source_fitbits=source_entry.get("fitbits"),
+        physical_foreground_status="GAIA_ASTROMETRY_CANDIDATE_NOT_FINAL_MEMBERSHIP",
+        explicit_sky_and_wings_science_hold=True)
+
+
 def run_scene_protection_radius_sweep(
         dataset, project_root, draft, center_icrs, *,
         threshold_contrast=2.2, smoothing_pix=4.,
@@ -1010,6 +1116,7 @@ class SceneEditor(QWidget):
         self._source_registry_visible = []
         self._sweep_result = None
         self._policy_ablation_result = None
+        self._foreground_psf_result = None
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -1457,6 +1564,25 @@ class SceneEditor(QWidget):
             "A Tractor component is not a confirmed galaxy member "
             "or foreground contaminant.")
         registry_layout.addWidget(self.source_registry_details)
+        self.psf0_fg_btn = QPushButton(
+            "Probe selected Gaia star · saved PSF-0")
+        self.psf0_fg_btn.setObjectName("scene_psf0_foreground_probe")
+        self.psf0_fg_btn.setToolTip(
+            "Read-only fit of the existing per-band empirical PSF-0 "
+            "on original star pixels, with a reserved holdout annulus "
+            "and constant/planar sky alternatives. Requires a current "
+            "Gaia-astrometry foreground candidate and a SHA-verified "
+            "saved PSF-0. Does NOT extrapolate distant wings, subtract "
+            "pixels or change the science mask.")
+        self.psf0_fg_btn.clicked.connect(
+            self._run_foreground_psf_probe)
+        registry_layout.addWidget(self.psf0_fg_btn)
+        self.psf0_fg_status = QLabel(
+            "No foreground PSF-0 probe. Select a Gaia foreground candidate "
+            "(e.g., Leo P OBJID 2035) and use the saved per-band PSF-0.")
+        self.psf0_fg_status.setObjectName("scene_psf0_foreground_status")
+        self.psf0_fg_status.setWordWrap(True)
+        registry_layout.addWidget(self.psf0_fg_status)
         self.source_registry_copy = QPushButton(
             "Copy filtered evidence as TSV")
         self.source_registry_copy.setObjectName(
@@ -1729,6 +1855,9 @@ class SceneEditor(QWidget):
         self._source_registry_visible = []
         self._sweep_result = None
         self._policy_ablation_result = None
+        self._foreground_psf_result = None
+        self.psf0_fg_status.setText(
+            "Foreground PSF-0 probe invalidated by project/band switch.")
         self.radius_sweep_status.setText(
             "Radius comparison invalidated by project/band switch.")
         self.policy_ablation_status.setText(
@@ -1810,6 +1939,8 @@ class SceneEditor(QWidget):
                 self._accept_radius_sweep_result(result)
             elif kind == "policy_ablation":
                 self._accept_mask_policy_ablation_result(result)
+            elif kind == "psf_foreground":
+                self._accept_foreground_psf_probe(result)
             else:
                 self._accept_dataset(result)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError,
@@ -1839,6 +1970,11 @@ class SceneEditor(QWidget):
                 self.policy_ablation_status.setText(
                     "Read-only mask policy ablation FAILED: "
                     + str(exc) + ". Nothing was saved.")
+            elif kind == "psf_foreground":
+                self._foreground_psf_result = None
+                self.psf0_fg_status.setText(
+                    "Read-only foreground PSF-0 probe FAILED: "
+                    + str(exc) + ". No model subtraction or mask change.")
             else:
                 self.status.setText(
                     f"Original FITS scene could not be displayed: {exc}")
@@ -1896,6 +2032,10 @@ class SceneEditor(QWidget):
                 self.graphics.removeItem(self._isophote_preview)
             self._isophote_preview = None
         self._isophote_proposal = None
+        self._foreground_psf_result = None
+        self.psf0_fg_status.setText(
+            "No current PSF-0 component-overlap probe; run explicitly "
+            "after checking the source evidence.")
         for item in self._sga_shred_paths:
             if item.scene() is self.graphics:
                 self.graphics.removeItem(item)
@@ -1930,6 +2070,9 @@ class SceneEditor(QWidget):
         self._contamination = None
         self._source_registry = None
         self._source_registry_visible = []
+        self._foreground_psf_result = None
+        self.psf0_fg_status.setText(
+            "Foreground PSF-0 probe invalidated by source-mask changes.")
         self.source_registry_list.clear()
         self.source_registry_status.setText(
             "Source evidence invalidated. Prepare masks for this "
@@ -2352,6 +2495,98 @@ class SceneEditor(QWidget):
             + lead + " Full pixel comparisons in Copy Scene QA. "
             "NOT galaxy-light loss; NOTHING ADOPTED.")
 
+
+    def _run_foreground_psf_probe(self):
+        """Fit a selected foreground star only against saved finite PSF-0."""
+        if (self._loaded is None or self._project_root is None or
+                self._future is not None or self._source_registry is None or
+                self._contamination is None or self._draft is None):
+            return
+        row = self.source_registry_list.currentRow()
+        if not 0 <= row < len(self._source_registry_visible):
+            return
+        entry = self._source_registry_visible[row]
+        if (entry.get("tractor_type") != "PSF" or
+                entry.get("gaia_dr3_source_id") is None or
+                entry.get("foreground_evidence_assessment") !=
+                "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW"):
+            self.psf0_fg_status.setText(
+                "Select a Gaia-astrometry foreground PSF candidate.")
+            return
+        if (self._contamination.get("catalog_sha256") !=
+                self._source_registry.get("catalog_sha256") or
+                self._contamination.get("draft_digest") != self._draft.digest):
+            self.psf0_fg_status.setText(
+                "Stale Tractor or scene draft; prepare masks again.")
+            return
+        centre = (self._isophote_center_icrs
+                  if self._isophote_center_icrs is not None
+                  else self._project_target)
+        if centre is None:
+            return
+        proposal = self._isophote_proposal
+        indices = None
+        if (proposal is not None and
+                proposal.get("project_id") == self._project_id and
+                proposal.get("source") == self._loaded["source"] and
+                proposal.get("draft_digest") == self._draft.digest):
+            indices = proposal["proposal"].component_indices
+        self._foreground_psf_result = None
+        self._future = self._executor.submit(
+            run_scene_psf0_foreground_probe,
+            self._loaded, str(self._project_root), dict(entry),
+            self._source_registry, centre, indices)
+        self._work_kind = "psf_foreground"
+        self._active_generation = self._load_generation
+        self.psf0_fg_status.setText(
+            f"Checking stored PSF-0 hashes and native pixels for "
+            f"OBJID {entry['objid']} in the background… "
+            "No image, draft or science model changes.")
+        self._poll_timer.start()
+        self._refresh_controls()
+
+    def _accept_foreground_psf_probe(self, result):
+        """Never accept worker evidence from another native source."""
+        if (self._loaded is None or self._source_registry is None or
+                self._contamination is None or self._draft is None or
+                result.get("project_id") != self._project_id or
+                result.get("dataset_source") != self._loaded["source"] or
+                result.get("band") != self._band or
+                result.get("tractor_catalog_sha256") !=
+                self._source_registry.get("catalog_sha256") or
+                self._contamination.get("draft_digest") != self._draft.digest or
+                not any(e["source_id"] == result.get("source_id")
+                        for e in self._source_registry["entries"])):
+            raise ValueError("Stale PSF0 foreground source/project evidence")
+        self._foreground_psf_result = result
+        status = result["status"]
+        if status != "FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED":
+            self.psf0_fg_status.setText(
+                f"OBJID {result['source_objid']}: {status}. "
+                "No fallback, wing extrapolation or science adoption. "
+                "Details in Copy Scene QA.")
+            return
+        profile = result["sky_fit_comparison"]
+        fwhm = result["measured_fwhm_native_pix"]
+        offset = result["star_to_target_centre_native_pix"]
+        outside = result["galaxy_centre_outside_finite_kernel_square"]
+        self.psf0_fg_status.setText(
+            f"READ-ONLY OBJID {result['source_objid']} · saved PSF-0 "
+            f"{self._band.upper()} · measured FWHM={fwhm:.2f} px; "
+            f"star–target={offset:.1f} px; "
+            f"finite kernel half-width="
+            f"{result['finite_kernel_half_width_native_pix']} px. "
+            f"Held-out weighted RMS: constant="
+            f"{profile['constant']['heldout_weighted_rms_empirical_not_significance']:.3g}; "
+            f"plane="
+            f"{profile['planar']['heldout_weighted_rms_empirical_not_significance']:.3g}. "
+            + ("Galaxy centre OUTSIDE finite PSF support: its distant "
+               "stellar-wing flux remains UNKNOWN. " if outside else
+               "Galaxy centre within finite kernel square; physical "
+               "wing contribution still UNVALIDATED. ")
+            + "No subtraction, no sky adoption or science photometry. "
+              "Full provenance in Copy Scene QA.")
+
     def _prepare_neighbour_masks(self):
         if (self._loaded is None or self._future is not None or
                 self._project_root is None or self._draft is None or
@@ -2639,6 +2874,7 @@ class SceneEditor(QWidget):
             "\nNo automatic foreground, background, HII, young-star "
             "or Tractor-shred membership has been inferred.")
         self.source_registry_details.setPlainText(info)
+        self._refresh_controls()
 
 
     def _complete_scene_qa_snapshot(self):
@@ -2719,9 +2955,11 @@ class SceneEditor(QWidget):
                 "radius_sweep_status":self.radius_sweep_status.text(),
                 "mask_policy_ablation_status":
                     self.policy_ablation_status.text(),
+                "psf0_foreground_probe_status":self.psf0_fg_status.text(),
             },
             "protection_radius_sweep":self._sweep_result,
             "mask_policy_ablation":self._policy_ablation_result,
+            "psf0_foreground_probe":self._foreground_psf_result,
             "native_fits": None,
             "sga_lookup": None,
             "sga_selected_prior": None,
@@ -3519,7 +3757,7 @@ class SceneEditor(QWidget):
         # cleared: otherwise the exported QA contains a null experiment
         # even though the expensive worker is still being handled.
         ablation_pending = (
-            self._work_kind == "policy_ablation"
+            self._work_kind in ("policy_ablation", "psf_foreground")
             and self._future is not None)
         self.copy_scene_qa_btn.setEnabled(not ablation_pending)
         if ablation_pending:
@@ -3579,6 +3817,17 @@ class SceneEditor(QWidget):
             self._source_registry is not None)
         self.source_registry_copy.setEnabled(
             bool(self._source_registry_visible))
+        chosen = self.source_registry_list.currentRow()
+        evidence = (self._source_registry_visible[chosen]
+                    if 0 <= chosen < len(self._source_registry_visible)
+                    else None)
+        self.psf0_fg_btn.setEnabled(
+            active and worker_idle and self._contamination is not None
+            and self._source_registry is not None and evidence is not None
+            and evidence.get("tractor_type") == "PSF"
+            and evidence.get("gaia_dr3_source_id") is not None
+            and evidence.get("foreground_evidence_assessment") ==
+                "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW")
         self.iso_show_sga_shreds.setEnabled(
             self._isophote_proposal is not None
             and bool(self._sga_shred_paths))
