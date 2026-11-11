@@ -252,7 +252,10 @@ def _mask_for(name, mask, shape):
     values = np.asarray(mask)
     if values.dtype.kind != "b" or values.shape != shape:
         raise ValueError(name+" requires an explicit same-grid boolean array")
-    return values
+    # Snapshot masks at entry: GUI draft edits must not change the
+    # effective source/membership geometry during a background worker.
+    # NativeBandFrame owns immutable original pixels separately.
+    return np.array(values, dtype=bool, copy=True)
 
 
 def measure_native_aperture(
