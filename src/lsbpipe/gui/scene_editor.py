@@ -2545,7 +2545,9 @@ class SceneEditor(QWidget):
                 proposal.get("project_id") == self._project_id and
                 proposal.get("source") == self._loaded["source"] and
                 proposal.get("draft_digest") == self._draft.digest):
-            indices = proposal["proposal"].component_indices
+            selected = self._selected_isophote()
+            if selected is not None and selected.get("model") is not None:
+                indices = selected["model"].component_indices
         self._foreground_psf_result = None
         self._future = self._executor.submit(
             run_scene_psf0_foreground_probe,
