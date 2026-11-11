@@ -57,6 +57,20 @@ def build_project_aperture_growth(
     if dataset["band"] not in "griz":
         raise ValueError("Unknown native optical band")
     data=dataset["data"]
+    # Scene has already snapshotted the full original FITS bytes in its
+    # loader worker. Stage04 reuses the immutable cutout, never reopens
+    # or rehashes files. Synthetic legacy callers may have no hashes.
+    from lsbpipe.surveys.dataset_integrity import KINDS
+    import re
+    hashes=dataset.get("original_fits_sha256_local")
+    content_hashed=(
+        dataset.get("original_fits_provenance_status") ==
+        "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD"
+        and isinstance(hashes,dict) and set(hashes)==set(KINDS)
+        and all(isinstance(value,str) and re.fullmatch("[0-9a-f]{64}",value)
+                for value in hashes.values()))
+    if hashes is not None and not content_hashed:
+        raise ValueError("Malformed or inconsistent original FITS SHA lineage")
     f=NativeBandFrame(
         image_nMgy=data["image"],
         invvar_nMgy2=data["invvar"],
@@ -67,8 +81,11 @@ def build_project_aperture_growth(
         source_evidence={
             "scene_dataset_source":dataset["source"],
             "project_id":dataset["project_id"],
-            "data_status":"SCENE_ORIGINAL_NATIVE_CUTOUT_NOT_FILE_HASH_VERIFIED",
-            "local_hashes":{},
+            "data_status":(
+                "SCENE_ORIGINAL_CUTOUT_FULL_FILES_HASHED_AT_LOAD"
+                if content_hashed else
+                "SCENE_ORIGINAL_NATIVE_CUTOUT_NOT_FILE_HASH_VERIFIED"),
+            "local_hashes":dict(hashes) if content_hashed else {},
         })
     if f.shape != tuple(dataset["pixel_shape"]):
         raise ValueError("Original Scene native image grid changed")
@@ -140,7 +157,12 @@ def build_project_aperture_growth(
         "sky_method":"zero_additional_correction",
         "sky_stage_science_adopted":False,
         "uses_only_existing_loaded_native_scene":True,
-        "source_fits_hashes_verified":False,
+        "source_fits_hashes_verified":bool(content_hashed),
+        "original_fits_sha256_local":(
+            dict(hashes) if content_hashed else None),
+        "source_fits_hash_scope":(
+            "LOCAL_FULL_ORIGINAL_BYTES_AT_SCENE_LOAD_NOT_ARCHIVE_AUTHENTICITY"
+            if content_hashed else "NOT_AVAILABLE"),
         "original_fits_modified":False,
         "background_subtracted_fits_created":False,
         "masked_light_reconstructed":False,
@@ -158,7 +180,10 @@ def build_project_aperture_growth(
             "FIRST_STAGE04_DIAGNOSTIC_CURVE_NOT_FINAL_GALAXY_PHOTOMETRY",
             "PROJECT_ANCHOR_FIXED_NOT_A_FITTED_PHOTOMETRIC_CENTRE",
             "PROVISIONAL_SOURCE_MEMBERSHIP_CAN_REMOVE_TARGET_KNOTS",
-            "NATIVE_SCENE_CUTOUT_SOURCE_FILE_HASHES_UNVERIFIED",
+            # Full source hashes can be verified at Scene load, but this
+            # cannot establish archive authenticity or science acceptance.
+            *([] if content_hashed else [
+                "NATIVE_SCENE_CUTOUT_SOURCE_FILE_HASHES_UNVERIFIED"]),
             "RESIDUAL_SKY_SYSTEMATICS_NOT_CALIBRATED",
             "COADD_NOISE_COVARIANCE_NOT_CALIBRATED",
             "EMPIRICAL_PSF_WINGS_NOT_SCIENTIFICALLY_VALIDATED",
