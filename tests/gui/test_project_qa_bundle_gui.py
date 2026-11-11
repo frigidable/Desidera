@@ -13,7 +13,8 @@ from PySide6.QtWidgets import QApplication
 from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.gui.project_qa_bundle import (
     build_project_diagnostic_bundle, serialize_project_diagnostic_bundle,
-    _compact_ablation, _compact_apertures, _guard_raw_arrays)
+    _compact_ablation, _compact_apertures, _guard_raw_arrays,
+    _foreground_aperture_overlap_qa, _diagnostic_findings)
 from lsbpipe.photometry.sky_masks import SkyMaskDraft
 
 
@@ -56,7 +57,10 @@ def test_single_copy_includes_all_stages_and_reproducibility(qtbot, tmp_path):
     assert bundle["scientific_adoption"] is False
     assert bundle["workers_started_by_copy"] is False
     assert list(bundle["stages"]) == [
-        "aperture", "background", "psf0", "scene_masks"]
+        "aperture", "background", "foreground_aperture_overlap",
+        "psf0", "scene_masks"]
+    assert bundle["stages"]["foreground_aperture_overlap"]["state"] == (
+        "BLOCKED_BY_MISSING_OR_STALE_STAGE")
     assert bundle["stages"]["scene_masks"]["state"] == "NOT_LOADED"
     assert bundle["stages"]["background"]["state"] == "BLOCKED_BY_SCENE_INPUTS"
     assert bundle["stages"]["aperture"]["state"] == "BLOCKED_BY_SCENE_INPUTS"
@@ -265,3 +269,87 @@ def test_nonfinite_debug_values_and_pixel_grids_never_break_qa_copy():
         "diagnostic_nonfinite_float"] == "nan"
     assert result["signed_negative"] == -8.5
     json.dumps(result, allow_nan=False)
+
+
+def test_gaia_protected_foreground_spike_is_explicit_not_subtracted():
+    """An r-band Leo-P-like Gaia PSF star sits in the 18--25.2 arcsec ring."""
+    inventory = {
+        "status": "SOURCE_EVIDENCE_REVIEW_ONLY",
+        "dataset_id": "dr11/south/1554p180/r",
+        "entries": [
+            {"objid": 2035,
+             "gaia_dr3_source_id": 623919492384922624,
+             "tractor_type": "PSF", "offset_arcsec": 19.8706,
+             "parallax_significance": 30.6958, "parallax_mas": 1.08808,
+             "gaia_g_mag": 15.0252, "band_model_flux_nMgy": 1078.746,
+             "centre_in_target_protection": True,
+             "screening_disposition": "PROTECTED_OVERLAP",
+             "diagnostic_inner_gaia_mask_preview_active": False,
+             "evidence_flags": ["BRIGHT_STAR_WINGS_REVIEW"]},
+            {"objid": 42, "gaia_dr3_source_id": None, "tractor_type": "PSF",
+             "offset_arcsec": 20., "parallax_significance": 0.,
+             "band_model_flux_nMgy": 3000.},
+            {"objid": 43, "gaia_dr3_source_id": 12345, "tractor_type": "PSF",
+             "offset_arcsec": 25., "parallax_significance": 2.,
+             "band_model_flux_nMgy": 4000.},
+        ],
+    }
+    circle = {
+        "geometry_hypothesis": {"name": "anchor_circle"},
+        "radii_arcsec": [7.2, 12., 18., 25.2, 33.6],
+        "cumulative": [
+            {"signed_valid_flux_nMgy": 31.},
+            {"signed_valid_flux_nMgy": 58.},
+            {"signed_valid_flux_nMgy": 100.},
+            {"signed_valid_flux_nMgy": 1226.},
+            {"signed_valid_flux_nMgy": 1382.},
+        ],
+        "independently_integrated_annuli": [
+            {"signed_flux_nMgy": 27.},
+            {"signed_flux_nMgy": 42.},
+            {"signed_flux_nMgy": 1126.},
+            {"signed_flux_nMgy": 156.},
+        ],
+    }
+    stages = {
+        "scene_masks": {"state": "CURRENT_LOADED",
+                        "source_inventory": inventory,
+                        "contaminant_screening": {}},
+        "background": {"state": "CURRENT_DIAGNOSTIC"},
+        "aperture": {"state": "CURRENT_DIAGNOSTIC",
+                     "result": {"dataset_id": "dr11/south/1554p180/r",
+                                "curves": [circle], "systematics_04_3": {}}},
+    }
+    diag = _foreground_aperture_overlap_qa(stages)
+    assert diag["state"] == "FOREGROUND_ASTROMETRY_APERTURE_OVERLAP_QA_ONLY"
+    assert diag["n_qualifying_sources_within_outer_aperture"] == 1
+    star = diag["sources_ranked_by_tractor_model_flux"][0]
+    assert star["objid"] == 2035
+    assert star["ring_inner_arcsec"] == 18.
+    assert star["ring_outer_arcsec"] == 25.2
+    assert star["ring_measured_signed_flux_nMgy"] == 1126.
+    assert star["model_to_signed_ring_flux_ratio_not_a_fraction"] == (
+        pytest.approx(1078.746 / 1126.))
+    assert star["source_centre_protected"]
+    assert diag["science_adopted"] is False
+    assert diag["source_flux_removed"] is False
+    stages["foreground_aperture_overlap"] = diag
+    findings = _diagnostic_findings(stages, {})
+    assert "GAIA_ASTROMETRIC_FOREGROUND_CANDIDATES_INSIDE_APERTURE" in findings
+    assert "PROTECTED_BRIGHT_GAIA_SOURCE_MAY_DOMINATE_APERTURE_RING" in findings
+    # No reference to the user supplied dataset is needed at runtime.
+    json.dumps(diag, allow_nan=False)
+
+
+def test_foreground_aperture_diagnostic_fails_closed_on_stale_band():
+    base = {"scene_masks": {
+                "state": "CURRENT_LOADED",
+                "source_inventory": {
+                    "status": "SOURCE_EVIDENCE_REVIEW_ONLY",
+                    "dataset_id": "dr11/south/1554p180/r", "entries": []}},
+            "aperture": {"state": "CURRENT_DIAGNOSTIC",
+                         "result": {"dataset_id": "dr11/south/1554p180/i",
+                                    "curves": []}}}
+    r = _foreground_aperture_overlap_qa(base)
+    assert r["state"] == "SOURCE_INVENTORY_NOT_CURRENT"
+    assert r["source_flux_removed"] is False
