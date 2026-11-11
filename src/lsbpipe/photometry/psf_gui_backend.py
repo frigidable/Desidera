@@ -34,6 +34,27 @@ LEO_P_CENTER = (155.438012, 18.088025)
 BANDS = ("g", "r", "i", "z")
 KINDS = ("image", "invvar", "nexp", "maskbits")
 
+def _same_target_anchor(current, recorded) -> bool:
+    """Fail closed if a saved PSF was protected around another ICRS centre.
+
+    The target centre is part of the scientific input identity, even if
+    the FITS quartet and the selected brick are unchanged.
+    """
+    try:
+        if len(current) != 2 or len(recorded) != 2:
+            return False
+        ra0, dec0 = map(float, current)
+        ra1, dec1 = map(float, recorded)
+        if not all(math.isfinite(v) for v in (ra0, dec0, ra1, dec1)):
+            return False
+        if not (-90. <= dec0 <= 90. and -90. <= dec1 <= 90.):
+            return False
+        wrapped_ra_difference = (ra0-ra1+180.) % 360. - 180.
+        return abs(wrapped_ra_difference) <= 1e-9 and abs(dec0-dec1) <= 1e-9
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _same_observation_source(current, recorded) -> bool:
     """Saved default band is navigation state, not PSF source identity.
 
@@ -510,6 +531,11 @@ def save_gui_psf0(preview: dict, progress: Callable | None = None) -> str:
     if (project.project_id != preview["project_id"]
             or not _same_observation_source(project.selected_dataset, preview.get("dataset"))):
         raise ValueError("Galaxy project or selected dataset changed; rerun the diagnostic")
+    if (project.field is None or not _same_target_anchor(
+            (project.field.ra_deg, project.field.dec_deg),
+            result.center_target_icrs)):
+        raise ValueError(
+            "Galaxy project target ICRS anchor changed since PSF build; rerun")
     release, region, brick, _ = project.selected_dataset
     if result.dataset_id != f"{release}/{region}/{brick}/{result.dataset_id.split('/')[-1]}":
         raise ValueError("PSF result does not match the Galaxy Workspace source")
@@ -552,7 +578,10 @@ def read_saved_psf0_bands(project_root: str | Path) -> dict:
 
     project = read_object_project(project_root)
     outputs = {"restored": {}, "warnings": {}}
-    if project.selected_dataset is None or project.data_root is None:
+    if (project.selected_dataset is None or project.data_root is None
+            or project.field is None):
+        outputs["warnings"]["project"] = (
+            "Missing source or target ICRS anchor; stored PSFs are not current")
         return outputs
     release, region, brick, _selected_band = project.selected_dataset
     root = project.root / "analyses" / "psf-pilots"
@@ -587,6 +616,11 @@ def read_saved_psf0_bands(project_root: str | Path) -> dict:
                     report.get("status") != "EXPERIMENTAL_PSF_NOT_ADOPTED" or
                     report.get("science_adopted") is not False):
                 raise ValueError("Unrecognized or non-diagnostic PSF report")
+            if not _same_target_anchor(
+                    (project.field.ra_deg, project.field.dec_deg),
+                    report.get("target_icrs_deg")):
+                raise ValueError(
+                    "Saved PSF target ICRS anchor differs from current project")
             identity = str(report["dataset_id"]).split("/")
             if len(identity) != 4 or tuple(identity[:3]) != (release, region, brick):
                 raise ValueError("Stored PSF belongs to a different brick")
