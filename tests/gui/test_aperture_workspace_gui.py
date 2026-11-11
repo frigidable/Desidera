@@ -118,6 +118,10 @@ def test_aperture_source_sha_propagates_into_each_exact_flux_recipe():
     sha={k:(str(i)*64) for i,k in enumerate(
         ("image","invvar","nexp","maskbits"),1)}
     ds["original_fits_sha256_local"]=sha
+    ds["source_quartet_key"]=["dr11","south","1554p180","r"]
+    contam["source_quartet_key"]=list(ds["source_quartet_key"])
+    ds["image_unit_evidence"]="FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"
+    ds["invvar_unit_evidence"]="FITS_INVVAR_BUNIT_CONFIRMED"
     ds["original_fits_provenance_status"]=(
         "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD")
     result=build_project_aperture_growth(
