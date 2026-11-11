@@ -401,3 +401,27 @@ def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
     stages["background"]["result"]["draft_sha256"] = "other"
     assert _conditional_sky_aperture_response_qa(stages)["state"] == (
         "SCENE_OR_BAND_PROVENANCE_MISMATCH")
+
+
+def test_psf_band_navigation_never_discards_loaded_scene(qtbot, tmp_path):
+    widget = _bound_workspace(qtbot, tmp_path)
+    scene = widget.scene_editor
+    scene.set_band("r")
+    scene._loaded = {"band": "r", "source": "native-r"}
+    # The initially selected PSF tab is G; Scene native remains R.
+    assert widget.band_tabs.currentWidget().band.currentData() == "g"
+    widget.stage_tabs.setCurrentWidget(scene)
+    assert scene._band == "r"
+    assert scene._loaded["source"] == "native-r"
+    widget.stage_tabs.setCurrentWidget(widget.stage_tabs.widget(0))
+    widget.band_tabs.setCurrentIndex(2)
+    assert widget.band_tabs.currentWidget().band.currentData() == "i"
+    widget.stage_tabs.setCurrentWidget(scene)
+    assert scene._band == "r"
+    assert scene._loaded["source"] == "native-r"
+    # In an empty Scene the PSF selector is still allowed to initialize
+    # its band, retaining the original first-visit convenience.
+    scene._loaded = None
+    widget.stage_tabs.setCurrentWidget(widget.stage_tabs.widget(0))
+    widget.stage_tabs.setCurrentWidget(scene)
+    assert scene._band == "i"
