@@ -1573,3 +1573,155 @@ no complete P15–P20 results, no validated g PSF-0,
 no evidence for 15.18″ mask-radius fidelity,
 and no galaxy-light loss estimate. `SCIENCE HOLD`;
 no subtraction/mask/photometry gate change authorized.
+
+---
+
+## Twentieth-pass full r-band P15–P20 completed native-brick QA — Leo P (2026-11-11 10:45 UTC)
+
+**Source.** Researcher-supplied `Copy complete QA`,
+`desidera.psf0-griz-comprehensive-debug/1`, generated
+`2026-11-11T10:45:40.033965Z`. Uploaded JSON file SHA-256
+`62f4d68cd667235a2bcbdcec7e258ce6580944f1385c51657d033bef6b489397`,
+15,557,573 bytes; native FITS and full private report not embedded
+in Git. Object/project: Leo P UUID
+`0876bbc4-7405-481b-88a8-0e3486c7be98`;
+`dr11/south/1554p180/r`. The g/i/z entries are not new
+full-research results (g still rejected at selection, i/z
+still `standard_core`).
+
+**Real execution/provenance.** `r` reports
+`postfit_qa_execution.mode = full_research` with all eight
+historical research metrics completed and zero skipped. The
+fixed experimental PSF-0 remained identical to the prior
+source-bound foreground probe: kernel SHA
+`70db7f364c944262185fe5e20dfe28bba9ee995f88cc991bf808e51ac70e7824`,
+recipe SHA
+`25e260fb6e4a2e0ff9d3341a3e24f540b5cce1b4b2b0dcf81bb10951bbcfc611`,
+lineage `1d62ef2d2997fadeb85a410f43f72cfbc61ac61024d23ac768b231385a69b500`;
+17 training stars, five true frozen kernel holdouts,
+native FWHM 4.02927165 px, finite kernel 63×63 px
+(half-width 31 px). The input Tractor fingerprint is the
+same `8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`.
+Across the *complete newly exported report*, neither
+`Tractor OBJID=2035` nor Gaia DR3
+`623919492384922624` is named as an ePSF training/holdout
+star or selected P15–P20 stellar identity. Do not infer the
+specific rejection stage: the P15–P20 bright samples were
+preselected by catalogue criteria, not a complete
+source-by-source exclusion audit for this star.
+
+**P15–P19 cohort/engineering closure.** Native fixed-PSF
+joint scene P15 completed 22/22 fits, including all five
+original PSF holdouts, **but all 22 fits still contained
+unmodelled catalogue sources**; three completed fits had
+PSF neighbours with zero model support. P16 outer profiles:
+21/22 successful under two conditional sky hypotheses,
+including 5/5 PSF holdouts. Independent-of-kernel-identity
+bright-Gaia catalog cohort P16C: 16/16 original native
+profiles; this cohort shares the same DR11 coadd.
+P17 multi-mask experiment: 48/48 preselected catalogue
+sources (16 legacy, 24 new exploratory, eight designated
+new identity holdouts); catalog-shape/sky measurements
+48/48. P18/P19 report
+`BRICK_ONLY_EMPIRICAL_CORE_AND_WING_CONSTRAINTS_COMPLETE`
+as an **engineering completion marker**;
+`scientifically_validated_extended_wings=false` and
+`wide_wing_psf_kernel_constructed=false`. In the full
+48-star P18 16–20 FWHM annulus the median absolute
+sky-conditional radial residual/individual stellar peak
+is `3.8011e-5`, while the median *signed* residual is
+`4.026e-6`; neither is a calibrated wing measurement.
+Five-millimag-level stellar core fitting and
+long-range wing accuracy are different tasks.
+
+**P20 original-brick conditional joint profiles**:
+12 fixed bright stars in the joint fit; four
+predeclared bright-star identity holdouts (ranks
+4, 8, 12, 16). The heldout median absolute prediction
+residual / individual native peak is `1.75723e-5`;
+all four have at least one measured ring, but the
+rank-12 holdout has only **one** comparable radial bin.
+Same-coadd bright holdout is explicitly retrospective,
+not independent external calibration.
+Four leave-one-quadrant-out comparisons have median
+absolute prediction residuals / peak around
+`[1.83e-5, 1.46e-5, 1.55e-5, 2.58e-5]`.
+P20 reselected 16 blank locations over a fixed 4×4
+brick tile grid (four per quadrant, out of 142
+catalog-geometry eligible locations) **after an earlier
+P20 pilot review**. This is not a blindly designed
+external validation cohort. Blank sources may
+include uncatalogued objects.
+
+| Native radius, FWHM | Angular radius at 1.0557″/FWHM | P20 common profile (three skies), relative to individual stellar peak | Blank median absolute false-wing signal, nMgy/pixel |
+|---|---|---|---|
+| 4–6 | 4.22–6.33″ | 1.62440e-4 – 1.62511e-4 | 1.91051e-4 |
+| 6–8 | 6.33–8.45″ | 3.21063e-5 – 3.26382e-5 | 2.05949e-4 |
+| 8–12 | 8.45–12.67″ | 1.54710e-6 – 2.06077e-6 | 1.26774e-4 |
+| 12–16 | 12.67–16.89″ | -1.76830e-6 – -8.86906e-7 | 1.59182e-4 |
+| 16–20 | 16.89–21.11″ | 1.65266e-8 – 5.76303e-7 | 7.00438e-5 |
+| 20–22 | 21.11–23.23″ | 2.54873e-6 – 3.29933e-6 | 1.73005e-4 |
+
+**Do not compare the last two columns as a signal-to-noise
+ratio**: joint profile is divided by stellar peak
+(nMgy/pixel), while the blank control is in absolute
+nMgy/pixel, and its flux matching/covariance is not a
+calibrated hypothesis test. P20 fit includes per-star
+additive sky nuisance terms that anchor but do not
+identify the absolute outer-wing surface-brightness
+level. At 16–20 FWHM the joint conditional signal
+is consistent with a near-zero *sky-subtracted*
+profile under the tested nuisance hypotheses,
+but it cannot establish zero true stellar wings.
+Coadd native blank-pixel lag sensitivity has
+median lag-one correlations about 0.124 (x) and
+0.127 (y); lag-two around -0.074. These contain
+sky structure and unresolved sources, so are **not
+noise-only covariance calibration** or a sigma
+measurement.
+
+**Specific target application.** Gaia/Tractor source
+OBJID 2035 is 75.842 native pixels (=19.871″)
+from Leo P's reference centre in r, i.e.
+**18.82 measured FWHM**, inside P20 16–20 FWHM
+annulus. That annulus is ***outside*** the
+31-pixel stored PSF-0 kernel support and is
+only indirectly studied via other same-brick
+bright stars. The source is embedded within the
+potential Leo P diffuse envelope, so a fitted
+sky annulus can itself absorb galaxy signal.
+There is no valid projected stellar halo
+intensity at the Leo P centre, no validated
+15.18″ Gaia geometric mask, no recovered
+galaxy flux and no externally calibrated
+PSF-wing spatial/brightness extrapolation.
+
+**Scientific disposition.** All eight
+P15–P20 executable diagnostic contracts are now
+empirically **COMPLETED in r**, but the
+scientific validation flags remain
+`psf_wings_validated=false`,
+`noise_covariance_validated=false`,
+`psf_spatial_representativity_validated=false`,
+`stellar_contamination_model_validated=false`,
+`science_adopted=false`.
+P20 is a **feasibility/provenance** experiment,
+not an established PSF-wing detection,
+background prior, or permission for science
+subtraction.
+
+**Prioritized independent gate.** Derive/verify
+original-pixel source-specific wide-angle
+radial profiles for bright Gaia stars matching
+OBJID 2035's flux/quality and location while
+excluding its overlapping Leo P field; obtain
+independent galaxy-free/blank controls across
+additional DR11 bricks, frozen before their
+pixels are inspected; use independent sky
+constraints and injection–recovery for bias and
+correlated-error calibration. Only after these
+tests compare mask, subtraction, and no-subtraction
+strategies for Leo P at the same protected
+radius, separately by band. Do not replace
+science `HOLD` by `PASS` as a consequence
+of engineering QA completeness.
