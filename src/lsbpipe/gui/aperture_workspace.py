@@ -26,6 +26,9 @@ from lsbpipe.photometry.aperture_growth import (
     geometry_hypotheses, predeclared_growth_radii,
     measure_growth_diagnostic,
 )
+from lsbpipe.photometry.aperture_systematics import (
+    diagnose_aperture_systematics,
+)
 from lsbpipe.photometry.contracts import NativeBandFrame
 from lsbpipe.photometry.sky_masks import evaluate_mask_draft
 
@@ -104,6 +107,10 @@ def build_project_aperture_growth(
     measured=sum(
         c["science_status"]=="DIAGNOSTIC_MEASURED_PARTIAL_NOT_ADOPTED"
         for c in curves)
+    systematics = diagnose_aperture_systematics(
+        f, anchor_icrs=target_icrs, provenance=provenance,
+        effective_source_mask=source, manual_exclude=manual,
+        curves=curves)
     result={
         "schema":"desidera.photometry.project-aperture-growth/1",
         "status":(
@@ -142,6 +149,7 @@ def build_project_aperture_growth(
         "psf_science_validated":False,
         "adopted_for_science":False,
         "curves":curves,
+        "systematics_04_3":systematics,
         "n_measurable_geometry_hypotheses":int(measured),
         "warnings":([
             "NO_GEOMETRY_HAS_TWO_VALID_MEASURED_APERTURES"
@@ -495,6 +503,28 @@ class ApertureWorkspace(QWidget):
                 "on an observed *partial* aperture, NOT total light.",
                 "",
             ]
+        systematics = result.get("systematics_04_3")
+        if systematics is not None:
+            sky = systematics["sky_response"]
+            mask = systematics["catalogue_mask_counterfactual"]
+            geom = systematics["geometry_hypothesis_span"]
+            blank = systematics["blank_apertures"]
+            lines.extend([
+                "04.3 · Conditional uncertainty diagnostics — UNADOPTED",
+                "Sky level sensitivity dF/dB0 [native px²]: "
+                + str(sky["dflux_db0_native_pixel2"]),
+                "Sky slope sensitivity dF/dBx, dF/dBy [native px³]: "
+                + str((sky["dflux_dbx_native_pixel3"],
+                       sky["dflux_dby_native_pixel3"])),
+                "Remove provisional catalogue excludes, retain hard/manual: "
+                + str(mask["conditional_delta_nMgy"]) + " nMgy (NOT corrected flux)",
+                "Fixed-geometry hypothesis flux span (NOT 1σ): "
+                + str(geom["span_nMgy"]) + " nMgy",
+                f"Independent blank placements: {blank['n_accepted']}/"
+                f"{blank['n_required']} · {blank['status']}",
+                "Empirical blank covariance is exploratory even when measured.",
+                "",
+            ])
         lines += [
             "SCIENCE HOLD: no missing-area interpolation, no PSF-corrected "
             "total, no calibrated sky/noise covariance.",
