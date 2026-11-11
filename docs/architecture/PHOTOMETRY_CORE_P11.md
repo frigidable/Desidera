@@ -1710,3 +1710,94 @@ separate train/holdout medians and mismatch rejection.
 **Scientific acceptance status remains HOLD.** A passing test suite
 validates the currently encoded contracts and tested synthetic cases;
 it is not validation against independent external galaxy photometry.
+
+
+---
+
+## 2026-11-12 — Original-FITS provenance, unit, and cross-stage lineage gates
+
+A further repository audit identified an actionable gap between the
+full-brick verified PSF-0 lineage and the cutout-based
+Scene/Background/Aperture pipeline.
+
+### New enforced contract
+
+1. On explicit Stage02 `Load original FITS`, the worker resolves the
+   manifest's exact `(release, region, brick, band)` quartet from its
+   existing data root. It records pre-load file sizes and nanosecond
+   modification times; loads the original cutout using the existing
+   strict WCS-aligned, no-padding renderer; and then hashes each of
+   IMAGE, INVVAR, NEXP and MASKBITS as original **whole files**, not
+   displayed cutout arrays. A file replacement during the load causes
+   the result to be withheld. Files are only read, never modified.
+
+2. The *same original IMAGE science HDU* that supplied the pixels must
+   have a nonempty recognized nanomaggy `BUNIT`; an absent or explicitly
+   incompatible IMAGE BUNIT fails closed before photometry. An
+   explicitly incompatible INVVAR BUNIT is also refused. A missing
+   INVVAR BUNIT retains the specifically labeled
+   `INVVAR_UNITS_FROM_SURVEY_DOCUMENTATION_ASSUMPTION`, **not** a
+   measured unit confirmation. The accepted units match the
+   established native-PSF frame loader contract.
+
+3. Stage02's source mask preparation checks the loaded native
+   `source_quartet_key` against the selected project manifest before
+   reading a catalogue; its output carries the same machine key.
+   Stage03 refuses mismatched native-image/Tractor-mask identities.
+   Stage04 refuses mismatches with the project source triplet, native
+   Scene identity, or prepared masks. The GUI's human-readable source
+   label is not trusted as the primary identity.
+
+4. Stage03 and Stage04 expose the verified original SHA-256 fingerprints,
+   input unit evidence, and source key when present. Stage04's
+   exact-aperture recipe hash includes the original file hashes, making
+   changes in source bytes alter the derivative diagnostic identity even
+   with the same pixels, masked geometry, and object name. An
+   inconsistent or unverified hash claim fails closed. Synthetic
+   callers without full source file hashes remain explicitly
+   `NOT_VERIFIED`; they do not receive science approval.
+
+5. The unified `Copy QA` additionally emits
+   `stages.cross_stage_source_lineage`, checking that the current
+   background and aperture outputs were produced using matching
+   original file hashes, native quartet identity, and IMAGE unit
+   evidence. It marks missing or inconsistent evidence rather than
+   retrospectively declaring data accepted.
+
+### Limits and performance
+
+* Hashes establish **local byte identity at the time Scene was loaded**.
+  They are not independent archive authenticity and do not certify
+  upstream DR11 calibration. A file modified *after* loading cannot
+  retroactively alter already copied in-memory pixels; a new Scene
+  load is required to use it.
+* Full-file hashing entails additional read I/O on explicit Stage02
+  loading. It is never triggered by merely opening a tab, creating a
+  `Copy QA` report, fitting the background or measuring apertures.
+* FITS header and SHA validation do **not** validate astrophysical
+  sky subtraction, PSF wings, coadd covariance, masked light, or
+  galaxy membership. `SCIENCE HOLD` remains unchanged.
+* The current Scene viewer retains the existing detailed native
+  image/WCS compatibility gate. Header-unit checks act as an
+  additional science-readiness veto and are not a replacement for
+  full independent survey archive verification.
+
+### Added synthetic regressions
+
+* Four FITS headers with explicit BUNIT and local SHA-256 in a synthetic
+  project, followed by changed IMAGE units and mid-load source-file
+  replacement; ensure missing/invalid provenance never reaches GUI.
+* Exact-aperture SHA receipt changes when a verified original image
+  hash changes without any modification to the pixel integration.
+* Explicit mismatch between loaded native source key, current project
+  catalogue key and Stage04 source triplet is refused.
+* Stage03 rejects mismatched catalogue identities and unverified
+  asserted source hashes.
+* A one-click QA source-lineage comparison detects a changed aperture
+  source fingerprint while preserving other stages and a global
+  `SCIENCE HOLD` flag.
+
+This is a **code and synthetic-regression audit**. Real Leo P FITS
+have not been reloaded in this environment; the new header/hashing
+contract still needs a local GUI acceptance run on the scientist's
+original DR11 quartet.
