@@ -356,15 +356,17 @@ def _diagnostic_findings(stages, project):
         findings.append("SOURCE_MASKS_NOT_PREPARED_IN_CURRENT_SCENE")
     if scene.get("source_band_is_current") is False:
         findings.append("SCENE_BAND_MISMATCH")
-    if scene.get("scene_draft", {}).get("dirty") is True:
+    if (scene.get("scene_draft") or {}).get("dirty") is True:
         findings.append("UNSAVED_SCENE_DRAFT")
     ablation = scene.get("mask_policy_ablation")
     if ablation and isinstance(ablation.get("scenarios"), list):
         lookup = {row.get("policy"): row for row in ablation["scenarios"]}
         none, both = lookup.get("none"), lookup.get("both")
         if none and both and none.get("component_pixels") and both.get("component_pixels") is not None:
-            if abs(none["component_pixels"] - both["component_pixels"]) /
-                    max(1, none["component_pixels"]) > .2:
+            relative_change = (abs(none["component_pixels"] -
+                                   both["component_pixels"]) /
+                               max(1, none["component_pixels"]))
+            if relative_change > .2:
                 findings.append("EXPERIMENTAL_MASKS_CHANGE_COMPONENT_AREA_OVER_20_PERCENT")
     if sky.get("state") != "CURRENT_DIAGNOSTIC":
         findings.append("RESIDUAL_SKY_NO_CURRENT_MEASUREMENT")
