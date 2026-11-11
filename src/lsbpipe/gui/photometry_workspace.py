@@ -24,6 +24,7 @@ from lsbpipe.gui.psf0_panel import PSF0Panel
 from lsbpipe.gui.psf0_full_qa import detailed_band_report
 from lsbpipe.gui.scene_editor import SceneEditor
 from lsbpipe.gui.sky_workspace import SkyWorkspace
+from lsbpipe.gui.aperture_workspace import ApertureWorkspace
 
 
 
@@ -278,9 +279,15 @@ class PhotometryWorkspace(QWidget):
         self.sky_stage = SkyWorkspace(self.scene_editor, self.stage_tabs)
         self.stage_tabs.addTab(self.sky_stage, "3 · Background")
         self.stage_tabs.setTabToolTip(
-            2, "Robust residual sky candidates on the existing native Scene "
-               "with explicitly disjoint training/holdout regions. "
-               "All models remain unadopted.")
+            2, "Automatically selected same-project residual-sky controls; "
+               "only diagnostic models, no scientific sky adoption.")
+        self.aperture_stage = ApertureWorkspace(
+            self.scene_editor, self.sky_stage, self.stage_tabs)
+        self.stage_tabs.addTab(
+            self.aperture_stage, "4 · Aperture Photometry")
+        self.stage_tabs.setTabToolTip(
+            3, "Exact observed finite-aperture fluxes, independent elliptical "
+               "annuli and curve-of-growth diagnostics. No adopted total.")
         root.addWidget(self.stage_tabs, 1)
         self._last_stage_widget = psf_stage
         self.stage_tabs.currentChanged.connect(self._stage_changed)
@@ -294,8 +301,9 @@ class PhotometryWorkspace(QWidget):
     def current_navigation(self):
         current = self.stage_tabs.currentWidget()
         stage = ("scene" if current is self.scene_editor
-                 else "sky" if current is self.sky_stage else "psf0")
-        if stage in ("scene", "sky"):
+                 else "sky" if current is self.sky_stage
+                 else "aperture" if current is self.aperture_stage else "psf0")
+        if stage in ("scene", "sky", "aperture"):
             band = self.scene_editor.band.currentData()
         else:
             panel = self.band_tabs.currentWidget()
@@ -310,7 +318,7 @@ class PhotometryWorkspace(QWidget):
 
     def restore_navigation(self, *, stage, band):
         """Restore user location only; never run PSF/scene FITS workers."""
-        if stage not in ("psf0", "scene", "sky") or band not in ("g", "r", "i", "z"):
+        if stage not in ("psf0", "scene", "sky", "aperture") or band not in ("g", "r", "i", "z"):
             raise ValueError("Unknown photometry resume location")
         self._suppress_navigation = True
         try:
@@ -323,9 +331,12 @@ class PhotometryWorkspace(QWidget):
             self.stage_tabs.setCurrentWidget(
                 self.scene_editor if stage == "scene"
                 else self.sky_stage if stage == "sky"
+                else self.aperture_stage if stage == "aperture"
                 else self.stage_tabs.widget(0))
             if stage == "sky":
                 self.sky_stage.refresh_context()
+            if stage == "aperture":
+                self.aperture_stage.refresh_context()
         finally:
             self._suppress_navigation = False
 
@@ -337,12 +348,15 @@ class PhotometryWorkspace(QWidget):
         # Synchronize from PSF only when LEAVING the PSF tab. Returning
         # from 03 Background to 02 Scene must preserve the loaded native
         # band, annotations and prepared masks, regardless of PSF tab.
-        if previous is psf and current in (self.scene_editor, self.sky_stage):
+        if previous is psf and current in (
+                self.scene_editor, self.sky_stage, self.aperture_stage):
             band = self.band_tabs.currentWidget().band.currentData()
             if band in ("g", "r", "i", "z"):
                 self.scene_editor.set_band(band)
         if current is self.sky_stage:
             self.sky_stage.refresh_context()
+        if current is self.aperture_stage:
+            self.aperture_stage.refresh_context()
         # Opening Scene is deliberately read-only: local FITS load needs
         # the explicit Load original FITS button. Mask revision saving
         # also requires a separate explicit researcher action.
@@ -553,6 +567,7 @@ class PhotometryWorkspace(QWidget):
         # Re-entering the same project/photometry view is non-destructive.
         self.scene_editor.bind_project(self._project_root)
         self.sky_stage.refresh_context()
+        self.aperture_stage.refresh_context()
         for panel in self.psf0_panels.values():
             if force and panel._project_root is not None:
                 panel._project_root = self._project_root
