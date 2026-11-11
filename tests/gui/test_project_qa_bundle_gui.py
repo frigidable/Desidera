@@ -232,6 +232,8 @@ def test_loaded_synthetic_scene_collects_current_sky_and_aperture_then_vetoes_st
         "diagnostic_findings"]
     assert "SIGNED_NEGATIVE_ANNULAR_FLUX_REQUIRES_SKY_QA" in report[
         "diagnostic_findings"]
+    assert "APERTURE_VALID_AREA_BELOW_90_PERCENT" not in report[
+        "diagnostic_findings"]
 
     # An asynchronous band change must never let the old Stage 03/04
     # results pass as evidence for the newly selected native scene.
@@ -251,6 +253,7 @@ def test_nonfinite_debug_values_and_pixel_grids_never_break_qa_copy():
         "sky_nonfinite": float("nan"),
         "annulus_nonfinite": np.float64("-inf"),
         "raw_fits_pixel_grid": np.ones((400, 400)),
+        "small_array_with_nan": np.array([1., np.nan]),
         "signed_negative": -8.5,
     }
     result = _guard_raw_arrays(incoming)
@@ -258,5 +261,7 @@ def test_nonfinite_debug_values_and_pixel_grids_never_break_qa_copy():
     assert result["annulus_nonfinite"]["diagnostic_nonfinite_float"] == "-inf"
     assert result["raw_fits_pixel_grid"]["omitted_raw_array"]
     assert result["raw_fits_pixel_grid"]["shape"] == [400, 400]
+    assert result["small_array_with_nan"][1][
+        "diagnostic_nonfinite_float"] == "nan"
     assert result["signed_negative"] == -8.5
     json.dumps(result, allow_nan=False)
