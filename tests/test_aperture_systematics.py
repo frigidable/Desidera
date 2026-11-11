@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("astropy")
 pytest.importorskip("photutils")
 
-from test_aperture_flux import frame, provenance, geometry
+from test_aperture_flux import frame, provenance, geometry, wcs
 from lsbpipe.photometry.aperture_flux import (
     ApertureSkyScenario, measure_native_aperture,
 )
@@ -187,3 +187,56 @@ def test_invalid_sampling_limits_and_radial_grid_fail_closed():
     with pytest.raises(ValueError):
         estimate_blank_annulus_covariance(
             **dict(kw, radii_arcsec=(1., 2., 3.)))
+
+
+def test_small_scale_blanks_keep_full_target_exclusion_and_never_replace_outer():
+    """Smaller clean positions remain outside the FULL target aperture."""
+    rng = np.random.default_rng(2035)
+    w = wcs()
+    w.wcs.crpix = [161., 161.]
+    image = rng.normal(0., .03, (321, 321))
+    f = frame(image=image, shape=image.shape, w=w)
+    source = np.zeros(f.shape, bool)
+    radii = (1., 2., 3., 4., 7., 25.)
+    curve = _curve(f, source, source, radii=radii)
+    result = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=source, curves=[curve])
+    full = result["blank_apertures"]
+    small = result["smaller_scale_blank_diagnostics"]
+    assert full["annulus_covariance_nMgy2"] is None
+    assert small["status"] == "SMALL_SCALE_COVARIANCE_DIAGNOSTIC_ONLY"
+    assert small["must_not_replace_full_scale_covariance"]
+    assert small["full_target_semimajor_arcsec"] == 25.
+    assert small["first_available_probe_outer_arcsec"] in (2., 3., 4., 7.)
+    probe = small["probes"][-1]
+    assert probe["annulus_covariance_nMgy2"] is not None
+    assert probe["n_accepted"] >= probe["n_required"]
+    assert probe["target_exclusion_radius_native_pix"] > (
+        probe["blank_outer_radius_native_pix"])
+    from lsbpipe.photometry.aperture_flux import (
+        project_icrs_ellipse_to_native)
+    outer = project_icrs_ellipse_to_native(
+        geometry(a=25., q=1., pa=0.), w)
+    for x, y in probe["centres_native_xy"]:
+        assert np.hypot(x-outer.x_center, y-outer.y_center) > (
+            probe["target_plus_blank_exclusion_distance_native_pix"])
+    assert result["covariance_calibrated_for_science"] is False
+    assert small["adopted_for_science"] is False
+    json.dumps(result, allow_nan=False)
+
+
+def test_blank_subscale_refuses_mismatched_or_smaller_target_exclusion():
+    f = frame()
+    source = np.zeros(f.shape, bool)
+    normal = dict(
+        frame=f, outer=geometry(a=2., q=1.),
+        radii_arcsec=(1., 2.), effective_source_mask=source,
+        manual_exclude=source)
+    with pytest.raises(ValueError, match="share project anchor"):
+        estimate_blank_annulus_covariance(
+            **normal, full_target_exclusion_outer=geometry(
+                ra=155.401, a=5., q=1.))
+    with pytest.raises(ValueError, match="cannot be smaller"):
+        estimate_blank_annulus_covariance(
+            **normal, full_target_exclusion_outer=geometry(a=1., q=1.))
