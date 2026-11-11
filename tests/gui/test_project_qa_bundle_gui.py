@@ -411,6 +411,11 @@ def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
 def test_psf_band_navigation_never_discards_loaded_scene(qtbot, tmp_path):
     widget = _bound_workspace(qtbot, tmp_path)
     scene = widget.scene_editor
+    # The minimal project fixture has no physical FITS or PSF inputs,
+    # so initialize the fixed-band selectors without opening any files.
+    for band, panel in widget.psf0_panels.items():
+        panel.band.clear()
+        panel.band.addItem(band.upper(), band)
     scene.set_band("r")
     scene._loaded = {"band": "r", "source": "native-r"}
     # The initially selected PSF tab is G; Scene native remains R.
