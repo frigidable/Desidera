@@ -1739,3 +1739,92 @@ no-subtraction strategies for Leo P only at fixed
 identical protection radii and within each band;
 do not change original FITS or silently weaken
 holdout/sky gates.
+
+
+---
+
+## Twenty-first-pass project-only native foreground directional pilot — 2026-11-11
+
+**Binding input scope:** all I/O remains within the user's already
+selected Leo P project and its already downloaded DR11 South
+`1554p180` native `griz` image/mask/invvar quartet and original
+per-brick Tractor/Gaia catalogue. The source-bound worker already
+re-verifies the saved matching per-band empirical PSF-0 through
+`read_saved_psf0_bands`; it does not import or download any new
+DESI bricks or other catalogue fields. This experimental extension
+uses only **the currently loaded original native Scene image** and
+the source inventory already in memory. No extra directories,
+branches, cache files or altered FITS are involved.
+
+**Why a separate pilot.** P20 was performed on twelve bright
+stars across a complete native brick and reported a conditional
+sky-subtracted profile. Leo P's troublesome Gaia star
+`OBJID=2035` was NOT one of its fitted star identities.
+At Leo P's reference centre the r star-to-target separation
+is 18.82 measured FWHM, outside the verified 63px finite
+PSF-0 stamp. A P20 conditional result cannot be substituted
+for a direct original-pixel measurement of this source.
+
+**P21 design (new, strictly diagnostic):**
+`audit_same_project_foreground_sector_profile` is appended to
+the already existing `psf_joint_scene.py`. Upon an explicit
+successful native-band PSF-0 source-bound local probe in
+Scene & Masks, the same existing background worker additionally
+measures original native pixels for the selected Gaia source.
+For each fixed ring **6–8, 8–12, 12–16, 16–20 and 20–24**
+measured FWHM, compare two angular cones of half-opening
+45 degrees around the star→target axis and the exactly
+opposite direction. Report each median in native nMgy/pixel
+and the toward-minus-opposite difference, with at least
+30 original usable native pixels in each cone per ring.
+Two nonindependent **away-side outer-sky** reference choices,
+24–26 and 26–30 FWHM, explicitly gauge sky sensitivity,
+not statistical uncertainty. Only the original hard validity,
+finite coadd image and positive inverse variance, plus
+fixed 3-FWHM exclusion cores of known other native Tractor
+centres, are used. Unknown neighbouring *wings* remain.
+
+The internal negative controls are predeclared from the
+centres of a **4×4 spatial grid** over the loaded native
+Scene image, without data-dependent control replacement.
+Any tile centre near the target or selected bright star
+(within 60 measured FWHM), within 3 FWHM of a catalogue
+centre, or lacking a complete native 30-FWHM ROI is
+recorded as unavailable. Otherwise measure the *identical*
+directional cones and radial bins at that fixed location.
+Compare the star's observed angular contrast in absolute
+nMgy/pixel with the median and maximum *absolute*
+comparison across surviving controls. The 4×4 tiles
+sample one cropped project frame, not sixteen independent
+exposures or randomly selected blank fields.
+
+**Interpretation gate:** the facing cone at 16–20 FWHM
+contains the *direction of Leo P*. Any positive contrast
+can come from the galaxy's diffuse population,
+a stellar wing, a spatial gradient in background,
+coadd systematics or other undetected sources.
+A null contrast does not bound absolute isotropic wings,
+which cancel under facing-minus-opposite subtraction.
+The target-side contrast is therefore **NOT a
+detection, correction, upper limit on true PSF wings,
+galaxy-light flux-loss measurement or sky validation**.
+Even an apparent high contrast relative to same-frame
+controls cannot establish this distinction. At present
+P21 has passed only synthetic tests and still requires
+a fresh actual per-band Leo P source-specific
+`Copy Scene QA` export after using the same existing
+explicit GUI button; do not manufacture observational
+results before that run.
+
+**Original project science state:** r P15–P20 are
+empirically complete but science HOLD. The g-band
+strict candidate set still has 12/13, so no verified
+saved g PSF-0 is available from the last user export.
+A P21 g result requires independent restoration of
+a verified g PSF and is not silently substituted
+from r. Neither g candidate thresholds nor r source
+masks have been changed. Every P21 result is nested
+in `Copy Scene QA` at
+`psf0_foreground_probe.project_only_outer_sector_probe`,
+while the local frozen PSF fit and result status stay
+unchanged. Current work remains in Draft PR #84.
