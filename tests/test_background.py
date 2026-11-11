@@ -199,6 +199,7 @@ def _stage03_project_fixture(*, with_regions=True):
         "auto_mask":auto,"protected":protected,"hard":hard.copy(),
         "gaia_inner_preview_enabled":True,
         "red_extended_preview_enabled":False,
+        "source_inventory":{"entries":[]},
         "anchor_icrs":tuple(map(float,wcs.all_pix2world(59.5,59.5,0))),
     }
     return dataset, draft, contamination
@@ -212,11 +213,20 @@ def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
                  contamination["auto_mask"].copy(),
                  contamination["protected"].copy())
     out=diagnose_current_project_residual_sky(dataset,draft,contamination)
-    assert out["status"]=="TWO_SKY_MODELS_FITTED_HOLDOUT_UNCALIBRATED"
+    assert out["status"]=="AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
+    assert out["schema"]=="desidera.sky.project-native-residual-diagnostic/2"
+    assert out["automatic_sky_selection_qa"][
+        "sky_regions_drawn_by_user_required"] is False
+    assert out["automatic_sky_selection_qa"][
+        "geometry_sufficient_for_diagnostic"] is True
+    assert len(out["automatic_sky_selection_qa"]["holdout_quadrants"])>=3
+    assert out["provisional_automatic_model"]["method"]=="tilted_plane"
     assert out["band"]=="r"
     assert out["project_id"]=="stage03-project"
     assert out["sky_train_effective_pixels"]>100
     assert out["sky_holdout_effective_pixels"]>100
+    assert out["automatic_sky_selection_qa"]["training_tiles"]>=8
+    assert out["automatic_sky_selection_qa"]["holdout_tiles"]>=4
     assert out["preview_gaia_inner_mask_used"] is True
     assert out["protected_target_pixels"]>100
     assert out["methods"]["constant"]["holdout_status"]==(
@@ -242,15 +252,16 @@ def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
     assert np.array_equal(contamination["protected"],originals[3])
 
 
-def test_project_stage03_missing_explicit_regions_fails_closed():
+def test_project_stage03_no_manual_sky_regions_still_builds_automatic_sky():
     from lsbpipe.background import diagnose_current_project_residual_sky
     dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
     out=diagnose_current_project_residual_sky(dataset,draft,contamination)
-    assert out["status"]=="EXPLICIT_DISJOINT_SKY_REGIONS_REQUIRED"
-    assert out["methods"]=={}
-    assert out["method_comparison"] is None
-    assert out["sky_train_effective_pixels"]==0
-    assert out["sky_holdout_effective_pixels"]==0
+    assert out["status"]=="AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
+    assert out["methods"]["tilted_plane"]["fit_status"]=="FITTED"
+    assert out["automatic_sky_selection_qa"][
+        "manual_sky_annotations_ignored_not_deleted"] is True
+    assert out["sky_train_effective_pixels"]>100
+    assert out["sky_holdout_effective_pixels"]>100
     assert out["sky_model_adopted"] is False
 
 
@@ -291,3 +302,74 @@ def test_project_stage03_source_protection_hides_mistaken_sky_annotation():
     assert result["methods"]["tilted_plane"]["coefficients_nMgy"] == (
         other["methods"]["tilted_plane"]["coefficients_nMgy"])
     assert result["method_comparison"] == other["method_comparison"]
+    assert result["automatic_sky_selection_qa"] == other[
+        "automatic_sky_selection_qa"]
+
+
+
+def test_project_stage03_fails_closed_when_no_safe_automatic_sky_tiles():
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
+    bad=dict(contamination,auto_mask=np.ones(dataset["pixel_shape"],dtype=bool))
+    out=diagnose_current_project_residual_sky(dataset,draft,bad)
+    assert out["status"]=="INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY"
+    assert out["methods"]=={}
+    assert out["provisional_automatic_model"] is None
+    assert out["sky_model_adopted"] is False
+    assert out["sky_train_effective_pixels"]==0
+
+
+def test_project_stage03_requires_existing_bright_star_inventory():
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
+    bad=dict(contamination)
+    bad.pop("source_inventory")
+    out=diagnose_current_project_residual_sky(dataset,draft,bad)
+    assert out["status"]=="SOURCE_INVENTORY_REQUIRED_FOR_AUTOMATIC_SKY"
+    assert out["methods"]=={}
+    assert out["provisional_automatic_model"] is None
+    assert "BRIGHT_GAIA_SOURCE_INVENTORY_ABSENT" in out["warnings"]
+
+
+def test_project_stage03_excludes_galaxy_leakage_and_existing_bright_gaia():
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
+    image=dataset["data"]["image"]
+    yy,xx=np.indices(image.shape)
+    target=(xx-59.5)**2+(yy-59.5)**2<=22.**2
+    original=image.copy()
+    image[target]+=50.0
+    auto=contamination.copy()
+    auto["source_inventory"]={"entries":[
+        {"gaia_g_mag":14.5,"x":13.,"y":107.,"objid":25}]}
+    out=diagnose_current_project_residual_sky(dataset,draft,auto)
+    assert out["automatic_sky_selection_qa"][
+        "n_existing_bright_gaia_sources_vetoed"]==1
+    assert out["automatic_sky_selection_qa"]["bright_star_veto_pixels"]>100
+    assert out["sky_model_adopted"] is False
+    if out["methods"]:
+        assert out["methods"]["tilted_plane"]["coefficients_nMgy"]==(
+            pytest.approx((.012,.00045,-.00032),abs=1e-8))
+    assert np.all(image[target]>original[target])
+    assert np.array_equal(dataset["native_hard"],
+                          contamination["hard"])
+
+
+def test_project_stage03_automatic_selection_independent_of_image_brightness():
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
+    first=diagnose_current_project_residual_sky(dataset,draft,contamination)
+    bright=dataset["data"]["image"].copy()
+    yy,xx=np.indices(bright.shape)
+    bright[30:90,30:90]+=200.0
+    second=diagnose_current_project_residual_sky(
+        dict(dataset,data=dict(dataset["data"],image=bright)),
+        draft,contamination)
+    assert first["automatic_sky_selection_qa"]==second[
+        "automatic_sky_selection_qa"]
+    assert first["sky_train_effective_pixels"]==second[
+        "sky_train_effective_pixels"]
+    assert first["sky_holdout_effective_pixels"]==second[
+        "sky_holdout_effective_pixels"]
+    assert first["automatic_sky_selection_qa"][
+        "selection_predeclared_geometry_only_not_flux_optimized"] is True
