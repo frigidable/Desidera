@@ -490,8 +490,10 @@ def _audit_automatic_sky_tile_residuals(image, sky_train, sky_holdout,
         missing_quadrants = sorted(set(range(4)) -
                                    set(selection[f"{role}_quadrants"]))
         clipped_edge_tiles = sum(
-            (r["tile_index"][1]+1)*edge > ny or
-            (r["tile_index"][0]+1)*edge > nx
+            (r["tile_bounds_native_xyxy"][2] -
+             r["tile_bounds_native_xyxy"][0] < edge) or
+            (r["tile_bounds_native_xyxy"][3] -
+             r["tile_bounds_native_xyxy"][1] < edge)
             for r in records)
         checks[role] = {
             "n_tiles": len(records),
@@ -523,9 +525,13 @@ def _audit_automatic_sky_tile_residuals(image, sky_train, sky_holdout,
             tiles = []
             medians = []
             for record in records:
-                ix, iy = record["tile_index"]
-                x0, x1 = ix*edge, min(nx, (ix+1)*edge)
-                y0, y1 = iy*edge, min(ny, (iy+1)*edge)
+                # The tile index is a GRID INDEX, not a pixel origin.
+                # Alternative QA grids can be shifted by half a tile;
+                # reconstructing [ix*edge:(ix+1)*edge] then selects
+                # different pixels and silently misattributes residuals.
+                x0, y0, x1, y1 = record["tile_bounds_native_xyxy"]
+                if not (0 <= x0 < x1 <= nx and 0 <= y0 < y1 <= ny):
+                    raise ValueError("Invalid native sky tile bounds")
                 yy_local, xx_local = np.nonzero(valid[y0:y1, x0:x1])
                 xx = xx_local+x0
                 yy = yy_local+y0
