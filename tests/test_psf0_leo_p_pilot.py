@@ -124,6 +124,34 @@ def test_synthetic_native_legacy_fits_runs_leo_p_pilot_without_false_science(
     assert (p.root/"lsbpipe-object.json").is_file()
 
 
+def test_gui_psf_protection_uses_saved_project_icrs_not_canonical_leo_p(
+        tmp_path, monkeypatch):
+    """Every stage must share the same saved target anchor within Leo P."""
+    import lsbpipe.photometry.psf_gui_backend as backend
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    dec = 18.088025 + 20./3600.
+    project = _project(tmp_path, dec=dec)
+    _synthetic_legacy_files(project)
+    seen = []
+    def intercept_psf_build(frame, *, target_icrs_deg, **kwargs):
+        seen.append((tuple(target_icrs_deg),
+                     float(kwargs["target_protection_arcsec"])))
+        raise RuntimeError("SYNTHETIC_STOP_AFTER_TARGET_PROVENANCE")
+    monkeypatch.setattr(backend, "build_empirical_coadd_psf",
+                        intercept_psf_build)
+    with pytest.raises(RuntimeError, match="SYNTHETIC_STOP"):
+        backend.run_gui_psf0(
+            project.root, band="r",
+            config=PSF0Config(
+                star_catalog_policy="dao_diagnostic",
+                max_training_stars=30,
+                min_train_stars=6, min_holdout_stars=2),
+            protection_arcsec=90.)
+    assert seen == [((155.438012, dec), 90.)]
+    assert not (project.root / "analyses").exists()
+
+
 def test_gui_preview_refuses_export_after_original_fits_changed(tmp_path, monkeypatch):
     from lsbpipe.photometry.psf_gui_backend import run_gui_psf0, save_gui_psf0
 
