@@ -459,3 +459,76 @@ Primary sources: Legacy DR11 PSF and CCD-model description at
 https://www.legacysurvey.org/dr11/description/ and Photutils
 `EPSFBuilder` at
 https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html.
+
+
+---
+
+## 2026-11-11 implementation: executable 03 Background diagnostic (not Sky adoption)
+
+The Photometry Workspace now exposes **three real task tabs**:
+`1 · PSF-0` → `2 · Scene & Masks` → `3 · Background`.
+These are **UI task labels**, not replacements for the eight logical
+scientific stages above. The third UI tab is an exploratory
+**post-Scene residual sky** experiment (logical `Sky Reconstruction`),
+not a shortcut around PSF/background coupling or a final Sky_v1.
+
+**Bounded scope.** The Stage 03 widget holds only a reference to the
+already loaded, currently selected native-band Scene Editor state.
+It does **not** open FITS, change projects, fetch another Legacy brick,
+download a new catalogue, create subdirectories or save a sky model.
+The user must explicitly open original native FITS in 02, prepare
+the provisional Tractor masks there, and annotate **separate**
+`sky_train` and `sky_holdout` ICRS regions outside the candidate
+galaxy and likely stellar halos. Existing Scene mask drafts and the
+current scene identity (project UUID, DR release/brick/band, WCS,
+draft hash and Tractor fingerprint) are reused. New drafts or source
+changes invalidate prior in-memory sky evidence. A persistent UI
+resume pointer may now store `stage="sky"` as a third allowed
+navigation value; it never runs numerical work on navigation.
+
+**Numerics.** `diagnose_current_project_residual_sky`
+in existing `lsbpipe.background` connects the already implemented
+robust `fit_residual_background` to original `IMAGE`, `INVVAR`
+and native-hard validity plus the currently prepared *provisional*
+Tractor auto-mask, manual exclude and unadopted target protection.
+It uses source `SkyMaskDraft` annotations for exactly disjoint
+training and holdout samples; neither full-image blank-sky guesses nor
+auto-tuned alternative sky regions are supplied. Sky annotations
+crossing protected target geometry are excluded. Method candidates:
+constant residual level and tilted plane, both fitted to the
+**identical** training pixels and evaluated on the **identical**
+holdout pixels with separate four-quadrant residual summaries.
+Initial descriptive requirements: >=100 native training pixels,
+>=100 native holdout pixels, holdout in >=3 spatial quadrants.
+These counts are **not independent-pixel statistics** in a
+correlated coadd. Without both nonempty disjoint regions there
+is **no fit**. Even a converged fit with many holdout pixels has
+`MEASURED_UNCALIBRATED` holdout status, not a scientific PASS
+or acceptance. Method difference at the project target centre
+is reported as sky-model sensitivity, **not estimated lost
+galaxy flux**.
+
+**Output status.** In-memory `desidera.sky.project-native-residual-diagnostic/1`
+QA includes project, native dataset, WCS grid identity,
+draft/catalogue fingerprints, explicit effective sky sample counts,
+model coefficients, heldout and per-quadrant residuals, warning
+flags and method comparison. The explicit **Copy background QA**
+action exports JSON only; no model-subtracted FITS/map is
+generated, no mask changed, and no sky/PSF/galaxy light
+is scientifically adopted. Model amplitudes on already
+sky-subtracted Legacy coadds cannot restore upstream
+oversubtraction. Coadd covariance, stellar wide wings,
+residual galactic emission in sky regions and PSF/galaxy/sky
+joint degeneracy remain unmeasured, so the science gate
+stays **HOLD**.
+
+**Validation tests.** Synthetic same-project test images exercise
+a spatially tilted residual sky, a protected target region that
+overlaps an erroneously drawn sky-training annotation,
+disjoint heldout coverage, stale project/band/draft/Tractor
+mismatches, lack of explicit regions, and read-only image/mask
+invariants. Qt tests cover third-tab navigation, explicit run,
+copying a non-adopted report and invalidation after a changed
+scene. The researcher must run the stage against Leo P's
+already available data before any actual galaxy background
+claims can be made.
