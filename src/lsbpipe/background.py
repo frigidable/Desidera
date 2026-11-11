@@ -1043,6 +1043,11 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "draft_sha256": draft.digest,
         "catalog_sha256": contamination["catalog_sha256"],
         "native_pixel_shape": list(shape),
+        "original_fits_provenance_status": dataset.get(
+            "original_fits_provenance_status", "NOT_HASHED"),
+        "original_fits_sha256_local": dataset.get(
+            "original_fits_sha256_local"),
+        "source_file_hashes_are_local_not_archive_authenticity": True,
         "native_hard_pixels": int(np.count_nonzero(hard)),
         "provisional_catalogue_mask_pixels": int(np.count_nonzero(auto)),
         "protected_target_pixels": int(np.count_nonzero(sky_protected)),
