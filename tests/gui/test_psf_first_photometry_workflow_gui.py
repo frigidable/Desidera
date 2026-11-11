@@ -28,6 +28,7 @@ def test_photometry_uses_real_psf_workflow_without_unimplemented_stage_cards(qtb
     assert w.psf0_panels["g"].run_btn.text() == "Build empirical PSF"
     assert w.psf0_panels["g"].experiment.currentData() == (
         "outer_sky_isolation_footprint")
-    assert "no adopted PSF, sky or galaxy photometry" in w.subtitle.text()
+    assert "aperture fluxes are diagnostic only" in w.subtitle.text()
+    assert "no adopted galaxy photometry" in w.subtitle.text()
     assert w.table.rowCount() == 0
     assert w._project_root is None
