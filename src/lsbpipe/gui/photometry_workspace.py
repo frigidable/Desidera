@@ -371,9 +371,14 @@ class PhotometryWorkspace(QWidget):
         # band, annotations and prepared masks, regardless of PSF tab.
         if previous is psf and current in (
                 self.scene_editor, self.sky_stage, self.aperture_stage):
-            band = self.band_tabs.currentWidget().band.currentData()
-            if band in ("g", "r", "i", "z"):
-                self.scene_editor.set_band(band)
+            # Do not invalidate an already loaded scene, its masks, and
+            # completed sky/photometry merely because the researcher
+            # inspected a different PSF-0 band. An intentional change of
+            # the native Scene band uses its own explicit band selector.
+            if self.scene_editor._loaded is None:
+                band = self.band_tabs.currentWidget().band.currentData()
+                if band in ("g", "r", "i", "z"):
+                    self.scene_editor.set_band(band)
         if current is self.sky_stage:
             self.sky_stage.refresh_context()
         if current is self.aperture_stage:
