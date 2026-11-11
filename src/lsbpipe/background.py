@@ -442,6 +442,119 @@ def _automatic_scene_sky_pixels(dataset, preview, contamination):
     return train, holdout, qa
 
 
+
+def _audit_automatic_sky_tile_residuals(image, sky_train, sky_holdout,
+                                        selection, candidates):
+    """Equal-area-tile descriptive checks without treating pixels as iid.
+
+    Post-fit statistics are never used to reselect training/holdout tiles,
+    tune veto radii or replace the predeclared model choice.
+    """
+    from collections import Counter
+
+    edge = selection["tile_edge_native_pix"]
+    ny, nx = image.shape
+    checks = {}
+    warnings = []
+    for role, records in (
+            ("training", selection["training_tile_evidence"]),
+            ("holdout", selection["holdout_tile_evidence"])):
+        row_counts = Counter(r["tile_index"][1] for r in records)
+        dominant = max(row_counts.values(), default=0)
+        fraction = (float(dominant / len(records))
+                    if records else None)
+        missing_quadrants = sorted(set(range(4)) -
+                                   set(selection[f"{role}_quadrants"]))
+        clipped_edge_tiles = sum(
+            (r["tile_index"][1]+1)*edge > ny or
+            (r["tile_index"][0]+1)*edge > nx
+            for r in records)
+        checks[role] = {
+            "n_tiles": len(records),
+            "n_distinct_tile_rows": len(row_counts),
+            "max_tiles_in_any_single_row": dominant,
+            "dominant_single_row_fraction": fraction,
+            "n_partial_edge_tiles": clipped_edge_tiles,
+            "partial_edge_tile_fraction": (
+                float(clipped_edge_tiles/len(records))
+                if records else None),
+            "missing_quadrants": missing_quadrants,
+            "spatial_mask_selection_unchanged": True,
+        }
+        if fraction is not None and fraction > .40:
+            warnings.append(f"{role.upper()}_TILES_CLUSTERED_IN_SINGLE_ROW")
+        if missing_quadrants:
+            warnings.append(f"{role.upper()}_QUADRANTS_NOT_ALL_REPRESENTED")
+        if clipped_edge_tiles >= max(2, int(np.ceil(.40*len(records)))):
+            warnings.append(f"{role.upper()}_TILES_DOMINATED_BY_PARTIAL_IMAGE_EDGE")
+
+    method_details = {}
+    for method, candidate in candidates.items():
+        if candidate.fit_status != FitStatus.FITTED:
+            continue
+        data = {}
+        for role, records, valid in (
+                ("training", selection["training_tile_evidence"], sky_train),
+                ("holdout", selection["holdout_tile_evidence"], sky_holdout)):
+            tiles = []
+            medians = []
+            for record in records:
+                ix, iy = record["tile_index"]
+                x0, x1 = ix*edge, min(nx, (ix+1)*edge)
+                y0, y1 = iy*edge, min(ny, (iy+1)*edge)
+                yy_local, xx_local = np.nonzero(valid[y0:y1, x0:x1])
+                xx = xx_local+x0
+                yy = yy_local+y0
+                if len(xx) != record["n_sampled_pixels"]:
+                    raise ValueError("Sky sample tile geometry/provenance changed")
+                residual = np.asarray(
+                    image[yy,xx] - candidate.evaluate_at(xx,yy),
+                    dtype=float)
+                median = float(np.median(residual))
+                medians.append(median)
+                tiles.append({
+                    "tile_index": list(record["tile_index"]),
+                    "quadrant": int(record["quadrant"]),
+                    "n_samples": int(len(xx)),
+                    "median_residual_nMgy_per_pixel": median,
+                    "rms_residual_nMgy_per_pixel":
+                        float(np.sqrt(np.mean(residual**2))),
+                })
+            data[role] = {
+                "tiles": tiles,
+                "equal_tile_median_of_medians_nMgy_per_pixel": (
+                    float(np.median(medians)) if medians else None),
+                "tile_median_peak_to_peak_nMgy_per_pixel": (
+                    float(np.ptp(medians)) if medians else None),
+                "tile_median_mad_nMgy_per_pixel": (
+                    float(np.median(np.abs(np.asarray(medians) -
+                                            np.median(medians))))
+                    if medians else None),
+                "equal_tile_median_abs_residual_nMgy_per_pixel": (
+                    float(np.median(np.abs(medians))) if medians else None),
+            }
+        train_rms = candidate.training_rms_residual_nMgy
+        hold_rms = candidate.holdout_rms_residual_nMgy
+        ratio = (float(train_rms/hold_rms)
+                 if (train_rms is not None and hold_rms is not None
+                     and hold_rms > 0.) else None)
+        data["training_to_holdout_pixel_rms_ratio"] = ratio
+        data["tile_residuals_are_correlated_same_coadd_not_errors"] = True
+        data["pixel_weighted_rms_does_not_validate_sky_level"] = True
+        if ratio is not None and ratio > 2.:
+            warnings.append(f"{method.upper()}_TRAINING_RMS_OVER_TWICE_HOLDOUT")
+        method_details[method] = data
+    return {
+        "schema": "desidera.sky.automatic-tile-spatial-qa/1",
+        "geometry": checks,
+        "methods": method_details,
+        "warning_flags": sorted(set(warnings)),
+        "spatial_support_complete_for_science": False,
+        "science_holds_even_without_warning": True,
+        "no_tile_reselection_after_inspecting_residuals": True,
+    }
+
+
 def diagnose_current_project_residual_sky(dataset, draft, contamination):
     """Automatically select Scene-safe sky tiles and compare residual models.
 
@@ -539,6 +652,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "methods": {},
         "method_comparison": None,
         "provisional_automatic_model": None,
+        "automatic_sky_spatial_qa": None,
         "warnings": warnings,
     }
     if not selection["geometry_sufficient_for_diagnostic"]:
@@ -586,6 +700,10 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             serialized["warnings"].append("NONFINITE_CONDITION_NUMBER")
         methods[method] = serialized
     base["methods"] = methods
+    tile_audit = _audit_automatic_sky_tile_residuals(
+        image, sky_train, sky_holdout, selection, candidates)
+    base["automatic_sky_spatial_qa"] = tile_audit
+    base["warnings"] = warnings + tile_audit["warning_flags"]
     if not all(c.fit_status == FitStatus.FITTED for c in candidates.values()):
         base["status"] = "SKY_CANDIDATE_FIT_INCOMPLETE_NOT_ADOPTED"
         return base
@@ -622,6 +740,9 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             "PLANE_IF_HELDOUT_RMS_LESS_THAN_75_PERCENT_OF_CONSTANT_ELSE_CONSTANT"),
         "same_coadd_holdout_not_independent_validation": True,
         "not_a_science_adoption": True,
+        "spatial_support_warning_flags":
+            tile_audit["warning_flags"],
+        "spatial_quality_not_certified": True,
         "coefficients_nMgy": list(candidates[preferred].coefficients_nMgy),
         "reference_xy_pix": list(candidates[preferred].reference_xy_pix),
         "predicted_residual_sky_at_target_nMgy_per_pixel":
