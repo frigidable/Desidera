@@ -179,6 +179,13 @@ def load_scene_original_cutout(project_root: str, band: str,
     if str(native_root.resolve()) != str(
             Path(original["data_root"]).resolve()):
         raise ValueError("Scene reader resolved a different native data root")
+    # Check for a source swap before reopening HDU headers, so a
+    # mid-load replacement fails with precise provenance evidence.
+    for kind,file in expected_paths.items():
+        stat=file.stat()
+        if (stat.st_size, stat.st_mtime_ns) != before[kind] or file.is_symlink():
+            raise RuntimeError(
+                f"Original {kind} FITS changed during Scene load")
     # The generic FITS viewer validates shape/WCS but not every unit.
     # Scientific aperture flux is meaningless if IMAGE units differ from
     # nanomaggies; verify the exact same HDU selected by the cutout reader.
