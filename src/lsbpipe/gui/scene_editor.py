@@ -710,6 +710,257 @@ def run_scene_protection_radius_sweep(
     }
 
 
+
+
+def run_scene_mask_policy_ablation(
+        dataset, project_root, draft, center_icrs, *,
+        protection_radius_arcsec=70., threshold_contrast=2.2,
+        smoothing_pix=4., bridge_guard_pix=2, sga_prior=None,
+        sga_protection_prior=None):
+    """Fixed-image, fixed-radius masks A/B plus Gaia-star leave-one-out QA.
+
+    Four independent policy scenarios and one intervention per Gaia
+    foreground candidate are compared on exactly the same native pixels.
+    Mask and component intersections are computed directly (not inferred
+    from source counts or radial-bin coincidence). The results contain
+    only metadata; native arrays, source membership, project, drafts and
+    science products are never changed or written to disk.
+
+    A Gaia leave-one-out removes only that *experimental* candidate mask.
+    It does not imply that the source is a target star or that pixels
+    underneath other objects are recoverable without modelling.
+    """
+    project = read_object_project(project_root)
+    if (project.project_id != dataset["project_id"] or
+            draft.project_id != project.project_id):
+        raise ValueError("Policy ablation project identity mismatch")
+    radius = float(protection_radius_arcsec)
+    if (not math.isfinite(radius) or radius <= 0 or
+            radius > project.sky_inner_arcsec):
+        raise ValueError("Ablation radius outside project sky annulus")
+    if sga_prior is not None and sga_prior.core_shape() is None:
+        raise ValueError("Selected SGA geometry invalid for policy ablation")
+    if (sga_protection_prior is not None and
+            sga_protection_prior.core_shape() is None):
+        raise ValueError("Selected SGA protection invalid for policy ablation")
+    if sga_prior is not None and sga_protection_prior is not None:
+        if (sga_prior.sga_id != sga_protection_prior.sga_id or
+                sga_prior.source_sha256 !=
+                sga_protection_prior.source_sha256):
+            raise ValueError("Conflicting SGA prior identities")
+
+    fixed_project = replace(project, target_radius_arcsec=radius)
+    policies = [
+        ("none", False, False, ()),
+        ("gaia", True, False, ()),
+        ("red", False, True, ()),
+        ("both", True, True, ()),
+    ]
+    rows, masks, components, inventories = [], {}, {}, {}
+    catalogue_sha = None
+
+    def execute(name, gaia, red, skipped):
+        nonlocal catalogue_sha
+        prepared = prepare_scene_contamination(
+            dataset, fixed_project, draft, center_icrs,
+            sga_prior=sga_protection_prior,
+            **({"gaia_inner_preview":True} if gaia else {}),
+            **({"red_extended_preview":True} if red else {}),
+            **({"gaia_inner_skip_objids":skipped} if skipped else {}))
+        sha = prepared["catalog_sha256"]
+        if catalogue_sha is not None and catalogue_sha != sha:
+            raise ValueError("Tractor catalogue changed within policy ablation")
+        catalogue_sha = sha
+        inv = prepared["source_inventory"]
+        if inv["truncated"] or inv["screening_evidence_incomplete"]:
+            raise ValueError("Incomplete source inventory in policy ablation")
+        m = prepared["mask"]
+        if m.shape != tuple(dataset["pixel_shape"]) or m.dtype.kind != "b":
+            raise ValueError("Policy mask is not on native Boolean pixel grid")
+        masks[name] = m
+        inventories[name] = {
+            e["source_id"]:e["screening_disposition"]
+            for e in inv["entries"]}
+        counts = prepared["stats"]
+        row = {
+            "policy":name,
+            "gaia_inner_preview":bool(gaia),
+            "red_extended_preview":bool(red),
+            "skipped_gaia_objids":list(skipped),
+            "catalog_sha256":sha,
+            "masked_catalog_sources":counts["masked_catalog_sources"],
+            "protected_overlaps":counts["skipped_target_overlap"],
+            "gaia_preview_sources":counts.get(
+                "gaia_inner_preview_sources", 0),
+            "gaia_preview_pixels":counts.get(
+                "gaia_inner_preview_pixels", 0),
+            "red_preview_sources":counts.get(
+                "red_extended_preview_sources", 0),
+            "red_preview_pixels":counts.get(
+                "red_extended_preview_pixels", 0),
+            "excluded_pixels":int(np.count_nonzero(m)),
+            "excluded_pixels_inside_protection":int(np.count_nonzero(
+                m & prepared["protected"])),
+            "native_hard_pixels":counts["native_hard_pixels"],
+            "component_status":"ISOPHOTE_NOT_FOUND",
+            "component_error":None,
+            "component_pixels":None,
+            "component_q":None,
+            "component_centroid_offset_pix":None,
+            "sga_radius_arcsec":None,
+            "sga_radial_bin_step_arcsec":None,
+            "local_sky_nMgy_pixel":None,
+            "smoothed_sky_rms_nMgy_pixel":None,
+            "minimum_trial_iou":None,
+            "confidence":None,
+            "sensitivity_flags":[],
+        }
+        try:
+            proposal = propose_scene_isophote(
+                dataset, center_icrs, threshold_contrast, smoothing_pix,
+                prepared, bridge_guard_pix=bridge_guard_pix,
+                sga_prior=sga_prior)
+            model=proposal["proposal"]
+            radial=proposal.get("sga_radial")
+            sensitivity=proposal["sensitivity"]
+            components[name]=model.component_indices
+            row.update({
+                "component_status":"ISOPHOTE_PROPOSED_NOT_ADOPTED",
+                "component_pixels":int(model.seed.component_pixels),
+                "component_q":float(model.seed.q),
+                "component_centroid_offset_pix":
+                    float(model.seed.centroid_offset_pix),
+                "sga_radius_arcsec":(
+                    radial.detected_a_arcsec if radial else None),
+                "sga_radial_bin_step_arcsec":(
+                    radial.radial_step_arcsec if radial else None),
+                "local_sky_nMgy_pixel":float(model.local_sky),
+                "smoothed_sky_rms_nMgy_pixel":
+                    float(model.smoothed_sky_rms),
+                "minimum_trial_iou":
+                    sensitivity["minimum_spatial_iou"],
+                "confidence":sensitivity["confidence"],
+                "sensitivity_flags":list(sensitivity["flags"]),
+            })
+        except (ValueError, ArithmeticError) as exc:
+            components[name]=None
+            row["component_error"]=str(exc)[:500]
+        rows.append(row)
+
+    for spec in policies:
+        execute(*spec)
+
+    # Derive actual candidate IDs from current native Tractor evidence.
+    # No hard-coded Leo P objects and no per-object literature searches.
+    candidates = (
+        prepare_id["objid"] for prepare_id in
+        []  # no effect: candidates are read from current masks below
+    )
+    # The Gaia source list belongs to the canonical WITH-GAIA scenario,
+    # not to unvalidated catalogue classifications elsewhere.
+    # It is recovered below from the corresponding stored source inventory.
+    gaia_ids = sorted(
+        int(e.rsplit("OBJID=", 1)[-1])
+        for e, disposition in inventories["gaia"].items()
+        if disposition == "GAIA_FOREGROUND_MASK_PREVIEW"
+        and "OBJID=" in e)
+    if len(gaia_ids) != len(set(gaia_ids)) or len(gaia_ids) > 12:
+        raise ValueError(
+            "Gaia source identity ambiguous or >12: no partial ablation")
+    for objid in gaia_ids:
+        execute(f"both_without_gaia_{objid}", True, True, (objid,))
+
+    reference = masks["none"]
+    reference_component = components["none"]
+    both_mask = masks["both"]
+    both_component = components["both"]
+
+    def compare(candidate, baseline):
+        return {
+            "mask_xor_pixels":int(np.count_nonzero(
+                masks[candidate] ^ masks[baseline])),
+            "mask_jaccard":(
+                float(np.count_nonzero(
+                    masks[candidate] & masks[baseline]) /
+                    np.count_nonzero(
+                        masks[candidate] | masks[baseline]))
+                if np.count_nonzero(
+                    masks[candidate] | masks[baseline]) else 1.),
+            "component_iou":None,
+            "component_intersection_pixels":None,
+        }
+
+    def component_overlap(candidate, baseline):
+        a,b=components[candidate],components[baseline]
+        if a is None or b is None:
+            return None, None
+        common=np.intersect1d(a,b,assume_unique=True).size
+        union=a.size+b.size-common
+        return float(common/union) if union else 1., int(common)
+
+    for row in rows:
+        name=row["policy"]
+        vs_none=compare(name,"none")
+        vs_both=compare(name,"both")
+        vs_none["component_iou"],vs_none[
+            "component_intersection_pixels"]=component_overlap(
+                name,"none")
+        vs_both["component_iou"],vs_both[
+            "component_intersection_pixels"]=component_overlap(
+                name,"both")
+        row["vs_no_experimental_masks"]=vs_none
+        row["vs_both_experimental_masks"]=vs_both
+        # The *native pixel* baseline component can include foreground
+        # source flux. This counts mask overlap ONLY, not galaxy light loss.
+        row["masked_pixels_over_baseline_component"]=(
+            int(np.count_nonzero(
+                masks[name].ravel()[reference_component]))
+            if reference_component is not None else None)
+        row["disposition_changes_vs_none"]=sorted(
+            source_id for source_id,disposition in
+            inventories[name].items()
+            if disposition != inventories["none"].get(source_id))
+    return {
+        "schema":"desidera.gui.mask-policy-ablation/1",
+        "status":"READ_ONLY_DIAGNOSTIC_NOT_SCIENCE_VALIDATED",
+        "project_id":project.project_id,
+        "dataset_source":dataset["source"],
+        "band":dataset["band"],
+        "draft_digest":draft.digest,
+        "anchor_icrs":list(center_icrs),
+        "catalog_sha256":catalogue_sha,
+        "fixed_settings":{
+            "protection_radius_arcsec":radius,
+            "contrast":float(threshold_contrast),
+            "smoothing_pix":float(smoothing_pix),
+            "bridge_guard_pix":int(bridge_guard_pix),
+            "sga_geometry_ref":(
+                sga_prior.sga_id if sga_prior is not None else None),
+            "sga_geometry_sha256":(
+                sga_prior.source_sha256 if sga_prior is not None else None),
+            "sga_protection_ref":(
+                sga_protection_prior.sga_id
+                if sga_protection_prior is not None else None),
+            "sga_protection_sha256":(
+                sga_protection_prior.source_sha256
+                if sga_protection_prior is not None else None),
+        },
+        "gaia_star_leave_one_out_count":len(gaia_ids),
+        "gaia_candidate_objids":gaia_ids,
+        "limitations":[
+            "GEOMETRIC_TRACTOR_MASKS_NOT_RENDERED_SOURCE_MODELS",
+            "NO_MEASURED_GALAXY_FLUX_OR_PSF_WING_SUBTRACTION",
+            "MASK_OVERLAP_WITH_COMPONENT_IS_NOT_TARGET_FLUX_LOSS",
+            "LOCAL_SKY_REFIT_PER_POLICY_NOT_INDEPENDENT_SPATIAL_SKY",
+            "NO_NATIVE_FITS_CONTENT_HASH_IN_SC1",
+            "SAME_NATIVE_IMAGE_BUT_NO_PIXEL_ARRAYS_EXPORTED",
+            "NO_SCIENCE_MASK_OR_ISOPHOTE_ADOPTION",
+        ],
+        "scenarios":rows,
+    }
+
+
+
 class SceneDrawingView(FITSGraphicsView):
     pointChosen = Signal(float, float)
 
