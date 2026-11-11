@@ -285,8 +285,13 @@ def run_gui_psf0(
     depth = "full research QA" if extended_research_qa else "core and holdout QA"
     _progress(progress, f"Building provisional {band} PSF · {depth}")
     try:
+        # The fixed Leo P coordinate is only an IDENTITY GUARD in
+        # _leo_p_project. All downstream stages use the saved project's
+        # actual target ICRS anchor. PSF source protection must agree.
+        project_anchor = (float(project.field.ra_deg),
+                          float(project.field.dec_deg))
         result = build_empirical_coadd_psf(
-            frame, target_icrs_deg=LEO_P_CENTER,
+            frame, target_icrs_deg=project_anchor,
             target_protection_arcsec=float(protection_arcsec), config=config,
             catalog_matcher=catalogue,
             extended_research_qa=extended_research_qa)
