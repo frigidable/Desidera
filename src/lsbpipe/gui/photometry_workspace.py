@@ -71,7 +71,7 @@ class PhotometryWorkspace(QWidget):
             "opening FITS, connecting to the archive or running analysis.")
         self.refresh_btn.clicked.connect(lambda _checked=False: self.refresh(force=True))
         header.addWidget(self.refresh_btn)
-        self.copy_project_qa_btn = QPushButton("Copy QA · all stages")
+        self.copy_project_qa_btn = QPushButton("Copy QA")
         self.copy_project_qa_btn.setObjectName("photometry_copy_project_qa")
         self.copy_project_qa_btn.setToolTip(
             "Copy a single current-project JSON report: PSF-0 griz, Scene & "
@@ -79,13 +79,16 @@ class PhotometryWorkspace(QWidget):
             "evidence, blockers and environment. Missing analyses are marked "
             "NOT_RUN; this never opens FITS or starts workers.")
         self.copy_project_qa_btn.clicked.connect(self.copy_project_qa)
-        header.addWidget(self.copy_project_qa_btn)
         root.addLayout(header)
 
         self.title = QLabel("Photometry")
         self.title.setObjectName("photometry_heading")
         self.title.setStyleSheet("font-size: 21px; font-weight: 600;")
-        root.addWidget(self.title)
+        title_row = QHBoxLayout()
+        title_row.addWidget(self.title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.copy_project_qa_btn)
+        root.addLayout(title_row)
         self.subtitle = QLabel(
             "PSF, residual sky and aperture fluxes are diagnostic only · "
             "no adopted galaxy photometry")
