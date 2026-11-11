@@ -14,7 +14,7 @@ from lsbpipe.surveys.object_projects import read_object_project
 
 SCHEMA = "desidera.photometry-workspace-state/1"
 FILENAME = "photometry-workspace-state.json"
-STAGES = frozenset(("psf0", "scene"))
+STAGES = frozenset(("psf0", "scene", "sky"))
 LOCATIONS = frozenset(("survey", "photometry"))
 BANDS = frozenset(("g", "r", "i", "z"))
 
