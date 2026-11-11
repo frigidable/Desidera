@@ -96,10 +96,15 @@ def estimate_blank_annulus_covariance(
     centres, samples = [], []
     examined, rejected = 0, 0
     required = max(min_placements, 2 * len(radii) + 2)
+    # A heavily masked large CCD must not trigger an unbounded search.
+    candidate_budget = max(256, 32 * max_placements)
     for row, y in enumerate(range(margin, ny - margin, step)):
+        if examined >= candidate_budget:
+            break
         start = margin + (step // 2 if row % 2 else 0)
         for x in range(start, nx - margin, step):
-            if len(centres) >= max_placements:
+            if (len(centres) >= max_placements or
+                    examined >= candidate_budget):
                 break
             examined += 1
             # At least the full outer aperture separates each sky placement
@@ -150,6 +155,8 @@ def estimate_blank_annulus_covariance(
         "n_rejected": int(rejected),
         "n_accepted": len(centres),
         "n_required": int(required),
+        "n_candidate_budget": int(candidate_budget),
+        "candidate_search_budget_exhausted": examined >= candidate_budget,
         "centres_native_xy": centres,
         "annulus_mean_blank_flux_nMgy": None,
         "annulus_covariance_nMgy2": None,
@@ -162,6 +169,7 @@ def estimate_blank_annulus_covariance(
             "TARGET_LIGHT_OUTSIDE_TESTED_ELLIPSE_NOT_EXCLUDED",
             "UNDETECTED_SOURCES_OR_BACKGROUND_GRADIENTS_MAY_REMAIN",
             "BLANK_POSITIONS_FROM_ONE_COADD_NOT_AN_INDEPENDENT_EXPOSURE_TEST",
+            "NONOVERLAPPING_PLACEMENTS_MAY_STILL_SHARE_LARGE_SCALE_NOISE",
         ],
     }
     if len(centres) >= required:
