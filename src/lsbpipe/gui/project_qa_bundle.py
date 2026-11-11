@@ -361,8 +361,10 @@ def _foreground_aperture_overlap_qa(stages):
 
     This is a catalogue/source-position diagnostic, NOT a PSF subtraction,
     membership solution or a measurement of contaminant flux in the aperture.
-    The neutral circular apertures are used because `offset_arcsec` is a
-    great-circle distance, not an elliptical semimajor-axis coordinate.
+    The neutral circular apertures require spherical separation from the
+    fixed PROJECT anchor. Scene source-inventory `offset_arcsec` may be
+    referenced to a separately picked isophote centre and is not suitable
+    for the Stage04 annulus lookup.
     """
     scene = stages.get("scene_masks") or {}
     phot = stages.get("aperture") or {}
@@ -389,22 +391,37 @@ def _foreground_aperture_overlap_qa(stages):
             len(cumulative) != len(radii)):
         return {"state": "INCONSISTENT_ANNULAR_PROFILE_WITHHELD",
                 "source_flux_removed": False, "science_adopted": False}
+    anchor = aperture.get("target_anchor_icrs")
+    if (not isinstance(anchor, (list, tuple)) or len(anchor) != 2 or
+            not all(isinstance(x, (float, int)) and math.isfinite(x)
+                    for x in anchor)):
+        return {"state": "MISSING_FIXED_PROJECT_APERTURE_ANCHOR",
+                "source_flux_removed": False, "science_adopted": False}
+    ra0, dec0 = (math.radians(float(x)) for x in anchor)
     sources, n_screened = [], 0
     for item in source_evidence.get("entries") or []:
         if not isinstance(item, dict):
             continue
-        offset = item.get("offset_arcsec")
+        src_ra = item.get("ra_deg")
+        src_dec = item.get("dec_deg")
         significance = item.get("parallax_significance")
         parallax = item.get("parallax_mas")
         flux = item.get("band_model_flux_nMgy")
         if (not all(isinstance(x, (int, float)) and not isinstance(x, bool)
                     and math.isfinite(x)
-                    for x in (offset, significance, parallax, flux))
-                or offset < 0 or parallax <= 0 or significance < 5 or flux <= 0
+                    for x in (src_ra, src_dec, significance, parallax, flux))
+                or not 0 <= src_ra < 360 or not -90 <= src_dec <= 90
+                or parallax <= 0 or significance < 5 or flux <= 0
                 or not item.get("gaia_dr3_source_id")
                 or item.get("tractor_type") != "PSF"):
             continue
         n_screened += 1
+        ra, dec = math.radians(src_ra), math.radians(src_dec)
+        half_haversine = (math.sin((dec-dec0)/2.)**2 +
+                          math.cos(dec0)*math.cos(dec)*
+                          math.sin((ra-ra0)/2.)**2)
+        offset = (2.*math.asin(math.sqrt(
+            max(0., min(1., half_haversine))))*180./math.pi*3600.)
         ring = next((i for i, edge in enumerate(radii) if offset <= edge),
                     None)
         if ring is None:
@@ -420,6 +437,8 @@ def _foreground_aperture_overlap_qa(stages):
             "objid": item.get("objid"),
             "gaia_dr3_source_id": item.get("gaia_dr3_source_id"),
             "distance_to_project_anchor_arcsec": float(offset),
+            "source_inventory_offset_arcsec_potentially_different_anchor": (
+                item.get("offset_arcsec")),
             "ring_index": ring,
             "ring_inner_arcsec": 0.0 if ring == 0 else float(radii[ring-1]),
             "ring_outer_arcsec": float(radii[ring]),
@@ -441,6 +460,7 @@ def _foreground_aperture_overlap_qa(stages):
         "state": "FOREGROUND_ASTROMETRY_APERTURE_OVERLAP_QA_ONLY",
         "dataset_id": aperture.get("dataset_id"),
         "geometry": "FIXED_ANCHOR_CIRCLE",
+        "ring_assignment_uses_independently_computed_project_icrs_offset": True,
         "n_astrometric_psf_sources_screened": n_screened,
         "n_qualifying_sources_within_outer_aperture": len(sources),
         "sources_ranked_by_tractor_model_flux": sources[:24],
