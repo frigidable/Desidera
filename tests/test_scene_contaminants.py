@@ -1175,3 +1175,44 @@ def test_red_policy_unscreened_protection_audit_is_row_local():
     assert inventory["screening_evidence_incomplete"] is False
     assert all(item["photometry_action"]=="NO_NEW_ACTION_READ_ONLY"
                for item in inventory["entries"])
+
+
+
+def test_gaia_leave_one_out_is_strictly_read_only_and_restores_overlap():
+    """One star can be withheld without switching off other Gaia masks."""
+    protected=np.ones((241,241),dtype=bool)
+    positions=np.array([[90.,120.],[150.,120.]])
+    rows=(
+        {**_row("PSF",flux=100.),"objid":11,
+         "ref_cat":"G3","ref_id":11111,"parallax_mas":1.,
+         "parallax_ivar":900.},
+        {**_row("PSF",flux=100.),"objid":22,
+         "ref_cat":"G3","ref_id":22222,"parallax_mas":1.,
+         "parallax_ivar":900.},
+    )
+    kwargs=dict(arcsec_per_pixel=1.,protected=protected,wcs=_wcs(),
+                gaia_inner_preview=True)
+    both,old=conservative_catalogue_mask(
+        protected.shape,positions,rows,**kwargs)
+    omit,changed=conservative_catalogue_mask(
+        protected.shape,positions,rows,**kwargs,
+        gaia_inner_skip_objids=(11,))
+    assert old["gaia_inner_preview_sources"]==2
+    assert changed["gaia_inner_preview_sources"]==1
+    assert changed["skipped_target_overlap"]==1
+    assert changed["masked_catalog_sources"]==1
+    assert [v["objid"] for v in changed["gaia_inner_preview_centres"]]==[22]
+    assert both[120,90] and not omit[120,90]
+    assert omit[120,150] and both[120,150]
+    assert np.count_nonzero(omit)<np.count_nonzero(both)
+    assert not omit.flags.writeable
+    assert np.array_equal(protected,np.ones_like(protected))
+    with pytest.raises(ValueError,match="Invalid Gaia"):
+        conservative_catalogue_mask(
+            protected.shape,positions,rows,
+            arcsec_per_pixel=1.,protected=protected,wcs=_wcs(),
+            gaia_inner_skip_objids=(11,))
+    with pytest.raises(ValueError,match="Invalid Gaia"):
+        conservative_catalogue_mask(
+            protected.shape,positions,rows,**kwargs,
+            gaia_inner_skip_objids=(-1,))
