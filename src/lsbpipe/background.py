@@ -931,7 +931,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     """
     from dataclasses import asdict, replace
     from lsbpipe.photometry.sky_masks import evaluate_mask_draft
-    from lsbpipe.scene import LayerKind, MaskLayer, SceneState, grid_fingerprint
+    from lsbpipe.scene import grid_fingerprint
 
     if (not isinstance(dataset, dict) or
             not isinstance(contamination, dict) or draft is None):
@@ -1025,6 +1025,8 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "model_improvement_vs_zero_baseline": None,
         "recommended_science_action": "NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED",
         "automatic_sky_background_correction_authorized": False,
+        "sky_grid_sensitivity_qa": None,
+        "sky_injection_recovery_qa": None,
         "warnings": warnings,
     }
     if not selection["geometry_sufficient_for_diagnostic"]:
@@ -1036,22 +1038,12 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             base, status="SOURCE_INVENTORY_REQUIRED_FOR_AUTOMATIC_SKY",
             warnings=warnings+["BRIGHT_SOURCE_HALO_VETO_UNAVAILABLE"])
 
-    def layer(name, kind, pixels):
-        return MaskLayer(name, kind, pixels, grid, band, "automated-scene-diagnostic")
-
-    scene = SceneState(
-        target_id=pid, grid_id=grid, band=band, shape=shape,
-        layers=(
-            layer("native_hard", LayerKind.INVALID_DATA, hard),
-            layer("catalogue_provisional", LayerKind.NEIGHBOR, auto),
-            layer("manual_exclusion", LayerKind.MANUAL_EXCLUDE,
-                  preview["manual_exclude"]),
-            layer("target_provisional", LayerKind.TARGET_PROTECT,
-                  sky_protected),
-            layer("sky_train_automatic_tiles", LayerKind.SKY_TRAIN, sky_train),
-            layer("sky_holdout_automatic_tiles", LayerKind.SKY_HOLDOUT, sky_holdout),
-        ), revision=draft.revision,
-    )
+    scene = _make_automatic_sky_scene(
+        project_id=pid, grid=grid, band=band, shape=shape,
+        revision=draft.revision, hard=hard, source_mask=auto,
+        manual_mask=preview["manual_exclude"],
+        target_mask=sky_protected,
+        sky_train=sky_train, sky_holdout=sky_holdout)
     settings = BackgroundSettings(
         min_training_pixels=100, min_holdout_pixels=100,
         min_holdout_quadrants=3)
@@ -1153,4 +1145,26 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "holdout_rms_constant_nMgy_per_pixel":score_const,
         "holdout_rms_plane_nMgy_per_pixel":score_plane,
     }
+    base["sky_grid_sensitivity_qa"] = (
+        _audit_current_project_sky_grid_sensitivity(
+            dataset, preview, contamination, grid=grid, band=band,
+            shape=shape, revision=draft.revision, original_hard=hard,
+            source_mask=auto, manual_mask=preview["manual_exclude"],
+            target_mask=sky_protected, original_image=image,
+            inverse_variance=ivar, anchor_native_xy=(x,y),
+            original_candidates=candidates, settings=settings))
+    base["sky_injection_recovery_qa"] = (
+        _audit_current_project_sky_injection_recovery(
+            image, ivar, scene, candidates,
+            anchor_native_xy=(x,y), protected=sky_protected,
+            source_mask=auto, manual_mask=preview["manual_exclude"],
+            hard=hard, settings=settings))
+    if sum(row["status"] == "BOTH_MODELS_MEASURED_UNCALIBRATED"
+           for row in base["sky_grid_sensitivity_qa"]["trials"]) < 2:
+        base["warnings"].append(
+            "FEWER_THAN_TWO_PREDECLARED_GRID_VARIANTS_MEASURABLE")
+    if base["sky_injection_recovery_qa"]["status"] != (
+            "SAME_COADD_FROZEN_MASK_INJECTION_DIAGNOSTIC_ONLY"):
+        base["warnings"].append(
+            "SKY_INJECTION_RECOVERY_NOT_MEASURABLE")
     return base
