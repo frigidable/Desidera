@@ -48,7 +48,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                                 sga_core=None,
                                 gaia_inner_preview=False,
                                 red_extended_preview=False,
-                                anchor_pixel=None, target_radius_arcsec=None):
+                                anchor_pixel=None, target_radius_arcsec=None,
+                                gaia_inner_skip_objids=()):
     """Source-type-aware *screening* footprints, never rendered Tractor models.
 
     Point sources get conservative round brightness-dependent envelopes.
@@ -83,6 +84,15 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     inventory_truncated = 0
     if np.shape(positions) != (len(rows), 2):
         raise ValueError("Tractor positions and row count differ")
+    # Read-only star-by-star ablation: an excluded ID falls back to the
+    # original protected-overlap policy, never to a science mask.
+    if (not isinstance(gaia_inner_skip_objids, (tuple, frozenset)) or
+            len(gaia_inner_skip_objids) > 12 or
+            any(type(v) is not int or v < 0 for v in
+                gaia_inner_skip_objids) or
+            (gaia_inner_skip_objids and not gaia_inner_preview)):
+        raise ValueError("Invalid Gaia leave-one-out QA source IDs")
+    skipped_gaia_ids = set(gaia_inner_skip_objids)
     # Nearest-neighbour isolation is an independent veto. Do not use
     # red/extended heuristics to discard blended target light in dense
     # galaxy cores. Only compute this layer if explicitly requested.
@@ -243,6 +253,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
             # exclusion, not as a subtraction or science mask.
             is_gaia_preview = (
                 gaia_inner_preview and source_type == "PSF"
+                and row.get("objid") not in skipped_gaia_ids
                 and not row.get("gaia_duplicated_source", False)
                 and gaia_astrometric_foreground_review(row)[0])
             if is_gaia_preview:
@@ -331,7 +342,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
 
 def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                                 *, sga_prior=None, gaia_inner_preview=False,
-                                red_extended_preview=False):
+                                red_extended_preview=False,
+                                gaia_inner_skip_objids=()):
     """Prepare source-bound candidate mask in a worker, with no network.
 
     The current stage supports verified local DR11 South native Tractor
@@ -419,6 +431,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         arcsec_per_pixel=pxscale, protected=protected,
         wcs=dataset["wcs"], sga_core=sga_core,
         gaia_inner_preview=bool(gaia_inner_preview),
+        gaia_inner_skip_objids=gaia_inner_skip_objids,
         red_extended_preview=bool(red_extended_preview),
         anchor_pixel=(dataset["wcs"].all_world2pix(*anchor, 0)
                       if red_extended_preview else None),
@@ -490,6 +503,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "auto_mask": auto.copy(),
         "gaia_inner_preview_mask": inner_gaia_mask.copy(),
         "gaia_inner_preview_enabled": bool(gaia_inner_preview),
+        "gaia_inner_skipped_objids_for_qa":tuple(sorted(
+            gaia_inner_skip_objids)),
         "red_extended_preview_mask": red_extended_mask.copy(),
         "red_extended_preview_enabled": bool(red_extended_preview),
         "protected": protected.copy(),
