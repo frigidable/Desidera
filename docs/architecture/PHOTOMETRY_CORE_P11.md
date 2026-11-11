@@ -1111,3 +1111,87 @@ build 04.2 fixed anchored ICRS radial grids,
 direct cumulative and annular flux sums with
 shared exact masks; only then stage 04.4 GUI
 and later correlated-noise/membership QA.
+
+
+---
+
+## 2026-11-11 — Stage 04.2 fixed native growth and first GUI bridge
+
+**Status:** numerical and GUI diagnostic implementation; not adopted
+science and not yet executed against Leo P native data.
+
+The new existing-package module
+`src/lsbpipe/photometry/aperture_growth.py` implements
+`GrowthHypothesis`, `predeclared_growth_radii`,
+`geometry_hypotheses`, `measure_native_annulus` and
+`measure_growth_diagnostic`. All operate on original,
+unchanged band-local `NativeBandFrame` images and strictly
+same-grid provisional masks. Fixed project ICRS anchor;
+no auto-recentering on stellar peaks.
+
+The sampling reference radius is only the area-equivalent
+radius of provisional target protection, R=sqrt(N/pi)*local
+native pixel scale. It is not a measured galaxy isophote.
+When no usable protection is present, the grid uses a
+clearly flagged native-field scale. Ten fixed semimajor axes
+are [0.12,0.20,0.30,0.42,0.56,0.72,0.90,1.12,1.40,1.75] R.
+The selection scale is capped at 85% of the shortest
+native frame-edge margin, with exact area coverage retained
+at every radius. A cap never proves complete coverage.
+
+Initial geometry hypotheses are (1) project-anchor circle,
+(2) explicit selected SGA q/PA hypothesis where available;
+otherwise (2–3) fixed q=0.7 hypotheses at PA 0/90 degrees.
+The ICRS center is invariant across all rings. SGA center
+and an offset Scene isophote do not silently move the
+apertures. All hypotheses are labelled nonvalidated.
+
+Independent photutils `EllipticalAnnulus` exact fractional
+native pixel integrals yield annular signed flux, usable
+area, diagonal-only IVAR error, linear surface intensity
+and positive-only AB surface brightness. The difference
+between two measured cumulative fluxes is independently
+compared with the intervening annular direct sum; it is
+not assumed identical without numerical QA. Negative
+annular flux remains negative and the CoG is never forced
+monotonic. Masked-area reconstruction and asymptotic
+extrapolation are absent.
+
+New `src/lsbpipe/gui/aperture_workspace.py` is the fourth
+real tab inside the existing `PhotometryWorkspace`.
+It uses in-memory Scene original native IMAGE/INVVAR/NEXP/
+MASKBITS, matching current preliminary Tractor catalogue,
+revisioned ICRS mask draft, effective restored-source mask
+and native hard exclusions, with the project manifest's
+release/region/brick ID. Stage 03's constant-plane
+preferred fit is **never** automatically adopted.
+All first direct curves operate on the original DR11
+coadd with ZERO additional sky correction.
+
+The `Build aperture curves` action explicitly starts the
+worker; simply visiting the tab must not read a FITS
+or run any measurement. The original-source lookup never
+downloads other bricks or stellar fields. A read-only
+multi-geometry growth plot, radius/coverage/flux readout
+and complete `Copy aperture QA` expose provenance and
+limitations. Project, band, Scene revision, catalog source
+and selected SGA shape changes invalidate a stale QA.
+Resume stage `aperture` is supported by the existing
+project-scoped navigation pointer. Offline GUI screenshots
+include the Stage 04 no-native-FITS fail-closed state.
+
+**Scientific HOLD:** source-FITS checksums are not
+independently revalidated from in-memory Scene cutouts,
+source membership and masked galaxy flux are unresolved,
+and correlated coadd noise, sky-systematic uncertainty,
+PSF wings and total magnitude are not calibrated.
+Do not use available-area AB magnitudes as total
+galaxy magnitudes. No observed Leo P Stage 04 flux
+is claimed until the researcher runs the new stage
+on its pre-existing DR11 brick.
+
+Next: Stage 04.3 large-aperture empirical noise,
+sky/geometry/source-membership sensitivity,
+PSF-aware injection, then separately gated total
+and multi-filter products. No new branch or
+project directory is required.
