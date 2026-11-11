@@ -452,6 +452,84 @@ def _foreground_aperture_overlap_qa(stages):
     }
 
 
+def _conditional_sky_aperture_response_qa(stages):
+    """Evaluate frozen Stage03 candidate planes on Stage04 mask geometry.
+
+    This is a flux *counterfactual*, not a measured photometric sky error.
+    Background candidates are NOT scientifically accepted or subtracted.
+    """
+    sky = stages.get("background") or {}
+    aperture = stages.get("aperture") or {}
+    if (sky.get("state") != "CURRENT_DIAGNOSTIC" or
+            aperture.get("state") != "CURRENT_DIAGNOSTIC"):
+        return {"state": "BACKGROUND_OR_APERTURE_NOT_CURRENT",
+                "correction_applied": False, "science_adopted": False}
+    bg = sky.get("result") or {}
+    ap = aperture.get("result") or {}
+    if (bg.get("band") != ap.get("band") or
+            bg.get("project_id") != ap.get("project_id") or
+            bg.get("draft_sha256") != ap.get("scene_draft_sha256") or
+            bg.get("catalog_sha256") != ap.get("catalog_sha256") or
+            bg.get("dataset_source") != ap.get("dataset_source")):
+        return {"state": "SCENE_OR_BAND_PROVENANCE_MISMATCH",
+                "correction_applied": False, "science_adopted": False}
+    details = (ap.get("systematics_04_3") or {}).get("sky_response")
+    if not isinstance(details, dict):
+        return {"state": "NO_EXACT_APERTURE_RESPONSE",
+                "correction_applied": False, "science_adopted": False}
+    derivatives = [details.get(key) for key in (
+        "dflux_db0_native_pixel2",
+        "dflux_dbx_native_pixel3",
+        "dflux_dby_native_pixel3")]
+    centre = details.get("reference_native_xy")
+    if (not all(isinstance(x, (int, float)) and math.isfinite(x)
+                for x in derivatives) or not isinstance(centre, (list, tuple))
+            or len(centre) != 2):
+        return {"state": "INVALID_SKY_DERIVATIVE_WITHHELD",
+                "correction_applied": False, "science_adopted": False}
+    fits = {}
+    for method, candidate in (bg.get("methods") or {}).items():
+        try:
+            coefficients = candidate["coefficients_nMgy"]
+            reference = candidate["reference_xy_pix"]
+            if (candidate.get("fit_status") != "FITTED" or
+                    len(coefficients) != 3 or len(reference) != 2):
+                continue
+            b0, bx, by = (float(x) for x in coefficients)
+            xref, yref = (float(x) for x in reference)
+            if not all(math.isfinite(x) for x in (b0,bx,by,xref,yref)):
+                continue
+            # dF/db0 is relative to target anchor; transform plane origin.
+            b_at_target = (b0 + bx*(centre[0]-xref)
+                             + by*(centre[1]-yref))
+            delta_flux = (derivatives[0]*b_at_target +
+                          derivatives[1]*bx + derivatives[2]*by)
+            fits[method] = {
+                "fitted_candidate_sky_at_anchor_nMgy_per_native_pixel":
+                    b_at_target,
+                "conditional_flux_change_if_subtracted_nMgy": delta_flux,
+                "NOT_a_measured_galaxy_sky_bias": True,
+                "fit_is_unadopted": True,
+            }
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+    return {
+        "state": ("FITTED_SKY_COUNTERFACTUALS_AVAILABLE"
+                  if fits else "NO_USABLE_SKY_CANDIDATE"),
+        "dataset_id": ap.get("dataset_id"),
+        "outer_circle_radius_arcsec": (
+            (ap.get("systematics_04_3") or {}).get(
+                "reference_semimajor_arcsec")),
+        "methods": fits,
+        "correction_applied": False,
+        "sky_uncertainty_inferred": False,
+        "science_adopted": False,
+        "warning": (
+            "These are deterministic responses to unadopted Stage03 sky "
+            "candidates, not error bars or evidence of required subtraction"),
+    }
+
+
 def _diagnostic_findings(stages, project):
     """Deterministic triage hints; never claim a calibrated error or fit."""
     findings = []
@@ -501,6 +579,9 @@ def _diagnostic_findings(stages, project):
                    for ring in curve.get("independently_integrated_annuli", [])):
                 findings.append("SIGNED_NEGATIVE_ANNULAR_FLUX_REQUIRES_SKY_QA")
                 break
+    sky_response = stages.get("conditional_sky_aperture_response") or {}
+    if sky_response.get("state") == "FITTED_SKY_COUNTERFACTUALS_AVAILABLE":
+        findings.append("APERTURE_SENSITIVE_TO_UNADOPTED_SKY_FITS")
     foreground = stages.get("foreground_aperture_overlap") or {}
     if foreground.get("state") == "FOREGROUND_ASTROMETRY_APERTURE_OVERLAP_QA_ONLY":
         if foreground.get("n_qualifying_sources_within_outer_aperture", 0) > 0:
@@ -577,6 +658,9 @@ def build_project_diagnostic_bundle(workspace):
     report["stages"]["foreground_aperture_overlap"] = _safe_stage(
         "foreground_aperture_overlap",
         lambda: _foreground_aperture_overlap_qa(report["stages"]))
+    report["stages"]["conditional_sky_aperture_response"] = _safe_stage(
+        "conditional_sky_aperture_response",
+        lambda: _conditional_sky_aperture_response_qa(report["stages"]))
     report["diagnostic_findings"] = _diagnostic_findings(
         report["stages"], report["project"])
     # Preserve non-finite diagnostics as explicit JSON-safe failure markers.
