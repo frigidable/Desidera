@@ -8,6 +8,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
+import traceback
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -35,6 +36,7 @@ class SkyWorkspace(QWidget):
         self._active_identity = None
         self._result_identity = None
         self._result = None
+        self._last_failure = None
         self._timer = QTimer(self)
         self._timer.setInterval(80)
         self._timer.timeout.connect(self._poll_worker)
@@ -172,6 +174,7 @@ class SkyWorkspace(QWidget):
         identity, dataset, draft, contamination = snap
         self._result = None
         self._result_identity = None
+        self._last_failure = None
         self.copy_btn.setEnabled(False)
         self._active_identity = identity
         self._future = self._executor.submit(
@@ -204,6 +207,14 @@ class SkyWorkspace(QWidget):
             result = future.result()
         except (OSError, ValueError, KeyError, TypeError,
                 ArithmeticError, RuntimeError) as exc:
+            self._last_failure = {
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:1600],
+                "traceback": "".join(traceback.format_exception(
+                    type(exc), exc, exc.__traceback__))[-5000:],
+                "scene_identity_at_attempt": list(identity[:5]),
+                "status": "WORKER_FAILED_CLOSED",
+            }
             self.status.setText(f"Sky diagnostic failed closed: {exc}")
             self.readout.setPlainText(
                 "No background candidate accepted or subtracted. "
