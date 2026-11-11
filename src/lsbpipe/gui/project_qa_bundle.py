@@ -216,7 +216,7 @@ def _guard_raw_arrays(value, depth=0):
         if value.ndim >= 2 or value.size > 256:
             return {"omitted_raw_array": True, "shape": list(value.shape),
                     "dtype": str(value.dtype)}
-        return value.tolist()
+        return _guard_raw_arrays(value.tolist(), depth+1)
     if isinstance(value, np.generic):
         return _guard_raw_arrays(value.item(), depth+1)
     if isinstance(value, dict):
@@ -373,6 +373,12 @@ def _diagnostic_findings(stages, project):
     ablation = scene.get("mask_policy_ablation")
     if ablation and isinstance(ablation.get("scenarios"), list):
         lookup = {row.get("policy"): row for row in ablation["scenarios"]}
+        if any((len(row) > 7 and isinstance(row[7], (int, float))
+                and row[7] < 0)
+               for scenario in ablation["scenarios"]
+               for row in (scenario.get("sga_radial_trace") or {}).get(
+                   "rows", [])):
+            findings.append("NEGATIVE_REPORTED_SMOOTHED_RMS_REQUIRES_AUDIT")
         none, both = lookup.get("none"), lookup.get("both")
         if none and both and none.get("component_pixels") and both.get("component_pixels") is not None:
             relative_change = (abs(none["component_pixels"] -
@@ -390,6 +396,10 @@ def _diagnostic_findings(stages, project):
         if blank.get("annulus_covariance_nMgy2") is None:
             findings.append("BLANK_ANNULUS_COVARIANCE_UNAVAILABLE")
         for curve in aper["result"].get("curves", []):
+            if any((record.get("area_native_pixel2") or {}).get(
+                    "valid_fraction_of_ideal", 1.) < .9
+                   for record in curve.get("cumulative", [])):
+                findings.append("APERTURE_VALID_AREA_BELOW_90_PERCENT")
             if any((ring.get("signed_flux_nMgy") is not None and
                     ring["signed_flux_nMgy"] < 0)
                    for ring in curve.get("independently_integrated_annuli", [])):
