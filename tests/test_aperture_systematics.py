@@ -514,3 +514,34 @@ def test_compensated_native_pixel_permutations_fail_closed():
         diagnose_aperture_systematics(
             changed_variance, **dict(args, curves=[variance_curve]))
     assert variance_frame.native_input_sha256 == variance_frame.native_input_sha256
+
+
+@pytest.mark.parametrize("bad_weight", (-0.2, 1.2, float("nan")))
+def test_stage_04_3_rejects_invalid_exact_weights_in_sky_derivative(
+        monkeypatch, bad_weight):
+    """04.3 must reject bad overlap fractions even after valid 04.2 receipts."""
+    import photutils.aperture as ap
+    baseline_class = ap.EllipticalAperture
+    f = frame(value=1.)
+    zeros = np.zeros(f.shape, dtype=bool)
+    curve = _curve(f, zeros, zeros)
+    calls = [0]
+
+    class CorruptedSecondAperture(baseline_class):
+        def to_mask(self, method="exact"):
+            result = super().to_mask(method=method)
+            calls[0] += 1
+            # First use is the independent fresh Stage 04.2 aperture
+            # verification; the second use is the Stage 04.3 derivative.
+            if calls[0] == 2:
+                result.data[result.data.shape[0]//2,
+                            result.data.shape[1]//2] = bad_weight
+            return result
+
+    monkeypatch.setattr(ap, "EllipticalAperture", CorruptedSecondAperture)
+    with pytest.raises(ValueError, match="Invalid Stage 04.3 exact"):
+        diagnose_aperture_systematics(
+            f, anchor_icrs=(155.4, 18.),
+            provenance=provenance(), effective_source_mask=zeros,
+            manual_exclude=zeros, curves=[curve])
+    assert calls[0] == 2

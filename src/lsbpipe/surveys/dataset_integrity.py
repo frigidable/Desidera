@@ -344,6 +344,13 @@ def _sampled_footprint(data_root: Path, verified: list[dict], field: SkyField,
             checkpoint(cancel_check)
             key = (release, region, entry["brick"], band)
             paths = _expected_paths(data_root, key)
+            # Verification and sampled-footprint extraction are separate
+            # file opens. A path can be substituted after the earlier
+            # quartet check; refuse symlinks before opening it again.
+            for kind, path in paths.items():
+                if path.is_symlink() or not path.is_file():
+                    raise RuntimeError(
+                        f"Unsafe original {kind.upper()} FITS during coverage sampling: {path}")
             with ExitStack() as stack:
                 hdus = {k: stack.enter_context(
                     fits.open(p, memmap=True)) for k, p in paths.items()}

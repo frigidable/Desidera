@@ -284,3 +284,26 @@ def test_native_dataset_audit_rejects_symlink_substitution_after_inventory(
     from lsbpipe.surveys.dataset_integrity import _sha256_file
     with pytest.raises(ValueError, match="Unsafe"):
         _sha256_file(original_image)
+
+
+def test_sampled_coverage_refuses_symlink_substitution_after_validated_input(
+        tmp_path):
+    """Second opening of a P0.2 quartet cannot follow a substituted source."""
+    from lsbpipe.surveys import dataset_integrity as audit
+    root = tmp_path / "original"
+    files = _make_brick(root, "0401p012")
+    source = audit.discover_dataset_inventory(root)[0]
+    verified = audit.verify_dataset(root, source)
+    assert verified["status"] == "FITS_WCS_VALIDATED_DIAGNOSTIC"
+    old = files["image"]
+    external = tmp_path / "outside-original-image.fits.fz"
+    old.rename(external)
+    try:
+        old.symlink_to(external)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem disallows symlink construction")
+    with pytest.raises(RuntimeError, match="Unsafe original IMAGE FITS"):
+        audit._sampled_footprint(
+            root, [verified], FIELD, pitch_arcsec=2.)
+    assert old.is_symlink()
+    assert external.is_file()

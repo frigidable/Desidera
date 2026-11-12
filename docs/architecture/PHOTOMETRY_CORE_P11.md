@@ -2433,3 +2433,19 @@ least 15 pixels. It now checks this same kernel-shape contract
 before fitting holdout amplitudes, preserving identical radial
 comparison mathematics for valid kernels. Neither correction
 promotes experimental stellar PSFs to scientific adoption.
+
+
+### Stage 04.3 numerical integrity of exact overlap fractions (2026-11-12)
+
+The Stage 04.2 direct and annular flux integrators reject nonfinite
+and nonphysical exact fractional pixel overlaps, but the Stage 04.3
+residual-sky response calculation still used unconditional
+`np.clip(weights, 0, 1)`. Corrupt negative or supra-unit weights
+could therefore silently change the measured native-area response
+to constant/tilted sky, despite a previously validated 04.2 curve.
+Stage 04.3 now checks finite fractional weight bounds **before**
+applying only roundoff-scale clipping, matching the integrators.
+A regression injects bad photutils weights only after the independently
+verified outer 04.2 aperture and requires a specific refusal before
+reporting a sky derivative. No sky uncertainty or science covariance
+is inferred by this numerical check.

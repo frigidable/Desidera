@@ -1058,3 +1058,19 @@ unknown releases cannot masquerade as supported optical observations.
 The caller still supplies the original image digest and is responsible
 for having computed it from the actual data; this validation is
 syntactic and does not identify physical source membership.
+
+
+### Multi-brick sampled footprint must reopen original FITS safely (2026-11-12)
+
+P0.2 validated each native quartet and its unit/coordinate metadata
+before constructing the optional sampled multi-brick coverage map.
+That later map reopened the paths, but unlike the initial verification
+did not re-check that they still pointed to regular files rather than
+new symbolic links. A substituted path could therefore be consumed
+in the sky coverage diagnostic despite an earlier clean inventory.
+The footprint sampler now repeats the no-symlink/regular-file
+precondition at its own original-FITS read boundary; the final
+source-SHA check remains in place. A synthetic regression substitutes
+a link **after** verified input receipt creation and requires refusal
+before the map's second FITS opening. This mitigates path replacement
+but is not a kernel-level race-free descriptor authenticity guarantee.

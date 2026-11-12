@@ -498,7 +498,11 @@ def diagnose_aperture_systematics(
     large, small = mask.get_overlap_slices(frame.shape)
     area = dx_sum = dy_sum = 0.
     if large is not None:
-        weights = np.clip(np.asarray(mask.data[small], dtype=float), 0., 1.)
+        weights = np.asarray(mask.data[small], dtype=float)
+        if (not np.isfinite(weights).all() or
+                np.any((weights < -1e-10) | (weights > 1.+1e-10))):
+            raise ValueError("Invalid Stage 04.3 exact aperture overlap fractions")
+        weights = np.clip(weights, 0., 1.)
         usable = frame.valid[large] & ~source[large] & ~manual[large]
         yy, xx = np.indices(weights.shape, dtype=float)
         xx += large[1].start
