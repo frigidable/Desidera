@@ -123,14 +123,35 @@ def estimate_blank_annulus_covariance(
     if max_placements is None:
         max_placements = min(256, max(48, required))
     candidate_budget = max(256, 32 * max_placements)
+    # The old row-major loop always accepted the first clean blanks at
+    # the upper edge. On an ample image 48 examples could all come from
+    # one sky region, understating large-scale spatial heterogeneity.
+    # Predeclare a geometry-only four-quadrant, seeded ordering. Neither
+    # pixel intensities nor measured fluxes participate in the ordering.
+    # Candidate nodes retain the existing step-separated lattice, so
+    # distinct accepted outer apertures never geometrically overlap.
+    candidates_by_quadrant = [[], [], [], []]
     for row, y in enumerate(range(margin, ny - margin, step)):
-        if examined >= candidate_budget:
-            break
         start = margin + (step // 2 if row % 2 else 0)
         for x in range(start, nx - margin, step):
-            if (len(centres) >= max_placements or
-                    examined >= candidate_budget):
+            quadrant = int(x >= nx/2) + 2*int(y >= ny/2)
+            candidates_by_quadrant[quadrant].append((x, y))
+    rng = np.random.default_rng(20261112)
+    for group in candidates_by_quadrant:
+        rng.shuffle(group)
+    accepted_by_quadrant = [0, 0, 0, 0]
+    available_by_quadrant = [len(g) for g in candidates_by_quadrant]
+    # Interleave the predeclared quadrants; do not prefer the first
+    # pixel rows merely because a placement cap has been reached.
+    for index in range(max(available_by_quadrant, default=0)):
+        if len(centres) >= max_placements or examined >= candidate_budget:
+            break
+        for quadrant, group in enumerate(candidates_by_quadrant):
+            if len(centres) >= max_placements or examined >= candidate_budget:
                 break
+            if index >= len(group):
+                continue
+            x, y = group[index]
             examined += 1
             # At least the full outer aperture separates each sky placement
             # from the putative target. Extended LSB light is NOT excluded.
@@ -165,16 +186,21 @@ def estimate_blank_annulus_covariance(
                 rejected += 1
                 continue
             centres.append([int(x), int(y)])
+            accepted_by_quadrant[quadrant] += 1
             samples.append(vector)
-        if len(centres) >= max_placements:
-            break
 
     report = {
         "schema": _BLANK_SCHEMA,
         "dataset_id": frame.dataset_id,
         "radii_arcsec": list(radii),
         "placement_policy": (
-            "DETERMINISTIC_NONOVERLAPPING_NATIVE_ELLIPTICAL_RINGS_V1"),
+            "STRATIFIED_QUADRANT_PREDECLARED_NONOVERLAPPING_NATIVE_RINGS_V2"),
+        "candidate_order_independent_of_image_brightness": True,
+        "candidate_order_random_seed": 20261112,
+        "candidate_grid_nodes_by_quadrant": available_by_quadrant,
+        "accepted_centres_by_quadrant": accepted_by_quadrant,
+        "n_quadrants_with_accepted_blanks": sum(
+            n > 0 for n in accepted_by_quadrant),
         "n_examined": int(examined),
         "n_rejected": int(rejected),
         "n_accepted": len(centres),
