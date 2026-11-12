@@ -274,6 +274,40 @@ def fit_observation_background(observation, scene: SceneState, *, method,
 
 
 
+def _sky_circle_native_patch(shape, x, y, radius_arcsec, jacobian):
+    """Conservative local WCS sky circle on the original native grid.
+
+    A circular angular exclusion is generally an ELLIPSE in native pixels.
+    The geometric-mean pixel scale cannot bound the fine-scale direction.
+    This is a local tangent-plane *veto*, not a calibrated PSF-halo model.
+    """
+    matrix = np.asarray(jacobian, dtype=float)
+    if matrix.shape != (2, 2) or not np.isfinite(matrix).all():
+        raise ValueError("Invalid celestial WCS Jacobian for Gaia sky veto")
+    singular = np.linalg.svd(matrix, compute_uv=False)
+    if singular[-1] <= 1.e-12:
+        raise ValueError("Degenerate celestial WCS for Gaia sky veto")
+    if (not np.isfinite(x) or not np.isfinite(y) or
+            not np.isfinite(radius_arcsec) or radius_arcsec <= 0):
+        raise ValueError("Invalid Gaia sky-veto centre or radius")
+    reach = float(radius_arcsec / singular[-1])
+    ny, nx = shape
+    x0, x1 = max(0, int(np.floor(x-reach))), min(
+        nx, int(np.ceil(x+reach))+1)
+    y0, y1 = max(0, int(np.floor(y-reach))), min(
+        ny, int(np.ceil(y+reach))+1)
+    if x1 <= x0 or y1 <= y0:
+        return slice(0, 0), slice(0, 0), np.zeros((0, 0), bool)
+    yy, xx = np.meshgrid(np.arange(y0, y1), np.arange(x0, x1),
+                         indexing="ij")
+    dx, dy = xx-x, yy-y
+    tangent_x = matrix[0,0]*dx + matrix[0,1]*dy
+    tangent_y = matrix[1,0]*dx + matrix[1,1]*dy
+    mask = (tangent_x*tangent_x+tangent_y*tangent_y
+            <= radius_arcsec*radius_arcsec)
+    return slice(y0, y1), slice(x0, x1), mask
+
+
 def _automatic_scene_sky_pixels(
         dataset, preview, contamination, *,
         tile_edge_native_pix=None, grid_offset_xy_native_pix=(0, 0),
@@ -321,12 +355,21 @@ def _automatic_scene_sky_pixels(
     if scales.shape != (2,) or not np.all(np.isfinite(scales)) or np.any(scales <= 0):
         raise ValueError("Cannot determine Scene native pixel scale")
     arcsec_per_pixel = float(np.sqrt(scales[0]*scales[1])*3600.)
+    tangent_jacobian = np.asarray(
+        dataset["wcs"].celestial.pixel_scale_matrix, dtype=float)*3600.
+    singular = np.linalg.svd(tangent_jacobian, compute_uv=False)
+    if (not np.isfinite(singular).all() or singular[-1] <= 1.e-12):
+        raise ValueError("Degenerate local WCS for sky-region exclusion")
+    # A scalar distance-transform guard uses the MINIMUM angular
+    # pixel scale. This can over-exclude sky, but cannot quietly
+    # under-exclude on the fine-scale native pixel axis.
+    guard_arcsec_per_pixel = float(singular[-1])
     # This is an exclusion-only heuristic, not validated galaxy extent.
     equivalent_target_radius = np.sqrt(np.count_nonzero(target)/np.pi)
     target_guard_px = int(np.ceil(target_guard_factor*max(
-        15./arcsec_per_pixel, .30*equivalent_target_radius)))
+        15./guard_arcsec_per_pixel, .30*equivalent_target_radius)))
     source_guard_px = int(np.ceil(source_guard_factor*max(
-        2., 6./arcsec_per_pixel)))
+        2., 6./guard_arcsec_per_pixel)))
 
     def guarded(mask, radius):
         if not np.any(mask):
@@ -357,15 +400,11 @@ def _automatic_scene_sky_pixels(
         guard_arcsec = (60. if mag <= 13. else
                         40. if mag <= 15. else
                         30. if mag <= 16.5 else 18.)
-        radius = guard_arcsec/arcsec_per_pixel
-        x0, x1 = max(0, int(np.floor(sx-radius))), min(
-            nx, int(np.ceil(sx+radius))+1)
-        y0, y1 = max(0, int(np.floor(sy-radius))), min(
-            ny, int(np.ceil(sy+radius))+1)
-        if x1 <= x0 or y1 <= y0:
+        ys, xs, footprint = _sky_circle_native_patch(
+            shape, sx, sy, guard_arcsec, tangent_jacobian)
+        if footprint.size == 0:
             continue
-        xx, yy = np.meshgrid(np.arange(x0,x1), np.arange(y0,y1))
-        bright_veto[y0:y1,x0:x1] |= (xx-sx)**2+(yy-sy)**2 <= radius**2
+        bright_veto[ys, xs] |= footprint
         bright_n += 1
 
     valid = ((~hard) & np.isfinite(image) &
@@ -436,6 +475,11 @@ def _automatic_scene_sky_pixels(
         "sky_regions_drawn_by_user_required": False,
         "manual_sky_annotations_ignored_not_deleted": True,
         "native_pixel_scale_arcsec": arcsec_per_pixel,
+        "guard_minimum_native_angular_scale_arcsec_per_pixel":
+            guard_arcsec_per_pixel,
+        "bright_gaia_veto_uses_local_tangent_plane_wcs": True,
+        "distance_transform_guards_use_conservative_minimum_pixel_scale": True,
+        "sky_veto_is_not_calibrated_psf_wing_radius": True,
         "tile_edge_native_pix": tile,
         "tile_grid_offset_xy_native_pix": [offset_x, offset_y],
         "target_guard_factor": float(target_guard_factor),
