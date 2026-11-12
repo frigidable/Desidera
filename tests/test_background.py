@@ -214,6 +214,11 @@ def test_anisotropic_wcs_gaia_sky_veto_uses_true_sky_circle():
     ys,xs,patch=_sky_circle_native_patch(
         (145,145),70.,70.,18.,jac)
     def included(x,y):
+        # The native patch is intentionally bounded. Pixels outside its
+        # conservative angular support are correctly excluded as False,
+        # not indexed into a non-existent local array.
+        if not (xs.start <= x < xs.stop and ys.start <= y < ys.stop):
+            return False
         return bool(patch[y-ys.start,x-xs.start])
     assert included(70,70)
     assert included(70,102)   # dy=32 native px -> 16 arcsec
