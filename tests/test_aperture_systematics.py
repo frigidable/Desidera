@@ -63,6 +63,45 @@ def test_blank_annulus_covariance_is_deterministic_signed_and_psd():
     json.dumps(result, allow_nan=False)
 
 
+def test_blank_sampling_is_spatially_stratified_not_first_clean_rows():
+    """A capped clean field must sample distinct quadrants, not one edge."""
+    rng=np.random.default_rng(29)
+    values=rng.normal(0.,.3,(321,321))
+    f=frame(image=values,shape=values.shape)
+    none=np.zeros(f.shape,dtype=bool)
+    result=estimate_blank_annulus_covariance(
+        f,geometry(a=1.6,q=.8,pa=25.),(.5,1.,1.6),
+        effective_source_mask=none,manual_exclude=none,
+        max_placements=48)
+    counts=result["accepted_centres_by_quadrant"]
+    assert result["n_accepted"]==48
+    assert sum(counts)==48
+    assert result["n_quadrants_with_accepted_blanks"]==4
+    assert min(counts)>=8
+    assert max(counts)-min(counts)<=4
+    assert result["candidate_order_independent_of_image_brightness"] is True
+    assert result["placement_policy"]==(
+        "STRATIFIED_QUADRANT_PREDECLARED_NONOVERLAPPING_NATIVE_RINGS_V2")
+    assert result==estimate_blank_annulus_covariance(
+        f,geometry(a=1.6,q=.8,pa=25.),(.5,1.,1.6),
+        effective_source_mask=none,manual_exclude=none,
+        max_placements=48)
+    # The centre selection is entirely geometric and must not change
+    # when the coadd pixel fluxes change while validity stays fixed.
+    alternate=frame(image=-values,shape=values.shape)
+    other=estimate_blank_annulus_covariance(
+        alternate,geometry(a=1.6,q=.8,pa=25.),(.5,1.,1.6),
+        effective_source_mask=none,manual_exclude=none,
+        max_placements=48)
+    assert other["centres_native_xy"]==result["centres_native_xy"]
+    assert result["covariance_calibrated_for_science"] is False
+    coords=np.asarray(result["centres_native_xy"],dtype=float)
+    # All accepted footprints are separated by the original 2r+6 lattice.
+    d2=((coords[:,None,:]-coords[None,:,:])**2).sum(axis=2)
+    np.fill_diagonal(d2,np.inf)
+    assert np.min(d2)>=(2*1.6)**2
+
+
 def test_missing_independent_blanks_refuses_covariance_instead_of_zero():
     f = frame(value=.1)
     source = np.ones(f.shape, dtype=bool)
