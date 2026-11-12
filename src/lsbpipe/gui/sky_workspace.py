@@ -117,6 +117,24 @@ class SkyWorkspace(QWidget):
         contamination = scene._contamination
         if dataset is None or draft is None or contamination is None:
             return None
+        # A copied or edited project passport can keep the same UUID,
+        # band and human-readable label while changing centre/brick.
+        # The loaded source and prepared masks must still match the
+        # explicitly bound ICRS anchor and native quartet.
+        loaded_anchor = dataset.get("loaded_target_icrs")
+        if loaded_anchor is not None and (
+                scene._project_target is None or
+                tuple(loaded_anchor) != tuple(scene._project_target)):
+            return None
+        loaded_key = dataset.get("source_quartet_key")
+        if loaded_key is not None:
+            if (scene._source_key is None or
+                    scene._source_key[2] is None or
+                    tuple(loaded_key[:3]) != tuple(scene._source_key[2][:3]) or
+                    loaded_key[3] != scene._band or
+                    tuple(contamination.get("source_quartet_key", ())) !=
+                    tuple(loaded_key)):
+                return None
         if (scene._future is not None or scene._project_root is None or
                 scene._project_id != dataset["project_id"] or
                 scene._band != dataset["band"] or
