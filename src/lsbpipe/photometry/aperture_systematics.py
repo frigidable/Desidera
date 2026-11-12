@@ -23,7 +23,7 @@ from lsbpipe.scene import grid_fingerprint
 
 
 _SCHEMA = "desidera.photometry.aperture-systematics/1"
-_BLANK_SCHEMA = "desidera.photometry.blank-annulus-covariance/1"
+_BLANK_SCHEMA = "desidera.photometry.blank-annulus-covariance/2"
 
 
 def _scene_masks(frame, source_mask, manual_exclude):
@@ -133,7 +133,8 @@ def estimate_blank_annulus_covariance(
         frame: NativeBandFrame, outer: ApertureGeometryICRS,
         radii_arcsec, *, effective_source_mask, manual_exclude,
         min_placements=12, max_placements=None,
-        full_target_exclusion_outer: ApertureGeometryICRS | None = None):
+        full_target_exclusion_outer: ApertureGeometryICRS | None = None,
+        sky: ApertureSkyScenario | None = None):
     """Empirical covariance of signed fluxes in non-overlapping blank rings.
 
     Candidates have the same native-pixel shape as the galaxy rings; they
@@ -149,6 +150,9 @@ def estimate_blank_annulus_covariance(
     if not isinstance(frame, NativeBandFrame) or not isinstance(
             outer, ApertureGeometryICRS):
         raise TypeError("Validated native frame and ICRS geometry required")
+    sky = ApertureSkyScenario() if sky is None else sky
+    if not isinstance(sky, ApertureSkyScenario):
+        raise TypeError("Versioned conditional blank-sky scenario required")
     radii = tuple(float(v) for v in radii_arcsec)
     if (not 2 <= len(radii) <= 40 or
             any(not math.isfinite(v) or v <= 0 for v in radii) or
@@ -241,8 +245,22 @@ def estimate_blank_annulus_covariance(
                     np.any(invalid[large] & support)):
                 vector = []
                 break
+            pixel_values = frame.image_nMgy[large][support]
+            if sky.method != "zero_additional_correction":
+                # The target aperture uses the declared sky plane.
+                # A blank-ring covariance measured on UNcorrected
+                # coadd pixels cannot represent residuals of that
+                # same conditional photometric measurement.
+                ry, rx = np.nonzero(support)
+                xref, yref = sky.reference_xy_pix
+                pixel_values = pixel_values - (
+                    sky.b0_nMgy_per_pixel +
+                    sky.bx_nMgy_per_pixel2 *
+                    (rx+large[1].start-xref) +
+                    sky.by_nMgy_per_pixel2 *
+                    (ry+large[0].start-yref))
             vector.append(float(np.sum(
-                weights[support] * frame.image_nMgy[large][support],
+                weights[support] * pixel_values,
                 dtype=np.float64)))
         if len(vector) != len(radii):
             rejected += 1
@@ -255,6 +273,9 @@ def estimate_blank_annulus_covariance(
         "schema": _BLANK_SCHEMA,
         "dataset_id": frame.dataset_id,
         "radii_arcsec": list(radii),
+        "conditional_sky_scenario": asdict(sky),
+        "blank_signal_uses_same_frozen_sky_plane_as_target": True,
+        "sky_plane_not_calibrated_or_adopted": True,
         "placement_policy": (
             "STRATIFIED_QUADRANT_BOUNDED_MEMORY_NATIVE_RINGS_V3"),
         "candidate_order_independent_of_image_brightness": True,
@@ -331,7 +352,7 @@ def estimate_blank_annulus_covariance(
 
 
 def _smaller_blank_scales(frame, full_outer, full_radii, source, manual, *,
-                          full_scale_available):
+                          full_scale_available, sky=None):
     """Fixed prefix tests, never represent them as full-size covariance.
 
     A 105-arcsec blank ellipse cannot be tiled in a 4-arcmin cutout. Smaller
@@ -368,7 +389,7 @@ def _smaller_blank_scales(frame, full_outer, full_radii, source, manual, *,
         probe = estimate_blank_annulus_covariance(
             frame, small_outer, full_radii[:index+1],
             effective_source_mask=source, manual_exclude=manual,
-            full_target_exclusion_outer=full_outer)
+            full_target_exclusion_outer=full_outer, sky=sky)
         result["probes"].append(probe)
         if probe["annulus_covariance_nMgy2"] is not None:
             result["status"] = "SMALL_SCALE_COVARIANCE_DIAGNOSTIC_ONLY"
@@ -639,10 +660,12 @@ def diagnose_aperture_systematics(
     ]
     blanks = estimate_blank_annulus_covariance(
         frame, outer, first["radii_arcsec"],
-        effective_source_mask=source, manual_exclude=manual)
+        effective_source_mask=source, manual_exclude=manual,
+        sky=sky)
     small_scale = _smaller_blank_scales(
         frame, outer, first["radii_arcsec"], source, manual,
-        full_scale_available=(blanks["annulus_covariance_nMgy2"] is not None))
+        full_scale_available=(blanks["annulus_covariance_nMgy2"] is not None),
+        sky=sky)
     report = {
         "schema": _SCHEMA,
         "project_id": provenance.project_id,
@@ -747,7 +770,7 @@ def diagnose_aperture_systematics(
             "GEOMETRY_SPAN_COMPARES_DIFFERENT_SKY_FOOTPRINTS",
             "NO_TOTAL_FLUX_OR_PSF_CORRECTION_INFERRED",
         ] + ([
-            "BLANK_COVARIANCE_USES_UNCORRECTED_NATIVE_COADD"
+            "BLANK_COVARIANCE_CONDITIONAL_ON_UNADOPTED_SKY_PLANE"
         ] if sky.method != "zero_additional_correction" else []),
     }
     json.dumps(report, allow_nan=False)

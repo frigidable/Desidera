@@ -421,7 +421,9 @@ def test_nonzero_sky_is_held_fixed_in_catalogue_mask_counterfactual():
         direct.signed_valid_flux_nMgy - masked)
     assert report["conditional_sky_scenario"]["method"] == "tilted_plane"
     assert report["stage_04_2_receipts_and_outer_apertures_verified"] == 1
-    assert "BLANK_COVARIANCE_USES_UNCORRECTED_NATIVE_COADD" in report["warnings"]
+    assert "BLANK_COVARIANCE_CONDITIONAL_ON_UNADOPTED_SKY_PLANE" in report["warnings"]
+    assert report["blank_apertures"]["conditional_sky_scenario"] == (
+        report["conditional_sky_scenario"])
     with pytest.raises(ValueError, match="sky scenario|recipe mismatch"):
         diagnose_aperture_systematics(
             f, anchor_icrs=(155.4, 18.), provenance=provenance(),
@@ -752,3 +754,72 @@ def test_radial_source_mask_ablation_preserves_signed_negative_contributions():
     assert out["catalogue_mask_counterfactual"][
         "conditional_delta_nMgy"] < 0.
     assert out["adopted_for_science"] is False
+
+
+def test_blank_covariance_respects_exact_same_conditional_plane_as_target():
+    """A known tilted plane must be subtracted at EACH blank native pixel."""
+    from lsbpipe.photometry.aperture_systematics import (
+        estimate_blank_annulus_covariance)
+    w = wcs()
+    w.wcs.crpix = [161., 161.]
+    yy, xx = np.indices((321, 321))
+    rng = np.random.default_rng(290187)
+    noise = rng.normal(0., .007, (321, 321))
+    b0, bx, by = .13, .004, -.002
+    origin = (23.5, 197.25)
+    image = (b0 + bx*(xx-origin[0]) +
+             by*(yy-origin[1]) + noise)
+    f = frame(image=image, shape=image.shape, w=w)
+    zeros = np.zeros(f.shape, dtype=bool)
+    kw = dict(frame=f, outer=geometry(a=1.6, q=.77, pa=31.),
+              radii_arcsec=(.4, 1., 1.6),
+              effective_source_mask=zeros, manual_exclude=zeros)
+    raw = estimate_blank_annulus_covariance(**kw)
+    sky = ApertureSkyScenario(
+        method="tilted_plane",
+        b0_nMgy_per_pixel=b0,
+        bx_nMgy_per_pixel2=bx,
+        by_nMgy_per_pixel2=by,
+        reference_xy_pix=origin,
+        evidence_id="KNOWN_NATIVE_PLANE")
+    residual = estimate_blank_annulus_covariance(**kw, sky=sky)
+    assert raw["status"] == residual["status"] == (
+        "EMPIRICAL_BLANK_COVARIANCE_DIAGNOSTIC_ONLY")
+    assert residual["schema"] == (
+        "desidera.photometry.blank-annulus-covariance/2")
+    assert residual["centres_native_xy"] == raw["centres_native_xy"]
+    assert residual["conditional_sky_scenario"]["reference_xy_pix"] == origin or (
+        residual["conditional_sky_scenario"]["reference_xy_pix"] == list(origin))
+    assert residual["blank_signal_uses_same_frozen_sky_plane_as_target"]
+    assert residual["sky_plane_not_calibrated_or_adopted"] is True
+    # The large plane gradient contributes covariance across blank
+    # locations in the raw image; removing the known plane greatly
+    # lowers the conditional residual variance.
+    raw_diag = np.diag(raw["annulus_covariance_nMgy2"])
+    residual_diag = np.diag(residual["annulus_covariance_nMgy2"])
+    assert np.all(residual_diag < raw_diag*.1)
+    assert np.max(np.abs(residual["annulus_mean_blank_flux_nMgy"])) < .03
+    assert residual["covariance_calibrated_for_science"] is False
+    json.dumps(residual, allow_nan=False)
+
+
+def test_smaller_scale_blank_probe_uses_same_nonadopted_sky_scenario():
+    f = frame(value=1.)
+    masks = np.zeros(f.shape, dtype=bool)
+    sky = ApertureSkyScenario(
+        method="constant", b0_nMgy_per_pixel=1.,
+        evidence_id="SYNTHETIC_CONDITIONAL")
+    curve = _curve(f, masks, masks, radii=(1., 2., 3., 4., 7., 25.),
+                   sky=sky)
+    report = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=masks, manual_exclude=masks,
+        curves=[curve], sky=sky)
+    assert report["blank_apertures"]["conditional_sky_scenario"][
+        "b0_nMgy_per_pixel"] == 1.
+    small = report["smaller_scale_blank_diagnostics"]
+    assert all(p["conditional_sky_scenario"]["method"] == "constant"
+               for p in small["probes"])
+    assert all(p["blank_signal_uses_same_frozen_sky_plane_as_target"]
+               for p in small["probes"])
+    assert not report["covariance_calibrated_for_science"]

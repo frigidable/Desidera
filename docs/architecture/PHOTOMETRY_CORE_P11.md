@@ -2612,3 +2612,31 @@ identified; the veto radii and true wing extents remain
 uncalibrated. Synthetic regressions cover nonmapping entries,
 invalid/missing positions, Boolean/string G magnitudes and Gaia
 identities without usable brightness evidence.
+
+
+### Stage 04.3: use the same conditional sky plane for blank-ring controls (2026-11-13)
+
+The earlier blank covariance measured signed flux on the **raw**
+native coadd even when the frozen Stage 04.2 aperture had already
+subtracted a nonzero conditional constant/tilted plane. Thus the
+reported same-field covariance referred to a *different flux
+operator* and could include deterministic fitted sky gradients that
+the target measurement had removed.
+
+The versioned `blank-annulus-covariance/2` diagnostic accepts the
+same immutable `ApertureSkyScenario` as Stage04.2 and integrates
+`sum(w*(I-B))` on the original valid, unmasked blank pixels
+without modifying the image. Full-scale and reduced-scale blank
+probes inherit that **same scenario**, while the default zero
+additional correction remains equivalent to the original raw
+coadd diagnostic. The QA records the full sky scenario and
+explicitly states that neither it nor the same-coadd covariance
+has become scientifically calibrated/adopted.
+
+A controlled synthetic tilted-plane field tests the reduction in
+blank covariance when the correct known plane is subtracted.
+An independent large-aperture fallback test verifies that all
+smaller-scale blank placements use the same frozen sky
+parameters. This corrects a conditional-method mismatch; it is
+**not** a sky posterior, off-diagonal CCD covariance reconstruction,
+or proof that the plane should have been subtracted in science.
