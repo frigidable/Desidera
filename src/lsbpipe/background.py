@@ -1407,6 +1407,37 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     # same-coadd holdout; never assert a scientific / noise-calibrated PASS.
     score_const = float(const.holdout_rms_residual_nMgy)
     score_plane = float(plane.holdout_rms_residual_nMgy)
+    # The original internal numerical two-fit comparison never ranked
+    # *zero additional correction* even though that is the physical
+    # reference for the already sky-subtracted survey coadd. Preserve
+    # the existing two-fit heuristic for longitudinal QA, but display
+    # a separate complete three-way SAME-PIXELS RMS comparison.
+    # A winner is not a sky-model recommendation or an error bar.
+    rms_candidates = (
+        ("zero_additional_correction", float(zero_rms)),
+        ("constant", score_const),
+        ("tilted_plane", score_plane),
+    )
+    if not all(np.isfinite(v) and v >= 0. for _, v in rms_candidates):
+        raise ValueError("Nonfinite same-coadd holdout RMS comparison")
+    ordered_rms = sorted(
+        rms_candidates, key=lambda item: (item[1],
+                                         {"zero_additional_correction":0,
+                                          "constant":1,
+                                          "tilted_plane":2}[item[0]]))
+    base["zero_inclusive_same_coadd_model_comparison"] = {
+        "schema": "desidera.sky.zero-inclusive-heldout-rms/1",
+        "model_holdout_rms_nMgy_per_pixel": dict(rms_candidates),
+        "lowest_rms_method_descriptive_only": ordered_rms[0][0],
+        "descending_simplicity_tie_preference": [
+            "zero_additional_correction", "constant", "tilted_plane"],
+        "all_evaluated_on_same_fixed_native_holdout_pixels": True,
+        "zero_additional_correction_explicitly_included": True,
+        "best_rms_is_not_physical_sky_or_noise_calibration": True,
+        "galaxy_flux_bias_unmeasured": True,
+        "science_sky_model_selected": False,
+        "no_sky_subtraction_authorized": True,
+    }
     preferred = ("tilted_plane" if score_plane < .75*score_const
                  else "constant")
     base["status"] = "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"

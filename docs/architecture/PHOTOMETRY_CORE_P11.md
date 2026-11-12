@@ -2640,3 +2640,28 @@ smaller-scale blank placements use the same frozen sky
 parameters. This corrects a conditional-method mismatch; it is
 **not** a sky posterior, off-diagonal CCD covariance reconstruction,
 or proof that the plane should have been subtracted in science.
+
+
+### Stage 03: explicit zero-inclusive native sky-model RMS comparison (2026-11-13)
+
+The former `provisional_automatic_model` selected a **numerical**
+winner between the constant and tilted-plane fits only, and even
+the original QA noted that zero additional sky correction was
+absent from that heuristic. The coadd has **already** been sky
+subtracted upstream; a two-fit "winner" can have higher error
+on exactly the same heldout pixels than doing nothing.
+
+Stage 03 now additionally records a versioned *three-way descriptive*
+heldout RMS comparison for the zero-correction baseline, constant
+and tilted-plane models, all evaluated on identical fixed native
+samples. A tie prefers the simpler/no-subtraction label only
+for display. Existing two-fit experiment naming and baseline
+model selection are preserved for longitudinal comparisons,
+but all new fields explicitly say that the numerical minimum
+does **not** choose physical sky, quantify missing galaxy light
+or authorize subtraction. A synthetic case with biased training
+pixels but pristine held-out pixels confirms that the zero
+reference can correctly rank first.
+
+This is a research QA transparency improvement, not a claimed
+scientific sky adoption or validated survey background.

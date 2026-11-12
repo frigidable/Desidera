@@ -1037,3 +1037,40 @@ def test_stage03_incomplete_gaia_rows_fail_closed_without_silent_star_skip():
         assert not evidence["bright_gaia_inventory_complete"]
         assert (evidence["source_inventory_invalid_or_unverifiable_rows"] +
                 evidence["gaia_reference_sources_without_g_magnitude"]) >= 1
+
+
+def test_stage03_zero_sky_reference_is_ranked_without_authorizing_subtraction():
+    """The current sky-proposal heuristic must not hide a better zero baseline."""
+    from lsbpipe.background import (
+        diagnose_current_project_residual_sky,
+        _automatic_scene_sky_pixels)
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    dataset, draft, contamination = _stage03_project_fixture(
+        with_regions=False)
+    preview = evaluate_mask_draft(
+        draft, dataset["wcs"], dataset["pixel_shape"], "r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    train, hold, _ = _automatic_scene_sky_pixels(
+        dataset, preview, contamination)
+    # This artificial field has a biased training footprint but an
+    # unmodified, already perfectly sky-subtracted held-out footprint.
+    # A fitted nonzero plane would *worsen* the held-out sky relative
+    # to doing nothing; all masks and tile choices remain unchanged.
+    image = np.zeros(dataset["pixel_shape"], dtype=float)
+    image[train] = .025
+    assert np.count_nonzero(hold) > 0
+    dataset["data"]["image"] = image
+    output = diagnose_current_project_residual_sky(
+        dataset, draft, contamination)
+    ranked = output["zero_inclusive_same_coadd_model_comparison"]
+    assert ranked["lowest_rms_method_descriptive_only"] == (
+        "zero_additional_correction")
+    assert ranked["model_holdout_rms_nMgy_per_pixel"][
+        "zero_additional_correction"] == 0.
+    assert ranked["model_holdout_rms_nMgy_per_pixel"][
+        "constant"] > 0.
+    assert not ranked["science_sky_model_selected"]
+    assert not ranked["no_sky_subtraction_authorized"] is False
+    assert output["automatic_sky_background_correction_authorized"] is False
+    assert output["sky_model_adopted"] is False
