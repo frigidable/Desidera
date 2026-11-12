@@ -106,6 +106,12 @@ def test_aperture_refuses_foreign_source_quartet_even_if_display_label_matches()
             ds,draft,contam,source_triplet=("dr11","south","1554p180"),
             target_icrs=(155.4,18.))
     contam["source_quartet_key"]=list(ds["source_quartet_key"])
+    ds["loaded_target_icrs"]=[155.399,18.]
+    with pytest.raises(ValueError,match="target ICRS differs"):
+        build_project_aperture_growth(
+            ds,draft,contam,source_triplet=("dr11","south","1554p180"),
+            target_icrs=(155.4,18.))
+    ds["loaded_target_icrs"]=[155.4,18.]
     good=build_project_aperture_growth(
         ds,draft,contam,source_triplet=("dr11","south","1554p180"),
         target_icrs=(155.4,18.))
