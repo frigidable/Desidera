@@ -1963,3 +1963,49 @@ A green CI run is evidence for code-level contracts in synthetic
 and GUI cases. Repeat source/header/PSF/sky controls on the
 researcher's local original DR11 Leo P FITS and compare with
 independent astrophysical truth before changing `SCIENCE HOLD`.
+
+
+---
+
+## 2026-11-12 — Deep audit: empirical blank covariance sampling fairness
+
+The Stage04.3 empirical covariance diagnostic originally enumerated
+candidate empty apertures in increasing native image rows and columns,
+accepting the first `max_placements` clean positions. Thus even a wide
+source-free original coadd could yield all 48 accepted blanks close to
+one side of the image. A sample covariance computed from that cluster
+cannot represent broad-scale field variation. This was a **sampling
+design defect**, not an error in the matrix formula
+`C_cumulative = T C_annulus T.T`.
+
+**Corrected**: the same predeclared, nonoverlapping native-pixel lattice
+is divided into four fixed image quadrants. Within each quadrant its
+candidates are permuted with an explicitly recorded deterministic
+seed, independently of coadd fluxes; the search cycles through
+quadrants before reaching the existing bound on accepted positions or
+evaluations. The report now carries `candidate_grid_nodes_by_quadrant`,
+`accepted_centres_by_quadrant`,
+`n_quadrants_with_accepted_blanks`,
+`candidate_order_independent_of_image_brightness`, and the new
+placement-policy identifier V2. An actually restricted field still
+reports insufficient spatial support; a one-quadrant or strongly
+one-sided accepted sample emits explicit warnings. Changing pixel
+intensity alone never changes the selected candidate positions if
+validity/masking stays fixed.
+
+Dedicated regression checks require all four quadrants to be sampled
+on an ample clean image, verify reproducibility and pixel-intensity
+independence of the candidate selection, confirm physical separation
+between accepted apertures, and flag a contrived image with clean
+sky confined to one quadrant.
+
+**Scientific limit**: deterministic quadrants improve selection
+representativeness but cannot prove that blank positions are
+independent noise realizations: they share the same resampled coadd,
+possibly common background structures and unmasked LSB signal. The
+calculated matrix remains a **diagnostic only**. For Leo P a 105-arcsec
+target aperture in a roughly 4-arcmin cutout still has too few clean,
+nonoverlapping full-size blanks; finer-scale tests MUST NOT be
+extrapolated to the 105-arcsec flux without external calibration.
+The numeric covariance from V2 is generally *different* from V1
+by design; this is not a new flux calibration or science acceptance.
