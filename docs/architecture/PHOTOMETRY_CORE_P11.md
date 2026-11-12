@@ -2009,3 +2009,79 @@ nonoverlapping full-size blanks; finer-scale tests MUST NOT be
 extrapolated to the 105-arcsec flux without external calibration.
 The numeric covariance from V2 is generally *different* from V1
 by design; this is not a new flux calibration or science acceptance.
+
+
+---
+
+## 2026-11-12 — Deep projection-plane and source-mask recipe audit
+
+### Confirmed high-declination Stage02 TAN-WCS defect
+
+The provisional Tractor catalogue mask rasterizer previously used
+`WCS.celestial.pixel_scale_matrix` (the FITS CD/PC projection-plane
+matrix, in degrees per native pixel), then multiplied its **first
+row by `cos(CRVAL2)`** before interpreting the result as east/north
+angles. In a TAN projection this is a second, erroneous declination
+correction: the CD matrix is already in intermediate tangent-plane
+degrees, NOT raw coordinate differences in RA and Dec.
+
+This error stretched catalogued PSF and extended-source masks along
+the first projection direction by a factor approximately
+`1 / cos(CRVAL2)` and also underestimated local sky-plane distances
+for the opt-in isolated-red-extended-source classifier. At a field
+declination of 75 degrees this factor is ~3.86. The originally
+tested Leo P geometry at +18 degrees suffers a smaller (~5%)
+but still genuine difference in source-mask footprint.
+
+**Fixed:** `conservative_catalogue_mask` now uses the 2×2 native
+CD/PC intermediate-plane matrix directly in arcsec/pixel, with no
+extra cosine. All affected circular and elliptical mask footprints
+and WCS-based nearest-neighbour classifications share this corrected
+local affine geometry. A synthetic high-declination FITS TAN-WCS
+regression uses actual `SkyCoord` great-circle separation to show
+that a point 12 true arcsec from a 9.5-arcsec provisional star-mask
+centre must not be masked.
+
+The prepared Scene source mask now explicitly reports the
+`PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS` policy
+and `source_mask_native_geometry` descriptor. Stage04 inherits
+the actual Scene mask-policy ID into `ApertureProvenance` and
+each exact-aperture recipe SHA-256. Even if an old and new policy
+happen to produce identical Boolean arrays, their diagnostic
+recipes differ. Preexisting synthetic callers without the
+version field are explicitly labelled legacy rather than
+misrepresented as fresh V2.
+
+**Scope:** this corrects TAN projection-plane geometry near the
+source selected native brick. It does not claim accuracy of a
+single constant Jacobian across very wide or nonlinear celestial
+fields, does not validate Tractor model sizes, Gaia membership,
+stellar PSF wings, or missing target-light correction. Reprepare
+Scene masks after updating the local GUI before comparing future
+Leo P radial fluxes. Different values produced by the corrected
+mask geometry must be treated as a new diagnostic recipe, not
+astrophysical variability.
+
+### Independent Stage04 sampling defect
+
+The empirical blank-annulus covariance used to accept candidate
+positions in monotonically increasing image-row order until the
+placement cap. It could therefore fill its entire budget near one
+edge even when all four field quadrants contained clean sky.
+Its formal sample matrix was mathematically defined but spatially
+unrepresentative.
+
+The default candidate order is now deterministic, flux-independent,
+and interleaved by native image quadrant, with a recorded seed.
+The underlying separation lattice is unchanged. QA reports accepted
+counts in all four quadrants and explicitly flags one-quadrant or
+strongly one-sided samples. A synthetic source-free field verifies
+four-quadrant coverage and pixel-flux independence; another synthetic
+field permits blank positions only in one quadrant and checks
+warnings. This remains a same-coadd diagnostic covariance, not a
+scientifically adopted error model.
+
+**Acceptance gate:** these regressions establish code-level geometry
+and reproducibility. No new published Leo P magnitudes, colours,
+SBF distances, or adopted noise covariance are inferred; all
+real-data scientific results remain `SCIENCE HOLD`.
