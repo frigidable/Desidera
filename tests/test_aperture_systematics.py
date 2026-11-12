@@ -154,6 +154,40 @@ def test_blank_covariance_flags_available_positions_in_one_quadrant():
     assert result["covariance_calibrated_for_science"] is False
 
 
+def test_blank_apertures_ignore_nan_outside_exact_ring_support():
+    """A masked NaN in a rectangular bbox with zero ring weight is harmless.
+
+    Previously `weights * full_bbox_image` turned 0*NaN into NaN,
+    poisoning otherwise valid blank covariance realizations.
+    """
+    from itertools import islice
+    from lsbpipe.photometry.aperture_systematics import (
+        _bounded_quadrant_blank_candidates)
+    from lsbpipe.photometry.aperture_flux import project_icrs_ellipse_to_native
+    original=np.random.default_rng(122).normal(0.,.3,(321,321))
+    f0=frame(image=original,shape=original.shape)
+    outer=geometry(a=1.6,q=1.,pa=0.)
+    projected=project_icrs_ellipse_to_native(outer,f0.wcs)
+    margin=int(np.ceil(projected.a_pix+3))
+    step=max(2*margin+2,8)
+    _,centres=_bounded_quadrant_blank_candidates(f0.shape,margin,step)
+    with_nans=original.copy()
+    for quadrant,x,y in islice(centres,48):
+        assert x+6 < with_nans.shape[1] and y+6 < with_nans.shape[0]
+        with_nans[y+6,x+6]=np.nan
+    f=frame(image=with_nans,shape=with_nans.shape)
+    none=np.zeros(f.shape,bool)
+    result=estimate_blank_annulus_covariance(
+        f,outer,(.5,1.,1.6),
+        effective_source_mask=none,manual_exclude=none)
+    assert result["n_accepted"]>=result["n_required"]
+    assert result["status"]=="EMPIRICAL_BLANK_COVARIANCE_DIAGNOSTIC_ONLY"
+    assert np.isfinite(result["annulus_covariance_nMgy2"]).all()
+    assert result["covariance_calibrated_for_science"] is False
+    assert np.isnan(with_nans).any()
+    np.testing.assert_array_equal(f.image_nMgy,with_nans)
+
+
 def test_missing_independent_blanks_refuses_covariance_instead_of_zero():
     f = frame(value=.1)
     source = np.ones(f.shape, dtype=bool)
