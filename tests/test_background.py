@@ -205,6 +205,49 @@ def _stage03_project_fixture(*, with_regions=True):
     return dataset, draft, contamination
 
 
+def test_anisotropic_wcs_gaia_sky_veto_uses_true_sky_circle():
+    """One angular exclusion must not become a wrong circular pixel mask."""
+    from lsbpipe.background import (
+        _sky_circle_native_patch, _automatic_scene_sky_pixels)
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    jac=np.diag([-1.,.5])
+    ys,xs,patch=_sky_circle_native_patch(
+        (145,145),70.,70.,18.,jac)
+    def included(x,y):
+        return bool(patch[y-ys.start,x-xs.start])
+    assert included(70,70)
+    assert included(70,102)   # dy=32 native px -> 16 arcsec
+    assert not included(95,70) # dx=25 native px -> 25 arcsec
+    assert not included(70,110) # dy=40 native px -> 20 arcsec
+    with pytest.raises(ValueError,match="Degenerate celestial WCS"):
+        _sky_circle_native_patch((145,145),70.,70.,18.,
+                                 np.zeros((2,2)))
+
+    dataset,draft,contamination=_stage03_project_fixture(
+        with_regions=False)
+    dataset["wcs"].wcs.cd=np.diag([-1.,.5])/3600.
+    preview=evaluate_mask_draft(
+        draft,dataset["wcs"],dataset["pixel_shape"],"r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    _,_,baseline=_automatic_scene_sky_pixels(
+        dataset,preview,contamination)
+    contamination["source_inventory"]["entries"]=[
+        {"gaia_g_mag":17.5,"x":25.,"y":25.}]
+    train,held,qa=_automatic_scene_sky_pixels(
+        dataset,preview,contamination)
+    assert qa["n_existing_bright_gaia_sources_vetoed"]==1
+    assert qa["bright_star_veto_pixels"]>0
+    assert baseline["bright_star_veto_pixels"]==0
+    assert qa["bright_gaia_veto_uses_local_tangent_plane_wcs"] is True
+    assert qa["guard_minimum_native_angular_scale_arcsec_per_pixel"] == (
+        pytest.approx(.5))
+    assert qa["native_pixel_scale_arcsec"] == (
+        pytest.approx(np.sqrt(.5)))
+    assert not np.any(train&held)
+    assert not qa["galaxy_free_certified"]
+
+
 def test_automatic_sky_refuses_empty_target_protection():
     """No target mask must never allow the galaxy to become sky training."""
     from lsbpipe.background import diagnose_current_project_residual_sky
