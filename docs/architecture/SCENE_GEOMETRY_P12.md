@@ -933,3 +933,23 @@ silently claim equivalence with the new input-bound IDs. Tests
 check each dependency and deterministic ordering. Identity of the
 *positional candidate graph* is still not physical galaxy membership,
 a source deblend, or scientific validation. No FITS or masks change.
+
+
+### Native Scene sky-mask numeric integrity and simple polygon gate (2026-11-12)
+
+Earlier `SkyMaskShape` validated radius, axis ratio and semimajor
+axis using `float()` but kept their original types in the frozen
+object. Thus numeric-looking strings or Booleans could pass creation
+and appear in saved drafts, then fail or behave inconsistently during
+native rasterization. Numeric geometry is now explicitly type-checked
+and canonically stored as finite float values, rejecting strings and
+Booleans.
+
+The rasterizer also now rejects nonzero-area polygons with crossed,
+touching or overlapping nonadjacent edges in its existing locally
+projected spherical-offset coordinate plane. A signed-area check
+alone cannot identify all self-intersections and the old even/odd
+fill rule could silently construct ambiguous masks. The fix does not
+reproject FITS, alter user source data, repair polygon intent
+automatically or certify a fitted background. Regression tests cover
+malformed geometry and preserved RA-wrap polygon behavior.

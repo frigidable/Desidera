@@ -211,3 +211,46 @@ def test_isophote_provenance_markers_ignored_without_mask_change():
                     comment="x"*512))
     assert not is_legacy_isophote_protection(
         SkyMaskEdit("custom", "protect_target", ellipse))
+
+
+def test_mask_shape_numeric_types_are_canonical_and_not_strings():
+    """Frozen, serializable angular parameters must match calculation types."""
+    circle = SkyMaskShape("circle", center=(155, np.float64(.1)),
+                          radius_arcsec=np.float32(4.))
+    ellipse = SkyMaskShape("ellipse", center=(155., .1),
+                           a_arcsec=np.float32(10.),
+                           q=np.float64(.6), pa_deg=np.float64(225.))
+    assert type(circle.radius_arcsec) is float
+    assert type(ellipse.a_arcsec) is float
+    assert type(ellipse.q) is float
+    assert ellipse.pa_deg == pytest.approx(45.)
+    assert rasterize_sky_shape(circle, _wcs(ra=155.), (51,51)).sum() > 0.
+    assert rasterize_sky_shape(ellipse, _wcs(ra=155.), (51,51)).sum() > 0.
+    for bad in ("4.0", True, np.bool_(True)):
+        with pytest.raises(ValueError, match="invalid geometric"):
+            SkyMaskShape("circle", center=(155., .1), radius_arcsec=bad)
+        with pytest.raises(ValueError, match="invalid geometric"):
+            SkyMaskShape("ellipse", center=(155., .1),
+                         a_arcsec=10., q=bad, pa_deg=0.)
+    with pytest.raises(ValueError, match="invalid geometric"):
+        SkyMaskShape("circle", center=("155", .1), radius_arcsec=4.)
+
+
+def test_nonzero_area_self_crossed_polygon_must_not_be_rasterized():
+    # A five-vertex crossed polygon has nonzero signed shoelace area;
+    # rejecting zero-area polygons alone was insufficient.
+    offsets = ((0., 0.), (6., 6.), (0., 7.), (7., 0.), (3., -2.))
+    vertices = tuple((155. + x / 3600., .1 + y / 3600.)
+                     for x, y in offsets)
+    crossed = SkyMaskShape("polygon", vertices=vertices)
+    twice_area = sum(
+        offsets[i][0]*offsets[(i+1)%5][1] -
+        offsets[i][1]*offsets[(i+1)%5][0]
+        for i in range(5))
+    assert abs(twice_area) > 0.
+    with pytest.raises(ValueError, match="Self-intersecting"):
+        rasterize_sky_shape(crossed, _wcs(ra=155.), (51,51))
+    # The new geometry gate must preserve valid cross-meridian polygons.
+    normal = SkyMaskShape("polygon", vertices=(
+        (359.999, .100), (.001, .100), (.001, .101), (359.999, .101)))
+    assert rasterize_sky_shape(normal, _wcs(), (51,51)).sum() > 0
