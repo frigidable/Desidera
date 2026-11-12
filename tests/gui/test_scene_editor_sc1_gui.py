@@ -111,6 +111,30 @@ def test_same_uuid_project_centre_rebind_invalidates_loaded_scene(
     assert scene._loaded is None
 
 
+def test_same_uuid_target_protection_radius_change_invalidates_scene(
+        qtbot,tmp_path,monkeypatch):
+    """Source masks depend on the target protection radius, not just RA/Dec."""
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    previous_key=scene._source_key
+    previous_target=scene._project_target
+    assert scene._loaded is not None
+    assert scene._draft is not None
+    project.target_radius_arcsec=float(project.target_radius_arcsec)+12.
+    save_object_project(project)
+    scene.bind_project(project.root)
+    assert scene._source_key!=previous_key
+    assert scene._project_target==previous_target
+    assert scene._loaded is None
+    assert scene._contamination is None
+    assert scene._isophote_proposal is None
+    assert scene._foreground_psf_result is None
+    assert scene._draft is not None
+    # Rebinding the unchanged passport is idempotent.
+    new_key=scene._source_key
+    scene.bind_project(project.root)
+    assert scene._source_key==new_key
+
+
 def test_scene_rejects_cross_brick_worker_result_without_mutating_gui(
         qtbot,tmp_path,monkeypatch):
     scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
