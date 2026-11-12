@@ -147,7 +147,7 @@ def test_same_uuid_target_protection_radius_change_invalidates_scene(
     assert scene._source_key==previous_key
     assert scene.draft.digest==newer_sha
     assert len(scene.draft.edits)==1
-    assert scene.draft.edits[0].id=="newer_object_scope_edit"
+    assert scene.draft.edits[0].edit_id=="newer_object_scope_edit"
     assert scene._loaded is None
 
 
