@@ -901,3 +901,35 @@ def test_stage03_fails_closed_on_truncated_or_unverified_star_inventory():
         assert report["sky_model_adopted"] is False
         assert report["automatic_sky_selection_qa"][
             "bright_gaia_inventory_complete"] is False
+
+
+def test_residual_sky_settings_reject_boolean_fractional_and_string_thresholds():
+    """Malformed sky QA controls must fail before optimizer/holdout gates."""
+    invalid = (
+        {"min_training_pixels": True},
+        {"min_training_pixels": 12.5},
+        {"min_holdout_pixels": False},
+        {"min_holdout_pixels": 10.25},
+        {"min_holdout_quadrants": True},
+        {"min_holdout_quadrants": 2.5},
+        {"max_iterations": True},
+        {"max_iterations": 2.25},
+        {"max_design_condition": True},
+        {"max_design_condition": "10000"},
+        {"huber_t": False},
+        {"convergence_relative": "1e-10"},
+        {"max_abs_holdout_tile_median_nMgy": True},
+        {"max_abs_holdout_tile_median_nMgy": "0.01"},
+    )
+    for arguments in invalid:
+        with pytest.raises(ValueError):
+            BackgroundSettings(**arguments)
+    settings = BackgroundSettings(
+        min_training_pixels=np.int64(15),
+        min_holdout_quadrants=np.int64(3),
+        huber_t=np.float32(1.345),
+        max_abs_holdout_tile_median_nMgy=np.float64(.01))
+    assert type(settings.min_training_pixels) is int
+    assert type(settings.min_holdout_quadrants) is int
+    assert type(settings.huber_t) is float
+    assert type(settings.max_abs_holdout_tile_median_nMgy) is float

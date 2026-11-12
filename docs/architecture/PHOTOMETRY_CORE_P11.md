@@ -2374,3 +2374,23 @@ when they are missing/inconsistent. This is an input-integrity gate,
 not a claim that a complete Tractor list has calibrated PSF wings or
 proves galaxy-free sky pixels. Synthetic regression cases exercise
 the IRLS iteration limit and each incomplete-inventory condition.
+
+
+### Stage 03 sky optimizer / holdout setting types (2026-11-12)
+
+`BackgroundSettings` previously compared settings numerically but
+did not validate their scalar types: Boolean `max_iterations=True`
+was interpreted as a one-iteration budget, Boolean holdout threshold
+`True` became 1 nMgy/pixel, and fractional/Boolean pixel counts
+could pass despite having no meaningful integral sample budget.
+These choices can change whether a sky candidate is reported as
+converged/holdout-qualified and must not silently map user input into
+a different scientific algorithm.
+
+Integer sample limits/iteration budgets now require actual
+integer types (without Boolean coercion), and finite float-valued
+controls reject strings and Booleans. Accepted NumPy scalars are
+canonicalized into Python ints/floats for stable recording. The
+fit/holdout algorithms and default settings are unchanged; synthetic
+regressions cover malformed parameters and valid NumPy scalar inputs.
+This does not turn an uncalibrated sky candidate into an adopted one.

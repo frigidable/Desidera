@@ -43,18 +43,43 @@ class BackgroundSettings:
     max_abs_holdout_tile_median_nMgy: float | None = None
 
     def __post_init__(self):
-        if self.min_training_pixels < 3 or self.min_holdout_pixels < 1:
-            raise ValueError('Pixel counts must be positive (training at least 3)')
-        if not 1 <= self.min_holdout_quadrants <= 4:
-            raise ValueError('min_holdout_quadrants must be between 1 and 4')
-        for value in (self.max_design_condition, self.huber_t, self.convergence_relative):
-            if not np.isfinite(value) or value <= 0:
+        # Python bool is a subclass of int: True would silently turn a
+        # scientific pixel threshold into 1, and a max-iteration budget
+        # into a single Huber update. Fractional counts are invalid too.
+        for name, minimum in (("min_training_pixels", 3),
+                              ("min_holdout_pixels", 1),
+                              ("max_iterations", 1)):
+            number = getattr(self, name)
+            if (isinstance(number, (bool, np.bool_)) or
+                    not isinstance(number, (int, np.integer)) or
+                    number < minimum):
+                raise ValueError(
+                    f"{name} must be an integer >= {minimum}")
+            object.__setattr__(self, name, int(number))
+        quadrant = self.min_holdout_quadrants
+        if (isinstance(quadrant, (bool, np.bool_)) or
+                not isinstance(quadrant, (int, np.integer)) or
+                not 1 <= quadrant <= 4):
+            raise ValueError('min_holdout_quadrants must be an integer between 1 and 4')
+        object.__setattr__(self, "min_holdout_quadrants", int(quadrant))
+        for name in ("max_design_condition", "huber_t",
+                     "convergence_relative"):
+            number = getattr(self, name)
+            if (isinstance(number, (bool, np.bool_, str)) or
+                    not isinstance(number,
+                                   (int, float, np.integer, np.floating)) or
+                    not np.isfinite(number) or number <= 0):
                 raise ValueError('Numerical settings must be finite and positive')
-        if self.max_iterations < 1:
-            raise ValueError('max_iterations must be >= 1')
+            object.__setattr__(self, name, float(number))
         limit = self.max_abs_holdout_tile_median_nMgy
-        if limit is not None and (not np.isfinite(limit) or limit < 0):
-            raise ValueError('User-supplied holdout threshold must be non-negative finite')
+        if limit is not None:
+            if (isinstance(limit, (bool, np.bool_, str)) or
+                    not isinstance(limit,
+                                   (int, float, np.integer, np.floating)) or
+                    not np.isfinite(limit) or limit < 0):
+                raise ValueError('User-supplied holdout threshold must be non-negative finite')
+            object.__setattr__(
+                self, "max_abs_holdout_tile_median_nMgy", float(limit))
 
 
 @dataclass(frozen=True)
