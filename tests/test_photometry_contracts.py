@@ -295,3 +295,16 @@ def test_input_wcs_can_change_after_construction_without_mutating_frame():
         native_wcs=original, brick="0401p012")
     original.wcs.crval[0] = 90.0
     assert f.wcs.wcs.crval[0] == pytest.approx(40.096208)
+
+
+def test_native_loader_rejects_declared_foreign_inverse_variance_units(
+        tmp_path):
+    """Jy-based INVVAR may never be mistaken for inverse nMgy squared."""
+    from astropy.io import fits
+    paths = make_fits(tmp_path)
+    with fits.open(paths["invvar"], mode="update") as hdus:
+        hdus[0].header["BUNIT"] = "1/Jy^2"
+    with pytest.raises(ValueError, match="INVVAR BUNIT"):
+        load_native_legacy_quartet(
+            tmp_path, release="dr9", region="south",
+            brick="0401p012", band="r", hash_inputs=False)

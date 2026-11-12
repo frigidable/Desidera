@@ -953,3 +953,22 @@ fill rule could silently construct ambiguous masks. The fix does not
 reproject FITS, alter user source data, repair polygon intent
 automatically or certify a fitted background. Regression tests cover
 malformed geometry and preserved RA-wrap polygon behavior.
+
+
+### Shared optical IMAGE and INVVAR BUNIT contract (2026-11-12)
+
+The P0.2 original-FITS audit previously checked a declared IMAGE
+unit but silently ignored a declared INVVAR unit. A quartet with an
+inverse-variance raster explicitly labelled inverse square Jy could
+be reported as FITS/WCS validated and rejected only later by the P0.5
+native photometry loader. Conversely, P0.2 rejected valid `nmgy/pix`
+IMAGE aliases which P0.5 allowed.
+
+Both layers now use one lexical BUNIT normalization and the same
+explicit nanomaggy/pixel and inverse-square-nanomaggy alias tables.
+An incompatible present INVVAR BUNIT fails during the initial audit.
+The audit separately records whether IMAGE and INVVAR units came from
+explicit FITS headers or a documented missing-header assumption.
+P0.5 retains its strict missing-IMAGE-header opt-in; **no unit
+rescaling or calibration is performed**. Regression tests check
+agreement on native nMgy aliases and refusal of Jy-based INVVAR.

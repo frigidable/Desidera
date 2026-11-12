@@ -229,3 +229,35 @@ def test_cooperative_cancel_during_original_sha256_hash(tmp_path):
     with pytest.raises(OperationCancelled):
         _sha256_file(file, cancel_check=cancel)
     assert file.stat().st_size == 3 * 1024 * 1024
+
+
+def test_p02_and_p05_agree_on_explicit_native_optical_units(tmp_path):
+    """IVAR in foreign units must fail P0.2, not only later photometry."""
+    from lsbpipe.photometry.native_fits import load_native_legacy_quartet
+    root = tmp_path / "coadds"
+    paths = _make_brick(root, "0401p012")
+    with fits.open(paths["image"], mode="update") as hdus:
+        hdus[0].header["BUNIT"] = "nmgy/pix"
+    with fits.open(paths["invvar"], mode="update") as hdus:
+        hdus[0].header["BUNIT"] = "1 / nmgy**2"
+    valid = verify_dataset(
+        root, discover_dataset_inventory(root)[0], hash_inputs=False)
+    assert valid["status"] == "FITS_WCS_VALIDATED_DIAGNOSTIC"
+    assert valid["unit_evidence"]["image"] == "EXPLICIT_NANOMAGGIES_BUNIT"
+    assert valid["unit_evidence"]["invvar"] == (
+        "EXPLICIT_INVERSE_SQUARED_NANOMAGGIES_BUNIT")
+    kwargs = dict(release="dr9", region="south",
+                  brick="0401p012", band="r", hash_inputs=False)
+    native = load_native_legacy_quartet(root, **kwargs)
+    assert native.source_evidence["image_unit_evidence"] == (
+        "IMAGE_FITS_BUNIT_CONFIRMED")
+    assert native.source_evidence["invvar_unit_evidence"] == (
+        "INVVAR_FITS_BUNIT_CONFIRMED")
+    with fits.open(paths["invvar"], mode="update") as hdus:
+        hdus[0].header["BUNIT"] = "Jy^-2"
+    invalid = verify_dataset(
+        root, discover_dataset_inventory(root)[0], hash_inputs=False)
+    assert invalid["status"] == "INVALID_FITS"
+    assert "INVVAR BUNIT" in invalid["error"]
+    with pytest.raises(ValueError, match="INVVAR BUNIT"):
+        load_native_legacy_quartet(root, **kwargs)
