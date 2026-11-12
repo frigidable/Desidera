@@ -374,10 +374,25 @@ def test_foreground_aperture_diagnostic_fails_closed_on_stale_band():
 
 
 def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
+    hashes={"image":"1"*64,"invvar":"2"*64,
+            "nexp":"3"*64,"maskbits":"4"*64}
+    key=["dr11","south","1554p180","r"]
+    fixed_center=[155.4,18.]
     stages = {
+        "scene_masks":{"state":"CURRENT_LOADED","native_fits":{
+            "source_quartet_key":key,
+            "original_fits_sha256_local":hashes,
+            "loaded_target_icrs":fixed_center,
+            "image_unit_evidence":"FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"}},
         "background": {"state": "CURRENT_DIAGNOSTIC", "result": {
             "band": "r", "project_id": "p", "draft_sha256": "a",
             "catalog_sha256": "b", "dataset_source": "coadd-r",
+            "source_quartet_key":key,
+            "grid_fingerprint":"wcs-native-grid",
+            "original_fits_sha256_local":hashes,
+            "image_unit_evidence":"FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED",
+            "loaded_project_target_icrs":fixed_center,
+            "source_fits_hashes_verified_at_scene_load":True,
             "methods": {
                 "constant": {"fit_status": "FITTED",
                              "coefficients_nMgy": [0.002, 0., 0.],
@@ -390,6 +405,13 @@ def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
             "band": "r", "project_id": "p", "scene_draft_sha256": "a",
             "catalog_sha256": "b", "dataset_source": "coadd-r",
             "dataset_id": "dr11/south/test/r",
+            "source_quartet_key":key,
+            "grid_fingerprint":"wcs-native-grid",
+            "original_fits_sha256_local":hashes,
+            "image_unit_evidence":"FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED",
+            "loaded_project_target_icrs":fixed_center,
+            "target_anchor_icrs":fixed_center,
+            "source_fits_hashes_verified":True,
             "systematics_04_3": {
                 "reference_semimajor_arcsec": 100.,
                 "sky_response": {
@@ -414,6 +436,24 @@ def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
     assert "APERTURE_SENSITIVE_TO_UNADOPTED_SKY_FITS" in (
         _diagnostic_findings(stages, {}))
     stages["background"]["result"]["draft_sha256"] = "other"
+    assert _conditional_sky_aperture_response_qa(stages)["state"] == (
+        "SCENE_OR_BAND_PROVENANCE_MISMATCH")
+    stages["background"]["result"]["draft_sha256"]="a"
+    ap=stages["aperture"]["result"]
+    ap["original_fits_sha256_local"]=dict(hashes,image="f"*64)
+    mismatch=_conditional_sky_aperture_response_qa(stages)
+    assert mismatch["state"]=="SCENE_OR_BAND_PROVENANCE_MISMATCH"
+    assert mismatch["mismatch_key"]=="original_fits_sha256_local"
+    ap["original_fits_sha256_local"]=hashes
+    ap["grid_fingerprint"]="different-wcs"
+    assert _conditional_sky_aperture_response_qa(stages)["mismatch_key"] == (
+        "grid_fingerprint")
+    ap["grid_fingerprint"]="wcs-native-grid"
+    ap["target_anchor_icrs"]=[155.401,18.]
+    assert _conditional_sky_aperture_response_qa(stages)["mismatch_key"] == (
+        "full_native_source_or_target")
+    ap["target_anchor_icrs"]=fixed_center
+    stages["scene_masks"]["native_fits"]["original_fits_sha256_local"]=None
     assert _conditional_sky_aperture_response_qa(stages)["state"] == (
         "SCENE_OR_BAND_PROVENANCE_MISMATCH")
 
