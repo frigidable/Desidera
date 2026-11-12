@@ -103,16 +103,18 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 not math.isfinite(float(target_radius_arcsec)) or
                 float(target_radius_arcsec) <= 0):
             raise ValueError("Red-extended QA needs current target geometry")
-    # Original WCS CD/PC matrix maps *native FITS pixels* to east/north
-    # arcsec at the small selected field's tangent location.
+    # For TAN-WCS the CD/PC matrix maps native pixels into INTERMEDIATE
+    # projection-plane coordinates (degrees). At the tangent point those
+    # axes already represent east/north angular displacements; they are
+    # not raw (delta-RA, delta-Dec). Multiplying CD1_* by cos(dec) a
+    # second time creates an artificial stretch of masks/distances on
+    # high-declination fields. The local affine approximation remains
+    # a diagnostic; true wide-field celestial nonlinearity is not
+    # represented by a constant 2x2 Jacobian.
     jacobian = None
     if wcs is not None:
         cd = np.asarray(wcs.celestial.pixel_scale_matrix, dtype=float)
-        dec0 = float(wcs.celestial.wcs.crval[1])
-        jacobian = np.array([
-            [cd[0, 0]*math.cos(math.radians(dec0))*3600.,
-             cd[0, 1]*math.cos(math.radians(dec0))*3600.],
-            [cd[1, 0]*3600., cd[1, 1]*3600.]], dtype=float)
+        jacobian = cd * 3600.
         if (jacobian.shape != (2, 2) or
                 not np.isfinite(jacobian).all() or
                 abs(float(np.linalg.det(jacobian))) < 1e-8):
