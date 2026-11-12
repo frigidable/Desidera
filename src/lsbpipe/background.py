@@ -307,6 +307,14 @@ def _automatic_scene_sky_pixels(
     manual = np.asarray(preview["manual_exclude"], dtype=bool)
     target = (np.asarray(contamination["protected"], dtype=bool)
               | preview["target_protect"] | preview["isophote_candidate"])
+    # Never let the sky selector treat the galaxy centre as clean sky
+    # simply because its target protection is empty or malformed.
+    # Even a fitted plane in that case would be a physically invalid
+    # background/galaxy decomposition, not valid missing-mask evidence.
+    if not np.any(target):
+        raise ValueError(
+            "No protected target region: refuse automatic sky sampling "
+            "over potentially real galaxy light")
     source = auto | manual
     scales = np.asarray(proj_plane_pixel_scales(
         dataset["wcs"].celestial), dtype=float)
