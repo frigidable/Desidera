@@ -55,7 +55,7 @@ def _ring_aperture(x, y, projected, radii, index):
 def estimate_blank_annulus_covariance(
         frame: NativeBandFrame, outer: ApertureGeometryICRS,
         radii_arcsec, *, effective_source_mask, manual_exclude,
-        min_placements=12, max_placements=48,
+        min_placements=12, max_placements=None,
         full_target_exclusion_outer: ApertureGeometryICRS | None = None):
     """Empirical covariance of signed fluxes in non-overlapping blank rings.
 
@@ -82,9 +82,10 @@ def estimate_blank_annulus_covariance(
     if (isinstance(min_placements, bool) or
             not isinstance(min_placements, int) or
             min_placements < 3 or min_placements > 256 or
-            isinstance(max_placements, bool) or
-            not isinstance(max_placements, int) or
-            max_placements < min_placements or max_placements > 256):
+            (max_placements is not None and (
+                isinstance(max_placements, bool) or
+                not isinstance(max_placements, int) or
+                max_placements < min_placements or max_placements > 256))):
         raise ValueError("Invalid bounded blank-aperture sampling limits")
 
     source, manual = _scene_masks(
@@ -115,6 +116,12 @@ def estimate_blank_annulus_covariance(
     examined, rejected = 0, 0
     required = max(min_placements, 2 * len(radii) + 2)
     # A heavily masked large CCD must not trigger an unbounded search.
+    # For long radial vectors, a hardcoded 48-position default can be
+    # LESS than the required 2*n_rings+2. Auto-scale the default
+    # sampling budget, but never silently override an explicit user cap.
+    requested_max_placements = max_placements
+    if max_placements is None:
+        max_placements = min(256, max(48, required))
     candidate_budget = max(256, 32 * max_placements)
     for row, y in enumerate(range(margin, ny - margin, step)):
         if examined >= candidate_budget:
@@ -172,6 +179,8 @@ def estimate_blank_annulus_covariance(
         "n_rejected": int(rejected),
         "n_accepted": len(centres),
         "n_required": int(required),
+        "n_max_placements": int(max_placements),
+        "placement_cap_explicit": requested_max_placements is not None,
         "n_candidate_budget": int(candidate_budget),
         "target_exclusion_radius_native_pix": float(full_radius_pix),
         "blank_outer_radius_native_pix": float(projected.a_pix),
@@ -193,6 +202,10 @@ def estimate_blank_annulus_covariance(
             "NONOVERLAPPING_PLACEMENTS_MAY_STILL_SHARE_LARGE_SCALE_NOISE",
         ],
     }
+    if required > max_placements:
+        report["status"] = "EXPLICIT_PLACEMENT_CAP_BELOW_REQUIRED_COVARIANCE_SAMPLE"
+        report["warnings"].append(
+            "REQUESTED_CAP_CANNOT_MEET_MINIMUM_SAMPLES_FOR_RADIAL_DIMENSION")
     if len(centres) >= required:
         observations = np.asarray(samples, dtype=float)
         covariance = np.atleast_2d(np.cov(observations, rowvar=False, ddof=1))
