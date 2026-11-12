@@ -1447,10 +1447,49 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
                                          {"zero_additional_correction":0,
                                           "constant":1,
                                           "tilted_plane":2}[item[0]]))
+    # The fits use diagonal INVVAR, while the historic pixel-RMS
+    # comparison equally weights high- and low-noise coadd pixels.
+    # Record the paired IVAR-weighted RMS on the EXACT SAME held-out
+    # samples as a second descriptive diagnostic, never chi-squared
+    # or a way of choosing a physically adopted sky.
+    hy, hx = np.nonzero(sky_holdout)
+    comparison_weights = np.asarray(ivar[hy, hx], dtype=float)
+    if (not len(comparison_weights) or
+            not np.isfinite(comparison_weights).all() or
+            np.any(comparison_weights <= 0.)):
+        raise ValueError("Invalid diagonal IVAR in fixed sky holdout")
+    normalized_weights = comparison_weights / np.max(comparison_weights)
+    weight_sum = float(np.sum(normalized_weights, dtype=np.float64))
+    if not np.isfinite(weight_sum) or weight_sum <= 0.:
+        raise ValueError("Degenerate diagonal IVAR in fixed sky holdout")
+    weighted_rms = {}
+    for method in ("zero_additional_correction", "constant", "tilted_plane"):
+        residual = np.asarray(image[hy, hx], dtype=float)
+        if method != "zero_additional_correction":
+            residual = residual - candidates[method].evaluate_at(hx, hy)
+        value = float(np.sqrt(np.sum(
+            normalized_weights * residual * residual, dtype=np.float64)
+            / weight_sum))
+        if not np.isfinite(value):
+            raise ValueError("Nonfinite IVAR-weighted sky holdout RMS")
+        weighted_rms[method] = value
+    ordered_weighted = sorted(
+        weighted_rms, key=lambda name: (
+            weighted_rms[name],
+            {"zero_additional_correction":0,
+             "constant":1, "tilted_plane":2}[name]))
     base["zero_inclusive_same_coadd_model_comparison"] = {
         "schema": "desidera.sky.zero-inclusive-heldout-rms/1",
         "model_holdout_rms_nMgy_per_pixel": dict(rms_candidates),
         "lowest_rms_method_descriptive_only": ordered_rms[0][0],
+        "model_holdout_ivar_weighted_rms_nMgy_per_pixel": weighted_rms,
+        "lowest_ivar_weighted_rms_method_descriptive_only": (
+            ordered_weighted[0]),
+        "unweighted_and_ivar_weighted_rms_rank_disagree": (
+            ordered_rms[0][0] != ordered_weighted[0]),
+        "weighted_qa_uses_exact_same_native_holdout_pixels": True,
+        "weighted_qa_uses_original_diagonal_ivar_not_full_covariance": True,
+        "weighted_qa_not_chi_squared_or_statistical_significance": True,
         "simplicity_tie_preference": [
             "zero_additional_correction", "constant", "tilted_plane"],
         "all_evaluated_on_same_fixed_native_holdout_pixels": True,

@@ -1111,3 +1111,46 @@ def test_stage03_sky_veto_for_ambiguous_target_source_preserves_flux_mask():
     with pytest.raises(ValueError, match="native Boolean"):
         _automatic_scene_sky_pixels(dataset, preview, bad)
     assert np.any(base_train | base_hold)
+
+
+def test_stage03_ivar_weighted_heldout_rms_matches_direct_pixel_operator():
+    """The optional noise-weighted comparison uses unchanged fixed pixels."""
+    from lsbpipe.background import (
+        diagnose_current_project_residual_sky,
+        _automatic_scene_sky_pixels)
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    dataset, draft, contamination = _stage03_project_fixture(with_regions=False)
+    ivar = np.array(dataset["data"]["invvar"], copy=True)
+    ivar[:, :ivar.shape[1]//2] *= .02
+    dataset["data"]["invvar"] = ivar
+    preview = evaluate_mask_draft(
+        draft, dataset["wcs"], dataset["pixel_shape"], "r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    _, held, _ = _automatic_scene_sky_pixels(
+        dataset, preview, contamination)
+    report = diagnose_current_project_residual_sky(
+        dataset, draft, contamination)
+    assert report["status"] == "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
+    comparison = report["zero_inclusive_same_coadd_model_comparison"]
+    assert comparison["weighted_qa_uses_exact_same_native_holdout_pixels"]
+    assert comparison["weighted_qa_uses_original_diagonal_ivar_not_full_covariance"]
+    assert comparison["weighted_qa_not_chi_squared_or_statistical_significance"]
+    y, x = np.nonzero(held)
+    w = ivar[y, x]
+    samples = np.asarray(dataset["data"]["image"])[y, x]
+    for method in ("zero_additional_correction", "constant", "tilted_plane"):
+        residual = samples.copy()
+        if method != "zero_additional_correction":
+            row = report["methods"][method]
+            b0, bx, by = row["coefficients_nMgy"]
+            xref, yref = row["reference_xy_pix"]
+            residual -= b0 + bx*(x-xref) + by*(y-yref)
+        expected = float(np.sqrt(
+            np.sum(w*residual**2) / np.sum(w)))
+        assert comparison[
+            "model_holdout_ivar_weighted_rms_nMgy_per_pixel"][method] == (
+                pytest.approx(expected, rel=1e-12, abs=1e-12))
+    assert report["sky_model_adopted"] is False
+    assert report["automatic_sky_background_correction_authorized"] is False
+    json.dumps(comparison, allow_nan=False)

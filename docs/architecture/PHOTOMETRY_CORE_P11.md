@@ -2725,3 +2725,29 @@ measurements unchanged; Stage04.2 must now fail closed. Valid
 masked/underconstrained rings continue to be distinguished
 from observed zero flux. This does not impose a monotonic
 CoG or exclude real negative annular flux.
+
+
+### Stage 03: paired noise-weighted versus pixel-weighted residual-sky controls (2026-11-13)
+
+Current Stage03 robust fits use diagonal original native IVAR
+in their regression weights, but the frozen held-out residual
+RMS candidate ranking intentionally assigns **equal weight**
+to every geometrically selected pixel. Heteroscedastic coadd
+noise can then move a numerical ranking simply by changing
+the relative fraction of noisy and quiet regions. Neither
+objective alone represents a calibrated physical sky likelihood:
+coadd correlations, systematic outer-galaxy light and PSF
+wings are still unresolved.
+
+Stage03 now reports a paired, **descriptive**
+`sqrt(sum(ivar*(I-B)^2)/sum(ivar))` for zero additional
+correction, constant and plane, over **exactly the same
+original native holdout pixels** as the unweighted RMS.
+It publishes whether the two rankings disagree and records
+explicitly that the weighted statistic is not a chi-square,
+correlated-pixel covariance or science-selection criterion.
+The existing fit, historical candidate heuristic, masks,
+pixel sample and all sky-science holds remain unchanged.
+A synthetic heteroscedastic-INVVAR regression reconstructs
+each held-out model/residual on original native coordinates
+and independently checks the weighted RMS.
