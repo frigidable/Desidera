@@ -117,6 +117,7 @@ def test_same_uuid_target_protection_radius_change_invalidates_scene(
     scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
     previous_key=scene._source_key
     previous_target=scene._project_target
+    original_radius=float(project.target_radius_arcsec)
     assert scene._loaded is not None
     assert scene._draft is not None
     project.target_radius_arcsec=float(project.target_radius_arcsec)+12.
@@ -133,6 +134,21 @@ def test_same_uuid_target_protection_radius_change_invalidates_scene(
     new_key=scene._source_key
     scene.bind_project(project.root)
     assert scene._source_key==new_key
+    # Changing the radius back must NOT resurrect an old draft from the
+    # previous source-key cache after a newer edit was saved meanwhile.
+    newer=scene.draft.with_edit(SkyMaskEdit(
+        "newer_object_scope_edit", "exclude",
+        SkyMaskShape("circle", (359.999,60.), radius_arcsec=4.)))
+    newer_sha=save_mask_draft(
+        project.root,newer,expected_digest=scene._saved_digest)
+    project.target_radius_arcsec=original_radius
+    save_object_project(project)
+    scene.bind_project(project.root)
+    assert scene._source_key==previous_key
+    assert scene.draft.digest==newer_sha
+    assert len(scene.draft.edits)==1
+    assert scene.draft.edits[0].id=="newer_object_scope_edit"
+    assert scene._loaded is None
 
 
 def test_scene_rejects_cross_brick_worker_result_without_mutating_gui(
