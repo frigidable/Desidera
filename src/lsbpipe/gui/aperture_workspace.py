@@ -119,6 +119,17 @@ def build_project_aperture_growth(
     # MUST NOT enter the photometric invalidity masks.
     source=np.array(preview["effective_auto"],copy=True)
     manual=np.array(preview["manual_exclude"],copy=True)
+    from lsbpipe.photometry.sky_masks import native_boolean_mask_sha256
+    source_mask_hash=native_boolean_mask_sha256(source)
+    manual_mask_hash=native_boolean_mask_sha256(manual)
+    for key, actual in (
+            ("effective_source_mask_sha256", source_mask_hash),
+            ("manual_exclude_mask_sha256", manual_mask_hash)):
+        expected=contamination.get(key)
+        if expected is not None and expected != actual:
+            raise ValueError(
+                "Stage04 native Scene/aperture mask geometry fingerprint mismatch: "
+                + key)
     if preview["draft_sha256"] != draft.digest:
         raise ValueError("Scene mask revision changed during photometry")
     provenance=ApertureProvenance(
@@ -162,6 +173,8 @@ def build_project_aperture_growth(
         "scene_draft_sha256":draft.digest,
         "catalog_sha256":contamination["catalog_sha256"],
         "source_policy_id":provenance.source_policy_id,
+        "effective_source_mask_sha256":source_mask_hash,
+        "manual_exclude_mask_sha256":manual_mask_hash,
         "band":dataset["band"],
         "target_anchor_icrs":list(map(float,target_icrs)),
         "loaded_project_target_icrs":(
