@@ -506,8 +506,21 @@ def _conditional_sky_aperture_response_qa(stages):
     if source.get("state") != "CURRENT_LOADED" or not native:
         return {"state": "SCENE_SOURCE_NOT_VERIFIED_FOR_COMPARISON",
                 "correction_applied": False, "science_adopted": False}
-    mask_policy=(source.get("contaminant_screening") or {}).get(
-        "source_mask_policy_id")
+    screening=source.get("contaminant_screening") or {}
+    mask_policy=screening.get("source_mask_policy_id")
+    # The same draft and catalogue can still produce different pixels
+    # after changed rasterization, restored masks or accidental array
+    # mutation. Require the exact prepared Boolean footprint when known.
+    for mask_key in ("effective_source_mask_sha256",
+                     "manual_exclude_mask_sha256"):
+        expected=screening.get(mask_key)
+        if expected is not None and (
+                not isinstance(expected,str) or
+                re.fullmatch(r"[0-9a-f]{64}",expected) is None or
+                bg.get(mask_key)!=expected or ap.get(mask_key)!=expected):
+            return {"state":"SCENE_OR_BAND_PROVENANCE_MISMATCH",
+                    "mismatch_key":mask_key,
+                    "correction_applied":False,"science_adopted":False}
     if mask_policy is not None and (
             bg.get("source_mask_policy_id") != mask_policy or
             ap.get("source_policy_id") != mask_policy):
@@ -618,8 +631,11 @@ def _cross_stage_source_lineage_qa(stages):
     status=native.get("original_fits_provenance_status")
     unit=native.get("image_unit_evidence")
     anchor=native.get("loaded_target_icrs")
-    source_policy=(scene.get("contaminant_screening") or {}).get(
-        "source_mask_policy_id")
+    scene_screening=scene.get("contaminant_screening") or {}
+    source_policy=scene_screening.get("source_mask_policy_id")
+    exact_mask_receipts={
+        k:scene_screening.get(k) for k in (
+            "effective_source_mask_sha256","manual_exclude_mask_sha256")}
     if (not isinstance(anchor,(tuple,list)) or len(anchor)!=2 or
             not all(isinstance(v,(int,float)) and math.isfinite(v)
                     for v in anchor) or
@@ -662,17 +678,29 @@ def _cross_stage_source_lineage_qa(stages):
                     else "source_policy_id")
         policy_match=(source_policy is None or
                       result.get(policy_key)==source_policy)
+        mask_matches={}
+        for fingerprint, expected in exact_mask_receipts.items():
+            if expected is None:
+                mask_matches[fingerprint]=None
+            else:
+                mask_matches[fingerprint]=bool(
+                    isinstance(expected,str) and
+                    re.fullmatch(r"[0-9a-f]{64}",expected) and
+                    result.get(fingerprint)==expected)
+        footprints_match=all(
+            value is not False for value in mask_matches.values())
         examined[name]={
             "state":"MATCH" if (matches and hashes_match and
                                 grid_match and unit_match and anchor_match
-                                and policy_match)
+                                and policy_match and footprints_match)
             else "SOURCE_IDENTITY_MISMATCH",
             "quartet_matches":bool(matches),
             "full_original_sha256_matches":bool(hashes_match),
             "native_grid_fingerprint_matches":bool(grid_match),
             "image_unit_evidence_matches":bool(unit_match),
             "project_target_icrs_matches":bool(anchor_match),
-            "source_mask_geometry_policy_matches":bool(policy_match)}
+            "source_mask_geometry_policy_matches":bool(policy_match),
+            "native_mask_fingerprint_matches":mask_matches}
         if examined[name]["state"]!="MATCH":
             inconsistent.append(name)
     return {
@@ -687,6 +715,7 @@ def _cross_stage_source_lineage_qa(stages):
         "scene_original_fits_sha256_local":dict(hashes),
         "scene_image_unit_evidence":unit,
         "scene_source_mask_policy_id":source_policy,
+        "scene_exact_mask_fingerprints":exact_mask_receipts,
         "stage_comparisons":examined,
         "inconsistent_stages":inconsistent,
         "sha_is_local_byte_identity_not_archive_authenticity":True,
