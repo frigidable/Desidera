@@ -204,44 +204,44 @@ def estimate_blank_annulus_covariance(
         _bounded_quadrant_blank_candidates(frame.shape, margin, step))
     accepted_by_quadrant = [0, 0, 0, 0]
     for quadrant, x, y in candidate_positions:
-            if len(centres) >= max_placements or examined >= candidate_budget:
+        if len(centres) >= max_placements or examined >= candidate_budget:
+            break
+        examined += 1
+        # At least the full outer aperture separates each sky placement
+        # from the putative target. Extended LSB light is NOT excluded.
+        if math.hypot(
+                x - projected.x_center,
+                y - projected.y_center) <= exclusion_distance_pix:
+            rejected += 1
+            continue
+        vector = []
+        for i in range(len(radii)):
+            mask = _ring_aperture(x, y, projected, radii, i).to_mask(
+                method="exact")
+            large, small = mask.get_overlap_slices(frame.shape)
+            if large is None:
+                vector = []
                 break
-            examined += 1
-            # At least the full outer aperture separates each sky placement
-            # from the putative target. Extended LSB light is NOT excluded.
-            if math.hypot(
-                    x - projected.x_center,
-                    y - projected.y_center) <= exclusion_distance_pix:
-                rejected += 1
-                continue
-            vector = []
-            for i in range(len(radii)):
-                mask = _ring_aperture(x, y, projected, radii, i).to_mask(
-                    method="exact")
-                large, small = mask.get_overlap_slices(frame.shape)
-                if large is None:
-                    vector = []
-                    break
-                weights = np.asarray(mask.data[small], dtype=float)
-                if (not np.isfinite(weights).all() or
-                        np.any((weights < -1e-10) | (weights > 1 + 1e-10))):
-                    raise ValueError("Invalid blank-aperture exact weights")
-                weights = np.clip(weights, 0., 1.)
-                # This checks all partially covered boundary pixels too.
-                bad_area = float(np.sum(weights * invalid[large]))
-                area = float(np.sum(weights))
-                if area <= 0. or bad_area > 1e-6 * area:
-                    vector = []
-                    break
-                vector.append(float(np.sum(
-                    weights * frame.image_nMgy[large],
-                    dtype=np.float64)))
-            if len(vector) != len(radii):
-                rejected += 1
-                continue
-            centres.append([int(x), int(y)])
-            accepted_by_quadrant[quadrant] += 1
-            samples.append(vector)
+            weights = np.asarray(mask.data[small], dtype=float)
+            if (not np.isfinite(weights).all() or
+                    np.any((weights < -1e-10) | (weights > 1 + 1e-10))):
+                raise ValueError("Invalid blank-aperture exact weights")
+            weights = np.clip(weights, 0., 1.)
+            # This checks all partially covered boundary pixels too.
+            bad_area = float(np.sum(weights * invalid[large]))
+            area = float(np.sum(weights))
+            if area <= 0. or bad_area > 1e-6 * area:
+                vector = []
+                break
+            vector.append(float(np.sum(
+                weights * frame.image_nMgy[large],
+                dtype=np.float64)))
+        if len(vector) != len(radii):
+            rejected += 1
+            continue
+        centres.append([int(x), int(y)])
+        accepted_by_quadrant[quadrant] += 1
+        samples.append(vector)
 
     report = {
         "schema": _BLANK_SCHEMA,
