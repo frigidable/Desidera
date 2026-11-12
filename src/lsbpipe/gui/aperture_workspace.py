@@ -125,7 +125,9 @@ def build_project_aperture_growth(
         project_id=dataset["project_id"],
         scene_draft_sha256=draft.digest,
         catalogue_sha256=contamination["catalog_sha256"],
-        source_policy_id="PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V1")
+        source_policy_id=contamination.get(
+            "source_mask_policy_id",
+            "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V1_LEGACY"))
     protected=int(np.count_nonzero(contamination["protected"]))
     radii,radial_qa=predeclared_growth_radii(
         f,target_icrs,
