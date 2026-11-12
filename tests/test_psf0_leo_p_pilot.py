@@ -458,3 +458,22 @@ def test_leo_p_cli_qa_profile_requires_explicit_full_opt_in(tmp_path, monkeypatc
     with pytest.raises(TypeError, match="extended_research_qa"):
         run_leo_p_pilot(p.root, extended_research_qa="true")
     assert not (p.root / "analyses").exists()
+
+
+def test_psf_restore_ignores_broken_symlink_before_checkpoint_sort(
+        tmp_path, monkeypatch):
+    """Unsafe historic checkpoint entries must not abort PSF restoration."""
+    from lsbpipe.photometry.psf_gui_backend import read_saved_psf0_bands
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = _project(tmp_path)
+    folder = project.root / "analyses" / "psf-pilots"
+    folder.mkdir(parents=True)
+    unsafe = folder / ("psf0-" + "a"*24)
+    try:
+        unsafe.symlink_to(folder / "nonexistent", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Creating directory symlinks is not permitted on this runner")
+    assert unsafe.is_symlink() and not unsafe.exists()
+    restored = read_saved_psf0_bands(project.root)
+    assert restored["restored"] == {}
+    assert restored["warnings"]["storage"] == "Unsafe stored PSF entry"

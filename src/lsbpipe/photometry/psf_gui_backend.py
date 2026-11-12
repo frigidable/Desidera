@@ -592,7 +592,10 @@ def read_saved_psf0_bands(project_root: str | Path) -> dict:
     folders = sorted(
         (x for x in root.iterdir()
          if re.fullmatch(r"psf0-[0-9a-f]{24}", x.name)),
-        key=lambda x: x.stat().st_mtime_ns, reverse=True)
+        # stat() follows a symlink before the loop can reject it, and
+        # raises on broken links, blocking all legitimate checkpoints.
+        # lstat() inspects this directory entry alone, including links.
+        key=lambda x: x.lstat().st_mtime_ns, reverse=True)
     if len(folders) > 128:
         raise ValueError("More than 128 historical PSF checkpoints; manual audit needed")
     # Source hashes are independently verified against CURRENT original

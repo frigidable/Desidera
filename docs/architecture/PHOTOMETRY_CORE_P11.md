@@ -2335,3 +2335,17 @@ This is a **local computational identity**, not a claim of archived FITS
 authenticity, correct WCS, scientifically valid sky/PSF, or calibrated
 total photometry. FITS file hashes, WCS fingerprints and native-array
 fingerprints have deliberately distinct scopes.
+
+
+### Experimental PSF checkpoint restore: symlink-safe history (2026-11-12)
+
+The PSF-0 checkpoint reader already excluded symlinked historical
+entries in its restore loop, but it **sorted entries by Path.stat()**
+before reaching that check. `stat()` follows a symlink; a broken
+historical link raised an uncaught error and prevented the GUI from
+restoring any otherwise legitimate PSF checkpoint. The sort now uses
+`lstat()` (the directory entry itself), while the existing explicit
+symlink rejection and warning remain unchanged. This changes only
+safe access to saved diagnostic evidence, not the PSF, original FITS,
+star selection, kernel or science-adoption policy. A regression
+constructs a broken history link where supported by the test platform.
