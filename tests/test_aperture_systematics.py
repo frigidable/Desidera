@@ -987,3 +987,54 @@ def test_blank_ivar_comparison_retains_null_for_fully_masked_target_rings():
     assert qa["target_to_median_blank_diagonal_variance_ratio"][0] is None
     assert qa["median_full_blank_ring_formal_variance_nMgy2"][0] is not None
     assert out["covariance_calibrated_for_science"] is False
+
+
+def test_blank_spatial_quadrant_decomposition_exposes_coherent_sky_contrast():
+    """Strong spatial mean offsets must not be relabeled pure pixel noise."""
+    rng = np.random.default_rng(20261113)
+    yy, xx = np.indices((321, 321))
+    # Sky residual offset is persistent over large angular regions,
+    # while the small independent pixel-noise component is known.
+    image = np.where(xx < 160, -.08, .08) + (
+        rng.normal(0., .0003, (321, 321)))
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    f = frame(image=image, shape=image.shape, w=pixel_wcs)
+    none = np.zeros(f.shape, dtype=bool)
+    result = estimate_blank_annulus_covariance(
+        f, geometry(a=1.6, q=.74, pa=27.), (.5, 1., 1.6),
+        effective_source_mask=none, manual_exclude=none)
+    qa = result["quadrant_mean_flux_scatter_decomposition"]
+    assert qa["schema"] == "desidera.photometry.blank-spatial-mean-scatter/1"
+    assert qa["status"] == "SPATIAL_MEAN_CONTRAST_DESCRIPTIVE_ONLY"
+    assert sum(qa["counts_by_native_quadrant"]) == result["n_accepted"]
+    assert len(qa["per_quadrant_mean_signed_ring_flux_nMgy"]) == 4
+    assert qa["between_quadrant_mean_fraction_of_total_sum_squares"][0] > .65
+    within = np.array(qa["within_quadrant_flux_sum_squares_nMgy2"])
+    between = np.array(qa["between_quadrant_mean_flux_sum_squares_nMgy2"])
+    total = np.array(qa["total_flux_sum_squares_nMgy2"])
+    np.testing.assert_allclose(within+between, total, rtol=1.e-10, atol=1.e-8)
+    np.testing.assert_allclose(
+        total / (result["n_accepted"]-1),
+        np.diag(np.asarray(result["annulus_covariance_nMgy2"])),
+        rtol=1.e-10, atol=1.e-8)
+    assert qa["same_coadd_quadrants_are_not_independent_exposures"]
+    assert qa["between_quadrant_contrast_is_not_proven_sky_gradient"]
+    assert qa["not_a_noise_covariance_debiasing_or_science_gate"]
+    assert result["covariance_calibrated_for_science"] is False
+    json.dumps(qa, allow_nan=False)
+
+
+def test_blank_spatial_mean_scatter_reports_unavailable_for_no_blanks():
+    f = frame(value=.2)
+    zeros = np.zeros(f.shape, dtype=bool)
+    blocked = np.ones(f.shape, dtype=bool)
+    result = estimate_blank_annulus_covariance(
+        f, geometry(a=3.), (1., 2., 3.),
+        effective_source_mask=blocked, manual_exclude=zeros)
+    qa = result["quadrant_mean_flux_scatter_decomposition"]
+    assert qa["status"] == "INSUFFICIENT_VALID_BLANK_COVARIANCE"
+    assert qa["total_flux_sum_squares_nMgy2"] is None
+    assert qa["between_quadrant_mean_fraction_of_total_sum_squares"] is None
+    assert qa["per_quadrant_mean_signed_ring_flux_nMgy"] == {}
+    assert result["annulus_covariance_nMgy2"] is None

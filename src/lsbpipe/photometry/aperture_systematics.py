@@ -235,6 +235,7 @@ def estimate_blank_annulus_covariance(
     step = max(2 * margin + 2, 8)
     ny, nx = frame.shape
     centres, samples, blank_ring_formal_variances = [], [], []
+    accepted_quadrants = []
     examined, rejected = 0, 0
     required = max(min_placements, 2 * len(radii) + 2)
     # A heavily masked large CCD must not trigger an unbounded search.
@@ -316,6 +317,7 @@ def estimate_blank_annulus_covariance(
             rejected += 1
             continue
         centres.append([float(x), float(y)])
+        accepted_quadrants.append(int(quadrant))
         accepted_by_quadrant[quadrant] += 1
         samples.append(vector)
         blank_ring_formal_variances.append(formal_vector)
@@ -394,6 +396,19 @@ def estimate_blank_annulus_covariance(
         "candidate_search_budget_exhausted": examined >= candidate_budget,
         "centres_native_xy": centres,
         "annulus_mean_blank_flux_nMgy": None,
+        "quadrant_mean_flux_scatter_decomposition": {
+            "schema": "desidera.photometry.blank-spatial-mean-scatter/1",
+            "status": "INSUFFICIENT_VALID_BLANK_COVARIANCE",
+            "counts_by_native_quadrant": accepted_by_quadrant.copy(),
+            "per_quadrant_mean_signed_ring_flux_nMgy": {},
+            "within_quadrant_flux_sum_squares_nMgy2": None,
+            "between_quadrant_mean_flux_sum_squares_nMgy2": None,
+            "total_flux_sum_squares_nMgy2": None,
+            "between_quadrant_mean_fraction_of_total_sum_squares": None,
+            "same_coadd_quadrants_are_not_independent_exposures": True,
+            "between_quadrant_contrast_is_not_proven_sky_gradient": True,
+            "not_a_noise_covariance_debiasing_or_science_gate": True,
+        },
         "annulus_covariance_nMgy2": None,
         "annulus_sigma_empirical_nMgy": None,
         "cumulative_covariance_nMgy2": None,
@@ -433,6 +448,52 @@ def estimate_blank_annulus_covariance(
             report["annulus_covariance_nMgy2"] = covariance.tolist()
             report["annulus_sigma_empirical_nMgy"] = np.sqrt(
                 diagonal).tolist()
+            # The sample covariance conflates within-location noise
+            # with coherent differences in means across quadrants.
+            # Decompose the exact SAME signed blank observations by
+            # their original, geometrically predeclared native quadrant,
+            # without treating each quadrant as an independent exposure.
+            labels = np.asarray(accepted_quadrants, dtype=int)
+            n_quadrants = int(np.count_nonzero(accepted_by_quadrant))
+            qa = report["quadrant_mean_flux_scatter_decomposition"]
+            if n_quadrants >= 2:
+                global_mean = np.mean(observations, axis=0)
+                total_ss = np.sum(
+                    (observations-global_mean)**2, axis=0)
+                within_ss = np.zeros(len(radii), dtype=float)
+                between_ss = np.zeros(len(radii), dtype=float)
+                per_quadrant = {}
+                for q in range(4):
+                    part = observations[labels == q]
+                    if not len(part):
+                        continue
+                    local_mean = np.mean(part, axis=0)
+                    per_quadrant[str(q)] = local_mean.tolist()
+                    within_ss += np.sum((part-local_mean)**2, axis=0)
+                    between_ss += len(part)*(local_mean-global_mean)**2
+                if not np.allclose(
+                        total_ss, within_ss+between_ss,
+                        rtol=1.e-10, atol=1.e-8):
+                    raise ValueError(
+                        "Inconsistent native blank spatial scatter decomposition")
+                fractions = [
+                    float(b/t) if t > 0. else None
+                    for b,t in zip(between_ss,total_ss)]
+                qa.update({
+                    "status": "SPATIAL_MEAN_CONTRAST_DESCRIPTIVE_ONLY",
+                    "per_quadrant_mean_signed_ring_flux_nMgy": per_quadrant,
+                    "within_quadrant_flux_sum_squares_nMgy2":
+                        within_ss.tolist(),
+                    "between_quadrant_mean_flux_sum_squares_nMgy2":
+                        between_ss.tolist(),
+                    "total_flux_sum_squares_nMgy2": total_ss.tolist(),
+                    "between_quadrant_mean_fraction_of_total_sum_squares":
+                        fractions,
+                    "exact_sum_of_squares_identity_verified": True,
+                })
+            else:
+                qa["status"] = (
+                    "ONE_SPATIAL_QUADRANT_NO_BETWEEN_QUADRANT_CONTRAST")
             # Nested apertures share their inner rings: C_CoG = T C_ring T^T.
             # No independent-error quadrature and no covariance inversion.
             transfer = np.tril(np.ones((len(radii), len(radii))))

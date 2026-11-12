@@ -2816,3 +2816,36 @@ field (noise-heavy around the target, quiet in blank fields)
 and independently integrates the smallest-ring exact native
 weights; a second test checks a fully masked target inner
 ring stays null despite valid off-target control rings.
+
+
+### Stage 04.3: separate regional mean changes from within-region blank scatter (2026-11-13)
+
+Even after matching blank apertures' native pixel phase and
+recording target-versus-blank IVAR differences, the total
+empirical sample covariance can mix **different regional
+background means** with within-region fluctuations. A
+large-scale residual pattern across the coadd may dominate
+the sample covariance without demonstrating stationary,
+zero-mean correlated pixel noise.
+
+The blank QA now groups accepted, fixed-location signed ring
+measurements into the **original four native-image quadrants**
+and records their mean flux vectors. When the full-scale
+covariance was numerically measurable in at least two
+quadrants, it decomposes the ring flux sum of squares exactly
+into within-quadrant and between-quadrant-mean contributions,
+reporting the fraction of total squared scatter coming
+from regional mean contrasts. An internal identity check
+verifies `SS_total = SS_within + SS_between` across every
+ring. One-quadrant or insufficient-blank conditions return
+explicit underconstrained states, not artificial zeroes.
+
+A deterministic synthetic step-sky image produces dominant
+between-quadrant contrast even though its pixel noise is
+small; an independent regression verifies the decomposition
+against the reported native blank covariance. This is
+descriptive evidence of **spatial nonstationarity** and
+does NOT prove the offset is sky rather than undetected
+galaxy outskirts or sources. The original covariance is
+unchanged: no debiasing, no CCD independence, no adopted
+sky/noise or full-galaxy uncertainty is claimed.
