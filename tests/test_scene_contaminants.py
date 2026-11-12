@@ -100,6 +100,20 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
         "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS")
     assert result["source_mask_native_geometry"] == (
         "TAN_INTERMEDIATE_PROJECTION_PLANE_JACOBIAN_NO_EXTRA_COS_DECLINATION")
+    from lsbpipe.photometry.sky_masks import native_boolean_mask_sha256
+    assert result["effective_source_mask_sha256"] == (
+        native_boolean_mask_sha256(result["auto_mask"]))
+    expected_manual = np.zeros_like(result["auto_mask"])
+    assert result["manual_exclude_mask_sha256"] == (
+        native_boolean_mask_sha256(expected_manual))
+    # Byte strides do not change the identity of the same Boolean pixels;
+    # geometric shape and any changed pixel DO change the receipt.
+    assert native_boolean_mask_sha256(np.asfortranarray(
+        result["auto_mask"])) == result["effective_source_mask_sha256"]
+    altered=result["auto_mask"].copy()
+    altered[2, 2] = ~altered[2, 2]
+    assert native_boolean_mask_sha256(altered) != (
+        result["effective_source_mask_sha256"])
     assert result["catalog_sha256"] == "f"*64
     assert result["target_protection_radius_arcsec"] == pytest.approx(20.)
     assert not result["mask"].flags.writeable
