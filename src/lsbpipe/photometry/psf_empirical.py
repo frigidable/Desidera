@@ -1219,6 +1219,52 @@ def build_empirical_coadd_psf(
         "coadd_sky_and_psf_wings_jointly_fitted":False,
         "sky_correlation_uncertainty_calibrated":False,
     }
+    # An independent ePSF *fit* holdout is not an untouched
+    # independent source-population validation: the field-relative
+    # Gaia core-width screen was learned before the final split.
+    # Record that distinction together with actual sky coverage and
+    # stellar brightness spans, instead of relying on star count alone.
+    ny, nx = frame.shape
+    def cohort_coverage(stars):
+        counts = [0, 0, 0, 0]
+        magnitudes = []
+        coords = []
+        for star in stars:
+            x, y = float(star.x_pix), float(star.y_pix)
+            if not (np.isfinite(x) and np.isfinite(y)):
+                raise ValueError("Nonfinite PSF training/holdout location")
+            counts[int(x >= nx/2.) + 2*int(y >= ny/2.)] += 1
+            coords.append((x, y))
+            mag = star.gaia_g_mag
+            if mag is not None and np.isfinite(float(mag)):
+                magnitudes.append(float(mag))
+        return {
+            "n_stars": len(stars),
+            "n_populated_native_quadrants": sum(v > 0 for v in counts),
+            "counts_by_native_quadrant": counts,
+            "bounding_box_native_xyxy": (
+                [float(min(x for x, y in coords)),
+                 float(min(y for x, y in coords)),
+                 float(max(x for x, y in coords)),
+                 float(max(y for x, y in coords))]
+                if coords else None),
+            "n_stars_with_finite_gaia_g_mag": len(magnitudes),
+            "gaia_g_mag_min": min(magnitudes) if magnitudes else None,
+            "gaia_g_mag_max": max(magnitudes) if magnitudes else None,
+        }
+    stellar_coverage_qa = {
+        "schema": "desidera.psf0-stellar-coverage-and-screening/1",
+        "train": cohort_coverage(train),
+        "holdout": cohort_coverage(holdout),
+        "holdout_is_disjoint_from_epsf_fitting": True,
+        "holdout_is_not_an_untouched_preselection_population": True,
+        "gaia_core_width_reference_includes_pre_split_holdout": bool(
+            width_qa is not None),
+        "external_independent_stellar_validation_performed": False,
+        "spatial_transfer_to_galaxy_calibrated": False,
+        "brightness_dependent_psf_wings_calibrated": False,
+        "no_global_psf_science_adoption": True,
+    }
     selection_catalog_qa = {
         "policy": cfg.star_catalog_policy,
         "gaia_strict": cfg.star_catalog_policy == "gaia_strict",
@@ -1269,6 +1315,8 @@ def build_empirical_coadd_psf(
             if cfg.star_catalog_policy == "dao_diagnostic"
             else "GAIA_DR3_IDENTIFIED_IN_NATIVE_TRACTOR"),
         "holdout_independent_of_epsf_fit": True,
+        "stellar_spatial_and_brightness_coverage_qa":
+            stellar_coverage_qa,
         "psf_star_cleanliness_certified": False,
     }
     # Even when the signed kernel fails the negative-mass gate, preserve

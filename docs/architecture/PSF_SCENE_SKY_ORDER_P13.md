@@ -1102,3 +1102,27 @@ and `SCIENCE HOLD`. Further development should
 use predeclared large-aperture spatial covariance
 and several PSF-aware artificial dwarf profiles
 on copies of *the same already attached project*.
+
+
+### PSF-0: explicit internal-holdout selection leakage and spatial coverage QA (2026-11-13)
+
+The empirical ePSF fitting cohort and its fixed held-out
+stars are disjoint, but in catalogue-vetted modes the image
+core-width reference used to screen stars is learned from a
+population of Gaia-confirmed candidates **before** the final
+training/holdout split. Thus the holdout is independent of
+the *kernel fit*, not a completely blinded population with
+quality thresholds learned exclusively from training stars.
+Spatially distant stars and a narrow magnitude range may also
+prevent reliable transfer of one finite kernel to a galaxy.
+
+PSF-0 now records explicit `stellar_spatial_and_brightness_coverage_qa`
+with per-cohort native-quadrant counts, spatial bounding boxes,
+Gaia-G magnitude ranges and unambiguous flags distinguishing
+fit independence from preselection independence. The existing
+star selection, ePSF kernel, heldout numerical residuals and
+all non-adoption gates are unchanged. Synthetic fixture
+regressions verify exact cohort/quadrant accounting and
+that no fictitious external-validation or PSF-wing claim appears.
+This supports designing a future genuinely independent stellar
+validation cohort and does not itself cure PSF wing/sky degeneracy.

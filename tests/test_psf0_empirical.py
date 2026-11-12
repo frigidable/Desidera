@@ -143,6 +143,21 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert population["n_holdout_unverified_dao"] == len(result.holdout)
     assert population["holdout_identity_validation"] == "NONE_DAO_CANDIDATES_ONLY"
     assert population["holdout_independent_of_epsf_fit"] is True
+    coverage = population["stellar_spatial_and_brightness_coverage_qa"]
+    assert coverage["schema"] == (
+        "desidera.psf0-stellar-coverage-and-screening/1")
+    assert coverage["train"]["n_stars"] == len(result.training)
+    assert coverage["holdout"]["n_stars"] == len(result.holdout)
+    assert sum(coverage["train"]["counts_by_native_quadrant"]) == len(
+        result.training)
+    assert sum(coverage["holdout"]["counts_by_native_quadrant"]) == len(
+        result.holdout)
+    assert coverage["holdout_is_disjoint_from_epsf_fitting"] is True
+    assert coverage["holdout_is_not_an_untouched_preselection_population"] is True
+    assert coverage["gaia_core_width_reference_includes_pre_split_holdout"] is False
+    assert coverage["external_independent_stellar_validation_performed"] is False
+    assert coverage["spatial_transfer_to_galaxy_calibrated"] is False
+    assert coverage["brightness_dependent_psf_wings_calibrated"] is False
     candidates = population["candidate_screening_audit"]
     assert len([row for row in candidates
                 if row.get("final_selection_role") == "DAO_UNVERIFIED_HOLDOUT"
