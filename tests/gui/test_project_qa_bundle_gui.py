@@ -381,6 +381,7 @@ def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
     stages = {
         "scene_masks":{"state":"CURRENT_LOADED","native_fits":{
             "source_quartet_key":key,
+            "grid_fingerprint":"wcs-native-grid",
             "original_fits_sha256_local":hashes,
             "loaded_target_icrs":fixed_center,
             "image_unit_evidence":"FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"}},
@@ -449,6 +450,10 @@ def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
     assert _conditional_sky_aperture_response_qa(stages)["mismatch_key"] == (
         "grid_fingerprint")
     ap["grid_fingerprint"]="wcs-native-grid"
+    stages["scene_masks"]["native_fits"]["grid_fingerprint"]="other"
+    assert _conditional_sky_aperture_response_qa(stages)["mismatch_key"] == (
+        "full_native_source_or_target")
+    stages["scene_masks"]["native_fits"]["grid_fingerprint"]="wcs-native-grid"
     ap["target_anchor_icrs"]=[155.401,18.]
     assert _conditional_sky_aperture_response_qa(stages)["mismatch_key"] == (
         "full_native_source_or_target")
