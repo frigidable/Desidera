@@ -2179,3 +2179,28 @@ spatially correlated noise or sky–galaxy degeneracy. Blank aperture
 covariance is still a preliminary **same-coadd** diagnostic, and
 direct valid-area aperture fluxes are not total galaxy fluxes.
 `SCIENCE HOLD` remains required for Leo P and subsequent objects.
+
+
+### Stage04 blank covariance: invalid NaNs outside the annular support
+
+Further inspection found that the exact fractional ring integrator used
+`sum(weights * image)` across the **full rectangular aperture-mask
+bounding box**, after checking that no masked pixel had significant
+positive fractional area. This nevertheless multiplies `0 * NaN`
+for an invalid original FITS pixel *outside* the ring but *inside*
+the rectangular box, which is NaN in IEEE-754 NumPy. A geometrically
+valid blank therefore could be converted to a nonfinite sample and
+cause the entire estimated matrix to be withheld. Because native
+DESI cutouts may contain hard-invalid pixels, the old arithmetic
+was not equivalent to summing on the exact accepted aperture support.
+
+**Fixed:** a blank position is now rejected for **any** positive
+fractional geometric overlap with an invalid, source-masked or
+manually masked pixel. The actual flux sum uses ONLY positive exact
+weights on validated native samples, never the surrounding rectangle.
+No invalid native pixel is filled, zeroed as data, interpolated or
+assigned fictitious variance. A synthetic 321x321 original frame
+with deliberately inserted NaNs at zero-weight corner pixels checks
+that a finite empirical annulus covariance remains measurable without
+altering any native input data. This is a numerical and masking
+correctness fix, not a calibration of correlated coadd noise.
