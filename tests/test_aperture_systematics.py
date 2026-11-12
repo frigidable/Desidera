@@ -804,7 +804,9 @@ def test_blank_covariance_respects_exact_same_conditional_plane_as_target():
 
 
 def test_smaller_scale_blank_probe_uses_same_nonadopted_sky_scenario():
-    f = frame(value=1.)
+    w = wcs()
+    w.wcs.crpix = [161., 161.]
+    f = frame(value=1., shape=(321, 321), w=w)
     masks = np.zeros(f.shape, dtype=bool)
     sky = ApertureSkyScenario(
         method="constant", b0_nMgy_per_pixel=1.,
@@ -818,6 +820,9 @@ def test_smaller_scale_blank_probe_uses_same_nonadopted_sky_scenario():
     assert report["blank_apertures"]["conditional_sky_scenario"][
         "b0_nMgy_per_pixel"] == 1.
     small = report["smaller_scale_blank_diagnostics"]
+    assert small["status"] == "SMALL_SCALE_COVARIANCE_DIAGNOSTIC_ONLY"
+    assert len(small["probes"]) >= 1
+    assert small["probes"][-1]["annulus_covariance_nMgy2"] is not None
     assert all(p["conditional_sky_scenario"]["method"] == "constant"
                for p in small["probes"])
     assert all(p["blank_signal_uses_same_frozen_sky_plane_as_target"]

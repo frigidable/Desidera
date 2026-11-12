@@ -1071,6 +1071,6 @@ def test_stage03_zero_sky_reference_is_ranked_without_authorizing_subtraction():
     assert ranked["model_holdout_rms_nMgy_per_pixel"][
         "constant"] > 0.
     assert not ranked["science_sky_model_selected"]
-    assert not ranked["no_sky_subtraction_authorized"] is False
+    assert ranked["no_sky_subtraction_authorized"] is True
     assert output["automatic_sky_background_correction_authorized"] is False
     assert output["sky_model_adopted"] is False

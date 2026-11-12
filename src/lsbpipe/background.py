@@ -1429,7 +1429,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "schema": "desidera.sky.zero-inclusive-heldout-rms/1",
         "model_holdout_rms_nMgy_per_pixel": dict(rms_candidates),
         "lowest_rms_method_descriptive_only": ordered_rms[0][0],
-        "descending_simplicity_tie_preference": [
+        "simplicity_tie_preference": [
             "zero_additional_correction", "constant", "tilted_plane"],
         "all_evaluated_on_same_fixed_native_holdout_pixels": True,
         "zero_additional_correction_explicitly_included": True,
