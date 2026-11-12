@@ -2394,3 +2394,24 @@ canonicalized into Python ints/floats for stable recording. The
 fit/holdout algorithms and default settings are unchanged; synthetic
 regressions cover malformed parameters and valid NumPy scalar inputs.
 This does not turn an uncalibrated sky candidate into an adopted one.
+
+
+### Stage 04.2 exact annulus: invalid overlap fractions fail closed (2026-11-12)
+
+The cumulative-aperture integrator and blank-annulus covariance
+estimator already enforced the exact `photutils` pixel-coverage
+contract: finite weights in [0,1], with only ~1e-10 roundoff
+allowed. The independently integrated growth-ring routine instead
+used `np.clip` **before** checking for nonfinite values, silently
+accepting arbitrary negative or >1 fractional overlaps. If such
+weights arise from a dependency regression, the signed annular
+flux, intensity and variance could be modified without an error,
+and a plausible growth curve could be saved.
+
+The ring integrator now checks finite/bounded exact pixel weights
+**before** numerical-tolerance clipping, consistent with all other
+native aperture implementations. A regression injects negative,
+supra-unity and NaN overlap fractions through the `photutils`
+interface and requires explicit rejection. This does not replace
+correlated-noise covariance, actual isophotal fitting or scientific
+sky/PSF validation.

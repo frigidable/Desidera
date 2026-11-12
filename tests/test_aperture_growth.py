@@ -175,3 +175,25 @@ def test_entirely_masked_growth_sequence_is_not_claimed_measured():
     assert all(r["signed_valid_flux_nMgy"] is None
                for r in out["cumulative"])
     json.dumps(out,allow_nan=False)
+
+
+@pytest.mark.parametrize("invalid_weight", (-.2, 1.2, float("nan")))
+def test_annulus_invalid_exact_pixel_weights_must_fail_closed(
+        monkeypatch, invalid_weight):
+    """Photutils output outside [0,1] must not silently alter signed flux."""
+    import photutils.aperture as aperture
+    original = aperture.EllipticalAnnulus
+    class CorruptedAnnulus(original):
+        def to_mask(self, method="exact"):
+            result = super().to_mask(method=method)
+            result.data[result.data.shape[0]//2,
+                        result.data.shape[1]//2] = invalid_weight
+            return result
+    monkeypatch.setattr(aperture, "EllipticalAnnulus", CorruptedAnnulus)
+    f = frame(value=.12)
+    zeros = np.zeros(f.shape, dtype=bool)
+    with pytest.raises(ValueError, match="Invalid exact annulus"):
+        measure_native_annulus(
+            f, geometry(a=6., q=.8, pa=33.), 2.0, provenance(),
+            effective_source_mask=zeros, manual_exclude=zeros,
+            sky=ApertureSkyScenario())

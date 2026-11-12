@@ -172,9 +172,15 @@ def measure_native_annulus(frame:NativeBandFrame,
     if (source.shape!=frame.shape or manual.shape!=frame.shape or
         source.dtype.kind!="b" or manual.dtype.kind!="b"):
         raise ValueError("Annulus Scene masks must be same-grid Boolean arrays")
-    weights=np.clip(np.asarray(mask.data[small],dtype=float),0.,1.)
-    if not np.isfinite(weights).all():
-        raise ValueError("Nonfinite exact annulus weights")
+    weights=np.asarray(mask.data[small],dtype=float)
+    # Exact photutils overlap weights must be finite fractions. Silently
+    # clipping an invalid -0.2/1.2 weight would change signed flux,
+    # surface brightness and the diagonal-variance estimate without
+    # revealing a numerical failure to Stage 04.3.
+    if (not np.isfinite(weights).all() or
+            np.any((weights < -1e-10) | (weights > 1.+1e-10))):
+        raise ValueError("Invalid exact annulus fractional overlap weights")
+    weights=np.clip(weights,0.,1.)
     valid=(frame.valid[large]&~source[large]&~manual[large])
     used=valid&(weights>0)
     weighted_area=float(np.sum(weights[used]))
