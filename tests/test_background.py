@@ -550,6 +550,37 @@ def test_shifted_sky_grid_spatial_qa_uses_true_native_pixel_bounds():
     assert qa["geometry"]["holdout"]["n_partial_edge_tiles"] == 0
 
 
+def test_zero_sky_baseline_uses_shifted_native_tile_bounds_exactly():
+    """A shifted holdout must not be reassigned to unshifted grid pixels."""
+    from lsbpipe.background import _audit_zero_sky_baseline
+    image=np.zeros((96,96),dtype=float)
+    train=np.zeros((96,96),dtype=bool)
+    heldout=np.zeros((96,96),dtype=bool)
+    train[21,25]=True
+    heldout[21,57]=True
+    image[21,25]=.125
+    image[21,57]=-.075
+    selection={
+        "tile_edge_native_pix":32,
+        "holdout_tile_evidence":[{
+            "tile_index":[2,1],
+            "tile_bounds_native_xyxy":[56,20,88,52],
+            "n_sampled_pixels":1,
+            "quadrant":1}],
+    }
+    result=_audit_zero_sky_baseline(image,train,heldout,selection)
+    assert result["holdout_tile_medians_nMgy_per_pixel"][0][
+        "median_nMgy_per_pixel"]==pytest.approx(-.075)
+    assert result["holdout_rms_nMgy_per_pixel"]==pytest.approx(.075)
+    assert result["training_rms_nMgy_per_pixel"]==pytest.approx(.125)
+    assert result["n_holdout_samples"]==1
+    assert result["validates_original_sky_level"] is False
+    selection["holdout_tile_evidence"][0][
+        "tile_bounds_native_xyxy"]=[64,32,96,64]
+    with pytest.raises(ValueError,match="sample lineage differs"):
+        _audit_zero_sky_baseline(image,train,heldout,selection)
+
+
 def test_project_stage03_zero_baseline_is_exact_same_heldout_native_pixels():
     """The model-free DR11 coadd is always compared fairly with fitted sky."""
     from lsbpipe.background import (
