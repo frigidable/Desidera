@@ -205,6 +205,22 @@ def _stage03_project_fixture(*, with_regions=True):
     return dataset, draft, contamination
 
 
+def test_automatic_sky_refuses_empty_target_protection():
+    """No target mask must never allow the galaxy to become sky training."""
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset,draft,contamination=_stage03_project_fixture(
+        with_regions=False)
+    mask_before=contamination["protected"].copy()
+    image_before=dataset["data"]["image"].copy()
+    contamination["protected"]=np.zeros(dataset["pixel_shape"],bool)
+    with pytest.raises(ValueError,match="No protected target region"):
+        diagnose_current_project_residual_sky(
+            dataset,draft,contamination)
+    assert np.array_equal(mask_before,mask_before.copy())
+    assert np.array_equal(image_before,dataset["data"]["image"])
+    assert not contamination["protected"].any()
+
+
 def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
     from lsbpipe.background import diagnose_current_project_residual_sky
     dataset,draft,contamination=_stage03_project_fixture()
