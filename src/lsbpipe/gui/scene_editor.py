@@ -2743,6 +2743,9 @@ class SceneEditor(QWidget):
                 "CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED" or
                 result["project_id"] != self._project_id or
                 result["dataset_source"] != self._loaded["source"] or
+                (self._loaded.get("source_quartet_key") is not None and
+                 tuple(result.get("source_quartet_key", ())) !=
+                 tuple(self._loaded["source_quartet_key"])) or
                 result["band"] != self._band or
                 result["draft_digest"] != self._draft.digest or
                 result.get("gaia_inner_preview_enabled", False) !=
