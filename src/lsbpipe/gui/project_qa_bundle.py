@@ -570,7 +570,11 @@ def _cross_stage_source_lineage_qa(stages):
     hashes=native.get("original_fits_sha256_local")
     status=native.get("original_fits_provenance_status")
     unit=native.get("image_unit_evidence")
-    if (not isinstance(source,(tuple,list)) or len(source)!=4 or
+    anchor=native.get("loaded_target_icrs")
+    if (not isinstance(anchor,(tuple,list)) or len(anchor)!=2 or
+            not all(isinstance(v,(int,float)) and math.isfinite(v)
+                    for v in anchor) or
+            not isinstance(source,(tuple,list)) or len(source)!=4 or
             not isinstance(hashes,dict) or set(hashes)!=set(
                 ("image","invvar","nexp","maskbits")) or
             status!="FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD" or
@@ -594,12 +598,20 @@ def _cross_stage_source_lineage_qa(stages):
         hashes_match=(digest==hashes
                       if isinstance(digest,dict) else False)
         unit_match=result.get("image_unit_evidence")==unit
+        result_anchor=result.get("loaded_project_target_icrs")
+        anchor_match=(list(result_anchor)==list(anchor)
+                      if isinstance(result_anchor,(tuple,list)) else False)
+        if name=="aperture":
+            anchor_match=anchor_match and (
+                result.get("target_anchor_icrs")==list(anchor))
         examined[name]={
-            "state":"MATCH" if matches and hashes_match and unit_match
+            "state":"MATCH" if (matches and hashes_match and
+                                unit_match and anchor_match)
             else "SOURCE_IDENTITY_MISMATCH",
             "quartet_matches":bool(matches),
             "full_original_sha256_matches":bool(hashes_match),
-            "image_unit_evidence_matches":bool(unit_match)}
+            "image_unit_evidence_matches":bool(unit_match),
+            "project_target_icrs_matches":bool(anchor_match)}
         if examined[name]["state"]!="MATCH":
             inconsistent.append(name)
     return {
@@ -609,6 +621,7 @@ def _cross_stage_source_lineage_qa(stages):
             if any(v["state"]=="MATCH" for v in examined.values())
             else "NO_CURRENT_DEPENDENT_STAGE_TO_COMPARE"),
         "scene_source_quartet_key":list(source),
+        "scene_loaded_target_icrs":list(anchor),
         "scene_original_fits_sha256_local":dict(hashes),
         "scene_image_unit_evidence":unit,
         "stage_comparisons":examined,
