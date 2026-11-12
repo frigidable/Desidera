@@ -144,6 +144,8 @@ def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
 
 def _sha256_file(path: Path, *, cancel_check=None) -> dict:
     checkpoint(cancel_check)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"Unsafe or missing original file for SHA-256: {path}")
     before = path.stat()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -151,6 +153,8 @@ def _sha256_file(path: Path, *, cancel_check=None) -> dict:
             checkpoint(cancel_check)
             digest.update(block)
     checkpoint(cancel_check)
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"Original source replaced by unsafe path: {path}")
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (
             after.st_size, after.st_mtime_ns):
@@ -219,6 +223,12 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
     key = (entry["release"], entry["region"], entry["brick"], entry["band"])
     paths = _expected_paths(root, key)
     try:
+        # Inventory metadata is merely a point-in-time observation. Files
+        # can be replaced with symlinks between inventory and deep audit.
+        for kind, path in paths.items():
+            if path.is_symlink() or not path.is_file():
+                raise ValueError(
+                    f"Missing or unsafe symlink original {kind.upper()} FITS: {path}")
         with ExitStack() as stack:
             hdus = {kind: stack.enter_context(
                 fits.open(file, memmap=True, do_not_scale_image_data=False))
@@ -247,6 +257,9 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
                     finite & ivgood & ngood & ~flagged))
             product_info = {}
             for kind, file in paths.items():
+                if file.is_symlink() or not file.is_file():
+                    raise RuntimeError(
+                        f"Original {kind.upper()} FITS became unsafe during audit")
                 info = dict(entry["products"][kind])
                 info["hdu_index"] = int(indices[kind])
                 info["bunit"] = units[kind]

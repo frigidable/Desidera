@@ -972,3 +972,22 @@ explicit FITS headers or a documented missing-header assumption.
 P0.5 retains its strict missing-IMAGE-header opt-in; **no unit
 rescaling or calibration is performed**. Regression tests check
 agreement on native nMgy aliases and refusal of Jy-based INVVAR.
+
+
+### Original FITS path substitution between inventory and verification (2026-11-12)
+
+The deep P0.2 verifier trusted the earlier inventory status
+`PRESENT_UNVERIFIED` and opened the expected FITS paths without
+rechecking symlink safety. Another process could replace an original
+file with a symbolic link between inventory and deep audit. A
+well-formed linked FITS might then appear as an approved local source,
+despite the surrounding repository's explicit no-symlink policy.
+The deep verifier now refuses missing/symlink files immediately
+before opening the quartet and checks the paths again before hashing.
+The common chunked SHA-256 function likewise refuses symlinks at
+entry and after reading. This reduces path-substitution exposure;
+file-system race-free pinning of opened descriptors remains outside
+this diagnostic implementation, and a locally computed digest is not
+a remote archive authenticity certificate. No original file is
+rewritten. The regression tests replace an inventoried original with
+a symlink (where the platform permits symlink creation).

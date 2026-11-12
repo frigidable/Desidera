@@ -261,3 +261,26 @@ def test_p02_and_p05_agree_on_explicit_native_optical_units(tmp_path):
     assert "INVVAR BUNIT" in invalid["error"]
     with pytest.raises(ValueError, match="INVVAR BUNIT"):
         load_native_legacy_quartet(root, **kwargs)
+
+
+def test_native_dataset_audit_rejects_symlink_substitution_after_inventory(
+        tmp_path):
+    """Inventory alone cannot authorize opening an externally linked FITS."""
+    data = tmp_path / "coadds"
+    files = _make_brick(data, "0401p012")
+    saved_entry = discover_dataset_inventory(data)[0]
+    assert saved_entry["status"] == "PRESENT_UNVERIFIED"
+    original_image = files["image"]
+    external = tmp_path / "external-native-image.fits.fz"
+    original_image.rename(external)
+    try:
+        original_image.symlink_to(external)
+    except (OSError, NotImplementedError):
+        pytest.skip("Native symlink creation unavailable on this system")
+    assert original_image.is_symlink()
+    denied = verify_dataset(data, saved_entry, hash_inputs=False)
+    assert denied["status"] == "INVALID_FITS"
+    assert "unsafe symlink" in denied["error"]
+    from lsbpipe.surveys.dataset_integrity import _sha256_file
+    with pytest.raises(ValueError, match="Unsafe"):
+        _sha256_file(original_image)
