@@ -1862,7 +1862,17 @@ class SceneEditor(QWidget):
     def bind_project(self, project_root):
         """Metadata and saved draft only: never open FITS or download on entry."""
         if project_root is None:
+            had_unsaved_changes = (
+                self._draft is not None and
+                self._draft.digest != self._saved_digest)
             self.flush_autosave()
+            if (had_unsaved_changes and self._draft is not None and
+                    self._draft.digest != self._saved_digest):
+                self.status.setText(
+                    self.status.text() +
+                    " PROJECT UNBIND BLOCKED: unsaved mask edits "
+                    "remain after failed autosave.")
+                return
             self._switch_source(None, None)
             self._project_root = None
             self._project_id = None
