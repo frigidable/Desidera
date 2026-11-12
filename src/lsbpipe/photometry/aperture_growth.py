@@ -17,7 +17,7 @@ import numpy as np
 
 from .aperture_flux import (
     ApertureGeometryICRS, ApertureProvenance, ApertureSkyScenario,
-    measure_native_aperture, project_icrs_ellipse_to_native,
+    measure_native_aperture, project_icrs_ellipse_to_native, _finite_float,
 )
 from .contracts import NativeBandFrame
 
@@ -35,9 +35,14 @@ class GrowthHypothesis:
             raise ValueError("Named growth geometry hypothesis required")
         if not isinstance(self.source,str) or not self.source:
             raise ValueError("Hypothesis provenance required")
-        if not math.isfinite(self.q) or not 0 < self.q <= 1:
+        # Frozen hypotheses must preserve canonical numeric geometry,
+        # never a Boolean masquerading as a valid q=1 or PA=0.
+        for name in ("q", "pa_deg"):
+            object.__setattr__(
+                self, name, _finite_float(name, getattr(self, name)))
+        if not 0 < self.q <= 1:
             raise ValueError("Invalid ellipse axis ratio")
-        if not math.isfinite(self.pa_deg) or not 0 <= self.pa_deg < 180:
+        if not 0 <= self.pa_deg < 180:
             raise ValueError("Position angle must be in [0,180)")
 
 
@@ -151,9 +156,19 @@ def measure_native_annulus(frame:NativeBandFrame,
             isinstance(provenance,ApertureProvenance) and
             isinstance(sky,ApertureSkyScenario)):
         raise TypeError("Validated native annular science inputs required")
-    ain=float(a_inner_arcsec)
-    if not math.isfinite(ain) or not 0 < ain < outer.semimajor_arcsec:
+    ain=_finite_float("inner semimajor axis", a_inner_arcsec)
+    if not 0 < ain < outer.semimajor_arcsec:
         raise ValueError("Inner semimajor axis must be strictly inside outer")
+    # Validate the scientific mask grid BEFORE an early off-frame
+    # return. Otherwise a stale/mismatched Scene mask is silently
+    # accepted whenever the particular annulus misses the native FITS.
+    source=np.asarray(effective_source_mask)
+    manual=np.asarray(manual_exclude)
+    if (source.shape!=frame.shape or manual.shape!=frame.shape or
+        source.dtype.kind!="b" or manual.dtype.kind!="b"):
+        raise ValueError("Annulus Scene masks must be same-grid Boolean arrays")
+    source=np.array(source,dtype=bool,copy=True)
+    manual=np.array(manual,dtype=bool,copy=True)
     e=project_icrs_ellipse_to_native(outer,frame.wcs)
     factor=ain/outer.semimajor_arcsec
     aperture=EllipticalAnnulus(
@@ -167,11 +182,6 @@ def measure_native_annulus(frame:NativeBandFrame,
         return AnnulusFluxRecord(
             ain,outer.semimajor_arcsec,ideal,0.,0.,0.,
             None,None,None,None,True)
-    source=np.asarray(effective_source_mask)
-    manual=np.asarray(manual_exclude)
-    if (source.shape!=frame.shape or manual.shape!=frame.shape or
-        source.dtype.kind!="b" or manual.dtype.kind!="b"):
-        raise ValueError("Annulus Scene masks must be same-grid Boolean arrays")
     weights=np.asarray(mask.data[small],dtype=float)
     # Exact photutils overlap weights must be finite fractions. Silently
     # clipping an invalid -0.2/1.2 weight would change signed flux,
@@ -227,7 +237,7 @@ def measure_growth_diagnostic(
         raise TypeError("Explicit frozen geometry hypothesis required")
     if not 2 <= len(radii_arcsec) <= 40:
         raise ValueError("Growth curve needs 2–40 radii")
-    radii=tuple(float(v) for v in radii_arcsec)
+    radii=tuple(_finite_float("growth radius",v) for v in radii_arcsec)
     if (any(not math.isfinite(v) or v<=0 for v in radii)
             or any(b<=a for a,b in zip(radii[:-1],radii[1:]))):
         raise ValueError("Growth radii must be strictly increasing")

@@ -197,3 +197,50 @@ def test_annulus_invalid_exact_pixel_weights_must_fail_closed(
             f, geometry(a=6., q=.8, pa=33.), 2.0, provenance(),
             effective_source_mask=zeros, manual_exclude=zeros,
             sky=ApertureSkyScenario())
+
+
+def test_offframe_growth_annulus_still_refuses_stale_or_nonboolean_scene_masks():
+    """A no-overlap result must not skip input geometry/provenance checks."""
+    f = frame()
+    off = geometry(ra=155.45, dec=18., a=2., q=.8, pa=11.)
+    good = np.zeros(f.shape, dtype=bool)
+    empty = measure_native_annulus(
+        f, off, 1., provenance(),
+        effective_source_mask=good, manual_exclude=good,
+        sky=ApertureSkyScenario())
+    assert empty.no_valid_pixels is True
+    assert empty.signed_flux_nMgy is None
+    for bad in (np.zeros((2, 2), dtype=bool),
+                np.zeros(f.shape, dtype=float)):
+        with pytest.raises(ValueError, match="Annulus Scene masks"):
+            measure_native_annulus(
+                f, off, 1., provenance(),
+                effective_source_mask=bad, manual_exclude=good,
+                sky=ApertureSkyScenario())
+    with pytest.raises(ValueError, match="Annulus Scene masks"):
+        measure_native_annulus(
+            f, off, 1., provenance(),
+            effective_source_mask=good,
+            manual_exclude=np.ones((1, 1), dtype=bool),
+            sky=ApertureSkyScenario())
+
+
+def test_growth_geometry_and_radii_reject_boolean_numeric_coercion():
+    f=frame()
+    for q, pa in ((True, 20.), (.7, False), ("0.7", 20.)):
+        with pytest.raises(ValueError):
+            GrowthHypothesis("invalid", q, pa, "SYNTHETIC")
+    for inner in (True, "1.0", float("inf")):
+        with pytest.raises(ValueError):
+            measure_native_annulus(
+                f, geometry(a=4.), inner, provenance(),
+                effective_source_mask=np.zeros(f.shape, bool),
+                manual_exclude=np.zeros(f.shape, bool),
+                sky=ApertureSkyScenario())
+    for radii in ((True,2.), ("1.0",2.), (1.,False)):
+        with pytest.raises(ValueError):
+            run_curve(f, radii=radii)
+    accepted=GrowthHypothesis("numpy", np.float32(.8),
+                              np.float64(42.), "SYNTHETIC")
+    assert type(accepted.q) is float
+    assert type(accepted.pa_deg) is float

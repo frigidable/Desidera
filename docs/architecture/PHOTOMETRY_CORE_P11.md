@@ -2449,3 +2449,24 @@ A regression injects bad photutils weights only after the independently
 verified outer 04.2 aperture and requires a specific refusal before
 reporting a sky derivative. No sky uncertainty or science covariance
 is inferred by this numerical check.
+
+
+### Stage 04.2 annulus input validation before off-frame return (2026-11-12)
+
+The independent-ring integrator checked its native-grid source and
+manual masks **only after** `get_overlap_slices`. When an annulus
+fell wholly outside the original FITS, it returned an underconstrained
+record without ever checking whether the supplied masks were Boolean
+or had the correct source grid. This could conceal a stale Scene
+state in an otherwise valid-looking growth QA, even though the
+full-aperture integrator always validates masks on entry.
+
+Ring measurements now validate and snapshot both same-grid masks
+before projecting/rasterizing and before any no-overlap return.
+The positive inner radius, frozen growth hypothesis q/PA and radial
+grid are also required to use genuine finite numeric scalars, not
+Booleans or numeric-looking strings. Accepted NumPy scalars are
+canonicalized to Python floats, consistent with the full-aperture
+geometry contract. Synthetic tests check off-frame annuli,
+mismatched and non-Boolean masks and malformed geometry controls.
+No masked flux is reconstructed or declared scientifically adopted.
