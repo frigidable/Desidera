@@ -176,6 +176,11 @@ def test_failed_autosave_blocks_same_object_source_switch_without_losing_edits(
     assert scene._draft==unsaved
     assert scene._draft.digest!=scene._saved_digest
     assert "SOURCE SWITCH BLOCKED" in scene.status.text()
+    scene.bind_project(None)
+    assert "PROJECT UNBIND BLOCKED" in scene.status.text()
+    assert scene._source_key==original_key
+    assert scene._loaded is original_scene
+    assert scene._draft==unsaved
     saved,sha=read_active_mask_draft(project.root)
     assert sha==external_sha
     assert saved==external
