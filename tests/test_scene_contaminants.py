@@ -96,6 +96,10 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
     assert result["maskbits_caution_counts"]["GALAXY"] == 1
     assert result["maskbits_caution_counts"]["BRIGHT"] == 1
     assert result["draft_digest"] == draft.digest
+    assert result["source_mask_policy_id"] == (
+        "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS")
+    assert result["source_mask_native_geometry"] == (
+        "TAN_INTERMEDIATE_PROJECTION_PLANE_JACOBIAN_NO_EXTRA_COS_DECLINATION")
     assert result["catalog_sha256"] == "f"*64
     assert result["target_protection_radius_arcsec"] == pytest.approx(20.)
     assert not result["mask"].flags.writeable
