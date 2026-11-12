@@ -298,6 +298,23 @@ def test_scene_loader_records_source_quartet_hashes_and_detects_race(
     original_cutout = loaded["data"]["image"].copy()
     data["image"][0, 0] += 1000.
     np.testing.assert_array_equal(loaded["data"]["image"], original_cutout)
+    # A substituted BRICK directory must not masquerade as four safe
+    # regular science files merely because the leaf paths are regular.
+    brick_folder = paths["image"].parent
+    external_brick = tmp_path / "external-original-brick"
+    brick_folder.rename(external_brick)
+    try:
+        brick_folder.symlink_to(external_brick, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        external_brick.rename(brick_folder)
+    else:
+        try:
+            with pytest.raises((ValueError, FileNotFoundError),
+                               match="complete|unsafe symlink original"):
+                module.load_scene_original_cutout(str(project.root),"r",4.)
+        finally:
+            brick_folder.unlink()
+            external_brick.rename(brick_folder)
     with fits.open(paths["image"],mode="update") as hdus:
         hdus[0].header["BUNIT"]="ADU"
     with pytest.raises(ValueError, match="not nanomaggies"):

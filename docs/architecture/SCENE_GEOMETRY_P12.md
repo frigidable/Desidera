@@ -1122,3 +1122,24 @@ bounded scientific Scene load, leaves manual user-editable masks
 and on-disk FITS untouched, and does not pretend to make the
 outer Python dataset mapping immutable or to authenticate an
 external DESI archive.
+
+
+### Original source path safety applies to GUI discovery and Scene load (2026-11-12)
+
+The P0.2/P0.5 no-symlink source-path policy was not yet inherited
+by the desktop `science_data_root` adapter, which checked only
+`Path.is_file()`. A regular FITS leaf beneath a symlinked brick
+directory therefore still passed GUI source discovery. Stage02's
+Scene worker also checked leaf symlinks but not all original-root
+relative ancestor components before its FITS/header/hash opens.
+
+GUI source discovery now calls the same shared
+`_assert_safe_original_paths` checker used in P0.2/P0.5, allowing
+explicit user-selected root aliases to resolve while rejecting linked
+original dataset subdirectories. Stage02 re-checks the entire
+native path chain before its initial worker inputs, the header
+lookup and full-file SHA hashing. Synthetic tests supply complete
+FITS quartets behind linked brick directories and ensure both the
+generic GUI adapter and source-bound Scene reader refuse them.
+No data are copied from an external symlink target and no
+original FITS are altered by the application.

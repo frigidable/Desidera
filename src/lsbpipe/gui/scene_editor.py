@@ -162,16 +162,15 @@ def load_scene_original_cutout(project_root: str, band: str,
     # worker thread and never modify a source file or project manifest.
     from lsbpipe.gui.science_workflows import science_data_root
     from lsbpipe.surveys.dataset_integrity import (
-        KINDS, _expected_paths, _sha256_file)
+        KINDS, _expected_paths, _sha256_file,
+        _assert_safe_original_paths)
     native_root = science_data_root(project.data_root, hit=hit, band=band)
     expected_paths = _expected_paths(
         native_root, (release, region, brick, band))
+    _assert_safe_original_paths(native_root, expected_paths)
     before = {}
     for kind in KINDS:
         file = expected_paths[kind]
-        if not file.is_file() or file.is_symlink():
-            raise ValueError(
-                f"Unsafe or missing original {kind} FITS for Scene")
         stat = file.stat()
         before[kind] = (stat.st_size, stat.st_mtime_ns)
     original = prepare_fits_explorer(
@@ -179,8 +178,9 @@ def load_scene_original_cutout(project_root: str, band: str,
     if str(native_root.resolve()) != str(
             Path(original["data_root"]).resolve()):
         raise ValueError("Scene reader resolved a different native data root")
-    # Check for a source swap before reopening HDU headers, so a
-    # mid-load replacement fails with precise provenance evidence.
+    # The viewer read and the science header lookup are separate
+    # openings. Repeat the *full path-component* check before each.
+    _assert_safe_original_paths(native_root, expected_paths)
     for kind,file in expected_paths.items():
         stat=file.stat()
         if (stat.st_size, stat.st_mtime_ns) != before[kind] or file.is_symlink():
@@ -195,6 +195,8 @@ def load_scene_original_cutout(project_root: str, band: str,
         _norm, _ALLOWED_IMAGE_UNITS, _ALLOWED_IVAR_UNITS)
     observed_units = {}
     for kind in ("image", "invvar"):
+        _assert_safe_original_paths(
+            native_root, {kind: expected_paths[kind]})
         index = original["hdu_indices"][kind]
         with fits.open(expected_paths[kind], memmap=True) as hdus:
             if type(index) is not int or not 0 <= index < len(hdus):
@@ -219,9 +221,7 @@ def load_scene_original_cutout(project_root: str, band: str,
         else "INVVAR_UNITS_FROM_SURVEY_DOCUMENTATION_ASSUMPTION")
     source_hashes = {}
     for kind, file in expected_paths.items():
-        if file.is_symlink():
-            raise ValueError("Original FITS became a symlink during Scene load")
-        info = _sha256_file(file)
+        info = _sha256_file(file, data_root=native_root)
         if (info["size_bytes"], info["mtime_ns"]) != before[kind]:
             raise RuntimeError(
                 f"Original {kind} FITS changed during Scene load")
