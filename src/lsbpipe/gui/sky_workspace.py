@@ -128,12 +128,16 @@ class SkyWorkspace(QWidget):
             return None
         loaded_key = dataset.get("source_quartet_key")
         if loaded_key is not None:
-            if (scene._source_key is None or
+            mask_key = contamination.get("source_quartet_key")
+            if (not isinstance(loaded_key, (list,tuple)) or
+                    len(loaded_key) != 4 or
+                    not isinstance(mask_key, (list,tuple)) or
+                    len(mask_key) != 4 or
+                    scene._source_key is None or
                     scene._source_key[2] is None or
                     tuple(loaded_key[:3]) != tuple(scene._source_key[2][:3]) or
                     loaded_key[3] != scene._band or
-                    tuple(contamination.get("source_quartet_key", ())) !=
-                    tuple(loaded_key)):
+                    tuple(mask_key) != tuple(loaded_key)):
                 return None
         if (scene._future is not None or scene._project_root is None or
                 scene._project_id != dataset["project_id"] or
