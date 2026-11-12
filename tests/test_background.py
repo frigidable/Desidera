@@ -269,6 +269,33 @@ def test_automatic_sky_refuses_empty_target_protection():
     assert not contamination["protected"].any()
 
 
+def test_stage03_exact_mask_receipts_are_verified_before_sky_samples():
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    from lsbpipe.photometry.sky_masks import native_boolean_mask_sha256
+    dataset,draft,contamination=_stage03_project_fixture(with_regions=False)
+    original_image=dataset["data"]["image"].copy()
+    source_hash=native_boolean_mask_sha256(contamination["auto_mask"])
+    manual_hash=native_boolean_mask_sha256(
+        np.zeros(dataset["pixel_shape"],dtype=bool))
+    contamination["effective_source_mask_sha256"]=source_hash
+    contamination["manual_exclude_mask_sha256"]=manual_hash
+    good=diagnose_current_project_residual_sky(
+        dataset,draft,contamination)
+    assert good["effective_source_mask_sha256"]==source_hash
+    assert good["manual_exclude_mask_sha256"]==manual_hash
+    assert good["sky_model_adopted"] is False
+    contamination["manual_exclude_mask_sha256"]="f"*64
+    with pytest.raises(ValueError,match="mask geometry fingerprint mismatch"):
+        diagnose_current_project_residual_sky(dataset,draft,contamination)
+    contamination["manual_exclude_mask_sha256"]=manual_hash
+    changed=contamination["auto_mask"].copy()
+    changed[5,5] = ~changed[5,5]
+    contamination["auto_mask"]=changed
+    with pytest.raises(ValueError,match="mask geometry fingerprint mismatch"):
+        diagnose_current_project_residual_sky(dataset,draft,contamination)
+    np.testing.assert_array_equal(dataset["data"]["image"],original_image)
+
+
 def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
     from lsbpipe.background import diagnose_current_project_residual_sky
     dataset,draft,contamination=_stage03_project_fixture()
