@@ -344,3 +344,117 @@ isophotes and missing-light/total estimators; covariance calibrated
 over actual galaxy angular scales; matched-PSF multiband total
 colours; SBF. None may be inferred from a successful CI result.
 `SCIENCE HOLD` remains mandatory.
+
+
+## Follow-on method consistency review: PSF fit domain and sky-only ambiguous-source veto
+
+This follow-on forensic pass at the current draft branch focuses on
+the *same estimand under different nuisance-parameter and source-mask
+operators* rather than new photometric products. Two actionable
+methodological mismatches were verified in live code and changed,
+while major physical calibration claims remain on hold.
+
+### M16 — PSF held-out core test used a whole-stamp amplitude fit — FIXED
+
+**Source:** `photometry/psf_empirical.py::_holdout_diagnostic`.
+Before this change, the held-out ePSF star's amplitude was derived
+by inverse-variance least squares over **all** valid pixels of the
+31-pixel stamp. The published residual/normalization score was
+then evaluated only over the core (radius ≤9 pixels).
+An unmodelled outer stellar wing or locally subtracted background
+could alter the amplitude used to judge the core, even when its
+pixels were outside the reported core-quality region.
+
+**Numerical fix:** the independent held-out core amplitude and
+residual now use precisely the same valid central pixel domain.
+The old whole-stamp amplitude remains *descriptive sensitivity*
+evidence, explicitly kept separate from the core result and
+allowed to be undefined/non-positive without invalidating an
+otherwise measurable core. Synthetic fixed-PSF tests add very
+large positive and negative outer-halo perturbations while
+preserving the original core, showing that the core residual and
+its fitted amplitude remain unchanged. No PSF kernel, star
+training selection, science PSF acceptance, galaxy image or
+reference FITS was changed. This operation still fits only
+core *amplitude*, not the PSF's unknown far-wing flux.
+
+**Next experiment:** blinded independent stars across positions
+and Gaia magnitudes, with several **local sky annuli**, and
+explicit wide-angle PSF encircled-energy curves. A good core
+amplitude must not be extrapolated into a calibrated total
+stellar flux or a galaxy decontamination correction.
+
+Photutils and DAOPHOT document restricted spatial fitting
+regions for stellar PSF normalization:
+https://docs.astropy.org/projects/photutils/en/stable/user_guide/psf.html
+and https://iraf.readthedocs.io/en/latest/tasks/noao/digiphot/daophot/daopars.html .
+
+### M17 — protected-overlap Tractor sources could enter sky pixels — FIXED
+
+**Source:** `photometry/scene_contaminants.py::conservative_catalogue_mask`,
+`background.py::_automatic_scene_sky_pixels`.
+The Scene policy rightly did *not* automatically remove a
+Tractor footprint intersecting provisional dwarf protection,
+because parts of it might be intrinsic H II regions, stellar
+associations or diffuse target light. Yet Stage 03 previously
+vetoed only actual source-masked regions and a separate
+size-based target buffer. The **exterior fragment** of a
+contested source footprint could remain eligible for sky
+training or holdout despite being already catalogued as an
+ambiguous overlap.
+
+**Numerical/mechanistic fix:** Stage 02 now exports a separate
+native Boolean `unresolved_target_overlap_sky_veto_mask`,
+the count of contributing sources, and per-conflict
+on-target/off-target footprint-pixel accounting, with a SHA-256
+receipt bound to native pixels. Stage 03 checks the grid,
+Boolean type and receipt before additionally vetoing the
+*entire* unresolved source footprint solely in the selection
+of sky candidates. The original source photometry mask,
+protected target light, manual edits, original FITS, object
+association and PSF treatment remain unchanged.
+
+This is a one-sided conservative policy: accepting fewer sky
+pixels is preferable to falsely calling a known ambiguous
+source empty sky, but it can make a sky plane **unidentifiable**
+in a small or crowded field. A successful sky fit still does
+not prove the exterior diffuse target light is absent, or that
+Tractor's truncated PSF envelopes cover all scattered light.
+Tests verify source-mask invariance, source-overlap accounting,
+fewer geometrically eligible sky pixels and fail-closed
+detection of a tampered sky-only-mask receipt.
+
+### M18 — unresolved risks found but not "fixed" by synthetic checks
+
+1. **Local PSF star-cutout sky** currently estimates a robust
+   plane in one inner annular region. It does not yet jointly
+   fit a stellar wide-wing component, neighbour light and sky;
+   varying the sky annulus radius may produce a different
+   PSF. A fixed-reference star-core selection is not an
+   independent stellar-population validation.
+2. **Stage 02 membership and star-vs-dwarf decomposition**
+   remains an observational inference. The new sky-only mask
+   is not evidence that ambiguous Tractor sources are
+   foreground; it explicitly preserves them in photometric
+   apertures.
+3. **Stage 03 original Legacy coadd sky loss** remains
+   unrecoverable from an additional fitted constant/plane;
+   the protected-radius buffer cannot be assumed galaxy-free.
+   Restricting sky pixels does not infer the missing light.
+4. **Stage 04.3 blank same-coadd covariance** is conditional on
+   the sky/reference and mask assumptions; no empirical
+   large-scale covariance calibration or per-CCD independent
+   noise exists. Mathematical exactness of fractionally
+   overlapped apertures does not license an asymptotic total.
+
+These remaining tasks require original coadd/CCD science
+inputs, star-cohort validation and end-to-end blinded
+galaxy+stellar contamination injections. None of them is
+satisfied by this synthetic/tested numerical revision.
+
+**Release gate:** `SCIENCE HOLD` remains. The affected
+modules produce finite-aperture/PSF/sky diagnostic evidence
+only; no automatic sky or PSF model is accepted and no
+galaxy total/SBF distance is created. All updates remain
+on the existing draft branch PR #84 without creating
+new directories or modifying `main`.
