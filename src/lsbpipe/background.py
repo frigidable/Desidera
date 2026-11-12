@@ -594,14 +594,16 @@ def _audit_zero_sky_baseline(image, training, holdout, selection):
     """
     shape = image.shape
     ny, nx = shape
-    tile_edge = int(selection["tile_edge_native_pix"])
     records = []
     for record in selection["holdout_tile_evidence"]:
-        ix, iy = record["tile_index"]
-        x0, x1 = ix*tile_edge, min(nx,(ix+1)*tile_edge)
-        y0, y1 = iy*tile_edge, min(ny,(iy+1)*tile_edge)
+        # Grid indices are NOT original-pixel coordinates on offset sky
+        # selections. Compare with fitted models using the identical,
+        # stored native bounds and frozen holdout pixels.
+        x0, y0, x1, y1 = record["tile_bounds_native_xyxy"]
+        if not (0 <= x0 < x1 <= nx and 0 <= y0 < y1 <= ny):
+            raise ValueError("Invalid zero-baseline native tile bounds")
         values = np.asarray(
-            image[y0:y1,x0:x1][holdout[y0:y1,x0:x1]],
+            image[y0:y1, x0:x1][holdout[y0:y1, x0:x1]],
             dtype=float)
         if values.size != record["n_sampled_pixels"]:
             raise ValueError("Zero-background holdout sample lineage differs")
