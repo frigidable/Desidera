@@ -1872,7 +1872,7 @@ class SceneEditor(QWidget):
             self._refresh_controls()
             return
         project = read_object_project(project_root)
-        self._project_target = (
+        new_target = (
             (project.field.ra_deg, project.field.dec_deg)
             if project.field is not None else None)
         # A project's ICRS target and field width are scientific input
@@ -1900,7 +1900,21 @@ class SceneEditor(QWidget):
             self._project_root is not None and
             self._project_id == project.project_id and
             str(Path(self._project_root).resolve()) == key[0])
+        had_unsaved_changes = (
+            self._draft is not None and
+            self._draft.digest != self._saved_digest)
         self.flush_autosave()
+        if (had_unsaved_changes and self._draft is not None and
+                self._draft.digest != self._saved_digest):
+            # Optimistic concurrency can refuse an autosave after a
+            # second GUI edits HEAD. Never switch to a new source and
+            # discard the only in-memory copy of those user edits.
+            self.status.setText(
+                self.status.text() +
+                " SOURCE SWITCH BLOCKED: unsaved mask edits remain "
+                "in this Scene. Resolve the conflicting draft first.")
+            return
+        self._project_target = new_target
         if same_object_rebind:
             for stale_key in tuple(self._work_cache):
                 if (stale_key is not None and len(stale_key) >= 2 and
