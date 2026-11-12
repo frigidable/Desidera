@@ -2085,3 +2085,22 @@ scientifically adopted error model.
 and reproducibility. No new published Leo P magnitudes, colours,
 SBF distances, or adopted noise covariance are inferred; all
 real-data scientific results remain `SCIENCE HOLD`.
+
+
+### Mask geometry provenance must be a cross-stage identity, not just a text label
+
+The Stage02 raster algorithm V2 is now recorded directly in each
+current prepared `Scene.contaminant_screening.source_mask_policy_id`.
+Stage03 retains this same ID in its residual-sky result; Stage04
+inherits it into both the top-level `source_policy_id` and every
+`ApertureProvenance`/recipe SHA. `Copy QA` verifies that these agree
+for current stages, and withholds any conditional Stage03-sky
+counterfactual if a legacy V1 mask is mixed with corrected TAN V2
+masks, even when the quartet of original FITS hashes, WCS, target
+centre and catalogue SHA happen to match. Regression demonstrates
+that inconsistent policies generate a distinct failure state, and
+that no numerical hypothetical correction is emitted.
+
+The version is scientific-input provenance: matching versions does
+not imply valid foreground membership, accurate outer PSF wings,
+or calibrated masked-light reconstruction. `SCIENCE HOLD` remains.
