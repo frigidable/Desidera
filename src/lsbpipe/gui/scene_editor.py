@@ -226,7 +226,16 @@ def load_scene_original_cutout(project_root: str, band: str,
             raise RuntimeError(
                 f"Original {kind} FITS changed during Scene load")
         source_hashes[kind] = info["sha256_local"]
-    data = original["data"]
+    # A NumPy array with setflags(write=False) can become writable
+    # again if it owns mutable bytes. Scientific Scene/sky/aperture
+    # workers share these cutouts long after the original FITS hash
+    # was recorded, so detach all science layers onto byte-backed
+    # immutable native buffers before publishing the Scene dataset.
+    from lsbpipe.photometry.contracts import _immutable
+    data = dict(original["data"])
+    for kind in KINDS:
+        native = np.asarray(data[kind])
+        data[kind] = _immutable(native, native.dtype)
     shape = original["pixel_shape"]
     from lsbpipe.scene import grid_fingerprint
     source_grid_fingerprint = grid_fingerprint(original["wcs"], shape)
@@ -236,6 +245,7 @@ def load_scene_original_cutout(project_root: str, band: str,
         data["image"], data["invvar"], data["maskbits"], band)
     hard = (~validity | ~np.isfinite(data["nexp"]) |
             (data["nexp"] <= 0))
+    hard = _immutable(hard, np.bool_)
     rgb = rgb_for_layer(data["image"], "image", band, contrast="faint")
     rgba = np.zeros((*shape, 4), dtype=np.uint8)
     rgba[hard] = (238, 89, 104, 160)

@@ -1099,3 +1099,26 @@ A regression replaces the original brick directory with a symlink
 to a valid FITS-containing external directory: inventory,
 validation, sampled coverage, photometry and SHA all refuse it.
 Source FITS are never changed by the code under test.
+
+
+### Immutable scientific Scene original-image snapshots (2026-11-12)
+
+The FITS Explorer reader marked its output rasters read-only using
+`setflags(write=False)`. Where the underlying NumPy storage remains
+writable, another caller can reverse that flag and modify the
+in-memory IMAGE/INVVAR/NEXP/MASKBITS bytes, while the Stage02 full-FITS
+SHA-256 receipt and the GUI dataset dictionary identity stay fixed.
+Later Stage03/04 results could then refer to different native
+pixel values without source-file provenance indicating a change.
+
+The Stage02 original-FITS worker now detaches all four native science
+arrays into independent **immutable byte-backed** buffers using the
+existing P0.5 `_immutable` contract, preserving FITS array dtypes
+and native shapes. The derived native-hard-validity mask is frozen
+by the same mechanism. NumPy can no longer set these particular
+buffers writeable again, and modifying a source viewer array does
+not change the Scene snapshot. The change is restricted to the
+bounded scientific Scene load, leaves manual user-editable masks
+and on-disk FITS untouched, and does not pretend to make the
+outer Python dataset mapping immutable or to authenticate an
+external DESI archive.

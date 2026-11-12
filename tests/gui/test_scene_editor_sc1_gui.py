@@ -284,6 +284,20 @@ def test_scene_loader_records_source_quartet_hashes_and_detects_race(
         for kind,payload in originals.items()}
     assert all(file.read_bytes()==originals[kind]
                for kind,file in paths.items())
+    # Full-FITS SHA cannot detect changes to a mutable in-memory
+    # cutout. The published Scene data must have immutable owning bytes.
+    for kind in ("image", "invvar", "nexp", "maskbits"):
+        frozen = loaded["data"][kind]
+        assert frozen.dtype == data[kind].dtype
+        assert not frozen.flags.writeable
+        with pytest.raises(ValueError):
+            frozen.setflags(write=True)
+    assert not loaded["native_hard"].flags.writeable
+    with pytest.raises(ValueError):
+        loaded["native_hard"].setflags(write=True)
+    original_cutout = loaded["data"]["image"].copy()
+    data["image"][0, 0] += 1000.
+    np.testing.assert_array_equal(loaded["data"]["image"], original_cutout)
     with fits.open(paths["image"],mode="update") as hdus:
         hdus[0].header["BUNIT"]="ADU"
     with pytest.raises(ValueError, match="not nanomaggies"):
