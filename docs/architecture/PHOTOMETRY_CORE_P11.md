@@ -2277,3 +2277,35 @@ This protects the in-session editor operation; it is **not** a claim
 that the application or operating system can persist unsaved edits
 after a forced process termination. User intervention is still
 required to resolve an explicit optimistic-concurrency conflict.
+
+
+### Stage 04.2 → 04.3: frozen-sky and pixel-evidence integrity (2026-11-12)
+
+A conditional catalogue-mask ablation is valid only when the **same**
+residual-sky scenario is used for both measurements. Previously Stage
+04.3 recomputed its unmasked counterfactual with the default zero sky,
+irrespective of the background scenario used for the supplied Stage
+04.2 growth curve. With any nonzero constant or tilted-plane scenario,
+the reported mask-only flux difference therefore also contained a
+background change. The current GUI uses zero additional correction,
+but the public scientific API allowed conditional scenarios.
+
+Stage 04.3 now accepts an explicit frozen `ApertureSkyScenario` (defaulting
+to zero for the unchanged GUI path), records it in the diagnostics and
+uses it for both masked and unmasked measurements. All Stage 04.2
+hypotheses must have consistent project/dataset/WCS/source-policy,
+draft/catalogue fingerprints, target anchor, radial grid and sky
+evidence. Their deterministic receipt digests are checked. The
+outermost direct aperture is re-evaluated for every hypothesis against
+the current native frame and masks; recipe digest, valid area, signed
+flux and formal diagonal sigma must agree. This also catches
+same-area mask substitutions or changed image/variance pixels that
+the prior **area-only** check could miss. A changed background scenario
+must be supplied explicitly; implicit changes fail closed.
+
+Empirical blank covariance remains a diagnostic of the **uncorrected**
+native coadd even if a conditional nonzero sky scenario is supplied;
+a warning makes this scope explicit. These changes do not establish
+science-grade sky, masked-flux recovery, calibrated covariance or
+validated total photometry. The Leo P original FITS are still required
+for end-to-end injection-recovery and foreground PSF validation.

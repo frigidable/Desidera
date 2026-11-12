@@ -6,6 +6,8 @@ or calibrated uncertainties of a total galaxy magnitude.
 """
 from __future__ import annotations
 
+from dataclasses import asdict
+from hashlib import sha256
 import json
 import math
 from bisect import bisect_right
@@ -17,6 +19,7 @@ from .aperture_flux import (
     measure_native_aperture, project_icrs_ellipse_to_native,
 )
 from .contracts import NativeBandFrame
+from lsbpipe.scene import grid_fingerprint
 
 
 _SCHEMA = "desidera.photometry.aperture-systematics/1"
@@ -376,9 +379,83 @@ def _smaller_blank_scales(frame, full_outer, full_radii, source, manual, *,
     return result
 
 
+
+def _verify_frozen_growth_curves(frame, anchor_icrs, provenance,
+                                 source, manual, curves, sky):
+    """Fail closed on stale Stage 04.2 inputs, including same-area mask edits.
+
+    Comparing only valid pixel area cannot identify changed source pixels,
+    image values, inverse variances or a different conditional sky model.
+    Verify each frozen receipt and recompute its *outermost* direct aperture
+    against the original native frame and the exact current mask/sky recipe.
+    This is bounded by the number of declared geometry hypotheses; no
+    photometry, FITS or user draft is written.
+    """
+    if not isinstance(curves, (tuple, list)) or not curves:
+        raise ValueError("At least one frozen Stage 04.2 curve required")
+    expected_grid = grid_fingerprint(frame.wcs, frame.shape)
+    reference_radii = tuple(curves[0]["radii_arcsec"])
+    anchor = tuple(map(float, anchor_icrs))
+    for curve in curves:
+        if not isinstance(curve, dict):
+            raise ValueError("Stage 04.2 curve must be a frozen QA mapping")
+        receipt = sha256(json.dumps(
+            {key: value for key, value in curve.items()
+             if key != "receipt_sha256"},
+            sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")).hexdigest()
+        if curve.get("receipt_sha256") != receipt:
+            raise ValueError("Stage 04.2 growth receipt integrity mismatch")
+        expected = {
+            "project_id": provenance.project_id,
+            "dataset_id": frame.dataset_id,
+            "grid_fingerprint": expected_grid,
+            "draft_sha256": provenance.scene_draft_sha256,
+            "catalogue_sha256": provenance.catalogue_sha256,
+            "source_policy_id": provenance.source_policy_id,
+            "sky_method": sky.method,
+            "sky_evidence_id": sky.evidence_id,
+        }
+        if any(curve.get(k) != v for k, v in expected.items()):
+            raise ValueError("Stage 04.2 lineage or sky scenario mismatch")
+        if (tuple(curve.get("fixed_project_anchor_icrs", ())) != anchor or
+                tuple(curve.get("radii_arcsec", ())) != reference_radii):
+            raise ValueError("Stage 04.2 anchor or radial grid mismatch")
+        final = curve["cumulative"][-1]
+        hypothesis = curve["geometry_hypothesis"]
+        outer = ApertureGeometryICRS(
+            ra_deg=anchor[0], dec_deg=anchor[1],
+            semimajor_arcsec=float(reference_radii[-1]),
+            axis_ratio=float(hypothesis["q"]),
+            pa_deg_east_of_north=float(hypothesis["pa_deg"]))
+        fresh = measure_native_aperture(
+            frame, outer, provenance,
+            effective_source_mask=source, manual_exclude=manual, sky=sky)
+        if fresh.recipe_sha256 != final.get("recipe_sha256"):
+            raise ValueError(
+                "Stage 04.2 aperture recipe mismatch: mask pixels, "
+                "geometry, calibration lineage or sky changed")
+        for name, recorded, current in (
+            ("valid area", final["area_native_pixel2"]["valid_native_pixel2"],
+             fresh.area_native_pixel2["valid_native_pixel2"]),
+            ("signed flux", final["signed_valid_flux_nMgy"],
+             fresh.signed_valid_flux_nMgy),
+            ("formal variance", final["formal_diagonal_sigma_nMgy"],
+             fresh.formal_diagonal_sigma_nMgy),
+        ):
+            if recorded is None and current is None:
+                continue
+            if (recorded is None or current is None or
+                    not math.isclose(float(recorded), float(current),
+                                     rel_tol=1e-11, abs_tol=1e-8)):
+                raise ValueError(
+                    "Stage 04.2 original native pixels or weights changed: "
+                    + name)
+
 def diagnose_aperture_systematics(
         frame: NativeBandFrame, *, anchor_icrs, provenance: ApertureProvenance,
-        effective_source_mask, manual_exclude, curves):
+        effective_source_mask, manual_exclude, curves,
+        sky: ApertureSkyScenario | None = None):
     """Conditional sensitivity at the largest common, observed aperture.
 
     - sky response = exact derivative of observed valid-area flux to a
@@ -393,8 +470,11 @@ def diagnose_aperture_systematics(
         raise TypeError("Validated frame and project provenance required")
     source, manual = _scene_masks(
         frame, effective_source_mask, manual_exclude)
-    if not curves:
-        raise ValueError("At least one frozen curve required")
+    sky = ApertureSkyScenario() if sky is None else sky
+    if not isinstance(sky, ApertureSkyScenario):
+        raise TypeError("Versioned frozen sky scenario required")
+    _verify_frozen_growth_curves(
+        frame, anchor_icrs, provenance, source, manual, curves, sky)
     first = curves[0]
     last = first["cumulative"][-1]
     radius = float(first["radii_arcsec"][-1])
@@ -431,7 +511,7 @@ def diagnose_aperture_systematics(
     relaxed = measure_native_aperture(
         frame, outer, provenance,
         effective_source_mask=np.zeros(frame.shape, dtype=bool),
-        manual_exclude=manual, sky=ApertureSkyScenario())
+        manual_exclude=manual, sky=sky)
     original_flux = last["signed_valid_flux_nMgy"]
     relaxed_flux = relaxed.signed_valid_flux_nMgy
     candidate_fluxes = [
@@ -454,6 +534,8 @@ def diagnose_aperture_systematics(
         "draft_sha256": provenance.scene_draft_sha256,
         "catalogue_sha256": provenance.catalogue_sha256,
         "source_policy_id": provenance.source_policy_id,
+        "stage_04_2_receipts_and_outer_apertures_verified": len(curves),
+        "conditional_sky_scenario": asdict(sky),
         "baseline_geometry": hypothesis,
         "reference_semimajor_arcsec": radius,
         "reference_valid_flux_nMgy": original_flux,
@@ -496,7 +578,9 @@ def diagnose_aperture_systematics(
             "RELAXED_CATALOGUE_MASK_INCLUDES_CONTAMINANTS_AND_TARGET_MEMBERS",
             "GEOMETRY_SPAN_COMPARES_DIFFERENT_SKY_FOOTPRINTS",
             "NO_TOTAL_FLUX_OR_PSF_CORRECTION_INFERRED",
-        ],
+        ] + ([
+            "BLANK_COVARIANCE_USES_UNCORRECTED_NATIVE_COADD"
+        ] if sky.method != "zero_additional_correction" else []),
     }
     json.dumps(report, allow_nan=False)
     return report

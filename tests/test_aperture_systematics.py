@@ -23,12 +23,13 @@ from lsbpipe.photometry.aperture_systematics import (
 )
 
 
-def _curve(f, source, manual, *, q=1., pa=0., radii=(1., 2.5, 4.)):
+def _curve(f, source, manual, *, q=1., pa=0., radii=(1., 2.5, 4.), sky=None):
     return measure_growth_diagnostic(
         f, anchor_icrs=(155.4, 18.), provenance=provenance(),
         effective_source_mask=source, manual_exclude=manual,
         radii_arcsec=radii,
-        hypothesis=GrowthHypothesis("fixed_test", q, pa, "SYNTHETIC"))
+        hypothesis=GrowthHypothesis("fixed_test", q, pa, "SYNTHETIC"),
+        sky=sky)
 
 
 def test_blank_annulus_covariance_is_deterministic_signed_and_psd():
@@ -390,3 +391,81 @@ def test_blank_subscale_refuses_mismatched_or_smaller_target_exclusion():
     with pytest.raises(ValueError, match="cannot be smaller"):
         estimate_blank_annulus_covariance(
             **normal, full_target_exclusion_outer=geometry(a=1., q=1.))
+
+
+def test_nonzero_sky_is_held_fixed_in_catalogue_mask_counterfactual():
+    """Turning off a provisional mask must never also turn off sky subtraction."""
+    f = frame(value=2.)
+    source = np.zeros(f.shape, dtype=bool)
+    source[57:62, 57:62] = True
+    manual = np.zeros(f.shape, dtype=bool)
+    scenario = ApertureSkyScenario(
+        method="tilted_plane", b0_nMgy_per_pixel=.15,
+        bx_nMgy_per_pixel2=.001, by_nMgy_per_pixel2=-.002,
+        reference_xy_pix=(60., 60.), evidence_id="KNOWN_SYNTHETIC_PLANE")
+    curve = _curve(f, source, manual, sky=scenario)
+    report = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=[curve], sky=scenario)
+    direct = measure_native_aperture(
+        f, geometry(a=4., q=1., pa=0.), provenance(),
+        effective_source_mask=np.zeros(f.shape, dtype=bool),
+        manual_exclude=manual, sky=scenario)
+    masked = curve["cumulative"][-1]["signed_valid_flux_nMgy"]
+    counter = report["catalogue_mask_counterfactual"]
+    assert counter["flux_with_provisional_source_mask_nMgy"] == pytest.approx(masked)
+    assert counter["flux_without_provisional_source_mask_nMgy"] == pytest.approx(
+        direct.signed_valid_flux_nMgy)
+    assert counter["conditional_delta_nMgy"] == pytest.approx(
+        direct.signed_valid_flux_nMgy - masked)
+    assert report["conditional_sky_scenario"]["method"] == "tilted_plane"
+    assert report["stage_04_2_receipts_and_outer_apertures_verified"] == 1
+    assert "BLANK_COVARIANCE_USES_UNCORRECTED_NATIVE_COADD" in report["warnings"]
+    with pytest.raises(ValueError, match="sky scenario|recipe mismatch"):
+        diagnose_aperture_systematics(
+            f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+            effective_source_mask=source, manual_exclude=manual,
+            curves=[curve])
+
+
+def test_stage_04_3_rejects_same_area_modified_source_pixels_and_stale_image():
+    """Equal mask area and matching WCS do not certify matching input pixels."""
+    f = frame(value=2.)
+    source = np.zeros(f.shape, dtype=bool)
+    source[56:60, 57:61] = True
+    manual = np.zeros(f.shape, dtype=bool)
+    curve = _curve(f, source, manual)
+    modified_source = source.copy()
+    modified_source[56:60, 57:61] = False
+    modified_source[60:64, 60:64] = True
+    assert np.count_nonzero(source) == np.count_nonzero(modified_source)
+    args = dict(anchor_icrs=(155.4, 18.), provenance=provenance(),
+                manual_exclude=manual, curves=[curve])
+    with pytest.raises(ValueError, match="recipe mismatch"):
+        diagnose_aperture_systematics(
+            f, effective_source_mask=modified_source, **args)
+    altered = frame(value=3.)
+    with pytest.raises(ValueError, match="native pixels or weights changed"):
+        diagnose_aperture_systematics(
+            altered, effective_source_mask=source, **args)
+
+
+def test_stage_04_3_rejects_altered_receipts_and_mixed_growth_lineages():
+    f = frame(value=.9)
+    source = np.zeros(f.shape, bool)
+    manual = np.zeros(f.shape, bool)
+    curve = _curve(f, source, manual)
+    args = dict(frame=f, anchor_icrs=(155.4, 18.),
+                provenance=provenance(), effective_source_mask=source,
+                manual_exclude=manual)
+    corrupted = dict(curve)
+    corrupted["source_policy_id"] = "DIFFERENT_MASK_POLICY"
+    with pytest.raises(ValueError, match="receipt integrity"):
+        diagnose_aperture_systematics(curves=[corrupted], **args)
+    other = _curve(f, source, manual, radii=(1., 3., 4.))
+    with pytest.raises(ValueError, match="radial grid"):
+        diagnose_aperture_systematics(curves=[curve, other], **args)
+    good = diagnose_aperture_systematics(curves=[curve], **args)
+    assert good["stage_04_2_receipts_and_outer_apertures_verified"] == 1
+    assert good["conditional_sky_scenario"]["method"] == "zero_additional_correction"
