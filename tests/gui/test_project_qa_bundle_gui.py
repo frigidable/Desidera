@@ -532,6 +532,11 @@ def test_sky_flux_counterfactual_refuses_different_mask_raster_recipe():
     assert mismatch["state"]=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH"
     assert mismatch["stage_comparisons"]["aperture"][
         "native_mask_fingerprint_matches"]["effective_source_mask_sha256"] is False
+    stage["cross_stage_source_lineage"]=mismatch
+    findings=_diagnostic_findings(stage,{})
+    assert "CROSS_STAGE_SOURCE_OR_MASK_LINEAGE_MISMATCH" in findings
+    assert "CROSS_STAGE_NATIVE_MASK_PIXEL_FINGERPRINT_MISMATCH" in findings
+    assert "CROSS_STAGE_SOURCE_FITS_PROVENANCE_MISMATCH" not in findings
     withheld=_conditional_sky_aperture_response_qa(stage)
     assert withheld["state"]=="SCENE_OR_BAND_PROVENANCE_MISMATCH"
     assert withheld["mismatch_key"]=="effective_source_mask_sha256"
