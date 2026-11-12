@@ -506,6 +506,14 @@ def _conditional_sky_aperture_response_qa(stages):
     if source.get("state") != "CURRENT_LOADED" or not native:
         return {"state": "SCENE_SOURCE_NOT_VERIFIED_FOR_COMPARISON",
                 "correction_applied": False, "science_adopted": False}
+    mask_policy=(source.get("contaminant_screening") or {}).get(
+        "source_mask_policy_id")
+    if mask_policy is not None and (
+            bg.get("source_mask_policy_id") != mask_policy or
+            ap.get("source_policy_id") != mask_policy):
+        return {"state": "SCENE_OR_BAND_PROVENANCE_MISMATCH",
+                "mismatch_key": "source_mask_geometry_policy",
+                "correction_applied": False, "science_adopted": False}
     same_fields = (
         ("source_quartet_key", "source_quartet_key"),
         ("grid_fingerprint", "grid_fingerprint"),
@@ -610,6 +618,8 @@ def _cross_stage_source_lineage_qa(stages):
     status=native.get("original_fits_provenance_status")
     unit=native.get("image_unit_evidence")
     anchor=native.get("loaded_target_icrs")
+    source_policy=(scene.get("contaminant_screening") or {}).get(
+        "source_mask_policy_id")
     if (not isinstance(anchor,(tuple,list)) or len(anchor)!=2 or
             not all(isinstance(v,(int,float)) and math.isfinite(v)
                     for v in anchor) or
@@ -648,15 +658,21 @@ def _cross_stage_source_lineage_qa(stages):
         if name=="aperture":
             anchor_match=anchor_match and (
                 result.get("target_anchor_icrs")==list(anchor))
+        policy_key=("source_mask_policy_id" if name=="background"
+                    else "source_policy_id")
+        policy_match=(source_policy is None or
+                      result.get(policy_key)==source_policy)
         examined[name]={
             "state":"MATCH" if (matches and hashes_match and
-                                grid_match and unit_match and anchor_match)
+                                grid_match and unit_match and anchor_match
+                                and policy_match)
             else "SOURCE_IDENTITY_MISMATCH",
             "quartet_matches":bool(matches),
             "full_original_sha256_matches":bool(hashes_match),
             "native_grid_fingerprint_matches":bool(grid_match),
             "image_unit_evidence_matches":bool(unit_match),
-            "project_target_icrs_matches":bool(anchor_match)}
+            "project_target_icrs_matches":bool(anchor_match),
+            "source_mask_geometry_policy_matches":bool(policy_match)}
         if examined[name]["state"]!="MATCH":
             inconsistent.append(name)
     return {
@@ -670,6 +686,7 @@ def _cross_stage_source_lineage_qa(stages):
         "scene_loaded_target_icrs":list(anchor),
         "scene_original_fits_sha256_local":dict(hashes),
         "scene_image_unit_evidence":unit,
+        "scene_source_mask_policy_id":source_policy,
         "stage_comparisons":examined,
         "inconsistent_stages":inconsistent,
         "sha_is_local_byte_identity_not_archive_authenticity":True,
