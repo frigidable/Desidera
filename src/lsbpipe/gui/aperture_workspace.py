@@ -61,6 +61,13 @@ def build_project_aperture_growth(
         raise ValueError("Stage04 source-triplet mismatch with loaded native FITS")
     if (mask_key is not None and tuple(mask_key)!=expected_key):
         raise ValueError("Stage04 source-triplet mismatch with prepared source masks")
+    loaded_anchor=dataset.get("loaded_target_icrs")
+    if loaded_anchor is not None and (
+            not isinstance(loaded_anchor,(tuple,list)) or
+            len(loaded_anchor)!=2 or
+            tuple(loaded_anchor)!=tuple(target_icrs)):
+        raise ValueError(
+            "Stage04 target ICRS differs from loaded native Scene centre")
     if dataset["band"] not in "griz":
         raise ValueError("Unknown native optical band")
     data=dataset["data"]
@@ -155,6 +162,8 @@ def build_project_aperture_growth(
         "source_policy_id":provenance.source_policy_id,
         "band":dataset["band"],
         "target_anchor_icrs":list(map(float,target_icrs)),
+        "loaded_project_target_icrs":(
+            list(loaded_anchor) if loaded_anchor is not None else None),
         "selected_sga_hypothesis_available":(
             sga_q is not None and sga_pa_deg is not None),
         "radial_policy":radial_qa,
