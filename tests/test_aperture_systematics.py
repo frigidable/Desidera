@@ -102,6 +102,30 @@ def test_blank_sampling_is_spatially_stratified_not_first_clean_rows():
     assert np.min(d2)>=(2*1.6)**2
 
 
+def test_blank_covariance_flags_available_positions_in_one_quadrant():
+    """Nominally numerous blanks can still give poor sky coverage."""
+    pixwcs=wcs()
+    pixwcs.wcs.crpix=[161.,161.]
+    data=np.random.default_rng(91).normal(0.,.2,(321,321))
+    f=frame(image=data,shape=data.shape,w=pixwcs)
+    source=np.ones(f.shape,dtype=bool)
+    source[:145,:145]=False
+    result=estimate_blank_annulus_covariance(
+        f,geometry(a=1.6),(.5,1.,1.6),
+        effective_source_mask=source,
+        manual_exclude=np.zeros(f.shape,dtype=bool),
+        max_placements=48)
+    assert result["n_accepted"] >= 12
+    assert result["accepted_centres_by_quadrant"][0] == (
+        result["n_accepted"])
+    assert result["n_quadrants_with_accepted_blanks"] == 1
+    assert "BLANK_APERTURE_SPATIAL_QUADRANT_COVERAGE_LIMITED" in (
+        result["warnings"])
+    assert "BLANK_APERTURE_SAMPLES_DOMINATED_BY_ONE_QUADRANT" in (
+        result["warnings"])
+    assert result["covariance_calibrated_for_science"] is False
+
+
 def test_missing_independent_blanks_refuses_covariance_instead_of_zero():
     f = frame(value=.1)
     source = np.ones(f.shape, dtype=bool)
