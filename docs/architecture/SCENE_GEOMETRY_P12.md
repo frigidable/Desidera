@@ -1043,3 +1043,18 @@ semantics are retained. Regressions replace the KD-tree with a
 fail-fast guard for dense one-band inputs, verify one query for a
 500-to-1 uncorrelated band pairing, and preserve explicit overflow
 rejection for actual dense multiband pairings.
+
+
+### SA2a source metadata: require a supported native Legacy dataset (2026-11-12)
+
+The positional-linker input previously checked `dataset_id` only
+with `.endswith("/"+band)`. Arbitrary labels such as `fake/g`
+could therefore accompany a properly formatted SHA-256 and be
+treated as an original band detection. The read-only association
+now validates the four-part `release/region/brick/band` dataset ID
+against the **same** release and brick constraints used by the native
+Legacy FITS adapter. DR10 North, North i-band, invalid bricks and
+unknown releases cannot masquerade as supported optical observations.
+The caller still supplies the original image digest and is responsible
+for having computed it from the actual data; this validation is
+syntactic and does not identify physical source membership.

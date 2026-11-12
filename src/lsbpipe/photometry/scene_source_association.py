@@ -18,6 +18,8 @@ import re
 import numpy as np
 from scipy.spatial import cKDTree
 
+from lsbpipe.surveys.legacy import BRICK_RE, regions_for_release
+
 
 ASSOCIATION_SCHEMA = "desidera.scene-positional-association/2"
 _ALLOWED_BANDS = frozenset(("g", "r", "i", "z"))
@@ -77,6 +79,21 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
         if not meta["dataset_id"].endswith("/" + band):
             raise ValueError(
                 "Band provenance dataset_id disagrees with detection band")
+        # A suffix such as "fake/g" passes the old band check but does
+        # not identify a supported original native Legacy brick.
+        parts = meta["dataset_id"].split("/")
+        if len(parts) != 4 or BRICK_RE.fullmatch(parts[2]) is None:
+            raise ValueError("Native optical dataset_id must identify a supported Legacy brick")
+        release, region, _, native_band = parts
+        try:
+            supported_regions = regions_for_release(release)
+        except ValueError as exc:
+            raise ValueError(
+                "Native optical dataset_id has unsupported Legacy release") from exc
+        if (region not in supported_regions or native_band != band or
+                (region == "north" and band == "i")):
+            raise ValueError(
+                "Native optical dataset_id has unsupported release/region/band")
         image_sha = meta["image_sha256"]
         if re.fullmatch(r"[0-9a-f]{64}", image_sha) is None:
             raise ValueError(

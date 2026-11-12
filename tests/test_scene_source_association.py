@@ -183,3 +183,27 @@ def test_cross_band_search_queries_smaller_side_and_still_caps_dense_edges(
         association.associate_band_detections(
             {"g":g, "r":near}, match_radius_arcsec=.5,
             max_detections=600, max_edges=12)
+
+
+def test_association_requires_actual_legacy_native_quartet_identity():
+    """A valid-looking SHA cannot turn an arbitrary label into a dataset."""
+    legal = {"g":block("g", ("g1", 25., -2.))}
+    assert associate_band_detections(
+        legal, match_radius_arcsec=.3)["input_detection_count"] == 1
+    for fake in (
+        "garbage/g",
+        "dr12/south/1554p180/g",
+        "dr10/north/1554p180/g",
+        "dr11/south/notbrick/g",
+        "dr11/south/1554p180/extra/g",
+        "../dr11/south/1554p180/g",
+    ):
+        with pytest.raises(ValueError, match="Native optical dataset_id"):
+            associate_band_detections(
+                {"g":dict(legal["g"], dataset_id=fake)},
+                match_radius_arcsec=.3)
+    with pytest.raises(ValueError, match="unsupported release/region/band"):
+        associate_band_detections(
+            {"i":block("i", ("i1", 25., -2.)) |
+             {"dataset_id":"dr11/north/1554p180/i"}},
+            match_radius_arcsec=.3)
