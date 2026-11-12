@@ -1891,7 +1891,22 @@ class SceneEditor(QWidget):
                field_identity, float(project.target_radius_arcsec))
         if key == self._source_key:
             return
+        # The edit draft is object-scoped, whereas the native Scene
+        # cache key includes band, WCS and target-protection radius.
+        # A same-UUID passport edit must reload the latest saved draft:
+        # an old cached revision from a previous radius/brick must NOT
+        # replace newer edits when the scientist changes the value back.
+        same_object_rebind = (
+            self._project_root is not None and
+            self._project_id == project.project_id and
+            str(Path(self._project_root).resolve()) == key[0])
         self.flush_autosave()
+        if same_object_rebind:
+            for stale_key in tuple(self._work_cache):
+                if (stale_key is not None and len(stale_key) >= 2 and
+                        stale_key[0] == key[0] and
+                        stale_key[1] == project.project_id):
+                    self._work_cache.pop(stale_key, None)
         self._sga_lookup = None
         self._sga_candidate = None
         self.sga_candidates.blockSignals(True)
@@ -1904,7 +1919,8 @@ class SceneEditor(QWidget):
             "SGA D26 is a central scale, never an outer LSB boundary.")
         # Keep unsaved revisions in memory if researcher navigates to a
         # different project and later comes back in the same GUI session.
-        if self._draft is not None and self._project_root is not None:
+        if (self._draft is not None and self._project_root is not None
+                and not same_object_rebind):
             self._work_cache[self._source_key] = (
                 self._draft, self._saved_digest,
                 list(self._undo), list(self._redo))
@@ -1915,7 +1931,7 @@ class SceneEditor(QWidget):
             max_width = min(9., max(.5, project.field.width_arcmin))
             self.width.setMaximum(max_width)
             self.width.setValue(min(6., max_width))
-        if key in self._work_cache:
+        if not same_object_rebind and key in self._work_cache:
             self._draft, self._saved_digest, self._undo, self._redo = (
                 self._work_cache[key])
         else:
