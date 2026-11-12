@@ -514,6 +514,31 @@ def test_sky_flux_counterfactual_refuses_different_mask_raster_recipe():
     resp=_conditional_sky_aperture_response_qa(stage)
     assert resp["state"]=="SCENE_OR_BAND_PROVENANCE_MISMATCH"
     assert resp["mismatch_key"]=="source_mask_geometry_policy"
+    ap["source_policy_id"]=policy
+    source_sha="a"*64
+    manual_sha="b"*64
+    screening=stage["scene_masks"]["contaminant_screening"]
+    screening["effective_source_mask_sha256"]=source_sha
+    screening["manual_exclude_mask_sha256"]=manual_sha
+    for result in (sky,ap):
+        result["effective_source_mask_sha256"]=source_sha
+        result["manual_exclude_mask_sha256"]=manual_sha
+    assert _cross_stage_source_lineage_qa(stage)["state"]==(
+        "CURRENT_AVAILABLE_STAGES_MATCH_ORIGINAL_SCENE")
+    assert _conditional_sky_aperture_response_qa(stage)["state"]==(
+        "NO_EXACT_APERTURE_RESPONSE")
+    ap["effective_source_mask_sha256"]="e"*64
+    mismatch=_cross_stage_source_lineage_qa(stage)
+    assert mismatch["state"]=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH"
+    assert mismatch["stage_comparisons"]["aperture"][
+        "native_mask_fingerprint_matches"]["effective_source_mask_sha256"] is False
+    withheld=_conditional_sky_aperture_response_qa(stage)
+    assert withheld["state"]=="SCENE_OR_BAND_PROVENANCE_MISMATCH"
+    assert withheld["mismatch_key"]=="effective_source_mask_sha256"
+    ap["effective_source_mask_sha256"]=source_sha
+    sky["manual_exclude_mask_sha256"]="0"*64
+    assert _conditional_sky_aperture_response_qa(stage)["mismatch_key"]==(
+        "manual_exclude_mask_sha256")
 
 
 def test_psf_band_navigation_never_discards_loaded_scene(qtbot, tmp_path):
