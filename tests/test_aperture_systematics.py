@@ -469,3 +469,48 @@ def test_stage_04_3_rejects_altered_receipts_and_mixed_growth_lineages():
     good = diagnose_aperture_systematics(curves=[curve], **args)
     assert good["stage_04_2_receipts_and_outer_apertures_verified"] == 1
     assert good["conditional_sky_scenario"]["method"] == "zero_additional_correction"
+
+
+def test_compensated_native_pixel_permutations_fail_closed():
+    """Matching whole-aperture sums cannot prove unchanged IMAGE or INVVAR."""
+    image = np.ones((121, 121), dtype=float)
+    image[60, 60], image[60, 61] = 2., 4.
+    base = frame(image=image)
+    zeros = np.zeros(base.shape, dtype=bool)
+    curve = _curve(base, zeros, zeros)
+    switched = image.copy()
+    switched[60, 60], switched[60, 61] = 4., 2.
+    changed = frame(image=switched)
+    args = dict(anchor_icrs=(155.4, 18.), provenance=provenance(),
+                effective_source_mask=zeros, manual_exclude=zeros,
+                curves=[curve])
+    from lsbpipe.photometry.aperture_flux import measure_native_aperture
+    def outer(f):
+        return measure_native_aperture(
+            f, geometry(a=4., q=1., pa=0.), provenance(),
+            effective_source_mask=zeros, manual_exclude=zeros)
+    first, second = outer(base), outer(changed)
+    assert first.recipe_sha256 == second.recipe_sha256
+    assert first.signed_valid_flux_nMgy == pytest.approx(
+        second.signed_valid_flux_nMgy)
+    assert first.formal_diagonal_sigma_nMgy == pytest.approx(
+        second.formal_diagonal_sigma_nMgy)
+    assert base.native_input_sha256 != changed.native_input_sha256
+    with pytest.raises(ValueError, match="native_input_sha256"):
+        diagnose_aperture_systematics(changed, **args)
+
+    initial_ivar = np.full(base.shape, 4.)
+    initial_ivar[60, 60], initial_ivar[60, 61] = 2., 6.
+    variance_frame = frame(image=image, ivar=initial_ivar)
+    variance_curve = _curve(variance_frame, zeros, zeros)
+    changed_ivar = initial_ivar.copy()
+    changed_ivar[60, 60], changed_ivar[60, 61] = 6., 2.
+    changed_variance = frame(image=image, ivar=changed_ivar)
+    a, b = outer(variance_frame), outer(changed_variance)
+    assert a.formal_diagonal_sigma_nMgy == pytest.approx(
+        b.formal_diagonal_sigma_nMgy)
+    assert a.recipe_sha256 == b.recipe_sha256
+    with pytest.raises(ValueError, match="native_input_sha256"):
+        diagnose_aperture_systematics(
+            changed_variance, **dict(args, curves=[variance_curve]))
+    assert variance_frame.native_input_sha256 == variance_frame.native_input_sha256

@@ -394,6 +394,7 @@ def _verify_frozen_growth_curves(frame, anchor_icrs, provenance,
     if not isinstance(curves, (tuple, list)) or not curves:
         raise ValueError("At least one frozen Stage 04.2 curve required")
     expected_grid = grid_fingerprint(frame.wcs, frame.shape)
+    expected_native_input = frame.native_input_sha256
     reference_radii = tuple(curves[0]["radii_arcsec"])
     anchor = tuple(map(float, anchor_icrs))
     for curve in curves:
@@ -410,14 +411,17 @@ def _verify_frozen_growth_curves(frame, anchor_icrs, provenance,
             "project_id": provenance.project_id,
             "dataset_id": frame.dataset_id,
             "grid_fingerprint": expected_grid,
+            "native_input_sha256": expected_native_input,
             "draft_sha256": provenance.scene_draft_sha256,
             "catalogue_sha256": provenance.catalogue_sha256,
             "source_policy_id": provenance.source_policy_id,
             "sky_method": sky.method,
             "sky_evidence_id": sky.evidence_id,
         }
-        if any(curve.get(k) != v for k, v in expected.items()):
-            raise ValueError("Stage 04.2 lineage or sky scenario mismatch")
+        for key, value in expected.items():
+            if curve.get(key) != value:
+                raise ValueError(
+                    "Stage 04.2 lineage or sky scenario mismatch: " + key)
         if (tuple(curve.get("fixed_project_anchor_icrs", ())) != anchor or
                 tuple(curve.get("radii_arcsec", ())) != reference_radii):
             raise ValueError("Stage 04.2 anchor or radial grid mismatch")
@@ -534,6 +538,7 @@ def diagnose_aperture_systematics(
         "draft_sha256": provenance.scene_draft_sha256,
         "catalogue_sha256": provenance.catalogue_sha256,
         "source_policy_id": provenance.source_policy_id,
+        "native_input_sha256": frame.native_input_sha256,
         "stage_04_2_receipts_and_outer_apertures_verified": len(curves),
         "conditional_sky_scenario": asdict(sky),
         "baseline_geometry": hypothesis,

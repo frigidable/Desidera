@@ -7,6 +7,7 @@ remain in native coadd units with explicit uncertainty limitations.
 from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
+from hashlib import sha256
 import copy
 import json
 import math
@@ -183,6 +184,8 @@ class NativeBandFrame:
     _valid: np.ndarray = field(init=False, repr=False, compare=False)
     _reasons: Mapping = field(init=False, repr=False, compare=False)
     _area: float = field(init=False, repr=False, compare=False)
+    _native_input_digest: str | None = field(
+        init=False, default=None, repr=False, compare=False)
 
     def __post_init__(self, native_wcs):
         if self.region not in regions_for_release(self.release):
@@ -263,6 +266,29 @@ class NativeBandFrame:
     @property
     def local_pixel_area_arcsec2(self):
         return self._area
+
+    @property
+    def native_input_sha256(self) -> str:
+        """SHA-256 of immutable native IMAGE/IVAR/NEXP/MASKBITS and validity.
+
+        This is a local in-memory array identity, NOT an external FITS
+        authenticity or WCS certificate. Compute once only when requested
+        and hash contiguous buffers without temporary full-array copies.
+        """
+        cached = self._native_input_digest
+        if cached is not None:
+            return cached
+        digest = sha256(b"desidera-native-input-arrays-v1\n")
+        digest.update(self.dataset_id.encode("utf-8"))
+        for name in ("image_nMgy", "invvar_nMgy2", "nexp",
+                     "maskbits", "_valid"):
+            array = getattr(self, name)
+            digest.update((f"\n{name}:{array.dtype.str}:"
+                           f"{array.shape[0]}x{array.shape[1]}\n").encode("ascii"))
+            digest.update(memoryview(array).cast("B"))
+        value = digest.hexdigest()
+        object.__setattr__(self, "_native_input_digest", value)
+        return value
 
     @property
     def science_state(self):

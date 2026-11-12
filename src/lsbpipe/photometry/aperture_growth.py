@@ -267,6 +267,8 @@ def measure_growth_diagnostic(
         "project_id":provenance.project_id,
         "dataset_id":frame.dataset_id,
         "grid_fingerprint":cumulative[0].grid_fingerprint,
+        "native_input_sha256":frame.native_input_sha256,
+        "native_input_sha_is_local_array_identity_not_fits_authenticity":True,
         "draft_sha256":provenance.scene_draft_sha256,
         "catalogue_sha256":provenance.catalogue_sha256,
         "source_policy_id":provenance.source_policy_id,

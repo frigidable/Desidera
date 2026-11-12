@@ -170,6 +170,7 @@ def build_project_aperture_growth(
         "dataset_id":f.dataset_id,
         "source_quartet_key":list(expected_key),
         "grid_fingerprint":curves[0]["grid_fingerprint"],
+        "native_input_sha256":f.native_input_sha256,
         "scene_draft_sha256":draft.digest,
         "catalog_sha256":contamination["catalog_sha256"],
         "source_policy_id":provenance.source_policy_id,
