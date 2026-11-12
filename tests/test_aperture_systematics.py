@@ -189,6 +189,31 @@ def test_invalid_sampling_limits_and_radial_grid_fail_closed():
             **dict(kw, radii_arcsec=(1., 2., 3.)))
 
 
+def test_blank_covariance_sample_budget_tracks_radial_dimension():
+    """The default cannot require more independent blanks than it searches."""
+    f=frame()
+    source=np.ones(f.shape,dtype=bool)
+    radii=tuple(float(x) for x in np.linspace(.1,1.6,31))
+    kw=dict(frame=f,outer=geometry(a=1.6),
+            radii_arcsec=radii,effective_source_mask=source,
+            manual_exclude=np.zeros(f.shape,dtype=bool))
+    default=estimate_blank_annulus_covariance(**kw)
+    assert default["n_required"]==64
+    assert default["n_max_placements"]>=64
+    assert not default["placement_cap_explicit"]
+    assert default["status"]=="INSUFFICIENT_INDEPENDENT_BLANK_POSITIONS"
+    assert default["annulus_covariance_nMgy2"] is None
+    explicit=estimate_blank_annulus_covariance(**kw,max_placements=48)
+    assert explicit["n_required"]==64
+    assert explicit["n_max_placements"]==48
+    assert explicit["placement_cap_explicit"] is True
+    assert explicit["status"]==(
+        "EXPLICIT_PLACEMENT_CAP_BELOW_REQUIRED_COVARIANCE_SAMPLE")
+    assert explicit["annulus_covariance_nMgy2"] is None
+    assert explicit["covariance_calibrated_for_science"] is False
+    json.dumps(explicit,allow_nan=False)
+
+
 def test_small_scale_blanks_keep_full_target_exclusion_and_never_replace_outer():
     """Smaller clean positions remain outside the FULL target aperture."""
     rng = np.random.default_rng(2035)
