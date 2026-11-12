@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 import uuid
 
@@ -342,17 +343,30 @@ def science_cache_key(
     The caller must bind every stage-relevant processing parameter explicitly.
     This is *not* a pipeline scheduler or a scientific validity certificate.
     """
-    if not stage or not algorithm_version or not isinstance(parameters, dict):
+    if (not isinstance(stage, str) or not stage.strip() or
+            not isinstance(algorithm_version, str) or
+            not algorithm_version.strip() or
+            not isinstance(parameters, dict)):
         raise ValueError("Stage, algorithm version and parameter map are required")
-    if not selected_assets:
+    if not isinstance(selected_assets, (tuple, list)) or not selected_assets:
         raise ValueError("Cannot cache a science result with no data assets")
+    if dependency_keys is not None and (
+            not isinstance(dependency_keys, (tuple, list)) or
+            any(not isinstance(key, str) or not key.strip()
+                for key in dependency_keys) or
+            len(set(dependency_keys)) != len(dependency_keys)):
+        raise ValueError("Cache dependency keys must be unique named hashes")
     signatures = []
     for asset in selected_assets:
         sha = asset.get("sha256")
         if (asset.get("checksum_status") != CHECKSUM_VERIFIED or
-                not isinstance(sha, str) or len(sha) != 64):
+                not isinstance(sha, str) or
+                re.fullmatch(r"[0-9a-f]{64}", sha) is None):
             raise ValueError("Unverified FITS fingerprint; refuse cache reuse")
-        signatures.append((asset["asset_id"], sha))
+        asset_id = asset.get("asset_id")
+        if not isinstance(asset_id, str) or not asset_id.strip():
+            raise ValueError("Cache asset requires stable nonempty asset_id")
+        signatures.append((asset_id, sha))
     if len(signatures) != len(set(x[0] for x in signatures)):
         raise ValueError("Duplicate asset in cache dependencies")
     payload = {

@@ -991,3 +991,19 @@ this diagnostic implementation, and a locally computed digest is not
 a remote archive authenticity certificate. No original file is
 rewritten. The regression tests replace an inventoried original with
 a symlink (where the platform permits symlink creation).
+
+
+### Dataset registry: cache receipts cannot use placeholder SHA labels (2026-11-12)
+
+The P0 science-cache recipe previously checked only that an asset
+advertised `FILE_SHA256_VERIFIED` and its `sha256` string had length 64.
+Thus a 64-character nonhex placeholder could masquerade as a valid
+digest, undermining cache provenance even though other stages require
+full canonical lowercase SHA-256. The cache now requires the exact
+64-digit lowercase hexadecimal form, a stable nonempty asset ID,
+string-valued stage/version keys and valid unique dependency labels.
+These guards cannot authenticate a maliciously forged but syntactically
+valid digest: real file hashing remains the responsibility of
+`verify_asset_checksum`. No existing stored asset or source FITS
+is modified. Tests cover malformed hashes, incorrect identity
+types and repeated dependency keys.

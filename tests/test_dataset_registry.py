@@ -203,3 +203,28 @@ def test_mosaic_geometry_plan_does_not_mean_coaddition_allowed(project):
     assert decision["allowed"] is True
     assert "Geometry plan only" in decision["reason"]
     assert compatibility_policy([source], images, mode="joint")["allowed"] is False
+
+
+def test_science_cache_refuses_synthetic_unverifiable_asset_hash_labels():
+    """A 64-character placeholder is not a canonical SHA-256 receipt."""
+    import hashlib
+    from lsbpipe.surveys.dataset_registry import science_cache_key
+    actual = hashlib.sha256(b"immutable-source").hexdigest()
+    asset = {"asset_id":"dataset-A","sha256":actual,
+             "checksum_status":CHECKSUM_VERIFIED}
+    kwargs = dict(stage="sky",algorithm_version="v1",
+                  parameters={"plane":False},selected_assets=[asset])
+    assert len(science_cache_key(**kwargs)) == 64
+    for invalid in ("z"*64, actual.upper(), actual[:-1], "a"*65):
+        with pytest.raises(ValueError, match="Unverified FITS fingerprint"):
+            science_cache_key(
+                **dict(kwargs,selected_assets=[dict(asset,sha256=invalid)]))
+    with pytest.raises(ValueError, match="nonempty asset_id"):
+        science_cache_key(
+            **dict(kwargs,selected_assets=[dict(asset,asset_id="")]))
+    with pytest.raises(ValueError, match="Stage, algorithm"):
+        science_cache_key(**dict(kwargs,stage=42))
+    with pytest.raises(ValueError, match="Stage, algorithm"):
+        science_cache_key(**dict(kwargs,algorithm_version=False))
+    with pytest.raises(ValueError, match="unique named"):
+        science_cache_key(**kwargs, dependency_keys=["mask-v2","mask-v2"])
