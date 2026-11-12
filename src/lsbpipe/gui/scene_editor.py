@@ -2096,9 +2096,9 @@ class SceneEditor(QWidget):
             raise ValueError(
                 "Loaded Scene target ICRS differs from bound project anchor")
         if (data.get("source_quartet_key") is not None and
-                self._source_key is not None and
-                tuple(data["source_quartet_key"][:3]) !=
-                tuple(self._source_key[2][:3])):
+                (self._source_key is None or self._source_key[2] is None or
+                 tuple(data["source_quartet_key"][:3]) !=
+                 tuple(self._source_key[2][:3]))):
             raise ValueError(
                 "Loaded Scene quartet differs from bound project source")
         ny, nx = map(int, data["pixel_shape"])
