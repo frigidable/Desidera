@@ -303,3 +303,44 @@ Existing tests are valuable controlled mechanisms but hold the previous image-de
 | F — downstream | SBF/SED | Only after an adopted flux/colour/PSF/sky domain exists, implement SBF-specific and SED-specific calibrations | SBF Fourier transfer/noise and colour-calibration eligibility or SED filter/metallicity/systematics validated |
 
 **Stop/go condition:** A technical CI pass demonstrates software contracts, not any physical performance in Leo P. Stage 01–04 should continue returning DIAGNOSTIC_ONLY, MEASURED_PARTIAL or UNDERCONSTRAINED until source membership, large-angle PSF, residual/upstream sky bias, missing flux and full-scale covariance have *measured*, independently held-out accuracy evidence. PR #84 remains Draft and `SCIENCE HOLD` is unchanged.
+
+
+## Implemented methodological changes after F01–F15 review (2026-11-13)
+
+**Audit trail.** The original F01–F15 findings above are a frozen
+methodological assessment at their stated revision. The following
+is the subsequent **implemented** research-QA code, not a claim
+that physical PSF wings, foreground membership or sky level have
+been independently calibrated. All work remains in the existing
+draft PR #84 and its existing source/test/docs directories.
+
+| Audit issue | Implementation commit / existing operator | What changed | Scientific limit retained |
+|---|---|---|---|
+| F10 / F01 (radial sky response) | `ad468537`, `aperture_systematics.py` | Every frozen Stage04.2 radius now has an exact original-native-pixel Jacobian `(-sum w, -sum w*(x-xref), -sum w*(y-yref))`; adjacent-ring differences are recorded and all radial valid areas verified. Independent synthetic direct-aperture plane perturbations cover arbitrary off-centre pivots, asymmetric masks and closure. | No `Sigma_sky` posterior, correlated-coadd error, adopted subtraction or total flux. |
+| F03 (sampling structure) | `e6b0f3e`, `background.py` | Added a fixed-seed 8x8 two-dimensional stratified *alternative* for the 384-native-pixel/tile sky cap; comparable to unchanged row-major V1 under a sixth predeclared sensitivity experiment. Proportional quotas honor irregular mask occupancy. | Neither policy is galaxy-free, statistically independent or a preferred science sky. |
+| F06/F09 (masked light) | `df96dfd`, `aperture_systematics.py` | Every growth radius now exposes exact newly available native area and *signed* flux when only provisional source exclusion is disabled. Manual and hard exclusions stay frozen; outer result independently verified against direct integration; ring differences retained. | Recovered flux is NOT inferred galaxy membership, star subtraction or missing-light correction. |
+| F02/F04 (bright Gaia veto) | `55920ad`, `background.py` | A complete count alone no longer certifies an inventory: nonmapping rows, invalid positions, invalid G magnitudes and Gaia IDs missing G force incomplete source-veto evidence. Stage03 refuses fitting rather than silently skipping potentially bright contaminating stars. | Catalog completeness/halo radii are not independently validated and do not capture uncatalogued or truly broad wings. |
+| F11 (conditional covariance) | `b182faa`, `aperture_systematics.py` | Both full and smaller-size blank-ring covariance diagnostics now subtract **exactly the same frozen** constant/tilted `ApertureSkyScenario` as Stage04.2, on original unmodified pixels. Schema version 2 records the sky scenario and rejects unsuitable numerical inputs. Controlled plane+noise experiment verifies residual covariance. | Same-coadd spatial sample covariance is not calibrated science covariance, even when a known synthetic gradient is removed. |
+| F02/F03 (zero baseline) | `6cc88c2`, `background.py` | Stage03 now shows a three-way numerical heldout RMS ranking with `zero_additional_correction` on the exact same samples, in addition to the preserved historical two-fit heuristic. Synthetic training/holdout discrepancy puts zero first. | Neither low RMS nor model rank authorizes subtracting real LSB outskirts or adopting a sky model. |
+| F05 / F04 (PSF validation cohort) | `9b411e0`, `psf_empirical.py` | PSF0 receipts now distinguish disjoint *ePSF-fit* holdouts from population selection informed by pre-split Gaia core widths; train/holdout positions by native quadrant and Gaia magnitude ranges are explicit. | No new independent external stellar cohort or calibrated field/brightness transfer; wing/sky degeneracy unresolved. |
+| Regression quality | `462ef18`, `9e0f453` | Ensured smaller-scale blank-sky scenario test uses an actually measurable noisy synthetic field rather than vacuous `all()` assertions; clarified zero-model selection flags. | Still synthetic only. |
+
+**Immediate follow-up validation:** after verifying all scientific/GUI CI,
+the first **new real-data run** should be a single read-only Leo P
+project-bound QA export with both Stage03 sampling policies,
+the Stage04 radial sky Jacobian and radial source-mask ablation,
+the Stage04 blank covariance for the frozen conditional sky
+and Stage01's PSF cohort coverage. Differences must be shown
+by radius, angular sector, actual native source and mask
+identity, not only one integrated flux. Preserve the full list
+of underconstrained/rejected trials.
+
+**Not implemented in this patch series:** real DR11 Leo P
+end-to-end remeasurement; full chain re-detection injection/recovery;
+CCD-level upstream-sky recovery; physically calibrated far-PSF wing
+and brightness/position transfer; Gaia astrometric member/foreground
+classification; galaxy/PSF/sky joint inference; variable native
+isophotes and missing-light/total estimators; covariance calibrated
+over actual galaxy angular scales; matched-PSF multiband total
+colours; SBF. None may be inferred from a successful CI result.
+`SCIENCE HOLD` remains mandatory.
