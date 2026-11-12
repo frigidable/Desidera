@@ -136,6 +136,35 @@ def test_aperture_recipe_exposes_changed_scene_mask_geometry_policy():
     assert not updated["adopted_for_science"]
 
 
+def test_stage04_exact_mask_receipts_reject_changed_source_or_manual_pixels():
+    from lsbpipe.photometry.sky_masks import native_boolean_mask_sha256
+    ds,draft,contamination=_inputs()
+    source_hash=native_boolean_mask_sha256(contamination["auto_mask"])
+    manual_hash=native_boolean_mask_sha256(
+        np.zeros(ds["pixel_shape"],dtype=bool))
+    contamination["effective_source_mask_sha256"]=source_hash
+    contamination["manual_exclude_mask_sha256"]=manual_hash
+    good=build_project_aperture_growth(
+        ds,draft,contamination,source_triplet=("dr11","south","1554p180"),
+        target_icrs=(155.4,18.))
+    assert good["effective_source_mask_sha256"]==source_hash
+    assert good["manual_exclude_mask_sha256"]==manual_hash
+    assert good["adopted_for_science"] is False
+    contamination["effective_source_mask_sha256"]="f"*64
+    with pytest.raises(ValueError,match="mask geometry fingerprint mismatch"):
+        build_project_aperture_growth(
+            ds,draft,contamination,
+            source_triplet=("dr11","south","1554p180"),
+            target_icrs=(155.4,18.))
+    contamination["effective_source_mask_sha256"]=source_hash
+    contamination["manual_exclude_mask_sha256"]="e"*64
+    with pytest.raises(ValueError,match="mask geometry fingerprint mismatch"):
+        build_project_aperture_growth(
+            ds,draft,contamination,
+            source_triplet=("dr11","south","1554p180"),
+            target_icrs=(155.4,18.))
+
+
 def test_aperture_source_sha_propagates_into_each_exact_flux_recipe():
     """The full original-FITS SHA identity follows Scene -> Stage04."""
     ds,draft,contam=_inputs()
