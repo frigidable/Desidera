@@ -491,7 +491,13 @@ def _holdout_diagnostic(star, cutout, kernel):
     # Preserve the former all-stamp answer as a *separate diagnostic*
     # of the sensitivity to wings and local sky. It never determines
     # the core-fit validation residual or any PSF science adoption.
-    full_stamp_flux = fit_amplitude(usable)
+    try:
+        full_stamp_flux = fit_amplitude(usable)
+    except ValueError:
+        # This is deliberately SECONDARY: badly contaminated wings can
+        # yield a negative whole-stamp LS amplitude without invalidating
+        # the separate, still well-constrained held-out core diagnostic.
+        full_stamp_flux = None
     err = cutout["image"]-flux*model
     return {
         "source_id": star.star_id,
@@ -500,8 +506,12 @@ def _holdout_diagnostic(star, cutout, kernel):
         "flux_nMgy_diagnostic": float(flux),
         "amplitude_fit_domain": "VALID_CORE_PIXELS_WITHIN_REPORTED_RADIUS",
         "whole_stamp_amplitude_nMgy_comparison": float(full_stamp_flux),
-        "core_minus_whole_stamp_amplitude_nMgy": float(
-            flux-full_stamp_flux),
+        "core_minus_whole_stamp_amplitude_nMgy": (
+            float(flux-full_stamp_flux)
+            if full_stamp_flux is not None else None),
+        "whole_stamp_amplitude_comparison_status": (
+            "MEASURED_DESCRIPTIVE_ONLY" if full_stamp_flux is not None
+            else "UNDEFINED_OR_NONPOSITIVE_ALL_STAMP_FIT"),
         "amplitude_comparison_is_wing_sky_sensitivity_not_psf_validation": True,
         "background_rms_nMgy": cutout["rms_nMgy"],
         "core_aperture_center_native_xy": [float(local_x), float(local_y)],

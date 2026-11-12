@@ -904,3 +904,13 @@ def test_core_holdout_psf_amplitude_is_invariant_to_contaminated_outer_wings():
     assert contaminated["whole_stamp_amplitude_nMgy_comparison"] > (
         clean["whole_stamp_amplitude_nMgy_comparison"])
     assert contaminated["amplitude_comparison_is_wing_sky_sensitivity_not_psf_validation"]
+    # A sufficiently strong negative halo can make the whole-stamp
+    # amplitude negative; that must not erase a valid held-out core.
+    negative_halo = dict(cutout)
+    negative_halo["image"] = cutout["image"] - outer*100.
+    negative = _holdout_diagnostic(star, negative_halo, kernel)
+    assert negative["flux_nMgy_diagnostic"] == pytest.approx(
+        clean["flux_nMgy_diagnostic"], abs=1.e-10)
+    assert negative["whole_stamp_amplitude_nMgy_comparison"] is None
+    assert negative["whole_stamp_amplitude_comparison_status"] == (
+        "UNDEFINED_OR_NONPOSITIVE_ALL_STAMP_FIT")

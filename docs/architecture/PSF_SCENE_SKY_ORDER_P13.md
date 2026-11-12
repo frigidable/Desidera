@@ -1150,3 +1150,10 @@ that the fitted core amplitude and core residual are invariant,
 while the old whole-stamp fit remains sensitive. This matches the
 limited fitting-radius principle of Photutils PSF photometry and
 classical DAOPHOT but is not a calibrated far-wing measurement.
+
+
+The optional whole-stamp comparison also now explicitly reports an
+undefined/non-positive result instead of failing a valid core
+measurement when strong negative residual wings dominate the
+whole-stamp LS normalization. This behavior is covered by an
+independent negative-outer-halo regression.
