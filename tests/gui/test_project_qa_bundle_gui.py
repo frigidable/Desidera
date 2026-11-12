@@ -463,6 +463,59 @@ def test_unadopted_plane_sky_flux_response_uses_correct_reference_origin():
         "SCENE_OR_BAND_PROVENANCE_MISMATCH")
 
 
+def test_sky_flux_counterfactual_refuses_different_mask_raster_recipe():
+    hashes={k:str(i)*64 for i,k in enumerate(
+        ("image","invvar","nexp","maskbits"),1)}
+    key=["dr11","south","1554p180","r"]
+    anchor=[155.4,18.]
+    policy="PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS"
+    sky={"band":"r","project_id":"p","draft_sha256":"a",
+         "catalog_sha256":"b","dataset_source":"coadd-r",
+         "source_quartet_key":key,"grid_fingerprint":"wcs",
+         "original_fits_sha256_local":hashes,
+         "image_unit_evidence":"FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED",
+         "loaded_project_target_icrs":anchor,
+         "source_fits_hashes_verified_at_scene_load":True,
+         "source_mask_policy_id":policy,
+         "methods":{}}
+    ap={"band":"r","project_id":"p","scene_draft_sha256":"a",
+        "catalog_sha256":"b","dataset_source":"coadd-r",
+        "source_quartet_key":key,"grid_fingerprint":"wcs",
+        "original_fits_sha256_local":hashes,
+        "image_unit_evidence":"FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED",
+        "loaded_project_target_icrs":anchor,
+        "target_anchor_icrs":anchor,
+        "source_fits_hashes_verified":True,
+        "source_policy_id":policy}
+    stage={
+        "scene_masks":{"state":"CURRENT_LOADED",
+                       "native_fits":{
+                           "source_quartet_key":key,
+                           "grid_fingerprint":"wcs",
+                           "original_fits_sha256_local":hashes,
+                           "loaded_target_icrs":anchor,
+                           "image_unit_evidence":
+                               "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED",
+                           "original_fits_provenance_status":
+                               "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD"},
+                       "contaminant_screening":{
+                           "source_mask_policy_id":policy}},
+        "background":{"state":"CURRENT_DIAGNOSTIC","result":sky},
+        "aperture":{"state":"CURRENT_DIAGNOSTIC","result":ap}}
+    assert _cross_stage_source_lineage_qa(stage)["state"]==(
+        "CURRENT_AVAILABLE_STAGES_MATCH_ORIGINAL_SCENE")
+    assert _conditional_sky_aperture_response_qa(stage)["state"]==(
+        "NO_EXACT_APERTURE_RESPONSE")
+    ap["source_policy_id"]="PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V1"
+    mismatch=_cross_stage_source_lineage_qa(stage)
+    assert mismatch["state"]=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH"
+    assert not mismatch["stage_comparisons"]["aperture"][
+        "source_mask_geometry_policy_matches"]
+    resp=_conditional_sky_aperture_response_qa(stage)
+    assert resp["state"]=="SCENE_OR_BAND_PROVENANCE_MISMATCH"
+    assert resp["mismatch_key"]=="source_mask_geometry_policy"
+
+
 def test_psf_band_navigation_never_discards_loaded_scene(qtbot, tmp_path):
     widget = _bound_workspace(qtbot, tmp_path)
     scene = widget.scene_editor
