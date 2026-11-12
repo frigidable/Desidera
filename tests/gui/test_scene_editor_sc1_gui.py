@@ -175,7 +175,16 @@ def test_scene_loader_records_source_quartet_hashes_and_detects_race(
     with pytest.raises(ValueError, match="not nanomaggies"):
         module.load_scene_original_cutout(str(project.root),"r",4.)
     with fits.open(paths["image"],mode="update") as hdus:
+        del hdus[0].header["BUNIT"]
+    with pytest.raises(ValueError, match="IMAGE BUNIT missing"):
+        module.load_scene_original_cutout(str(project.root),"r",4.)
+    with fits.open(paths["image"],mode="update") as hdus:
         hdus[0].header["BUNIT"]="nanomaggies"
+    with fits.open(paths["invvar"],mode="update") as hdus:
+        del hdus[0].header["BUNIT"]
+    assumed=module.load_scene_original_cutout(str(project.root),"r",4.)
+    assert assumed["invvar_unit_evidence"] == (
+        "INVVAR_UNITS_FROM_SURVEY_DOCUMENTATION_ASSUMPTION")
     def racing_reader(**kwargs):
         receipt=fake_read(**kwargs)
         paths["image"].write_bytes(b"changed-original-during-load")
