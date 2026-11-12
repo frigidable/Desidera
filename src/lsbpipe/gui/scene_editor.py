@@ -1883,9 +1883,12 @@ class SceneEditor(QWidget):
             (float(project.field.ra_deg), float(project.field.dec_deg),
              float(project.field.width_arcmin))
             if project.field is not None else None)
+        # Target-protection radius is also a scientific source-screening
+        # input: keeping the same UUID/centre while changing this radius
+        # must invalidate already prepared Tractor masks and downstream QA.
         key = (str(Path(project.root).resolve()), project.project_id,
                project.selected_dataset, str(project.data_root),
-               field_identity)
+               field_identity, float(project.target_radius_arcsec))
         if key == self._source_key:
             return
         self.flush_autosave()
