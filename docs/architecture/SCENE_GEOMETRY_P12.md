@@ -913,3 +913,23 @@ by the caller**, not recomputed or authenticated in this API. A future
 native-detection adapter must generate these digests from validated,
 original input data. No physical source identity, membership, PSF
 subtraction or mask change is inferred by this positional grouping.
+
+
+### SA2a position-group identity includes the observation recipe (2026-11-12)
+
+A deeper audit found that the earlier `pos-<hash>` group ID was
+derived only from band/detection labels. The same labels can recur
+when the source image, segmentation method, sky positions, matching
+radius or dataset changes. This could allow a future result/cache to
+attach an old group identity to different evidence.
+
+The association schema is now
+`desidera.scene-positional-association/2`. Each group ID hashes
+the sorted member detection IDs **and** their original-image SHA,
+dataset ID, segmentation ID, normalized ICRS coordinates and the
+explicit association radius (canonical JSON, SHA-256 prefix). The
+changed schema/ID policy is deliberate: old identifiers must not
+silently claim equivalence with the new input-bound IDs. Tests
+check each dependency and deterministic ordering. Identity of the
+*positional candidate graph* is still not physical galaxy membership,
+a source deblend, or scientific validation. No FITS or masks change.

@@ -11,6 +11,7 @@ single griz Tractor catalogue is not independent multiband evidence.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 
@@ -18,7 +19,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 
-ASSOCIATION_SCHEMA = "desidera.scene-positional-association/1"
+ASSOCIATION_SCHEMA = "desidera.scene-positional-association/2"
 _ALLOWED_BANDS = frozenset(("g", "r", "i", "z"))
 
 
@@ -166,8 +167,26 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
                 status = "AMBIGUOUS_NONTRANSITIVE_OFFSETS"
             else:
                 status = "POSITIONAL_CANDIDATE_ONLY"
-        identities = tuple(f"{r['band']}:{r['detection_id']}" for r in members)
-        digest = hashlib.sha256("\n".join(identities).encode("utf-8")).hexdigest()[:16]
+        # Stable GROUP identity must bind the source bytes, detector
+        # provenance, sky positions and the matching rule. Reusing
+        # detection_id after a new segmentation/image cannot reattach
+        # an old group's downstream notes or science decisions.
+        identity = {
+            "schema": ASSOCIATION_SCHEMA,
+            "match_radius_arcsec": float(match_radius_arcsec),
+            "members": [
+                {
+                    "band": r["band"],
+                    "detection_id": r["detection_id"],
+                    "ra_deg": r["ra_deg"],
+                    "dec_deg": r["dec_deg"],
+                    **provenance[r["band"]],
+                } for r in members
+            ],
+        }
+        digest = hashlib.sha256(json.dumps(
+            identity, sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode("utf-8")).hexdigest()[:24]
         groups.append({
             "group_id":f"pos-{digest}",
             "status":status,
@@ -185,6 +204,8 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
         "band_provenance":provenance,
         "input_detection_count":n,
         "candidate_edge_count":len(edges),
+        "group_id_policy":"INPUT_IMAGE_SEGMENTATION_POSITION_AND_RADIUS_SHA256_V2",
+        "group_id_is_not_a_physical_source_identity":True,
         "groups":tuple(groups),
         "status":"UNVALIDATED_POSITIONAL_REVIEW_ONLY",
         "cautions":(

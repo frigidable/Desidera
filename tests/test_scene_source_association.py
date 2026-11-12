@@ -109,3 +109,31 @@ def test_association_rejects_unverifiable_or_duplicate_image_evidence():
     with pytest.raises(ValueError,match="safety limits"):
         associate_band_detections(valid,match_radius_arcsec=.3,
                                   max_detections=True)
+
+
+def test_group_ids_bind_dataset_image_segmentation_position_and_radius():
+    """No old group ID may survive a changed native observation/segmentation."""
+    original = {"g":block("g",("a",10.,0.)),
+                "r":block("r",("b",10.+.2/3600.,0.))}
+    def gid(data, radius=.4):
+        report = associate_band_detections(
+            data,match_radius_arcsec=radius)
+        assert report["candidate_edge_count"] == 1
+        assert report["groups"][0]["status"] == "POSITIONAL_CANDIDATE_ONLY"
+        return report["groups"][0]["group_id"]
+    baseline = gid(original)
+    assert baseline.startswith("pos-") and len(baseline) == 28
+    assert gid(original) == baseline
+    changed_image = deepcopy(original)
+    changed_image["g"]["image_sha256"] = "f"*64
+    assert gid(changed_image) != baseline
+    changed_segmentation = deepcopy(original)
+    changed_segmentation["r"]["segmentation_id"] += "-new"
+    assert gid(changed_segmentation) != baseline
+    changed_position = deepcopy(original)
+    changed_position["r"]["detections"][0]["ra_deg"] += .02/3600.
+    assert gid(changed_position) != baseline
+    assert gid(original, radius=.5) != baseline
+    changed_dataset = deepcopy(original)
+    changed_dataset["g"]["dataset_id"] = "dr11/south/1555p180/g"
+    assert gid(changed_dataset) != baseline
