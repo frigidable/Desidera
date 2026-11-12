@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+from bisect import bisect_right
 
 import numpy as np
 
@@ -50,6 +51,79 @@ def _ring_aperture(x, y, projected, radii, index):
         b_in=projected.b_pix * radii[index - 1] / radii[-1],
         b_out=projected.b_pix * scale,
         theta=projected.theta_rad_pixel_ccw)
+
+
+def _bounded_quadrant_blank_candidates(shape, margin, step, *, seed=20261112):
+    """Predeclare a staggered four-quadrant lattice with O(rows) memory.
+
+    A fully enumerated `(x, y)` list can be millions of entries on a
+    large native survey image, defeating the accepted/evaluation budgets.
+    Instead, each image row contributes at most TWO contiguous
+    arithmetic-progression blocks. A seeded coprime stride visits each
+    block's flattened quadrant index exactly once without constructing
+    any list of pixel centres. No fluxes or masks enter candidate order.
+
+    Returns (candidate_counts_by_quadrant, candidate_iterator).
+    """
+    ny, nx = shape
+    if not (isinstance(ny, (int, np.integer)) and
+            isinstance(nx, (int, np.integer)) and ny > 0 and nx > 0
+            and isinstance(margin, int) and margin >= 0
+            and isinstance(step, int) and step > 0):
+        raise ValueError("Invalid bounded blank candidate geometry")
+    blocks = [[], [], [], []]
+    totals = [0, 0, 0, 0]
+    for row, y in enumerate(range(margin, ny - margin, step)):
+        x_first = margin + (step // 2 if row % 2 else 0)
+        n_cols = len(range(x_first, nx - margin, step))
+        if n_cols == 0:
+            continue
+        # The two halves are defined solely in original native pixels.
+        n_left = max(0, min(
+            n_cols, math.ceil((nx / 2. - x_first) / step)))
+        choices = (
+            (0, x_first, n_left),
+            (1, x_first + n_left * step, n_cols - n_left),
+        )
+        for side, first, count in choices:
+            if count == 0:
+                continue
+            quadrant = side + 2 * int(y >= ny / 2.)
+            totals[quadrant] += count
+            # prefix end, original y row, first x column
+            blocks[quadrant].append(
+                (totals[quadrant], int(y), int(first)))
+    # Seeded permutation of a quadrant's flattenable integer indices,
+    # no permutation array and no sampling with replacement.
+    rng = np.random.default_rng(seed)
+    offsets, strides, ends = [], [], []
+    for quadrant, count in enumerate(totals):
+        if count == 0:
+            offsets.append(0)
+            strides.append(1)
+        else:
+            offsets.append(int(rng.integers(0, count)))
+            stride = int(rng.integers(1, count + 1))
+            while math.gcd(stride, count) != 1:
+                stride = 1 if stride == count else stride + 1
+            strides.append(stride)
+        ends.append([record[0] for record in blocks[quadrant]])
+
+    def iterator():
+        for i in range(max(totals, default=0)):
+            for quadrant, count in enumerate(totals):
+                if i >= count:
+                    continue
+                flat_index = (offsets[quadrant] +
+                              i * strides[quadrant]) % count
+                block_index = bisect_right(ends[quadrant], flat_index)
+                preceding = (ends[quadrant][block_index - 1]
+                             if block_index else 0)
+                _, y, x_first = blocks[quadrant][block_index]
+                yield (quadrant,
+                       x_first + step * (flat_index - preceding),
+                       y)
+    return totals, iterator()
 
 
 def estimate_blank_annulus_covariance(
@@ -123,35 +197,15 @@ def estimate_blank_annulus_covariance(
     if max_placements is None:
         max_placements = min(256, max(48, required))
     candidate_budget = max(256, 32 * max_placements)
-    # The old row-major loop always accepted the first clean blanks at
-    # the upper edge. On an ample image 48 examples could all come from
-    # one sky region, understating large-scale spatial heterogeneity.
-    # Predeclare a geometry-only four-quadrant, seeded ordering. Neither
-    # pixel intensities nor measured fluxes participate in the ordering.
-    # Candidate nodes retain the existing step-separated lattice, so
-    # distinct accepted outer apertures never geometrically overlap.
-    candidates_by_quadrant = [[], [], [], []]
-    for row, y in enumerate(range(margin, ny - margin, step)):
-        start = margin + (step // 2 if row % 2 else 0)
-        for x in range(start, nx - margin, step):
-            quadrant = int(x >= nx/2) + 2*int(y >= ny/2)
-            candidates_by_quadrant[quadrant].append((x, y))
-    rng = np.random.default_rng(20261112)
-    for group in candidates_by_quadrant:
-        rng.shuffle(group)
+    # Enumerate at most two integer-progression blocks per native row.
+    # Never allocate all possible (x, y) positions: an image can have
+    # millions of lattice nodes even when at most 256 blanks are used.
+    available_by_quadrant, candidate_positions = (
+        _bounded_quadrant_blank_candidates(frame.shape, margin, step))
     accepted_by_quadrant = [0, 0, 0, 0]
-    available_by_quadrant = [len(g) for g in candidates_by_quadrant]
-    # Interleave the predeclared quadrants; do not prefer the first
-    # pixel rows merely because a placement cap has been reached.
-    for index in range(max(available_by_quadrant, default=0)):
-        if len(centres) >= max_placements or examined >= candidate_budget:
-            break
-        for quadrant, group in enumerate(candidates_by_quadrant):
+    for quadrant, x, y in candidate_positions:
             if len(centres) >= max_placements or examined >= candidate_budget:
                 break
-            if index >= len(group):
-                continue
-            x, y = group[index]
             examined += 1
             # At least the full outer aperture separates each sky placement
             # from the putative target. Extended LSB light is NOT excluded.
@@ -194,9 +248,10 @@ def estimate_blank_annulus_covariance(
         "dataset_id": frame.dataset_id,
         "radii_arcsec": list(radii),
         "placement_policy": (
-            "STRATIFIED_QUADRANT_PREDECLARED_NONOVERLAPPING_NATIVE_RINGS_V2"),
+            "STRATIFIED_QUADRANT_BOUNDED_MEMORY_NATIVE_RINGS_V3"),
         "candidate_order_independent_of_image_brightness": True,
         "candidate_order_random_seed": 20261112,
+        "candidate_storage_policy": "ROW_BLOCKS_AND_COPRIME_INDEX_STRIDE_NO_CENTER_ARRAY",
         "candidate_grid_nodes_by_quadrant": available_by_quadrant,
         "accepted_centres_by_quadrant": accepted_by_quadrant,
         "n_quadrants_with_accepted_blanks": sum(
