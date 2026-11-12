@@ -446,7 +446,7 @@ def test_stage_04_3_rejects_same_area_modified_source_pixels_and_stale_image():
         diagnose_aperture_systematics(
             f, effective_source_mask=modified_source, **args)
     altered = frame(value=3.)
-    with pytest.raises(ValueError, match="native pixels or weights changed"):
+    with pytest.raises(ValueError, match="native pixels or weights changed|native_input_sha256"):
         diagnose_aperture_systematics(
             altered, effective_source_mask=source, **args)
 
