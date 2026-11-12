@@ -999,7 +999,7 @@ def test_red_extended_isolation_uses_wcs_not_scalar_pixel_scale():
     assert stats["skipped_target_overlap"] == 2
     assert not mask.any()
     # Removing the close neighbour makes exactly the same red object
-    # pass, with a sky-plane offset accounting for cos(dec) and scale.
+    # pass, with a TAN projection-plane offset (no second cos(dec)).
     alone, counts = conservative_catalogue_mask(
         protected.shape, positions[:1], (candidate,),
         arcsec_per_pixel=1., protected=protected, wcs=wcs,
@@ -1009,7 +1009,7 @@ def test_red_extended_isolation_uses_wcs_not_scalar_pixel_scale():
     evidence = counts["red_extended_preview_centres"][0]["evidence"]
     assert evidence["distance_geometry"] == (
         "NATIVE_WCS_LOCAL_EAST_NORTH_ARCSEC")
-    assert 35. < evidence["offset_arcsec"] < 40.
+    assert evidence["offset_arcsec"] == pytest.approx(40.,abs=1.e-9)
     assert evidence["nearest_arcsec"] is None
     assert evidence["no_catalogue_neighbour"] is True
     assert alone[120,160]
