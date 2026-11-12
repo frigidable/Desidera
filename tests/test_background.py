@@ -1003,3 +1003,37 @@ def test_stage03_spatial_sampler_is_alternative_not_default_selection():
     with pytest.raises(ValueError, match="sampling policy"):
         _automatic_scene_sky_pixels(
             dataset, preview, contamination, sample_policy="BAD")
+
+
+def test_stage03_incomplete_gaia_rows_fail_closed_without_silent_star_skip():
+    """A numerically complete SC1 inventory must contain usable veto evidence."""
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset, draft, contamination = _stage03_project_fixture(
+        with_regions=False)
+    invalid_entries = (
+        [None],
+        [["not", "a", "source"]],
+        [{"x": "invalid", "y": 20., "gaia_g_mag": 13.}],
+        [{"x": np.nan, "y": 20., "gaia_g_mag": 13.}],
+        [{"x": 20., "y": 20., "gaia_g_mag": True}],
+        [{"x": 20., "y": 20., "gaia_g_mag": "13.0"}],
+        [{"x": 20., "y": 20., "gaia_g_mag": None,
+          "gaia_dr3_source_id": 123456789}],
+    )
+    for entries in invalid_entries:
+        bad = dict(contamination)
+        bad["source_inventory"] = {
+            "entries": entries, "stored_count": 1,
+            "total_relevant_sources": 1, "truncated": 0,
+            "screening_evidence_incomplete": False,
+        }
+        report = diagnose_current_project_residual_sky(
+            dataset, draft, bad)
+        assert report["status"] == (
+            "SOURCE_INVENTORY_INCOMPLETE_FOR_AUTOMATIC_SKY")
+        assert report["methods"] == {}
+        assert report["sky_model_adopted"] is False
+        evidence = report["automatic_sky_selection_qa"]
+        assert not evidence["bright_gaia_inventory_complete"]
+        assert (evidence["source_inventory_invalid_or_unverifiable_rows"] +
+                evidence["gaia_reference_sources_without_g_magnitude"]) >= 1

@@ -483,17 +483,41 @@ def _automatic_scene_sky_pixels(
         entries = ()
     bright_veto = np.zeros(shape, dtype=bool)
     bright_n = 0
+    invalid_source_rows = 0
+    unknown_gaia_g_sources = 0
     for entry in entries:
-        mag = entry.get("gaia_g_mag")
-        if mag is None:
+        # A complete inventory count is not sufficient if a source row
+        # is malformed. In particular a bright Gaia star with invalid
+        # pixel coordinates or missing G magnitude must not simply
+        # disappear from the halo veto and certify background geometry.
+        if not isinstance(entry, dict):
+            invalid_source_rows += 1
             continue
         try:
-            mag = float(mag)
+            if (isinstance(entry.get("x"), (bool, np.bool_)) or
+                    isinstance(entry.get("y"), (bool, np.bool_))):
+                raise ValueError("Boolean catalogue pixel location")
             sx, sy = float(entry["x"]), float(entry["y"])
+            if not (np.isfinite(sx) and np.isfinite(sy)):
+                raise ValueError("Nonfinite catalogue location")
         except (TypeError, ValueError, KeyError, OverflowError):
+            invalid_source_rows += 1
             continue
-        if not (np.isfinite(mag) and np.isfinite(sx) and np.isfinite(sy)
-                and 0. < mag <= 18.):
+        mag = entry.get("gaia_g_mag")
+        if mag is None:
+            if entry.get("gaia_dr3_source_id") is not None:
+                unknown_gaia_g_sources += 1
+            continue
+        try:
+            if isinstance(mag, (bool, np.bool_, str)):
+                raise ValueError("Unverifiable Gaia G magnitude")
+            mag = float(mag)
+            if not (np.isfinite(mag) and 0. < mag <= 35.):
+                raise ValueError("Unphysical Gaia G magnitude")
+        except (TypeError, ValueError, OverflowError):
+            invalid_source_rows += 1
+            continue
+        if mag > 18.:
             continue
         guard_arcsec = (60. if mag <= 13. else
                         40. if mag <= 15. else
@@ -504,6 +528,8 @@ def _automatic_scene_sky_pixels(
             continue
         bright_veto[ys, xs] |= footprint
         bright_n += 1
+    if invalid_source_rows or unknown_gaia_g_sources:
+        provenance_complete = False
 
     valid = ((~hard) & np.isfinite(image) &
              np.isfinite(invvar) & (invvar > 0))
@@ -599,6 +625,11 @@ def _automatic_scene_sky_pixels(
         "n_existing_bright_gaia_sources_vetoed": bright_n,
         "bright_gaia_inventory_present": isinstance(inventory, dict),
         "bright_gaia_inventory_complete": bool(provenance_complete),
+        "source_inventory_invalid_or_unverifiable_rows":
+            int(invalid_source_rows),
+        "gaia_reference_sources_without_g_magnitude":
+            int(unknown_gaia_g_sources),
+        "source_inventory_rows_are_not_membership_probabilities": True,
         "bright_gaia_inventory_declared_truncated": (
             inventory.get("truncated") if isinstance(inventory, dict) else None),
         "bright_gaia_inventory_screening_evidence_incomplete": (

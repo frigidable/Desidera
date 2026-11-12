@@ -2584,3 +2584,31 @@ or a reason to add this light to a total. Regressions include
 overlapping hard/manual masks, an off-centre tilted sky and
 explicit negative source-mask flux. The per-source astrophysical
 classification still requires catalog/PSF and injected truth.
+
+
+### Stage 03: source-inventory row evidence is part of the bright-star sky veto (2026-11-13)
+
+Automatic sky selection previously verified that SC1 inventory
+`stored_count` matched the actual number of entries, but
+subsequently assumed all rows were mappings and silently skipped
+invalid `gaia_g_mag` or pixel coordinates. A malformed row could
+either crash on `entry.get` or, more seriously, omit a potentially
+bright foreground star from the halo veto while leaving the
+inventory-complete flag **True**.
+
+Stage 03 now checks each inventory entry's mapping type and
+finite original pixel centre. Any invalid/malformed Gaia G
+magnitude causes a countable incomplete-source status; a Gaia DR3
+reference ID without a known G magnitude is likewise explicitly
+unverifiable as a bright-star veto and therefore blocks automatic
+sky candidate fitting. Unknown magnitudes for records *without*
+a Gaia DR3 reference remain missing, rather than being fabricated.
+The invalid-row and unknown-G counts are recorded and
+`SOURCE_INVENTORY_INCOMPLETE_FOR_AUTOMATIC_SKY` is returned before
+any fitted sky is reported.
+
+This cannot prove that all uncatalogued bright stars have been
+identified; the veto radii and true wing extents remain
+uncalibrated. Synthetic regressions cover nonmapping entries,
+invalid/missing positions, Boolean/string G magnitudes and Gaia
+identities without usable brightness evidence.
