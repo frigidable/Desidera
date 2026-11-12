@@ -1061,6 +1061,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "band": band,
         "dataset_source": source,
         "source_quartet_key": loaded_key,
+        "loaded_project_target_icrs":dataset.get("loaded_target_icrs"),
         "grid_fingerprint": grid,
         "draft_sha256": draft.digest,
         "catalog_sha256": contamination["catalog_sha256"],
