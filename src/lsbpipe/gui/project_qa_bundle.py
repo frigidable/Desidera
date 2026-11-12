@@ -14,6 +14,7 @@ from pathlib import Path
 import json
 import math
 import platform
+import re
 import sys
 
 import numpy as np
@@ -603,6 +604,7 @@ def _cross_stage_source_lineage_qa(stages):
         return {"state":"SCENE_SOURCE_NOT_CURRENT",
                 "science_adopted":False}
     source=native.get("source_quartet_key")
+    grid=native.get("grid_fingerprint")
     hashes=native.get("original_fits_sha256_local")
     status=native.get("original_fits_provenance_status")
     unit=native.get("image_unit_evidence")
@@ -611,8 +613,12 @@ def _cross_stage_source_lineage_qa(stages):
             not all(isinstance(v,(int,float)) and math.isfinite(v)
                     for v in anchor) or
             not isinstance(source,(tuple,list)) or len(source)!=4 or
+            not isinstance(grid,str) or not grid or
             not isinstance(hashes,dict) or set(hashes)!=set(
                 ("image","invvar","nexp","maskbits")) or
+            not all(isinstance(v,str) and
+                    re.fullmatch(r"[0-9a-f]{64}",v)
+                    for v in hashes.values()) or
             status!="FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD" or
             unit!="FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"):
         return {"state":"SCENE_SOURCE_NOT_FULLY_VERIFIED",
@@ -633,6 +639,7 @@ def _cross_stage_source_lineage_qa(stages):
                  if isinstance(key,(tuple,list)) else False)
         hashes_match=(digest==hashes
                       if isinstance(digest,dict) else False)
+        grid_match=result.get("grid_fingerprint")==grid
         unit_match=result.get("image_unit_evidence")==unit
         result_anchor=result.get("loaded_project_target_icrs")
         anchor_match=(list(result_anchor)==list(anchor)
@@ -642,10 +649,11 @@ def _cross_stage_source_lineage_qa(stages):
                 result.get("target_anchor_icrs")==list(anchor))
         examined[name]={
             "state":"MATCH" if (matches and hashes_match and
-                                unit_match and anchor_match)
+                                grid_match and unit_match and anchor_match)
             else "SOURCE_IDENTITY_MISMATCH",
             "quartet_matches":bool(matches),
             "full_original_sha256_matches":bool(hashes_match),
+            "native_grid_fingerprint_matches":bool(grid_match),
             "image_unit_evidence_matches":bool(unit_match),
             "project_target_icrs_matches":bool(anchor_match)}
         if examined[name]["state"]!="MATCH":
@@ -657,6 +665,7 @@ def _cross_stage_source_lineage_qa(stages):
             if any(v["state"]=="MATCH" for v in examined.values())
             else "NO_CURRENT_DEPENDENT_STAGE_TO_COMPARE"),
         "scene_source_quartet_key":list(source),
+        "scene_grid_fingerprint":grid,
         "scene_loaded_target_icrs":list(anchor),
         "scene_original_fits_sha256_local":dict(hashes),
         "scene_image_unit_evidence":unit,
