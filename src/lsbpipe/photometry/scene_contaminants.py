@@ -25,6 +25,12 @@ from lsbpipe.photometry.sky_masks import rasterize_sky_shape
 from lsbpipe.survey import named_bit
 
 
+# A geometry correction can change source-mask pixels without changing
+# the target, catalogue, or mask draft. Its recipe must therefore be
+# independently versioned for reproducible photometry and SBF inputs.
+_SCENE_MASK_POLICY = "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS"
+
+
 def _has_gaia_catalogue_reference(row):
     """An identified Gaia DR2/DR3 reference, not merely a placeholder mag.
 
@@ -533,6 +539,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "draft_digest": draft.digest,
         "dataset_source": dataset["source"],
         "source_quartet_key": list(expected_key),
+        "source_mask_policy_id": _SCENE_MASK_POLICY,
+        "source_mask_native_geometry": (
+            "TAN_INTERMEDIATE_PROJECTION_PLANE_JACOBIAN_NO_EXTRA_COS_DECLINATION"),
         "band": band,
         "anchor_icrs": anchor,
         "sga_prior_id": sga_prior.sga_id if sga_prior is not None else None,
