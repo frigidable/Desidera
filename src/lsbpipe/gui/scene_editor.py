@@ -247,6 +247,9 @@ def load_scene_original_cutout(project_root: str, band: str,
         "display_width_arcmin": width_arcmin,
         "project_field_width_arcmin": project.field.width_arcmin,
         "project_id": project.project_id,
+        "loaded_target_icrs": [float(project.field.ra_deg),
+                               float(project.field.dec_deg)],
+        "loaded_project_field_width_arcmin": float(project.field.width_arcmin),
         "source_quartet_key": [release, region, brick, band],
         "hdu_indices": original["hdu_indices"],
         "original_fits_sha256_local": source_hashes,
@@ -1869,8 +1872,17 @@ class SceneEditor(QWidget):
         self._project_target = (
             (project.field.ra_deg, project.field.dec_deg)
             if project.field is not None else None)
+        # A project's ICRS target and field width are scientific input
+        # identity, not display-only metadata. Rebinding the same UUID
+        # after moving its centre MUST invalidate native cutouts, masks,
+        # isophotes, Background, Aperture, and associated in-memory QA.
+        field_identity = (
+            (float(project.field.ra_deg), float(project.field.dec_deg),
+             float(project.field.width_arcmin))
+            if project.field is not None else None)
         key = (str(Path(project.root).resolve()), project.project_id,
-               project.selected_dataset, str(project.data_root))
+               project.selected_dataset, str(project.data_root),
+               field_identity)
         if key == self._source_key:
             return
         self.flush_autosave()
@@ -2077,6 +2089,18 @@ class SceneEditor(QWidget):
             raise ValueError("Scene workbench refuses science-adopted input")
         if data["band"] != self._band or data["project_id"] != self._project_id:
             raise ValueError("Scene image identity does not match active project")
+        # Reject a completed worker that read the same project UUID but a
+        # different passport centre/source while GUI was loading it.
+        if data.get("loaded_target_icrs") is not None and (
+                tuple(data["loaded_target_icrs"]) != self._project_target):
+            raise ValueError(
+                "Loaded Scene target ICRS differs from bound project anchor")
+        if (data.get("source_quartet_key") is not None and
+                self._source_key is not None and
+                tuple(data["source_quartet_key"][:3]) !=
+                tuple(self._source_key[2][:3])):
+            raise ValueError(
+                "Loaded Scene quartet differs from bound project source")
         ny, nx = map(int, data["pixel_shape"])
         if ny*nx > MAX_RENDER_PIXELS or ny <= 0 or nx <= 0:
             raise ValueError("Scene native pixel count out of bounds")
@@ -3072,6 +3096,9 @@ class SceneEditor(QWidget):
                 "dataset_source": dataset["source"],
                 "band": dataset["band"],
                 "project_id": dataset["project_id"],
+                "loaded_target_icrs": dataset.get("loaded_target_icrs"),
+                "loaded_project_field_width_arcmin": dataset.get(
+                    "loaded_project_field_width_arcmin"),
                 "source_quartet_key": dataset.get("source_quartet_key"),
                 "native_pixel_shape": dataset["pixel_shape"],
                 "display_width_arcmin": dataset["display_width_arcmin"],
