@@ -151,6 +151,36 @@ def test_same_uuid_target_protection_radius_change_invalidates_scene(
     assert scene._loaded is None
 
 
+def test_failed_autosave_blocks_same_object_source_switch_without_losing_edits(
+        qtbot,tmp_path,monkeypatch):
+    """A stale external HEAD must never erase the live unsaved draft."""
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    original_key=scene._source_key
+    original_scene=scene._loaded
+    original_target=scene._project_target
+    unsaved=scene.draft.with_edit(SkyMaskEdit(
+        "live_not_saved", "exclude",
+        SkyMaskShape("circle",(359.999,60.),radius_arcsec=3.)))
+    scene._draft=unsaved
+    external=SkyMaskDraft(project.project_id).with_edit(SkyMaskEdit(
+        "other_window", "protect_target",
+        SkyMaskShape("circle",(359.999,60.),radius_arcsec=5.)))
+    external_sha=save_mask_draft(
+        project.root,external,expected_digest=scene._saved_digest)
+    project.target_radius_arcsec+=12.
+    save_object_project(project)
+    scene.bind_project(project.root)
+    assert scene._source_key==original_key
+    assert scene._loaded is original_scene
+    assert scene._project_target==original_target
+    assert scene._draft==unsaved
+    assert scene._draft.digest!=scene._saved_digest
+    assert "SOURCE SWITCH BLOCKED" in scene.status.text()
+    saved,sha=read_active_mask_draft(project.root)
+    assert sha==external_sha
+    assert saved==external
+
+
 def test_scene_rejects_cross_brick_worker_result_without_mutating_gui(
         qtbot,tmp_path,monkeypatch):
     scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
