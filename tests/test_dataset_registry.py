@@ -233,6 +233,7 @@ def test_science_cache_refuses_synthetic_unverifiable_asset_hash_labels():
 def test_registry_never_reads_external_symlinked_index_or_directory(
         project, tmp_path):
     """Project data lineage cannot be sourced from symlinked index metadata."""
+    add_legacy_assets(project.root / "data")
     import_legacy_fits(project.root, project.root / "data")
     index = registry_path(project.root)
     external = tmp_path / "outside-dataset-index.json"
