@@ -179,6 +179,34 @@ def test_circular_point_source_mask_uses_sky_plane_for_anisotropic_wcs():
     assert np.array_equal(points, before_points)
 
 
+def test_tan_projection_matrix_must_not_get_extra_cos_declination():
+    """A TAN CD element already measures angular projection-plane distance.
+
+    At Dec=75 degrees a second cos(dec) correction would expand a 9.5
+    arcsec foreground mask to ~37 pixels along native x, a large error.
+    """
+    from astropy.coordinates import SkyCoord
+    from astropy import units as u
+    w=_wcs()
+    w.wcs.crval=[155.,75.]
+    center=np.array([[120.,120.]])
+    masked,qa=conservative_catalogue_mask(
+        (241,241),center,[_row("PSF",flux=100.)],
+        protected=np.zeros((241,241),dtype=bool),
+        arcsec_per_pixel=1.,wcs=w)
+    # Flux 100 nMgy = 17.5 AB; heuristic radius is 9.5 arcsec.
+    assert qa["masked_catalog_sources"]==1
+    assert masked[120,120]
+    assert masked[120,127]  # 7 native px = ~7 arcsec east/west
+    assert not masked[120,132] # 12 native px = ~12 arcsec
+    ra0,dec0=w.all_pix2world(120.,120.,0)
+    ra1,dec1=w.all_pix2world(132.,120.,0)
+    actual=SkyCoord(ra0*u.deg,dec0*u.deg).separation(
+        SkyCoord(ra1*u.deg,dec1*u.deg)).arcsec
+    assert actual==pytest.approx(12.,rel=1e-4)
+    assert not masked[132,120]
+
+
 def test_tractor_missing_or_unphysical_shape_falls_back_without_guessing_pa():
     protected=np.zeros((241,241),bool)
     rows=[{**_row("SER",flux=100.,shape_r=6.),
