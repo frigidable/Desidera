@@ -505,7 +505,8 @@ def _holdout_diagnostic(star, cutout, kernel):
                                             max(cutout["peak_nMgy"], 1e-12)),
         "flux_nMgy_diagnostic": float(flux),
         "amplitude_fit_domain": "VALID_CORE_PIXELS_WITHIN_REPORTED_RADIUS",
-        "whole_stamp_amplitude_nMgy_comparison": float(full_stamp_flux),
+        "whole_stamp_amplitude_nMgy_comparison": (
+            float(full_stamp_flux) if full_stamp_flux is not None else None),
         "core_minus_whole_stamp_amplitude_nMgy": (
             float(flux-full_stamp_flux)
             if full_stamp_flux is not None else None),
