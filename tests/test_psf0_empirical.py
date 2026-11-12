@@ -866,3 +866,41 @@ def test_psf_qa_depth_requires_exact_boolean_and_cannot_enable_adoption():
         build_empirical_coadd_psf(
             fake_frame(), target_icrs_deg=LEO_P,
             target_protection_arcsec=13., extended_research_qa="yes")
+
+
+def test_core_holdout_psf_amplitude_is_invariant_to_contaminated_outer_wings():
+    """Unvalidated far-wing pixels must not set a reported core residual scale."""
+    from types import SimpleNamespace
+    from scipy.ndimage import shift
+    from lsbpipe.photometry.psf_empirical import _holdout_diagnostic
+    yy, xx = np.indices((31, 31), dtype=float)
+    kernel = np.exp(-.5*((xx-15.)**2+(yy-15.)**2)/4.**2)
+    kernel /= kernel.sum()
+    x, y = 15.22, 14.83
+    shifted = np.maximum(shift(kernel, (y-15., x-15.),
+                                order=3, mode="constant", cval=0.), 0.)
+    cutout = {
+        "center_in_cutout": (x, y),
+        "weights": np.ones((31, 31), dtype=float),
+        "image": 175.*shifted,
+        "peak_nMgy": float((175.*shifted).max()),
+        "rms_nMgy": .02,
+    }
+    star = SimpleNamespace(star_id="test-star")
+    clean = _holdout_diagnostic(star, cutout, kernel)
+    # Inject diffuse outer light only outside the declared validation
+    # radius, where the current 31-pixel ePSF is not independently
+    # wing-calibrated. The fitted core amplitude must remain unchanged.
+    outer = np.hypot(xx-x, yy-y) > clean["core_aperture_radius_pix"]
+    altered = dict(cutout)
+    altered["image"] = cutout["image"] + outer*3.5
+    contaminated = _holdout_diagnostic(star, altered, kernel)
+    assert clean["amplitude_fit_domain"] == (
+        "VALID_CORE_PIXELS_WITHIN_REPORTED_RADIUS")
+    assert contaminated["flux_nMgy_diagnostic"] == pytest.approx(
+        clean["flux_nMgy_diagnostic"], abs=1.e-10)
+    assert contaminated["relative_core_abs_residual"] == pytest.approx(
+        clean["relative_core_abs_residual"], abs=1.e-13)
+    assert contaminated["whole_stamp_amplitude_nMgy_comparison"] > (
+        clean["whole_stamp_amplitude_nMgy_comparison"])
+    assert contaminated["amplitude_comparison_is_wing_sky_sensitivity_not_psf_validation"]

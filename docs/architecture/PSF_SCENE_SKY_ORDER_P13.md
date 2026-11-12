@@ -1126,3 +1126,27 @@ regressions verify exact cohort/quadrant accounting and
 that no fictitious external-validation or PSF-wing claim appears.
 This supports designing a future genuinely independent stellar
 validation cohort and does not itself cure PSF wing/sky degeneracy.
+
+
+### PSF-0 held-out core amplitude must not be fitted using unverified wings (2026-11-13)
+
+The independent held-out residual in `_holdout_diagnostic` is measured
+in a declared core aperture of radius at most nine native pixels, but
+the formerly reported stellar amplitude was fit over the **entire**
+31-pixel cutout. Broad PSF-wing mismodelling, neighbour residuals or
+a local-sky error outside the core therefore altered the amplitude
+used to judge the **core** itself. This is a confirmed mismatch
+between the metric's evaluation domain and its nuisance-parameter
+fit, not proof that the ePSF is astrophysically wrong.
+
+The conditional held-out amplitude is now inverse-variance fitted
+using precisely the declared valid **core** pixels. The previous
+whole-stamp amplitude is retained with a separate name and
+core-versus-whole difference as a descriptive wing/sky sensitivity
+test; neither result validates external PSF transfer or permits
+subtraction of stars. A synthetic fixed-PSF regression injects a
+large outer-halo disturbance outside the fitting radius and proves
+that the fitted core amplitude and core residual are invariant,
+while the old whole-stamp fit remains sensitive. This matches the
+limited fitting-radius principle of Photutils PSF photometry and
+classical DAOPHOT but is not a calibrated far-wing measurement.

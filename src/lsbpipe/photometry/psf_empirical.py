@@ -466,32 +466,43 @@ def _holdout_diagnostic(star, cutout, kernel):
     model = shift(kernel, (local_y-cy, local_x-cx),
                   order=3, mode="constant", cval=0., prefilter=True)
     usable = cutout["weights"] > 0
-    # Exclude any interpolation ringing: tiny signed numerical artifacts
-    # outside the model support are *not* interpreted as stellar flux.
+    # Exclude interpolation ringing and make the amplitude-fit domain
+    # identical to the declared *core* validation domain. The former
+    # whole-stamp LS fit let uncalibrated wings/annular sky leakage change
+    # the normalization against which CORE residuals were judged.
     model = np.maximum(model, 0.)
-    numerator = float(np.sum(cutout["weights"][usable]**2 *
-                             model[usable] * cutout["image"][usable]))
-    denominator = float(np.sum(cutout["weights"][usable]**2 * model[usable]**2))
-    if denominator <= 0 or not math.isfinite(denominator):
-        raise ValueError("Holdout PSF normalization is undefined")
-    flux = numerator/denominator
-    if flux <= 0 or not math.isfinite(flux):
-        raise ValueError("Holdout star fitted flux is invalid")
-    err = cutout["image"]-flux*model
     inner = np.indices(kernel.shape)
-    # The model was shifted to this native subpixel location; the
-    # validation aperture MUST use the same stellar center, not the
-    # unshifted central pixel of the kernel array.
     r = np.hypot(inner[1]-local_x, inner[0]-local_y)
     core_radius = min(cx, cy, 9.)
     local = usable & (r <= core_radius)
     if not np.any(local):
         raise ValueError("Empty PSF holdout aperture")
+    def fit_amplitude(selection):
+        wt = cutout["weights"][selection]**2
+        denominator = float(np.sum(wt*model[selection]**2))
+        if denominator <= 0 or not math.isfinite(denominator):
+            raise ValueError("Holdout PSF normalization is undefined")
+        result = float(np.sum(wt*model[selection]*cutout["image"][selection])
+                       / denominator)
+        if result <= 0 or not math.isfinite(result):
+            raise ValueError("Holdout star fitted flux is invalid")
+        return result
+    flux = fit_amplitude(local)
+    # Preserve the former all-stamp answer as a *separate diagnostic*
+    # of the sensitivity to wings and local sky. It never determines
+    # the core-fit validation residual or any PSF science adoption.
+    full_stamp_flux = fit_amplitude(usable)
+    err = cutout["image"]-flux*model
     return {
         "source_id": star.star_id,
         "relative_core_abs_residual": float(np.median(np.abs(err[local])) /
                                             max(cutout["peak_nMgy"], 1e-12)),
         "flux_nMgy_diagnostic": float(flux),
+        "amplitude_fit_domain": "VALID_CORE_PIXELS_WITHIN_REPORTED_RADIUS",
+        "whole_stamp_amplitude_nMgy_comparison": float(full_stamp_flux),
+        "core_minus_whole_stamp_amplitude_nMgy": float(
+            flux-full_stamp_flux),
+        "amplitude_comparison_is_wing_sky_sensitivity_not_psf_validation": True,
         "background_rms_nMgy": cutout["rms_nMgy"],
         "core_aperture_center_native_xy": [float(local_x), float(local_y)],
         "core_aperture_radius_pix": float(core_radius),
