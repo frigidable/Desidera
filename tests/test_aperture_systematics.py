@@ -63,6 +63,34 @@ def test_blank_annulus_covariance_is_deterministic_signed_and_psd():
     json.dumps(result, allow_nan=False)
 
 
+def test_bounded_memory_stratified_candidates_large_grid_does_not_allocate_centres():
+    """Tens of millions of candidate nodes require only row-block metadata."""
+    from itertools import islice
+    from lsbpipe.photometry.aperture_systematics import (
+        _bounded_quadrant_blank_candidates)
+    shape=(40000,40000)
+    margin=6
+    step=12
+    counts,seq=_bounded_quadrant_blank_candidates(
+        shape,margin,step)
+    assert len(counts)==4
+    assert sum(counts)>10_000_000
+    first=list(islice(seq,80))
+    assert len(first)==80
+    assert {v[0] for v in first}=={0,1,2,3}
+    assert len({(x,y) for _,x,y in first})==80
+    assert all(margin<=x<shape[1]-margin and
+               margin<=y<shape[0]-margin
+               for _,x,y in first)
+    assert first==list(islice(
+        _bounded_quadrant_blank_candidates(shape,margin,step)[1],80))
+    # The prior implementation allocated tens of millions of (x,y)
+    # tuples before considering any science mask. The V3 generator
+    # only stores a pair of row blocks per native grid row.
+    assert type(seq).__name__=="generator"
+    assert seq.__sizeof__()<4096
+
+
 def test_blank_sampling_is_spatially_stratified_not_first_clean_rows():
     """A capped clean field must sample distinct quadrants, not one edge."""
     rng=np.random.default_rng(29)
@@ -81,7 +109,7 @@ def test_blank_sampling_is_spatially_stratified_not_first_clean_rows():
     assert max(counts)-min(counts)<=4
     assert result["candidate_order_independent_of_image_brightness"] is True
     assert result["placement_policy"]==(
-        "STRATIFIED_QUADRANT_PREDECLARED_NONOVERLAPPING_NATIVE_RINGS_V2")
+        "STRATIFIED_QUADRANT_BOUNDED_MEMORY_NATIVE_RINGS_V3")
     assert result==estimate_blank_annulus_covariance(
         f,geometry(a=1.6,q=.8,pa=25.),(.5,1.,1.6),
         effective_source_mask=none,manual_exclude=none,
