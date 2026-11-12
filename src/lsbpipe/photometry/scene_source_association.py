@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -49,15 +50,17 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
     """
     if not isinstance(band_data, dict) or not band_data:
         raise ValueError("Nonempty band-to-native-detections mapping required")
-    if (not isinstance(match_radius_arcsec, (int, float)) or
+    if (isinstance(match_radius_arcsec, bool) or
+            not isinstance(match_radius_arcsec, (int, float)) or
             not math.isfinite(match_radius_arcsec) or
             not .05 <= match_radius_arcsec <= 10.):
         raise ValueError("Explicit angular match radius must be 0.05..10 arcsec")
-    if (not isinstance(max_detections, int) or max_detections < 1 or
-            not isinstance(max_edges, int) or max_edges < 1):
+    if (type(max_detections) is not int or max_detections < 1 or
+            type(max_edges) is not int or max_edges < 1):
         raise ValueError("Positive association safety limits required")
     records = []
     provenance = {}
+    seen_native_images = {}
     for band in sorted(band_data):
         if band not in _ALLOWED_BANDS:
             raise ValueError(f"Unsupported optical band: {band!r}")
@@ -70,6 +73,18 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"Missing {key} provenance for band {band}")
             meta[key] = value
+        if not meta["dataset_id"].endswith("/" + band):
+            raise ValueError(
+                "Band provenance dataset_id disagrees with detection band")
+        image_sha = meta["image_sha256"]
+        if re.fullmatch(r"[0-9a-f]{64}", image_sha) is None:
+            raise ValueError(
+                "image_sha256 must be a complete lowercase SHA-256")
+        if image_sha in seen_native_images:
+            raise ValueError(
+                "Identical original image SHA across bands cannot constitute "
+                "independent image-detection evidence")
+        seen_native_images[image_sha] = band
         provenance[band] = meta
         detections = block.get("detections")
         if not isinstance(detections, (list, tuple)):
@@ -176,6 +191,7 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
             "IMAGE_DETECTION_NOT_A_PHYSICAL_OBJECT",
             "POSITIONAL_MATCH_NOT_MEMBERSHIP_OR_ASSOCIATION_PROOF",
             "NO_TRACTOR_GRIZ_DUPLICATE_AS_INDEPENDENT_EVIDENCE",
+            "IMAGE_SHA256_DECLARED_BY_CALLER_NOT_RECOMPUTED_IN_ASSOCIATION",
             "NO_AUTOMATIC_MASK_OR_PHOTOMETRY_ACTION",
             "REQUIRES_INDEPENDENT_PSF_ASTROMETRY_AND_REAL_DATA_VALIDATION",
         ),

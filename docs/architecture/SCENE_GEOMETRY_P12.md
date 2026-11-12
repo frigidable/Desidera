@@ -895,3 +895,21 @@ bounds and release eligibility are specified separately in
 [Photometry Quality & Validation](PHOTOMETRY_QUALITY_VALIDATION.md).
 They are *requirements*, not evidence that SC1/SA2 or Leo P photometry
 has passed science QA.
+
+
+### SA2a declared independent-band source provenance (2026-11-12)
+
+The read-only `associate_band_detections` API previously checked only
+that `image_sha256` and `dataset_id` were nonempty strings. Thus
+placeholder labels could look like valid observation identity, and the
+same image bytes could be submitted as two ostensibly independent bands.
+
+The association layer now requires a canonical lowercase 64-character
+SHA-256, the correct band suffix in every native dataset ID and unique
+original-image hashes across supplied bands. Boolean radii and resource
+budgets fail closed. Deterministic regression tests cover invalid hashes,
+duplicates and mismatched dataset identity. The hashes are **declared
+by the caller**, not recomputed or authenticated in this API. A future
+native-detection adapter must generate these digests from validated,
+original input data. No physical source identity, membership, PSF
+subtraction or mask change is inferred by this positional grouping.

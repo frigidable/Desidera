@@ -10,7 +10,7 @@ from lsbpipe.photometry.scene_source_association import (
 
 def block(band, *detections):
     return {"dataset_id":f"dr11/south/1554p180/{band}",
-            "image_sha256":band*64,
+            "image_sha256":{"g":"a","r":"b","i":"c","z":"d"}[band]*64,
             "segmentation_id":f"native-test-{band}",
             "detections":[{"detection_id":str(label),
                            "ra_deg":ra,"dec_deg":dec}
@@ -83,3 +83,29 @@ def test_provenance_duplicate_identity_and_resource_limits_fail_closed():
     with pytest.raises(ValueError,match="Invalid ICRS"):
         associate_band_detections({"g":block("g",("a",10.,91.))},
                                   match_radius_arcsec=.5)
+
+
+def test_association_rejects_unverifiable_or_duplicate_image_evidence():
+    valid = {"g":block("g",("a",10.,0.)),
+             "r":block("r",("b",10.,0.))}
+    assert associate_band_detections(
+        valid,match_radius_arcsec=.3)["candidate_edge_count"] == 1
+    for invalid in ("g"*64,"A"*64,"a"*63,"anything","a"*65):
+        with pytest.raises(ValueError,match="lowercase SHA-256"):
+            associate_band_detections(
+                {"g":dict(valid["g"],image_sha256=invalid)},
+                match_radius_arcsec=.3)
+    with pytest.raises(ValueError,match="Identical original image SHA"):
+        associate_band_detections(
+            {"g":valid["g"],
+             "r":dict(valid["r"],image_sha256=valid["g"]["image_sha256"])},
+            match_radius_arcsec=.3)
+    with pytest.raises(ValueError,match="dataset_id disagrees"):
+        associate_band_detections(
+            {"g":dict(valid["g"],dataset_id="dr11/south/1554p180/z")},
+            match_radius_arcsec=.3)
+    with pytest.raises(ValueError,match="Explicit angular match"):
+        associate_band_detections(valid,match_radius_arcsec=True)
+    with pytest.raises(ValueError,match="safety limits"):
+        associate_band_detections(valid,match_radius_arcsec=.3,
+                                  max_detections=True)

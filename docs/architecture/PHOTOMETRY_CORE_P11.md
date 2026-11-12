@@ -2309,3 +2309,29 @@ a warning makes this scope explicit. These changes do not establish
 science-grade sky, masked-flux recovery, calibrated covariance or
 validated total photometry. The Leo P original FITS are still required
 for end-to-end injection-recovery and foreground PSF validation.
+
+
+### Native raster byte identity across Stage 04.2 → 04.3 (2026-11-12)
+
+A deterministic curve receipt and agreement of the outer-aperture
+flux/area/diagonal variance do **not** certify the native input arrays:
+swapping two equal-weight pixels can preserve every such scalar while
+changing IMAGE; compensating changes in inverse variance can likewise
+preserve the formal error. Native WCS and source-catalogue hashes are
+separate kinds of provenance.
+
+`NativeBandFrame.native_input_sha256` is a lazy, per-immutable-frame
+SHA-256 over the exact in-memory IMAGE, INVVAR, NEXP, MASKBITS and
+effective hard-validity arrays, including dtype, shape, dataset identity
+and a domain/version prefix. It hashes contiguous read-only buffers
+without allocating a second full raster. Stage 04.2 now includes this
+value in its deterministic receipt, and Stage 04.3 verifies it before
+any comparison; Stage 04's GUI diagnostic also exposes the value.
+Synthetic tests exchange source pixels and variance pixels while
+preserving their previous outer-aperture integrals and verify that
+the new byte-fingerprint safeguard refuses the stale input.
+
+This is a **local computational identity**, not a claim of archived FITS
+authenticity, correct WCS, scientifically valid sky/PSF, or calibrated
+total photometry. FITS file hashes, WCS fingerprints and native-array
+fingerprints have deliberately distinct scopes.
