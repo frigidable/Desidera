@@ -2104,3 +2104,78 @@ that no numerical hypothetical correction is emitted.
 The version is scientific-input provenance: matching versions does
 not imply valid foreground membership, accurate outer PSF wings,
 or calibrated masked-light reconstruction. `SCIENCE HOLD` remains.
+
+
+---
+
+## 2026-11-12 — Deep audit: bounded blank-covariance search and exact mask lineage
+
+### Stage04.3 candidate-list memory scaling
+
+The previous V2 stratified sampling fix correctly avoided the row-major
+selection bias, but it constructed **all native lattice point tuples**
+for every quadrant before applying the bounded scientific evaluation
+budget. In a sufficiently large image, millions of candidate centres
+could be allocated solely to select at most 256 independent blanks.
+This broke the stated resource-bounded design of the aperture QA
+worker; CPU/memory costs scaled with possible grid centres rather
+than the intended numerical evaluation budget.
+
+**Fix (V3)**: the identical staggered, geometry-only spacing lattice
+is represented by up to two arithmetic-progression blocks per native
+grid row. The four quadrant totals are computed without materializing
+centre coordinates. A recorded deterministic seeded, coprime-stride
+index permutation enumerates each quadrant's nodes without duplicates
+or a full permutation array, and the consumer stops at the existing
+`max_placements` / `candidate_budget`. This reduces candidate
+storage from O(number of grid nodes) to O(number of lattice rows),
+while preserving bounded candidate evaluations, separation
+requirements and geometry-only selection. The placement policy
+identifier is versioned as
+`STRATIFIED_QUADRANT_BOUNDED_MEMORY_NATIVE_RINGS_V3`; fitted blank
+covariance results may change because sample ordering has changed
+and must never be treated as adopted science uncertainties.
+
+A deterministic synthetic regression uses a grid representing **over
+10 million** possible lattice centres and checks the first 80
+generated positions, uniqueness, native bounds and repeatability.
+No full survey-science pixel array is allocated for this regression.
+The existing 4-quadrant coverage, intensity-independence,
+separation and one-quadrant warning tests remain applicable.
+
+### Exact pixel-level source-mask consistency across stages
+
+The draft SHA, catalogue SHA, WCS fingerprint and policy version
+identify recipes and inputs but previously did not bind the **actual
+rasterized Boolean pixels** consumed by Stage03 and Stage04. An
+in-memory mask replacement or a code-path discrepancy could therefore
+pass the identity comparison while sky and aperture diagnostics used
+different exclusion footprints.
+
+**Fix**: a shared canonical `native_boolean_mask_sha256` hashes
+2D Boolean source and manual-exclude masks using explicit native
+shape and C-ordered pixel bytes. Stage02 records both receipts
+immediately after preparing the real source and manual masks. Stage03
+and Stage04 recompute them from their evaluated working masks, and
+fail closed before any sky fit or aperture flux if a known receipt
+differs. Both results report these exact digests. The one-click
+`Copy QA` now tests the same receipts across Scene, Background and
+Aperture, and blocks the hypothetical sky/aperture flux response if
+the actual raster footprints differ. Native invalidity remains
+immutable and is not treated as manually restorable.
+
+Tests cover one deliberately flipped automatic mask pixel, a wrong
+manual-mask receipt, invariance to memory strides, and a deliberate
+cross-stage source-mask mismatch despite matching project/catalogue
+identifiers. Legacy synthetic paths without a prepared mask receipt
+remain explicitly outside pixel-level verification; their absence
+is not evidence of agreement.
+
+### Scientific constraints unchanged
+
+These changes harden computational reproducibility and resource use.
+They do not independently validate true source membership, PSF wings,
+spatially correlated noise or sky–galaxy degeneracy. Blank aperture
+covariance is still a preliminary **same-coadd** diagnostic, and
+direct valid-area aperture fluxes are not total galaxy fluxes.
+`SCIENCE HOLD` remains required for Leo P and subsequent objects.
