@@ -1864,3 +1864,102 @@ against real original DR11 Leo P files. A synthetic pass is not a
 measurement of PSF far wings, correlated noise covariance, bias from
 upstream sky subtraction, masked galaxy-light restoration, or source
 membership. The full science release remains blocked.
+
+
+---
+
+## 2026-11-12 — Deep audit: sky-grid references, contamination vetoes and full-source comparisons
+
+This pass extends the verified scientific GUI contract. It does not
+alter original FITS, persistent user masks or the `main` branch.
+
+### Stage03 offset-grid control bug
+
+The Stage03 spatial tile QA was already corrected to use the recorded
+`tile_bounds_native_xyxy`. The *separate zero-additional-sky
+baseline* still reconstructed a tile footprint as
+`tile_index * tile_edge`. These are different native pixel regions
+when the intentionally predeclared sky grid is offset. That could
+produce an inconsistent sample count or a misleading zero-baseline
+tile median and thus undermine comparisons with fitted constant or
+planar sky models.
+
+**Fixed:** the zero-baseline now measures each frozen held-out
+footprint using its true recorded native bounds, validates its
+in-image rectangle and exact sample count, and explicitly fails
+closed on mismatches. Regression supplies a deliberately displaced
+tile and known signed native pixel residuals. The zero baseline still
+does **not** establish a correct absolute sky level or authorize
+an additional subtraction.
+
+### Stage03 target-protection precondition
+
+With zero protected target pixels, the original
+`_automatic_scene_sky_pixels` function could sample the target as
+putative sky if other masks happened to allow it. It could then fit
+a background against galaxy light.
+
+**Fixed:** a missing or wholly empty target-protection footprint
+raises an explicit background selection failure. The original
+science arrays remain unchanged; no candidate is adopted.
+This is a *necessary* precondition, not a sufficient test that
+undetected galaxy outskirts are excluded.
+
+### Stage03 Gaia angular veto with anisotropic WCS
+
+The independent bright-Gaia-star sky veto originally interpreted
+arcsecond exclusion radii as circles in pixel coordinates using
+a geometric-mean pixel scale. For anisotropic/sheared WCS, this
+under-excluded the fine-angular-scale native direction. The same
+scale was also used for pixel-space dilations around the target
+and catalogue sources, making them too narrow along a fine axis.
+
+**Fixed:** each Gaia bright-star veto is now a local tangent-plane
+sky circle rasterized through the full 2×2 native WCS Jacobian.
+Distance-transform dilations conservatively use the smallest
+angular scale per native pixel, never the geometric mean. The
+explicit report retains both scales and identifies the veto as
+an *unvalidated* PSF-wing-radius heuristic. Synthetic anisotropic
+and degenerate-WCS regressions exercise both footprints. This
+does not measure true bright-star wing extents or certify sky
+contamination.
+
+### Cross-stage comparison gates
+
+Earlier Copy QA versions computed a numerical response of Stage04
+aperture flux to Stage03 unadopted sky fits when project UUID,
+band, draft and catalogue hashes matched. This was insufficient
+if an older native FITS/WCS, copied catalogue identity, or moved
+project centre survived in a numerical output.
+
+**Fixed:** the conditional sky/aperture comparison requires the
+*current Scene*, identical machine source quartet, full original
+local SHA-256 quartet, native WCS/shape grid fingerprint, IMAGE
+nanomaggy unit evidence and fixed target ICRS centre in Stage03
+and Stage04. The underlying stages must explicitly report
+Scene-load original-file verification, and their aperture target
+anchor must agree with the loaded Scene. Missing or contradictory
+evidence yields an explicit provenance-mismatch state, not a
+numerical flux response.
+
+The independent `cross_stage_source_lineage` report likewise
+validates the presence and hexadecimal syntax of each original
+SHA-256 and compares the native grid fingerprint, source quartet,
+unit evidence and fixed project anchor across current results.
+WCS fingerprint is captured at Scene load without rereading
+original FITS when Copy QA is pressed.
+
+### Remaining scientific holds
+
+All per-band aperture fluxes are still *partial direct signed
+measurements on unmasked native coadd pixels*. PSF-0 is not yet
+a validated galaxy/foreground deblender; fitting a background
+candidate does not approve subtraction; neither masked-galaxy
+light nor large-scale correlated coadd covariance is recovered.
+No total Leo P magnitude, colour, asymptotic result or SBF
+measurement is released from these QA-only controls.
+
+A green CI run is evidence for code-level contracts in synthetic
+and GUI cases. Repeat source/header/PSF/sky controls on the
+researcher's local original DR11 Leo P FITS and compare with
+independent astrophysical truth before changing `SCIENCE HOLD`.
