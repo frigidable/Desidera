@@ -264,15 +264,32 @@ def measure_growth_diagnostic(
                 effective_source_mask=source,manual_exclude=manual,
                 sky=sky))
     residuals=[]
+    n_verified_closure=0
     for i,ann in enumerate(annuli,1):
         outer=cumulative[i].signed_valid_flux_nMgy
         inner=cumulative[i-1].signed_valid_flux_nMgy
-        if (outer is not None and inner is not None and
-                ann.signed_flux_nMgy is not None):
-            deviation=float(outer-inner-ann.signed_flux_nMgy)
-            residuals.append(deviation)
-        else:
+        if outer is None or inner is None:
             residuals.append(None)
+            continue
+        # A fully masked ring is not a *measured* zero-flux ring.
+        # Nevertheless two measured nested cumulative apertures must
+        # then integrate the same original usable pixels.
+        ring_flux = ann.signed_flux_nMgy
+        if ring_flux is None and not ann.no_valid_pixels:
+            raise ValueError("Stage 04.2 annulus missing measured flux")
+        deviation=float(outer-inner-(ring_flux if ring_flux is not None else 0.))
+        scale=max(1.,abs(outer),abs(inner),
+                  abs(ring_flux) if ring_flux is not None else 0.)
+        # An exact geometric annulus must equal a difference of
+        # concentric exact apertures. This is a numerical identity,
+        # not a model-dependent science tolerance or chi^2 gate.
+        if (not math.isfinite(deviation) or
+                abs(deviation) > 1.e-6 + 1.e-9*scale):
+            raise ValueError(
+                "Stage 04.2 independent annulus and cumulative flux "
+                "closure mismatch at radial index " + str(i))
+        n_verified_closure+=1
+        residuals.append(deviation if ring_flux is not None else None)
     # CoG is not forcibly monotonic. A sequence of entirely masked
     # apertures is UNDERCONSTRAINED, not a valid partial measurement.
     n_measured=sum(
@@ -302,6 +319,13 @@ def measure_growth_diagnostic(
         "n_measured_direct_apertures":int(n_measured),
         "n_measured_independent_annuli":int(sum(
             rec.signed_flux_nMgy is not None for rec in annuli)),
+        "n_comparable_nested_radial_closures_verified":int(
+            n_verified_closure),
+        "all_comparable_annular_flux_closures_within_numerical_tolerance":
+            True,
+        "closure_absolute_tolerance_nMgy":1.e-6,
+        "closure_relative_tolerance":1.e-9,
+        "closure_is_not_a_noise_or_science_quality_test":True,
         "independent_coadd_covariance_calibrated":False,
         "masked_galaxy_light_restored":False,
         "aperture_total_magnitude_validated":False,

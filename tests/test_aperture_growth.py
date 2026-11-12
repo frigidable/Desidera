@@ -244,3 +244,42 @@ def test_growth_geometry_and_radii_reject_boolean_numeric_coercion():
                               np.float64(42.), "SYNTHETIC")
     assert type(accepted.q) is float
     assert type(accepted.pa_deg) is float
+
+
+def test_stage042_refuses_numerically_inconsistent_independent_annulus(
+        monkeypatch):
+    """A closure error is not merely descriptive when both operators exist."""
+    from dataclasses import replace
+    import lsbpipe.photometry.aperture_growth as module
+    original = module.measure_native_annulus
+    calls = []
+
+    def corrupt_ring(*args, **kwargs):
+        row = original(*args, **kwargs)
+        calls.append(row)
+        if row.signed_flux_nMgy is None:
+            return row
+        return replace(row, signed_flux_nMgy=row.signed_flux_nMgy+.01)
+    monkeypatch.setattr(module, "measure_native_annulus", corrupt_ring)
+    f=frame(value=.5)
+    with pytest.raises(ValueError, match="independent annulus and cumulative flux closure"):
+        run_curve(f, radii=(1., 2., 4.))
+    assert calls and calls[0].signed_flux_nMgy is not None
+
+
+def test_stage042_closure_gate_does_not_invent_flux_in_unobserved_ring():
+    f=frame(value=.25)
+    # If only the inner aperture survives, the larger masked ring
+    # cannot acquire a synthetic zero-flux measurement to satisfy closure.
+    yy,xx=np.indices(f.shape)
+    source=np.hypot(xx-60, yy-60) > 5.
+    result=run_curve(f, source=source, radii=(1., 2., 4., 6.),
+                     q=1., pa=0.)
+    assert result["all_comparable_annular_flux_closures_within_numerical_tolerance"]
+    assert result["closure_is_not_a_noise_or_science_quality_test"]
+    assert result["n_comparable_nested_radial_closures_verified"] >= 2
+    assert all(
+        row["signed_flux_nMgy"] is None or
+        np.isfinite(row["signed_flux_nMgy"])
+        for row in result["independently_integrated_annuli"])
+    assert result["adopted_for_science"] is False

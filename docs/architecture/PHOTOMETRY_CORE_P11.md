@@ -2695,3 +2695,33 @@ inputs are now rejected; an entirely masked curve still
 passes as underconstrained. This fixes a numerical QA
 consistency failure, **not** missing galaxy light or
 off-diagonal noise calibration.
+
+
+### Stage 04.2: enforce exact annulus/CoG flux closure before reporting a measured curve (2026-11-13)
+
+Stage04.2 already computed the flux difference between two
+independent numerical methods: a directly integrated native
+elliptical annulus and the difference of its enclosing cumulative
+apertures. Until this change, it merely **recorded** an arbitrary
+nonzero residual, yet labelled the growth curve diagnostically
+measured even if the two operators could disagree catastrophically.
+This is a confirmed numerical consistency gap, not a model
+selection question.
+
+The growth operator now refuses a comparable annulus if
+`abs(F_outer-F_inner-F_independent_ring)` exceeds a fixed
+roundoff allowance `1e-6 + 1e-9*max(1,abs(F_outer),abs(F_inner),abs(F_ring))`
+in native nMgy, with explicit radial index. A fully excluded
+ring remains **not measured** (null), but when both cumulative
+endpoints exist, their flux difference is still checked against
+zero usable *increment*; no synthetic annular flux is assigned.
+The result includes the number of closures actually checked
+and explicitly disclaims any interpretation as calibrated
+sky/PSF/covariance or astrophysical recovery.
+
+A synthetic regression alters an otherwise valid **independent
+ring** by 0.01 nMgy while leaving the two direct cumulative
+measurements unchanged; Stage04.2 must now fail closed. Valid
+masked/underconstrained rings continue to be distinguished
+from observed zero flux. This does not impose a monotonic
+CoG or exclude real negative annular flux.
