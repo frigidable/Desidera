@@ -1008,6 +1008,12 @@ def test_blank_spatial_quadrant_decomposition_exposes_coherent_sky_contrast():
     assert qa["schema"] == "desidera.photometry.blank-spatial-mean-scatter/1"
     assert qa["status"] == "SPATIAL_MEAN_CONTRAST_DESCRIPTIVE_ONLY"
     assert sum(qa["counts_by_native_quadrant"]) == result["n_accepted"]
+    expected_counts = [0, 0, 0, 0]
+    for px, py in result["centres_native_xy"]:
+        expected_counts[int(px >= 321/2.) +
+                        2*int(py >= 321/2.)] += 1
+    assert qa["counts_by_native_quadrant"] == expected_counts
+    assert qa["quadrants_assigned_by_actual_phase_shifted_centres"]
     assert len(qa["per_quadrant_mean_signed_ring_flux_nMgy"]) == 4
     assert qa["between_quadrant_mean_fraction_of_total_sum_squares"][0] > .65
     within = np.array(qa["within_quadrant_flux_sum_squares_nMgy2"])

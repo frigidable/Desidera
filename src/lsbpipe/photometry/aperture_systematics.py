@@ -317,7 +317,12 @@ def estimate_blank_annulus_covariance(
             rejected += 1
             continue
         centres.append([float(x), float(y)])
-        accepted_quadrants.append(int(quadrant))
+        # Quadrant-stratified lattice labels refer to the INTEGER
+        # candidate node. A fractional phase shift can cross a quadrant
+        # boundary: use the actual placed centre for the scientific
+        # spatial-mean contrast (but preserve nominal lattice counts).
+        actual_quadrant = int(x >= nx/2.) + 2*int(y >= ny/2.)
+        accepted_quadrants.append(actual_quadrant)
         accepted_by_quadrant[quadrant] += 1
         samples.append(vector)
         blank_ring_formal_variances.append(formal_vector)
@@ -341,6 +346,8 @@ def estimate_blank_annulus_covariance(
         blank_formal_min = [None]*len(radii)
         blank_formal_max = [None]*len(radii)
 
+    physical_quadrant_counts = [
+        int(accepted_quadrants.count(q)) for q in range(4)]
     report = {
         "schema": _BLANK_SCHEMA,
         "dataset_id": frame.dataset_id,
@@ -399,7 +406,10 @@ def estimate_blank_annulus_covariance(
         "quadrant_mean_flux_scatter_decomposition": {
             "schema": "desidera.photometry.blank-spatial-mean-scatter/1",
             "status": "INSUFFICIENT_VALID_BLANK_COVARIANCE",
-            "counts_by_native_quadrant": accepted_by_quadrant.copy(),
+            "counts_by_native_quadrant": physical_quadrant_counts,
+            "lattice_stratification_quadrant_counts":
+                accepted_by_quadrant.copy(),
+            "quadrants_assigned_by_actual_phase_shifted_centres": True,
             "per_quadrant_mean_signed_ring_flux_nMgy": {},
             "within_quadrant_flux_sum_squares_nMgy2": None,
             "between_quadrant_mean_flux_sum_squares_nMgy2": None,
@@ -454,7 +464,8 @@ def estimate_blank_annulus_covariance(
             # their original, geometrically predeclared native quadrant,
             # without treating each quadrant as an independent exposure.
             labels = np.asarray(accepted_quadrants, dtype=int)
-            n_quadrants = int(np.count_nonzero(accepted_by_quadrant))
+            n_quadrants = int(np.count_nonzero(
+                physical_quadrant_counts))
             qa = report["quadrant_mean_flux_scatter_decomposition"]
             if n_quadrants >= 2:
                 global_mean = np.mean(observations, axis=0)
