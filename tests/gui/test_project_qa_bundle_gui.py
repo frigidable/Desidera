@@ -454,12 +454,14 @@ def test_cross_stage_source_lineage_qa_rejects_foreign_fits_and_units():
     key=["dr11","south","1554p180","r"]
     scene={"state":"CURRENT_LOADED","native_fits":{
         "source_quartet_key":key,
+        "loaded_target_icrs":[155.438012,18.088025],
         "original_fits_provenance_status":
             "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD",
         "original_fits_sha256_local":local_hashes,
         "image_unit_evidence":
             "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"}}
     target={"source_quartet_key":list(key),
+            "loaded_project_target_icrs":[155.438012,18.088025],
             "original_fits_sha256_local":dict(local_hashes),
             "image_unit_evidence":
                 "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"}
@@ -467,12 +469,19 @@ def test_cross_stage_source_lineage_qa_rejects_foreign_fits_and_units():
             "background":{"state":"CURRENT_DIAGNOSTIC",
                           "result":dict(target)},
             "aperture":{"state":"CURRENT_DIAGNOSTIC",
-                        "result":dict(target)}}
+                        "result":dict(target,
+                            target_anchor_icrs=[155.438012,18.088025])}}
     result=_cross_stage_source_lineage_qa(stages)
     assert result["state"]=="CURRENT_AVAILABLE_STAGES_MATCH_ORIGINAL_SCENE"
     assert all(row["state"]=="MATCH" for row in
                result["stage_comparisons"].values())
     assert result["science_adopted"] is False
+    stages["aperture"]["result"]=dict(
+        target,target_anchor_icrs=[155.438012,18.09])
+    wrong_center=_cross_stage_source_lineage_qa(stages)
+    assert wrong_center["state"]=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH"
+    assert wrong_center["stage_comparisons"]["aperture"][
+        "project_target_icrs_matches"] is False
     # A stage cannot be relabelled as the original simply because its
     # target display name, brick text or band agrees.
     stages["aperture"]["result"]=dict(target,
