@@ -494,6 +494,7 @@ def test_cross_stage_source_lineage_qa_rejects_foreign_fits_and_units():
     key=["dr11","south","1554p180","r"]
     scene={"state":"CURRENT_LOADED","native_fits":{
         "source_quartet_key":key,
+        "grid_fingerprint":"native-wcs-001",
         "loaded_target_icrs":[155.438012,18.088025],
         "original_fits_provenance_status":
             "FULL_ORIGINAL_FITS_SHA256_VERIFIED_AT_SCENE_LOAD",
@@ -501,6 +502,7 @@ def test_cross_stage_source_lineage_qa_rejects_foreign_fits_and_units():
         "image_unit_evidence":
             "FITS_IMAGE_BUNIT_NANOMAGGIES_CONFIRMED"}}
     target={"source_quartet_key":list(key),
+            "grid_fingerprint":"native-wcs-001",
             "loaded_project_target_icrs":[155.438012,18.088025],
             "original_fits_sha256_local":dict(local_hashes),
             "image_unit_evidence":
@@ -535,10 +537,20 @@ def test_cross_stage_source_lineage_qa_rejects_foreign_fits_and_units():
     stages["aperture"]["result"]=dict(target,image_unit_evidence="ADU")
     assert _cross_stage_source_lineage_qa(stages)["state"] == (
         "CROSS_STAGE_SOURCE_IDENTITY_MISMATCH")
+    stages["aperture"]["result"]=dict(
+        target,grid_fingerprint="different-wcs-grid")
+    bad_grid=_cross_stage_source_lineage_qa(stages)
+    assert bad_grid["state"]=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH"
+    assert bad_grid["stage_comparisons"]["aperture"][
+        "native_grid_fingerprint_matches"] is False
     stages["background"]["state"]="NOT_RUN"
     stages["aperture"]["state"]="NOT_RUN"
     assert _cross_stage_source_lineage_qa(stages)["state"] == (
         "NO_CURRENT_DEPENDENT_STAGE_TO_COMPARE")
     scene["native_fits"]["original_fits_sha256_local"]=None
+    assert _cross_stage_source_lineage_qa(stages)["state"] == (
+        "SCENE_SOURCE_NOT_FULLY_VERIFIED")
+    scene["native_fits"]["original_fits_sha256_local"]=dict(
+        local_hashes,image="non-sha-hex")
     assert _cross_stage_source_lineage_qa(stages)["state"] == (
         "SCENE_SOURCE_NOT_FULLY_VERIFIED")
