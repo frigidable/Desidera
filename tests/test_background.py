@@ -1115,6 +1115,7 @@ def test_stage03_sky_veto_for_ambiguous_target_source_preserves_flux_mask():
 
 def test_stage03_ivar_weighted_heldout_rms_matches_direct_pixel_operator():
     """The optional noise-weighted comparison uses unchanged fixed pixels."""
+    import json
     from lsbpipe.background import (
         diagnose_current_project_residual_sky,
         _automatic_scene_sky_pixels)
