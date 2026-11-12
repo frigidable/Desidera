@@ -523,6 +523,7 @@ def _conditional_sky_aperture_response_qa(stages):
             bg["original_fits_sha256_local"] !=
             native["original_fits_sha256_local"] or
             bg["source_quartet_key"] != native.get("source_quartet_key") or
+            bg["grid_fingerprint"] != native.get("grid_fingerprint") or
             bg["loaded_project_target_icrs"] !=
             native.get("loaded_target_icrs") or
             ap.get("target_anchor_icrs") != native.get("loaded_target_icrs") or
