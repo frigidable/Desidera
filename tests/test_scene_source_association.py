@@ -137,3 +137,49 @@ def test_group_ids_bind_dataset_image_segmentation_position_and_radius():
     changed_dataset = deepcopy(original)
     changed_dataset["g"]["dataset_id"] = "dr11/south/1555p180/g"
     assert gid(changed_dataset) != baseline
+
+
+def test_single_dense_band_does_not_build_spurious_quadratic_neighbour_tree(
+        monkeypatch):
+    """No cross-band edges means no KDTree search, regardless of same-band crowding."""
+    import lsbpipe.photometry.scene_source_association as association
+    def forbidden_tree(*args, **kwargs):
+        raise AssertionError("Same-band pairs must not be searched")
+    monkeypatch.setattr(association, "cKDTree", forbidden_tree)
+    many = block("g", *((str(i), 20., 0.) for i in range(800)))
+    result = association.associate_band_detections(
+        {"g":many}, match_radius_arcsec=.5, max_detections=1000,
+        max_edges=1)
+    assert result["candidate_edge_count"] == 0
+    assert len(result["groups"]) == 800
+    assert all(group["status"] == "SINGLE_BAND_DETECTION"
+               for group in result["groups"])
+    assert result["same_band_neighbours_never_queried"] is True
+
+
+def test_cross_band_search_queries_smaller_side_and_still_caps_dense_edges(
+        monkeypatch):
+    """A crowded band cannot multiply empty same-band neighbour scans."""
+    import lsbpipe.photometry.scene_source_association as association
+    from scipy.spatial import cKDTree
+    queried = []
+    class ObservedTree:
+        def __init__(self, points):
+            self._tree = cKDTree(points)
+        def query_ball_point(self, point, r):
+            queried.append(1)
+            return self._tree.query_ball_point(point, r=r)
+    monkeypatch.setattr(association, "cKDTree", ObservedTree)
+    g = block("g", *((str(i), 20., 0.) for i in range(500)))
+    far = block("r", ("outside", 25., 0.))
+    out = association.associate_band_detections(
+        {"g":g, "r":far}, match_radius_arcsec=.5, max_detections=600,
+        max_edges=1)
+    assert out["candidate_edge_count"] == 0
+    assert len(queried) == 1
+    assert len(out["groups"]) == 501
+    near = block("r", ("same", 20., 0.))
+    with pytest.raises(ValueError, match="candidate edges"):
+        association.associate_band_detections(
+            {"g":g, "r":near}, match_radius_arcsec=.5,
+            max_detections=600, max_edges=12)

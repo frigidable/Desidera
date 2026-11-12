@@ -1022,3 +1022,24 @@ rechecks file symlink safety after the read, before publishing the
 checksum receipt. The regression covers both file and directory
 links where supported by the platform and preserves external bytes.
 These are filesystem/provenance safeguards, not science acceptance.
+
+
+### SA2a positional-linker performance and cardinality bound (2026-11-12)
+
+A dense *single-band* detection list was previously indexed in a
+global KD-tree and queried against every other same-band source,
+only to discard all those pairs. If 12,000 detections share one
+location, this can require roughly 144 million same-band neighbour
+enumerations despite producing **zero** independent-band candidate
+edges; the `max_edges` cap never fires for discarded same-band pairs.
+This is both an availability and large-survey scalability defect.
+
+SA2a now queries only pairs of distinct bands, constructing a tree
+from the larger population and querying the smaller population once
+per cross-band pairing. Same-band proximity is never enumerated.
+The existing finite cross-band edge cap, connected-component
+ambiguity decisions, group IDs, ordering and no-membership/no-science
+semantics are retained. Regressions replace the KD-tree with a
+fail-fast guard for dense one-band inputs, verify one query for a
+500-to-1 uncorrelated band pairing, and preserve explicit overflow
+rejection for actual dense multiband pairings.

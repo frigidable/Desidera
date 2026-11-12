@@ -120,20 +120,40 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
     n = len(records)
     adjacency = [set() for _ in range(n)]
     edges = []
-    if n:
-        vectors = np.array([r["xyz"] for r in records], dtype=float)
-        tree = cKDTree(vectors)
+    # Query *only* cross-band neighbours. The previous one-tree scan
+    # visited O(N²) near-identical same-band detections even though
+    # every same-band pair was then discarded. Its edge cap could not
+    # constrain that work. Build trees for the larger side of each
+    # nonempty band pair; query only the smaller side, fail before
+    # storing excessive actual cross-band edges.
+    indexed_bands = {
+        band: [i for i, r in enumerate(records) if r["band"] == band]
+        for band in sorted(band_data)
+    }
+    if sum(bool(rows) for rows in indexed_bands.values()) >= 2:
+        vectors = np.asarray([r["xyz"] for r in records], dtype=float)
         radius = 2.*math.sin(math.radians(match_radius_arcsec/3600.)/2.)
-        for a in range(n):
-            # Do not materialize an unbounded O(N^2) set of pairs.
-            for b in sorted(tree.query_ball_point(vectors[a], r=radius)):
-                if b <= a or records[a]["band"] == records[b]["band"]:
-                    continue  # same-band proximity never proves one identity
-                if len(edges) >= max_edges:
-                    raise ValueError("Too many positional candidate edges")
-                adjacency[a].add(b)
-                adjacency[b].add(a)
-                edges.append((a,b))
+        bands = tuple(sorted(indexed_bands))
+        for position, left_band in enumerate(bands):
+            for right_band in bands[position+1:]:
+                left, right = indexed_bands[left_band], indexed_bands[right_band]
+                if not left or not right:
+                    continue
+                query_indices, tree_indices = (
+                    (left, right) if len(left) <= len(right)
+                    else (right, left)
+                )
+                tree = cKDTree(vectors[tree_indices])
+                for index in query_indices:
+                    for match in sorted(tree.query_ball_point(
+                            vectors[index], r=radius)):
+                        other = tree_indices[match]
+                        a, b = sorted((index, other))
+                        if len(edges) >= max_edges:
+                            raise ValueError("Too many positional candidate edges")
+                        adjacency[a].add(b)
+                        adjacency[b].add(a)
+                        edges.append((a, b))
     visited = set()
     groups = []
     for seed in range(n):
@@ -204,6 +224,8 @@ def associate_band_detections(band_data, *, match_radius_arcsec,
         "band_provenance":provenance,
         "input_detection_count":n,
         "candidate_edge_count":len(edges),
+        "candidate_neighbour_search":"CROSS_BAND_ONLY_KDTREE_SMALLER_SIDE_V2",
+        "same_band_neighbours_never_queried":True,
         "group_id_policy":"INPUT_IMAGE_SEGMENTATION_POSITION_AND_RADIUS_SHA256_V2",
         "group_id_is_not_a_physical_source_identity":True,
         "groups":tuple(groups),
