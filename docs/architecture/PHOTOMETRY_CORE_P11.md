@@ -2751,3 +2751,36 @@ pixel sample and all sky-science holds remain unchanged.
 A synthetic heteroscedastic-INVVAR regression reconstructs
 each held-out model/residual on original native coordinates
 and independently checks the weighted RMS.
+
+
+### Stage 04.3: blank covariance must sample the same subpixel aperture phase (2026-11-13)
+
+The previous blank-ring controller used whole-pixel integer lattice
+centres irrespective of the actual WCS-projected galaxy centre's
+*fractional native pixel phase*. Although ellipse axes and PA were
+held fixed, an aperture shifted fractionally has different boundary
+overlap coefficients. For diagonal original pixel variances, even
+a perfectly uniform-noise field has a distinct
+`sum(w_p² sigma_p²)` for different subpixel phases. Thus the
+background test and the science aperture used different linear
+operators, a confirmed methodological inconsistency in a
+same-shape blank covariance comparison.
+
+`estimate_blank_annulus_covariance` now translates the original
+deterministic, quadrant-stratified native candidate lattice by
+the **exact fractional part** of the target's projected centre,
+not by fractional resampling of the image. Every candidate
+centre is a whole-native-pixel translation of the target
+centre. Original masks, native pixel intensities, full-target
+exclusion and pairwise blank separations are unchanged; the
+two-dimensional native phase, unchanged selection properties
+and non-adoption are recorded in schema
+`desidera.photometry.blank-annulus-covariance/3`.
+
+A synthetic fractional-WCS test verifies each accepted blank's
+native-pixel phase and compares `sum(w²)` in each exact
+translated ellipse to the **actual target** aperture. This
+removes one known mismatch but does not correct spatial
+variability of pixel IVAR, field-scale correlated noise,
+sky/foreground contamination, or galaxy light missing from
+survey coadds. The covariance remains diagnostic only.

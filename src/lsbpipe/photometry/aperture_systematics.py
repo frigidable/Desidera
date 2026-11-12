@@ -23,7 +23,7 @@ from lsbpipe.scene import grid_fingerprint
 
 
 _SCHEMA = "desidera.photometry.aperture-systematics/1"
-_BLANK_SCHEMA = "desidera.photometry.blank-annulus-covariance/2"
+_BLANK_SCHEMA = "desidera.photometry.blank-annulus-covariance/3"
 
 
 def _scene_masks(frame, source_mask, manual_exclude):
@@ -173,6 +173,16 @@ def estimate_blank_annulus_covariance(
         frame, effective_source_mask, manual_exclude)
     invalid = ~frame.valid | source | manual
     projected = project_icrs_ellipse_to_native(outer, frame.wcs)
+    # Exact fractional-pixel aperture weights are sensitive to the
+    # subpixel phase of the aperture centre. Integer-centred blank
+    # samples and a fractionally centred target integrate DIFFERENT
+    # linear combinations of the original pixel noise, even for
+    # identical axis lengths/angle and a uniform pixel variance.
+    # Translate the deterministic native lattice by the target's
+    # *fractional* pixel phase (never resample pixel values). This
+    # preserves candidate separations and the original sky masks.
+    phase_x = float(projected.x_center - math.floor(projected.x_center))
+    phase_y = float(projected.y_center - math.floor(projected.y_center))
     # A smaller-scale blank probe must STILL avoid the full galaxy aperture.
     # The centre-distance test is deliberately conservative for ellipses.
     if full_target_exclusion_outer is None:
@@ -210,10 +220,12 @@ def estimate_blank_annulus_covariance(
     available_by_quadrant, candidate_positions = (
         _bounded_quadrant_blank_candidates(frame.shape, margin, step))
     accepted_by_quadrant = [0, 0, 0, 0]
-    for quadrant, x, y in candidate_positions:
+    for quadrant, lattice_x, lattice_y in candidate_positions:
         if len(centres) >= max_placements or examined >= candidate_budget:
             break
         examined += 1
+        x = float(lattice_x + phase_x)
+        y = float(lattice_y + phase_y)
         # At least the full outer aperture separates each sky placement
         # from the putative target. Extended LSB light is NOT excluded.
         if math.hypot(
@@ -265,7 +277,7 @@ def estimate_blank_annulus_covariance(
         if len(vector) != len(radii):
             rejected += 1
             continue
-        centres.append([int(x), int(y)])
+        centres.append([float(x), float(y)])
         accepted_by_quadrant[quadrant] += 1
         samples.append(vector)
 
@@ -280,6 +292,10 @@ def estimate_blank_annulus_covariance(
             "STRATIFIED_QUADRANT_BOUNDED_MEMORY_NATIVE_RINGS_V3"),
         "candidate_order_independent_of_image_brightness": True,
         "candidate_order_random_seed": 20261112,
+        "blank_centre_phase_matches_target_native_xy": True,
+        "target_native_subpixel_phase_xy": [phase_x, phase_y],
+        "blank_lattice_translation_is_integer_pixels_after_phase_match": True,
+        "no_science_covariance_calibration_from_phase_matching": True,
         "candidate_storage_policy": "ROW_BLOCKS_AND_COPRIME_INDEX_STRIDE_NO_CENTER_ARRAY",
         "candidate_grid_nodes_by_quadrant": available_by_quadrant,
         "accepted_centres_by_quadrant": accepted_by_quadrant,

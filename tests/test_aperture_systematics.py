@@ -786,7 +786,7 @@ def test_blank_covariance_respects_exact_same_conditional_plane_as_target():
     assert raw["status"] == residual["status"] == (
         "EMPIRICAL_BLANK_COVARIANCE_DIAGNOSTIC_ONLY")
     assert residual["schema"] == (
-        "desidera.photometry.blank-annulus-covariance/2")
+        "desidera.photometry.blank-annulus-covariance/3")
     assert residual["centres_native_xy"] == raw["centres_native_xy"]
     assert residual["conditional_sky_scenario"]["reference_xy_pix"] == origin or (
         residual["conditional_sky_scenario"]["reference_xy_pix"] == list(origin))
@@ -875,3 +875,47 @@ def test_stage043_rejects_re_receipted_inner_flux_and_variance_corruption():
         "all_frozen_radial_fluxes_independently_verified"]
     assert all(r["frozen_valid_flux_nMgy"] is None for r in all_qa[
         "radial_sky_response"]["cumulative"])
+
+
+def test_blank_native_centres_match_target_subpixel_phase_and_noise_weights():
+    """Equal native-grid phase is required for comparable exact pixel weights."""
+    from photutils.aperture import EllipticalAperture
+    from lsbpipe.photometry.aperture_flux import project_icrs_ellipse_to_native
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    f = frame(
+        image=np.random.default_rng(20261113).normal(0., .2, (321,321)),
+        shape=(321,321), w=pixel_wcs)
+    none = np.zeros(f.shape, dtype=bool)
+    target = geometry(
+        ra=155.400037, dec=18.000041, a=1.6, q=.67, pa=37.)
+    projected = project_icrs_ellipse_to_native(target, f.wcs)
+    result = estimate_blank_annulus_covariance(
+        f, target, (.6, 1.1, 1.6),
+        effective_source_mask=none, manual_exclude=none)
+    assert result["status"] == "EMPIRICAL_BLANK_COVARIANCE_DIAGNOSTIC_ONLY"
+    assert result["blank_centre_phase_matches_target_native_xy"]
+    phase = result["target_native_subpixel_phase_xy"]
+    assert 0. < phase[0] < 1. and 0. < phase[1] < 1.
+    assert phase == pytest.approx([
+        projected.x_center % 1., projected.y_center % 1.])
+    target_ap = EllipticalAperture(
+        (projected.x_center, projected.y_center),
+        projected.a_pix, projected.b_pix,
+        theta=projected.theta_rad_pixel_ccw)
+    target_w = target_ap.to_mask(method="exact").data
+    target_weight_square = float(np.sum(target_w**2))
+    # The formal white-noise variance of the same-size aperture would
+    # depend on sum(w^2), not just sum(w) or ellipse geometric area.
+    for x, y in result["centres_native_xy"]:
+        assert x % 1. == pytest.approx(phase[0], abs=1.e-10)
+        assert y % 1. == pytest.approx(phase[1], abs=1.e-10)
+        blank_ap = EllipticalAperture(
+            (x, y), projected.a_pix, projected.b_pix,
+            theta=projected.theta_rad_pixel_ccw)
+        blank_w = blank_ap.to_mask(method="exact").data
+        assert np.sum(blank_w**2) == pytest.approx(
+            target_weight_square, abs=2.e-7)
+    assert not result["covariance_calibrated_for_science"]
+    assert result["no_science_covariance_calibration_from_phase_matching"]
+    json.dumps(result, allow_nan=False)
