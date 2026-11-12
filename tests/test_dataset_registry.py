@@ -228,3 +228,42 @@ def test_science_cache_refuses_synthetic_unverifiable_asset_hash_labels():
         science_cache_key(**dict(kwargs,algorithm_version=False))
     with pytest.raises(ValueError, match="unique named"):
         science_cache_key(**kwargs, dependency_keys=["mask-v2","mask-v2"])
+
+
+def test_registry_never_reads_external_symlinked_index_or_directory(
+        project, tmp_path):
+    """Project data lineage cannot be sourced from symlinked index metadata."""
+    import_legacy_fits(project.root, project.root / "data")
+    index = registry_path(project.root)
+    external = tmp_path / "outside-dataset-index.json"
+    index.rename(external)
+    try:
+        index.symlink_to(external)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not allow creating symlinks")
+    assert index.is_symlink()
+    with pytest.raises(ValueError, match="Unsafe symlinked dataset registry"):
+        read_dataset_index(project.root)
+    # Restoring the normal index must not rewrite the external record.
+    index.unlink()
+    external.replace(index)
+    original = index.read_bytes()
+    holder = tmp_path / "external-dataset-registry"
+    holder.mkdir()
+    moved = holder / "index.json"
+    index.rename(moved)
+    folder = index.parent
+    folder.rmdir()
+    try:
+        folder.symlink_to(holder, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not allow directory symlinks")
+    assert folder.is_symlink()
+    with pytest.raises(ValueError, match="Unsafe symlinked dataset registry"):
+        read_dataset_index(project.root)
+    from lsbpipe.surveys import dataset_registry
+    with pytest.raises(ValueError, match="Unsafe symlinked dataset registry"):
+        dataset_registry._save(
+            project.root,
+            {"schema":SCHEMA,"project_id":project.project_id})
+    assert moved.read_bytes() == original

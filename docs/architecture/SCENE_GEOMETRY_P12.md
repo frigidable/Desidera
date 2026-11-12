@@ -1007,3 +1007,18 @@ valid digest: real file hashing remains the responsibility of
 `verify_asset_checksum`. No existing stored asset or source FITS
 is modified. Tests cover malformed hashes, incorrect identity
 types and repeated dependency keys.
+
+
+### Dataset registry: reject symlinked index metadata (2026-11-12)
+
+The sidecar `datasets/index.json` was read as trusted project
+metadata if `Path.is_file()` succeeded. This follows symbolic links,
+including a symlinked `datasets` directory, permitting registry
+provenance to come from a different directory despite existing
+no-symlink restrictions on source FITS. Index reads and atomic
+index writes now refuse symlinked registry files **and** their direct
+container directory. Verification of indexed asset SHA-256 also
+rechecks file symlink safety after the read, before publishing the
+checksum receipt. The regression covers both file and directory
+links where supported by the platform and preserves external bytes.
+These are filesystem/provenance safeguards, not science acceptance.
