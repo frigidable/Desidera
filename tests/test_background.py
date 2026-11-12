@@ -199,7 +199,11 @@ def _stage03_project_fixture(*, with_regions=True):
         "auto_mask":auto,"protected":protected,"hard":hard.copy(),
         "gaia_inner_preview_enabled":True,
         "red_extended_preview_enabled":False,
-        "source_inventory":{"entries":[]},
+        "source_inventory":{
+            "entries": [], "stored_count": 0,
+            "total_relevant_sources": 0, "truncated": 0,
+            "screening_evidence_incomplete": False,
+        },
         "anchor_icrs":tuple(map(float,wcs.all_pix2world(59.5,59.5,0))),
     }
     return dataset, draft, contamination
@@ -239,6 +243,8 @@ def test_anisotropic_wcs_gaia_sky_veto_uses_true_sky_circle():
         dataset,preview,contamination)
     contamination["source_inventory"]["entries"]=[
         {"gaia_g_mag":17.5,"x":25.,"y":25.}]
+    contamination["source_inventory"]["stored_count"] = 1
+    contamination["source_inventory"]["total_relevant_sources"] = 1
     train,held,qa=_automatic_scene_sky_pixels(
         dataset,preview,contamination)
     assert qa["n_existing_bright_gaia_sources_vetoed"]==1
@@ -478,8 +484,11 @@ def test_project_stage03_excludes_galaxy_leakage_and_existing_bright_gaia():
     original=image.copy()
     image[target]+=50.0
     auto=contamination.copy()
-    auto["source_inventory"]={"entries":[
-        {"gaia_g_mag":14.5,"x":13.,"y":107.,"objid":25}]}
+    auto["source_inventory"]={
+        "entries":[{"gaia_g_mag":14.5,"x":13.,"y":107.,"objid":25}],
+        "stored_count":1,"total_relevant_sources":1,
+        "truncated":0,"screening_evidence_incomplete":False,
+    }
     out=diagnose_current_project_residual_sky(dataset,draft,auto)
     assert out["automatic_sky_selection_qa"][
         "n_existing_bright_gaia_sources_vetoed"]==1
@@ -838,3 +847,57 @@ def test_project_stage03_frozen_mask_injection_fails_without_target_geometry():
     assert out["status"] == "NOT_MEASURED_NO_TARGET_PROTECTION"
     assert out["science_adopted"] is False
     assert out["scenarios"] == []
+
+
+def test_robust_sky_irls_iteration_cap_is_not_misreported_as_fitted():
+    """One nonconverged Huber update cannot enter the sky comparison."""
+    rng = np.random.default_rng(5031)
+    shape = (48, 52)
+    train, hold = regions(shape)
+    img = .010 + rng.normal(0., .002, shape)
+    yy, xx = np.indices(shape)
+    img[train & (xx % 9 == 0)] += .15
+    scene = make_scene(shape, train, hold)
+    capped = BackgroundSettings(max_iterations=1, convergence_relative=1e-15)
+    candidate = fit(img, scene, "constant", settings=capped)
+    assert candidate.fit_status == FitStatus.NONCONVERGED
+    assert candidate.holdout_status == HoldoutStatus.NOT_EVALUATED
+    assert candidate.iterations == 1
+    assert candidate.coefficients_nMgy is None
+    with pytest.raises(ValueError, match="unsuccessful"):
+        candidate.image(shape)
+    # The same predeclared pixels may converge with a sufficient budget.
+    resolved = fit(img, scene, "constant")
+    assert resolved.fit_status == FitStatus.FITTED
+    assert resolved.coefficients_nMgy is not None
+
+
+def test_stage03_fails_closed_on_truncated_or_unverified_star_inventory():
+    """An incomplete bright-star veto cannot produce a fitted sky plane."""
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset, draft, contamination = _stage03_project_fixture(
+        with_regions=False)
+    initial = diagnose_current_project_residual_sky(
+        dataset, draft, contamination)
+    assert initial["status"] == (
+        "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED")
+    cases = [
+        dict(truncated=2,total_relevant_sources=2),
+        dict(screening_evidence_incomplete=True),
+        dict(stored_count=5,total_relevant_sources=5),
+        dict(total_relevant_sources=1),
+        dict(truncated=None),
+    ]
+    for updates in cases:
+        bad = dict(contamination)
+        bad["source_inventory"] = dict(
+            contamination["source_inventory"], **updates)
+        report = diagnose_current_project_residual_sky(
+            dataset, draft, bad)
+        assert report["status"] == (
+            "SOURCE_INVENTORY_INCOMPLETE_FOR_AUTOMATIC_SKY")
+        assert report["methods"] == {}
+        assert report["provisional_automatic_model"] is None
+        assert report["sky_model_adopted"] is False
+        assert report["automatic_sky_selection_qa"][
+            "bright_gaia_inventory_complete"] is False

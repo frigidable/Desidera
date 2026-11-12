@@ -2349,3 +2349,28 @@ symlink rejection and warning remain unchanged. This changes only
 safe access to saved diagnostic evidence, not the PSF, original FITS,
 star selection, kernel or science-adoption policy. A regression
 constructs a broken history link where supported by the test platform.
+
+
+### Stage 03: optimizer convergence and complete bright-star veto (2026-11-12)
+
+The robust Huber IRLS residual-sky fitter formerly returned its last
+coefficients with `FITTED` even if the `max_iterations` cap was hit
+without numerical convergence. The fitting contract now distinguishes
+`NONCONVERGED` from `ILL_CONDITIONED`, keeps coefficients unavailable
+and refuses downstream model evaluation/sky comparison until a
+predeclared convergence criterion is actually met. No silent
+relaxation of tolerances or post-hoc model selection occurs.
+
+The automatic sky selector also previously took any dictionary-valued
+`source_inventory` as a sufficient bright-Gaia veto source. In
+practice SC1 explicitly bounds its source-level inventory and reports
+`truncated`, `stored_count`, `total_relevant_sources` and
+`screening_evidence_incomplete`. If one such list is truncated or
+inconsistent, a bright source can be absent from the veto and a biased
+sky still be fitted. Stage 03 now requires the existing source
+inventory completeness/count receipts and returns
+`SOURCE_INVENTORY_INCOMPLETE_FOR_AUTOMATIC_SKY` with **no fitted sky**
+when they are missing/inconsistent. This is an input-integrity gate,
+not a claim that a complete Tractor list has calibrated PSF wings or
+proves galaxy-free sky pixels. Synthetic regression cases exercise
+the IRLS iteration limit and each incomplete-inventory condition.

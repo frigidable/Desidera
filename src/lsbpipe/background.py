@@ -18,6 +18,7 @@ class FitStatus(str, Enum):
     FITTED = 'FITTED'
     INSUFFICIENT_SKY = 'INSUFFICIENT_SKY'
     ILL_CONDITIONED = 'ILL_CONDITIONED'
+    NONCONVERGED = 'NONCONVERGED'
     NUMERICAL_FAILURE = 'NUMERICAL_FAILURE'
 
 
@@ -138,7 +139,7 @@ def _fit_robust(design, values, ivar, method, settings):
         coefficients, condition = _weighted_lstsq(
             design, values, ivar, settings.max_design_condition)
         if coefficients is None:
-            return None, condition, 0
+            return None, condition, 0, FitStatus.ILL_CONDITIONED
     for iteration in range(1, settings.max_iterations + 1):
         residuals = values - design @ coefficients
         centered = residuals / _robust_scale(residuals)
@@ -148,14 +149,16 @@ def _fit_robust(design, values, ivar, method, settings):
         updated, condition = _weighted_lstsq(
             design, values, ivar * huber_weights, settings.max_design_condition)
         if updated is None:
-            return None, condition, iteration
+            return None, condition, iteration, FitStatus.ILL_CONDITIONED
         converged = (np.max(np.abs(updated - coefficients)) <=
                      settings.convergence_relative *
                      max(1., float(np.max(np.abs(coefficients)))))
         coefficients = updated
         if converged:
-            break
-    return coefficients, condition, iteration
+            return coefficients, condition, iteration, FitStatus.FITTED
+    # Reaching the iteration cap is NOT numerical convergence. Do not
+    # let a drifting fitted plane enter downstream residual-sky QA.
+    return None, condition, settings.max_iterations, FitStatus.NONCONVERGED
 
 
 def _rms(values):
@@ -211,12 +214,12 @@ def fit_residual_background(
         design = np.column_stack(
             (np.ones(ntrain), (xx-xref)/xs, (yy-yref)/ys))
     try:
-        fit, cond, iterations = _fit_robust(
+        fit, cond, iterations, fit_state = _fit_robust(
             design, values, weights, method, settings)
     except (ValueError, np.linalg.LinAlgError, FloatingPointError, OverflowError):
         return failure(FitStatus.NUMERICAL_FAILURE)
     if fit is None:
-        return failure(FitStatus.ILL_CONDITIONED, cond, iterations)
+        return failure(fit_state, cond, iterations)
 
     coeff = ((float(fit[0]), 0., 0.) if method == 'constant'
              else (float(fit[0]), float(fit[1])/xs, float(fit[2])/ys))
@@ -382,7 +385,24 @@ def _automatic_scene_sky_pixels(
     # Existing Tractor/Gaia sources only. These radii are intentionally
     # conservative pilot vetoes and NOT a measured bright-star halo model.
     inventory = contamination.get("source_inventory")
+    # A dictionary labelled as an inventory is not proof that it contains
+    # every potential bright-star veto. SC1 exports exact stored/total
+    # counts and an upstream screening-completeness flag; fail closed
+    # when these are absent, inconsistent, truncated or incomplete.
     entries = inventory.get("entries", ()) if isinstance(inventory, dict) else ()
+    provenance_complete = (
+        isinstance(inventory, dict) and
+        isinstance(entries, (tuple, list)) and
+        type(inventory.get("truncated")) is int and
+        inventory["truncated"] == 0 and
+        type(inventory.get("stored_count")) is int and
+        inventory["stored_count"] == len(entries) and
+        type(inventory.get("total_relevant_sources")) is int and
+        inventory["total_relevant_sources"] == len(entries) and
+        inventory.get("screening_evidence_incomplete") is False
+    )
+    if not isinstance(entries, (tuple, list)):
+        entries = ()
     bright_veto = np.zeros(shape, dtype=bool)
     bright_n = 0
     for entry in entries:
@@ -492,6 +512,12 @@ def _automatic_scene_sky_pixels(
         "bright_gaia_veto_is_unvalidated_radius_heuristic": True,
         "n_existing_bright_gaia_sources_vetoed": bright_n,
         "bright_gaia_inventory_present": isinstance(inventory, dict),
+        "bright_gaia_inventory_complete": bool(provenance_complete),
+        "bright_gaia_inventory_declared_truncated": (
+            inventory.get("truncated") if isinstance(inventory, dict) else None),
+        "bright_gaia_inventory_screening_evidence_incomplete": (
+            inventory.get("screening_evidence_incomplete")
+            if isinstance(inventory, dict) else None),
         "candidate_tiles": n_candidate,
         "eligible_tiles": n_eligible,
         "training_tiles": len(tiles_train),
@@ -795,8 +821,8 @@ def _audit_current_project_sky_grid_sensitivity(
             item["status"] = "SKIPPED_INSUFFICIENT_FIXED_GEOMETRY"
             result.append(item)
             continue
-        if not selection["bright_gaia_inventory_present"]:
-            item["status"] = "SKIPPED_MISSING_SOURCE_INVENTORY"
+        if not selection["bright_gaia_inventory_complete"]:
+            item["status"] = "SKIPPED_MISSING_OR_INCOMPLETE_SOURCE_INVENTORY"
             result.append(item)
             continue
         trial_scene = _make_automatic_sky_scene(
@@ -1181,6 +1207,11 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         return dict(
             base, status="SOURCE_INVENTORY_REQUIRED_FOR_AUTOMATIC_SKY",
             warnings=warnings+["BRIGHT_SOURCE_HALO_VETO_UNAVAILABLE"])
+    if not selection["bright_gaia_inventory_complete"]:
+        return dict(
+            base, status="SOURCE_INVENTORY_INCOMPLETE_FOR_AUTOMATIC_SKY",
+            warnings=warnings+[
+                "BRIGHT_STAR_VETO_INCOMPLETE_OR_UNVERIFIED_INVENTORY"])
 
     scene = _make_automatic_sky_scene(
         project_id=pid, grid=grid, band=band, shape=shape,
