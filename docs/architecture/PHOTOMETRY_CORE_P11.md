@@ -2204,3 +2204,28 @@ with deliberately inserted NaNs at zero-weight corner pixels checks
 that a finite empirical annulus covariance remains measurable without
 altering any native input data. This is a numerical and masking
 correctness fix, not a calibration of correlated coadd noise.
+
+
+### Same-UUID target-protection radius change invalidation
+
+A further GUI lifecycle audit found that the same-object cache/source
+identity already included ICRS RA/Dec, saved field width, source
+quartet and data root, but omitted
+`project.target_radius_arcsec`. The latter changes the native target
+exclusion footprint and therefore the source-overlap decisions in
+Stage02. Reopening a modified passport with the same UUID and
+unchanged sky coordinates could previously leave already prepared
+masks and related in-memory diagnostics associated with an obsolete
+protection radius.
+
+The Scene binding key now contains the saved target-protection radius
+in addition to the prior dimensions. Changing it invalidates the
+loaded Scene and dependent masks/isophotes/Background/Aperture, while
+rebinding an unchanged passport remains idempotent. A dedicated
+synthetic Qt regression tests a radius-only edit with identical UUID,
+ICRS target, FITS catalogue and field width. This is conservative:
+the original FITS may need to be reloaded even though their bytes have
+not changed, but old mask decisions cannot silently survive.
+
+This radius is a provisional source-screening VETO, not an adopted
+outer isophote or proof of galaxy membership.
