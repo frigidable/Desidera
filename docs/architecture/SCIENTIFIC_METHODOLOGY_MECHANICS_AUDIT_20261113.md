@@ -139,3 +139,167 @@ Run the **entire configured chain**, rather than reusing masks/centre/sky/radius
 Repository review inspected the live GitHub SHA above, including `surveys/dataset_integrity.py`, `photometry/native_fits.py`, `photometry/contracts.py`, `photometry/scene_{contaminants,source_inventory,source_association}.py`, `photometry/psf_{empirical,joint_scene,core_wings_validation}.py`, `background.py`, `photometry/aperture_{flux,growth,systematics}.py`, `gui/{scene_editor,aperture_workspace,photometry_workspace,project_qa_bundle}.py`, `profiles.py`, `simulation.py` and the existing architecture/QA documents.
 
 The most recent passing synthetic CI suite validates engineering behavior *as encoded*, not the astrophysical accuracy of those choices. No remote original Leo P FITS were fetched or newly reduced, no real-galaxy remeasurement was repeated and no external science benchmark was executed for this audit. The present report intentionally makes **no** declaration of a science-ready PSF, total magnitude, galaxy colour, $R_e$ or SBF distance.
+
+
+---
+
+## Follow-on forensic audit — current Stage 01–04 mechanics and concrete remediation (2026-11-13)
+
+**Purpose:** identify *specific changes to the running stages*, not restate the future architecture. Examined at code revision `c342ac01121c00f621a426e8c82c8acfda4902ba`. All proposals below are explicitly separated into: **CONFIRMED DEFECT** (a demonstrable discrepancy between stated and calculated quantity), **OBSERVED/REPORTED LIMIT** (source code plus recorded QA, without independent FITS rerun), and **PROPOSED TEST** (not yet shown to improve real data). The term "P0" here is an implementation/scientific-validation priority, **not** a scientific status or claim of a universally valid threshold.
+
+### F01. Stage 04.3 sky derivative used the wrong parameter pivot — CONFIRMED DEFECT, FIXED (P0)
+
+**Location:** `photometry/aperture_systematics.py::diagnose_aperture_systematics`, versus `aperture_flux.py::measure_native_aperture`.
+
+For the stored model `b0 + bx*(x-xref) + by*(y-yref)`, the published gradient derivative must be `-sum(w_usable*(x-xref))`. Stage 04.3 formerly reported `-sum(w_usable*(x-x_aperture))` regardless of `sky.reference_xy_pix`, even though its field name implied an exact derivative of the *frozen* scenario. The difference is `-A_valid*(x_aperture-xref)` for `bx`, similarly for `by`. It can be large for a large native elliptical aperture and a sky plane anchored at the cutout rather than the galaxy.
+
+**Remedy committed:** `c342ac0` makes `reference_native_xy` the actual frozen sky-scenario reference, uses it for `dflux_dbx_native_pixel3` and `dflux_dby_native_pixel3`, and preserves differently named target-centred derivatives as alternative *parameterizations*. An independent regression perturbs all three sky-plane parameters with an off-centre reference and checks against new direct exact native aperture integration.
+
+**Gate:** finite-difference or algebraic sky response must match the *same* sky-parameterized flux operator for asymmetric masks, nonzero gradients, non-central `(xref,yref)`, several WCS handednesses and radii. An internally self-consistent derivative is still **not** an estimate of sky-parameter uncertainty.
+
+### F02. Stage 03 target-protection footprint is insufficient to establish galaxy-free sky — OBSERVED/REPORTED LIMIT (P0)
+
+**Location:** `background.py::_automatic_scene_sky_pixels` lines around target veto and fixed tile assignment; `_audit_current_project_sky_injection_recovery`.
+
+The target veto expands a provisional mask by an area-equivalent radius and pixel-distance guard. Neither procedure constrains the unknown, potentially asymmetric low-surface-brightness outskirts. It can protect all currently *detected* pixels yet admit real faint halo/stream light into the sky training sample. The current frozen-mask injection freezes source detection, geometry, masks and sky tiles and uses an **unconvolved** ideal exponential injected after the original Legacy reduction; by design it cannot calibrate the full procedure.
+
+**Existing Leo P r researcher-supplied evidence:** for increasing injected $h/R_\mathrm{protect}=0.5,1,2$, the fitted-sky recovered fractions in the frozen unmasked aperture were about 0.966/0.839/0.612 (constant) and 0.949/0.781/0.537 (plane). These numbers are **additional-sky-fitting response to artificial signal**, not the true lost fraction of Leo P light. The automatic no-subtraction recommendation is therefore defensible.
+
+**Improve:** make a *protected-radius and asymmetric-footprint ensemble* a first-class, separately versioned Stage 03 sensitivity product. Compare several target-protection shapes, bright-star wing veto alternatives, sky-grid offsets and one genuinely held-out outer field; report $b_\mathrm{target}$, full-aperture $A_\mathrm{valid}\Delta b$, tile-by-tile residual medians and injected-signal leakage into the exact selected sky pixels. Do not select a model using only a lower same-coadd RMS. If independent sky cannot be found, surface `SKY_UNIDENTIFIABLE` rather than silently subtracting.
+
+**Acceptance test:** on synthetic extended targets and independent observed controls, evaluate distribution of recovered flux conditioned on *retained/rejected* galaxy extensions after **re-running** the mask/sky selector, not merely frozen-mask sky fitting. Compare constant, plane, zero correction with a policy frozen before seeing target results. No fixed percentage is science-approved yet.
+
+### F03. Stage 03 train/holdout tile design has a spatial-selection and correlated-sampling weakness — CONFIRMED CODE POLICY / PROPOSED IMPROVEMENT (P1)
+
+**Location:** `background.py::_automatic_scene_sky_pixels`.
+
+The source-aware tile layout is geometry-deterministic, with `(tx+2*ty)%5==0` for holdout and at most 384 pixels selected via `np.linspace` on the row-major list of valid indices. Equal tile *counts* do not ensure equal radial/azimuthal coverage about the galaxy, matched contamination distributions or statistical independence at the coadd's correlation length. The 384-index linear selection can exhibit a regular spatial lattice and sensitivity to chip/coadd patterns. This is a *possible bias mechanism*, **not** a proven Leo P numerical error. Reported Leo P tile distributions were spatially unbalanced and training RMS differed strongly from holdout.
+
+**Improve:** predeclare several *spatially stratified folds*, balanced by target radius, quadrant and coverage, not by measured image brightness. Record sampled positions and their 2D pair-separation histogram, tile completeness, clipped edges, per-fold sky shifts and target-centre response. Compare row-major, seeded 2D stratified and spatial-block sampling **only on the same fixed eligible geometry**, then test out of sample. Version the sky sampling recipe: changing it changes the sample and invalidates downstream evidence.
+
+**Acceptance test:** synthetic stationary white/correlated fields, gradients and galaxy-outskirts contamination; require demonstrably unbiased constant/plane recovery and calibrated *block-level* uncertainty before assigning any scientific preference.
+
+### F04. Stage 01 empirical PSF star-cutout sky and PSF wings are non-identifiable from the same ring — CONFIRMED ALGORITHM / PHYSICAL HOLD (P0)
+
+**Location:** `psf_empirical.py::_star_cutout` and `PSF0Config`; `psf_survey_defaults.py`.
+
+The per-star local sky uses a clipped planar fit in an annulus around each selected star. A real extended wing, PSF spatial variation, close companion or broad halo can contribute coherent signal that is not removed by sigma clipping and is then subtracted from the ePSF stamp. A guessed FWHM or DR11 PSFSIZE is a *seeing-scale prior*, not a calibrated encircled-energy function; a normalized finite kernel cannot predict light beyond its cutout. The current kernel is conditionally evaluated on held-out stars and its reported `psf_wings_validated` is **false**; that is the correct semantics.
+
+**Improve:** for each native band, retain at least two stellar sky-radius hypotheses with equal fixed star cohort; compare radial flux fractions and local background planes on genuinely held-out stars in several spatial/brightness strata. Measure intermediate and wide-angle wings in suitably sized original-star fields, with neighbour modelling, and track the **finite-PSF normalization radius** explicitly. Reject a "global" ePSF as representative if spatial/brightness holdouts do not support transfer to the galaxy position. The official Photutils EPSFBuilder guide warns both about star cleanliness and about wings biasing a local annular background: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html .
+
+**Acceptance test:** known injected stars with varied seeing, phase, brightness and wing profiles; recover a galaxy+star composite at the galaxy's relevant limiting surface brightness. Do **not** make a global far-wing claim merely from low heldout core residual.
+
+### F05. Stage 01 PSF holdout can share sample-selection information with the training cohort — CODE MECHANISM / VALIDATION RISK (P1)
+
+**Location:** `psf_empirical.py` near `accepted`, `field_relative_core_width` and subsequent deterministic split.
+
+The reference population of Gaia-matched stellar **core widths** and other preliminary quality screens is computed over candidates before the final training/holdout split; the held-out stars are therefore independent of the final ePSF **fit**, but not necessarily independent of *all empirical decisions* determining the final eligible population. This does not invalidate every residual check, but it limits interpretation as a fully blinded accuracy estimate.
+
+**Improve:** freeze quality-cut thresholds from a separate training/calibration star cohort (or from survey-independent criteria), then evaluate a disjoint untouched *outer* validation cohort. Keep one internal training split for EPSF iteration and a separate external holdout for stellar population / transfer calibration; record actual Gaia IDs and spatial locations. Report holdout completeness by angular radius and magnitude rather than just count.
+
+**Acceptance test:** compare internal holdout vs genuinely disjoint external validation on known star simulations, measuring centroid, encircled energy, core-to-wing residual and spatial transfer bias. No ad hoc reduction of the minimum star count to manufacture a pass.
+
+### F06. Stage 02 catalogue masks do not implement a physical source decomposition — CONFIRMED CODE POLICY / PHYSICAL HOLD (P0)
+
+**Location:** `scene_contaminants.py::conservative_catalogue_mask`, `scene_source_inventory.py`, `scene_source_association.py`.
+
+The automatic source envelope uses magnitude/Tractor-shape-dependent *heuristic* radii. Even after the geometrical WCS fixes, it neither models PSF wings nor decides which unresolved or compact sources belong to the dwarf galaxy. An interior Gaia object can be foreground, an unresolved target member, a blend or an erroneous crossmatch. The optional red-extended/inner-Gaia exclusion rules are diagnostic and **not** proven classifiers. A positional SA2a match likewise does not establish astrophysical identity.
+
+**Improve:** create an explicit *per-source competing-treatment ledger* (unmasked; excluded but *no* flux reconstruction; forward PSF/Tractor model-subtracted; target compact member retained) and a WCS-identical image-difference comparison. Use group-matched Gaia astrometry with quality controls, individual CCD/residual shape, multi-band colour and external resolved-star data where available; no automatic membership probability until calibrated. Keep hard invalidity separate from source policy and always quantify the light lost from each treatment using artificial-galaxy injection.
+
+**Acceptance test:** inject partially overlapping foreground PSFs, blue HII knots, resolved upper RGB/AGB stars and diffuse red background galaxies into native coadd copies; report false removals, false retained contaminants, integrated galaxy flux bias and identified ambiguous regions. Repeat the actual source finder, not just fixed masks.
+
+### F07. Leo P foreground source OBJID 2035 is a distinct identifiability test, not yet a PSF measurement — OBSERVED/REPORTED LIMIT (P0)
+
+**Location:** `psf_joint_scene.py`, P21 directional/sector QA and `SCENE_LOGIC_AUDIT_20261110.md`.
+
+Existing user-supplied P21/2 QA reports that **all five** directional rings fail coverage criteria and part of the source-facing signal overlaps a provisional low-confidence galaxy contour. A positive facing-versus-away contrast cannot be uniquely interpreted as the star's PSF wing or Leo P light; same-image "blank" controls are not independent stars or sky realizations.
+
+**Improve:** evaluate the existing P21/3 provisional-*component*-aware split on a fresh exact user-project QA export (not the padded display contour), then compare four *conditional* scenarios at frozen sky/geometry: star kept; star masked; empirical PSF with an independently constrained broad tail; separate star+galaxy+sky forward fit. No star model or mask may be adopted on this comparison alone.
+
+**Acceptance test:** held-out bright stars of matched magnitude/environment and injected artificial dwarf light around them; calibrate the false stellar-wing assignment rate before using subtraction in Leo P.
+
+### F08. Stage 02 preliminary isophote is an anchored smoothed-component detector, not a fitted light profile — CONFIRMED MECHANIC / IMPROVEMENT (P1)
+
+**Location:** `ellipse_seed.py::propose_local_isophote`, `sga_informed_radial_seed`.
+
+The algorithm derives a provisional scalar sky from a distant cutout annulus, convolves the masked image, thresholds by the *empirical smoothed-annulus scatter*, finds a connected region near the target and uses intensity-truncated image moments for one $q$/PA suggestion. It does **not** fit $q(a)$, PA$(a)$, centre drift, ellipticity or azimuthal Fourier harmonics; a contaminated sky annulus and bridged neighbouring structure can shift the contour. A small trial-to-trial perturbation does not supply a confidence interval.
+
+**Improve:** separate detection mask from *isophote fitting*; introduce a controlled radial solver in original native sky coordinates with explicit exposure/invalid fraction, coherent PSF-aware contamination alternatives, constrained centre and smooth $q(a)$ and PA$(a)$, recorded covariance. Keep a freely varying centre as a *separate hypothesis* to detect drift and blends. Validate on irregular blue knots, inclined diffuse disks and low-S/N outer isophotes; measure angular sector scatter and low Fourier modes, not just global moments. Compare against AutoProf on the **same** sky/mask/PSF inputs; agreement of profiles alone is not truth: https://arxiv.org/abs/2106.13809 .
+
+### F09. Stage 04 direct flux is a partial valid-area estimator; missing-light correction is not available — CORRECT CODE SEMANTICS / P0 SCIENCE LIMIT
+
+**Location:** `aperture_flux.py::measure_native_aperture`, `aperture_growth.py`.
+
+The implementation correctly integrates exact fractional overlap with signed pixels, respects hard invalidity and manual/source exclusions, and does not multiply by the geometric-to-valid area ratio. A masked area can contain a diffuse central galaxy gradient or HII knots, so **neither zero replacement nor simple area scaling** is an unbiased galaxy flux reconstruction. A positive-only AB magnitude of surviving pixels cannot be renamed galaxy total. Current outputs are appropriately labelled MEASURED_PARTIAL/DIAGNOSTIC.
+
+**Improve:** publish distinct `F_valid`, `F_model_in_mask`, `F_extrapolated_outside` and `F_total_conditional` in an eventually adopted schema with uncertainty for each. Until then report a *quantitative lower/upper model-conditional envelope* of missed flux under alternative source/sky/geometry models, without silently modifying `F_valid`.
+
+**Acceptance test:** synthetic nonaxisymmetric galaxies and bright superposed stars; by mask policy, compare exact injected true flux inside known geometric/missing domains and distribution of reconstructed errors. Do not simply test ring-vs-curve-of-growth numerical closure.
+
+### F10. Stage 04 sky response must be radial and tied to covariance — IMPROVEMENT TO CURRENT DIAGNOSTIC (P1)
+
+**Location:** `aperture_systematics.py::diagnose_aperture_systematics`.
+
+After F01, the largest-aperture derivative is exact for the frozen sky reference, but the routine still reports sensitivities **only for the largest radius and baseline geometry**. A tiny coherent gradient may create a false outer curve-of-growth plateau, change ring signs and bias any $R_e$ selected from the same noisy curve. A single derivative and an uncalibrated same-coadd scatter cannot quantify a radial uncertainty envelope.
+
+**Improve:** for *each* frozen radius $a_i$, calculate the exact area and first two *usable weighted pixel moments* about the **same sky pivot**, then publish the Jacobian matrix $D_{i\alpha}=-\sum_p w_{ip}v_p(1,x-x_\mathrm{ref},y-y_\mathrm{ref})$. Show the covariance-induced CoG envelope $D\Sigma_\mathrm{sky}D^T$ **only if** a separately calibrated $\Sigma_\mathrm{sky}$ exists; otherwise show signed response to predeclared sky perturbations and mark no confidence interpretation. Derive ring responses as differences of cumulative Jacobians, subject to the same masks and geometry.
+
+**Acceptance test:** finite differences of independently integrated flux at every radius for asymmetric and wedge-masked apertures; response under sky-pivot changes must transform algebraically with the coefficients and leave the *physical sky image* and measured flux unchanged. Failure at any radius blocks use of a sky-error bar.
+
+### F11. Stage 04.3 blank-ring covariance cannot be promoted to galaxy-scale correlated-noise error — CONFIRMED PROTOCOL LIMIT (P0)
+
+**Location:** `aperture_systematics.py::estimate_blank_annulus_covariance`.
+
+The routine measures flux scatter from geometrically non-overlapping, source-masked, fixed-size annular placements in one resampled coadd; it can run on smaller scales if the full target aperture does not fit. Large-scale sky patterns, unmasked faint sources and angularly anisotropic correlations may remain. Spatially separated positions in *one exposure/coadd* are not independent noise realizations, and the number of available large blank placements can be zero. Rank/PSD of a sample covariance do not prove astrophysical completeness or accurate uncertainties.
+
+**Improve:** add a scale-by-scale block-control ledger with number of accepted spatial locations, all-excluded reasons, sky-area, exposure/NEXP structure, resampling correlation length, mean offsets and independent/overlapping CCD evidence where available. Do **not** extrapolate a 2–5 arcsec blank sigma to a 100 arcsec galaxy aperture by $\sqrt{N_\mathrm{pix}}$. Until independently calibrated, keep covariance only as a diagnostic and do not invert it for a formal chi-squared isophotal fit.
+
+**Acceptance test:** inject known correlated Gaussian fields *and* coherent large-scale sky modes in synthetic original coadds, compare predicted vs measured sample covariance at each relevant aperture radius and verify holdout coverage intervals. Report failure when the full radial domain lacks uncontaminated blank positions.
+
+### F12. Upstream sky subtraction is an input limitation, not recoverable by a post-coadd constant fit — EXTERNALLY CONFIRMED SCIENCE LIMIT (P0)
+
+The DESI Legacy data description documents spline-based sky estimation after source masking, with medians computed in sliding **512-pixel boxes**, and confirms that delivered coadds already have that level removed. The DR11 file specification states that the native image is a Lanczos-3 resampled inverse-variance-weighted coadd in nMgy/pixel, whereas Tractor models individual exposures. This warns that a post-coadd test cannot quantify flux irreversibly lost to *upstream* sky subtraction or reconstruct the complete original covariance.
+
+**Improve:** maintain explicitly separate coadd-only and CCD-aware processing modes. For difficult LSB objects, compare custom per-exposure background/PSF reduction from photometrically calibrated CCD files, not a local re-fit interpreted as raw-sky reconstruction. This is consistent with the independently published Stellar Stream Legacy Survey's CCD-level processing strategy. Do not treat a nominal 512 native-*coadd*-pixel angular scale as identical to an upstream CCD-pixel scale across instruments.
+
+**Acceptance test:** same synthetic galaxy injected (A) after standard coadd sky subtraction and (B) into original calibrated CCDs before sky modeling/coaddition, with matched truth/PSF/filter response, then the same downstream Scene→sky→photometry chain. A difference isolates part of the upstream loss. If source CCDs unavailable, identify the loss as *unbounded from the current coadd*, not zero.
+
+Official sources: https://www.legacysurvey.org/dr11/description/ ; https://www.legacysurvey.org/dr11/files/ . Independent treatment: https://doi.org/10.1051/0004-6361/202245011 .
+
+### F13. Multiband matched colour and PSF transfer remain absent science operators — DOCUMENTED CAPABILITY GAP (P1)
+
+The current same-brick band selector does not jointly fit per-band backgrounds/PSFs and does not make the per-band finite-aperture profiles share a validated target-light definition, compatible angular footprint and noise covariance. An identical ellipse in sky coordinates is **necessary but insufficient** for a physically comparable colour if PSFs and masks differ. A deep $r$-band geometry may also truncate blue outskirts visible only in $g$.
+
+**Improve:** define a union-of-band candidate target segmentation and common ICRS geometry; compare source memberships and native valid coverage **separately** per band. Evaluate two independent estimators: band-by-band forward PSF-convolved galaxy models, and a PSF-homogenized *matched-aperture* measurement with traceable convolution kernel/induced covariance. Selectively report per-band integrated fluxes and corresponding alternative colours, not silently equate with total colour. Galactic extinction correction and cross-band calibration uncertainties must be recorded once and propagated.
+
+**Acceptance test:** injection with a known $g-r$ colour gradient, variable seeing and mask holes, checking recovered matched-aperture colour on a predeclared common sky footprint. With insufficient overlapping valid coverage or wide-wing kernel, keep colour UNDERCONSTRAINED.
+
+### F14. Injection-recovery currently validates sky sensitivity under frozen masks, not the pipeline — CONFIRMED TEST-SCOPE LIMIT (P0)
+
+**Location:** `background.py::_audit_current_project_sky_injection_recovery` and simple Sérsic `simulation.py`.
+
+Existing tests are valuable controlled mechanisms but hold the previous image-detected source inventory, sky training/holdout pixels, mask, aperture, PSF and reduction history fixed. There is no demonstrated full-image recovery of input galaxy total and size across the algorithm's **own** source detection, mask assignment, sky selection, isophotal geometry and aperture-radius choice. This can substantially understate selection and missing-light bias.
+
+**Improve:** stratified and blinded full-chain native-coadd injections into untouched science data **copies**. Rerun source detection, ambiguous membership policy, PSF identification, sky tiles, centre/ellipse, aperture selection and flux integration. Preserve precise truth components: diffuse galactic light, genuine compact members, injected foreground, extrapolated outside footprint and pre/post-survey-sky differences. Separate tests with PSF-convolved sources and irregular/resolved dwarfs; simple Sérsic injections alone do not establish representativeness.
+
+**Acceptance test:** for every predeclared morphological/size/crowding/brightness stratum, report median bias, scatter, interval coverage, fraction of missed/false total claims and accepted-sample selection bias; use genuinely held-out galaxies and external deeper data. Keep *all* rejected and unsuccessful trials in denominators, not just successful runs.
+
+### F15. Current generalization and science release must remain gated — IMPLEMENTATION ORDER (P1)
+
+- PSF GUI/backend is Leo P-specific despite the more general lower-level `build_empirical_coadd_psf` function; do not infer galaxy-independent experimental PSF readiness from a successful Leo P run.
+- Separate the **measurement operator** from its adoption validator. P0.5/P1.1 already has useful array/data contracts; scientific statuses must be *per estimand* and include full source/mask/PSF/sky versions, joint noise, declared spatial domain, model family and acceptance evidence.
+- No current GUI output should silently become an asymptotic total, stellar-population constraint or SBF distance merely because a numerical solver converges. SBF additionally needs galaxy-residual power-spectrum modeling and PSF/noise calibration specific to its Fourier estimator.
+
+### Execution sequence by expected scientific gain and implementation risk
+
+| Batch | Stage(s) | Do first | Evidence required before next batch |
+|---|---|---|---|
+| A — **implemented now** | 04.1→04.3 | Repair actual frozen-sky pivot derivative; preserve target-centred reparameterization and direct-aperture finite-difference regression | All current CI suites pass; no regression in native fixed-aperture flux |
+| B — safest next diagnostic | 03→04 | Freeze source/sky scenarios, calculate **per-radius** sky Jacobian and direct exact annular response; display *conditional flux shifts* not guessed sigma | Synthetic affine-plane perturbations, masked wedges, native WCS, versioned receipts and heldout blank QA |
+| C — physical degeneracy | 01→02→03 | Joint source/bright-star wing/galaxy protection ablation; no automatic source membership or sky subtraction | Leo P OBJID2035 source-specific experiment + injections with separate star/galaxy truth |
+| D — sky and measurement | 02→03→04 | Full-chain post-coadd PSF-aware artificial galaxy recovery with detection/mask/geometry re-run, spatially balanced sky-holdout folds | Finite-sample bias/coverage curves across size, SB, crowding and masks; failure statuses retained |
+| E — total and multiband | 04+ | Fit variable-isophote and/or structural models; reconstruct missing light; PSF-matched native multi-band colours with covariance | Independent deeper images/CCD-aware sky test and predeclared accuracy/false-adoption limits |
+| F — downstream | SBF/SED | Only after an adopted flux/colour/PSF/sky domain exists, implement SBF-specific and SED-specific calibrations | SBF Fourier transfer/noise and colour-calibration eligibility or SED filter/metallicity/systematics validated |
+
+**Stop/go condition:** A technical CI pass demonstrates software contracts, not any physical performance in Leo P. Stage 01–04 should continue returning DIAGNOSTIC_ONLY, MEASURED_PARTIAL or UNDERCONSTRAINED until source membership, large-angle PSF, residual/upstream sky bias, missing flux and full-scale covariance have *measured*, independently held-out accuracy evidence. PR #84 remains Draft and `SCIENCE HOLD` is unchanged.
