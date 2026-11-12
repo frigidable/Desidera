@@ -914,3 +914,49 @@ def test_core_holdout_psf_amplitude_is_invariant_to_contaminated_outer_wings():
     assert negative["whole_stamp_amplitude_nMgy_comparison"] is None
     assert negative["whole_stamp_amplitude_comparison_status"] == (
         "UNDEFINED_OR_NONPOSITIVE_ALL_STAMP_FIT")
+
+
+def test_psf_local_sky_weights_diagnostic_reveals_heteroscedastic_annulus_bias():
+    """Heteroscedastic sky pixels change the fit, not source selection."""
+    from lsbpipe.photometry.psf_empirical import _star_cutout
+    shape = (121, 121)
+    yy, xx = np.indices(shape, dtype=float)
+    x, y = 60.18, 59.82
+    radius = np.hypot(xx-x, yy-y)
+    true_sky = .8 + .001*(xx-x) - .0015*(yy-y)
+    star = 75.*np.exp(-.5*(radius/2.0)**2)
+    # Bright-contaminated half of the annulus has lower INVVAR, not
+    # a legitimately better estimate of the background at the star.
+    contaminated = (yy > y) & (radius >= 10.) & (radius < 15.)
+    image = true_sky + star + .25*contaminated
+    ivar = np.ones(shape, dtype=float)*10000.
+    ivar[contaminated] = 1.
+    frame = NativeBandFrame(
+        image_nMgy=image, invvar_nMgy2=ivar,
+        nexp=np.ones(shape, dtype=float)*2.,
+        maskbits=np.zeros(shape, dtype=np.int32),
+        native_wcs=pilot_wcs(shape),
+        release="dr11", region="south",
+        brick="1554p180", band="r",
+        source_evidence={"synthetic": True})
+    config = PSF0Config(
+        cutout_size_pix=31, sky_annulus_inner_pix=10.,
+        sky_annulus_outer_pix=15., max_star_gradient_sigma=100.)
+    cutout, error = _star_cutout(
+        frame, x, y, config, np.zeros(shape, dtype=bool))
+    assert error is None
+    assert cutout is not None
+    qa = cutout["sky_qa"]["annulus_inverse_variance_sensitivity"]
+    assert qa["schema"] == (
+        "desidera.psf0-annular-sky-weight-sensitivity/1")
+    assert qa["weighted_fit_status"] == "MEASURED_DESCRIPTIVE_ONLY"
+    assert qa["inverse_variance_max_to_min_ratio"] == pytest.approx(10000.)
+    assert qa["n_fixed_clipped_annulus_pixels"] >= 25
+    assert qa["original_sky_plane_and_selection_unchanged"]
+    assert qa["alternative_is_diagnostic_only"]
+    assert qa["sky_and_psf_wings_separable"] is False
+    assert qa["weighted_minus_unweighted_b0_nMgy_per_pixel"] < -.05
+    assert abs(cutout["sky_nMgy"]-.8) > .05
+    assert abs(cutout["sky_nMgy"]+
+               qa["weighted_minus_unweighted_b0_nMgy_per_pixel"]-.8) < .02
+    json.dumps(qa, allow_nan=False)

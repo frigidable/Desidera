@@ -1157,3 +1157,35 @@ undefined/non-positive result instead of failing a valid core
 measurement when strong negative residual wings dominate the
 whole-stamp LS normalization. This behavior is covered by an
 independent negative-outer-halo regression.
+
+
+### PSF-0 star-local sky: measure sensitivity to heterogeneous coadd IVAR (2026-11-13)
+
+PSF-0 currently selects/iteratively clips pixels in an individual
+stellar sky annulus and fits an **unweighted** local constant-plus-plane.
+Yet original native inverse variance can change significantly
+across exposures/coadd boundaries. When one side of an annulus
+has higher uncertainty and a nonrepresentative positive
+residual, the unweighted fit can bias the fitted stellar sky
+intercept. Correcting it by automatically switching the live
+PSF fit to IVAR weighting would be premature while the weights
+themselves are only diagonal and the wings/sky degeneracy is
+unresolved.
+
+The running `_star_cutout` now additionally fits a **read-only,
+inverse-variance-weighted alternative** on precisely the same
+final sigma-clipped annulus pixels, without changing the PSF
+training cutouts, source selection, threshold, or main sky
+plane. The PSF0 QA records IVAR dynamic range, weighted-minus-
+unweighted intercept and gradient differences, and an explicit
+underconstrained status when the alternative is not stable.
+A deterministic synthetic test uses a high-variance contaminated
+half-annulus to show a measurable shift towards the known clean
+background, with no star-data edits. It is a *sensitivity*
+result, not proof that the weighted fit is always unbiased or
+that PSF far wings are modelled.
+
+Photutils' current ePSF documentation explicitly supports
+per-star uncertainty weights in fitting, but the local sky
+annulus still requires independent source/wing contamination
+tests. Reference: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html .

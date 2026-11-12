@@ -383,6 +383,57 @@ def _star_cutout(frame, x, y, cfg, protected):
     # Refit after the last rejection; the previous iteration's
     # coefficients otherwise describe a *different* pixel subset.
     coeff = np.linalg.lstsq(design[include], observed[include], rcond=None)[0]
+    # An unweighted local-sky plane is the frozen PSF-0 baseline.
+    # However the original inverse variance can be strongly
+    # heteroscedastic across a coadd. Compare it with a weighted LS
+    # fit on EXACTLY the same clipped annulus pixels, so this is a
+    # noise-model sensitivity test, never a re-selected star sample.
+    weighted_sky_qa = {
+        "schema": "desidera.psf0-annular-sky-weight-sensitivity/1",
+        "reference_fit": "UNCHANGED_SIGMA_CLIPPED_UNWEIGHTED_PLANE",
+        "alternative_fit": "INVVAR_WEIGHTED_PLANE_SAME_CLIPPED_PIXELS",
+        "n_fixed_clipped_annulus_pixels": int(np.count_nonzero(include)),
+        "original_sky_plane_and_selection_unchanged": True,
+        "alternative_is_diagnostic_only": True,
+        "sky_and_psf_wings_separable": False,
+        "weighted_fit_status": "UNAVAILABLE",
+        "inverse_variance_max_to_min_ratio": None,
+        "weighted_minus_unweighted_b0_nMgy_per_pixel": None,
+        "weighted_minus_unweighted_bx_nMgy_per_pixel2": None,
+        "weighted_minus_unweighted_by_nMgy_per_pixel2": None,
+    }
+    original_weights = np.asarray(ivar[annulus][include], dtype=float)
+    if (len(original_weights) >= 25 and
+            np.isfinite(original_weights).all() and
+            np.all(original_weights > 0.)):
+        ratio = float(original_weights.max()/original_weights.min())
+        weighted_sky_qa["inverse_variance_max_to_min_ratio"] = (
+            ratio if np.isfinite(ratio) else None)
+        # Divide out a common weight scale so a large nominal IVAR
+        # does not by itself destabilize the comparison.
+        normalized_weights = original_weights/np.median(original_weights)
+        sw = np.sqrt(normalized_weights)
+        weighted_design = design[include]*sw[:, None]
+        weighted_values = observed[include]*sw
+        try:
+            if (np.isfinite(weighted_design).all() and
+                    np.isfinite(weighted_values).all() and
+                    np.linalg.cond(weighted_design) < 1.e8):
+                alternate, _, rank, _ = np.linalg.lstsq(
+                    weighted_design, weighted_values, rcond=None)
+                if rank == 3 and np.isfinite(alternate).all():
+                    weighted_sky_qa.update({
+                        "weighted_fit_status": "MEASURED_DESCRIPTIVE_ONLY",
+                        "weighted_minus_unweighted_b0_nMgy_per_pixel":
+                            float(alternate[0]-coeff[0]),
+                        "weighted_minus_unweighted_bx_nMgy_per_pixel2":
+                            float(alternate[1]-coeff[1]),
+                        "weighted_minus_unweighted_by_nMgy_per_pixel2":
+                            float(alternate[2]-coeff[2]),
+                    })
+        except (np.linalg.LinAlgError, ValueError, FloatingPointError,
+                OverflowError):
+            pass
     full_sky = coeff[0] + coeff[1]*dx + coeff[2]*dy
     residual = src - full_sky
     core = (rr <= max(2.5, cfg.guessed_fwhm_pix))
@@ -427,6 +478,7 @@ def _star_cutout(frame, x, y, cfg, protected):
         "octant_median_spread_over_noise":sector_scatter_sigma,
         "sky_uncertainty_covariance_calibrated":False,
         "sky_versus_psf_wings_separable_from_this_cutout":False,
+        "annulus_inverse_variance_sensitivity": weighted_sky_qa,
     }
     # Independent observational sensitivity: re-fit *original* native
     # pixels in predeclared interior annuli. This never changes the chosen
