@@ -532,6 +532,7 @@ def diagnose_aperture_systematics(
         mask = aperture.to_mask(method="exact")
         large, small = mask.get_overlap_slices(frame.shape)
         area_i = moment_x = moment_y = 0.
+        direct_flux = direct_sigma = None
         source_only_area = source_only_flux = 0.
         if large is not None:
             weights = np.asarray(mask.data[small], dtype=float)
@@ -550,6 +551,16 @@ def diagnose_aperture_systematics(
                     wt*(xx+large[1].start-xref), dtype=np.float64))
                 moment_y = float(np.sum(
                     wt*(yy+large[0].start-yref), dtype=np.float64))
+                pixel_values = frame.image_nMgy[large][yy, xx]
+                inverse_variance = frame.invvar_nMgy2[large][yy, xx]
+                fitted_sky = (
+                    sky.b0_nMgy_per_pixel +
+                    sky.bx_nMgy_per_pixel2*(xx+large[1].start-xref) +
+                    sky.by_nMgy_per_pixel2*(yy+large[0].start-yref))
+                direct_flux = float(np.sum(
+                    wt*(pixel_values-fitted_sky), dtype=np.float64))
+                direct_sigma = float(np.sqrt(np.sum(
+                    wt*wt/inverse_variance, dtype=np.float64)))
             # In the alternative treatment, ONLY provisional catalogue
             # exclusions are removed. Never unmask hard-invalid or
             # manual-excluded pixels, nor mistake their flux for proven
@@ -577,6 +588,28 @@ def diagnose_aperture_systematics(
                 abs_tol=1e-6):
             raise ValueError(
                 "Stage 04.3 radial masks disagree with frozen Stage 04.2")
+        # Stage 04.2's receipt authenticates a *self-consistent*
+        # dictionary, not the truth of each saved radial measurement.
+        # Stage 04.3 already has exact original weights at all radii;
+        # independently recompute the flux and diagonal variance here.
+        # The prior verification only recomputed the outermost aperture,
+        # allowing internally re-receipted stale inner flux/sigma through.
+        stored = first["cumulative"][radial_index]
+        for field, original, measured in (
+                ("signed flux", stored["signed_valid_flux_nMgy"],
+                 direct_flux),
+                ("formal diagonal sigma",
+                 stored["formal_diagonal_sigma_nMgy"], direct_sigma)):
+            if original is None and measured is None:
+                continue
+            if (original is None or measured is None or
+                    not math.isfinite(float(original)) or
+                    not math.isfinite(float(measured)) or
+                    not math.isclose(
+                        float(original), float(measured),
+                        rel_tol=1.e-11, abs_tol=1.e-8)):
+                raise ValueError(
+                    "Stage 04.3 stale frozen Stage 04.2 radial " + field)
         radial_rows.append({
             "radius_arcsec": float(radial_radius),
             "valid_native_pixel2": area_i,
@@ -689,6 +722,9 @@ def diagnose_aperture_systematics(
             "cumulative": radial_rows,
             "disjoint_annuli": radial_rings,
             "all_frozen_radial_areas_independently_verified": True,
+            "all_frozen_radial_fluxes_independently_verified": True,
+            "all_frozen_radial_diagonal_sigmas_independently_verified": True,
+            "no_unverified_internal_radial_samples": True,
             "sky_parameter_covariance": None,
             "confidence_interval_or_sigma_calibrated": False,
             "conditional_on_unchanged_scene_masks_geometry": True,

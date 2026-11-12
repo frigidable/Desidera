@@ -2665,3 +2665,33 @@ reference can correctly rank first.
 
 This is a research QA transparency improvement, not a claimed
 scientific sky adoption or validated survey background.
+
+
+### Stage 04.3: independently verify *all* frozen radial fluxes and formal variances (2026-11-13)
+
+The stage-04.3 receipt verifier originally recomputed native flux
+and diagonal formal sigma only for the **outermost** Stage04.2
+cumulative aperture. The new radial Jacobian introduced a second
+exact native fractional overlap for each *inner* radius, but
+checked only its covered **area**. An internally re-receipted stale
+inner cumulative flux or formal sigma could enter the radial
+mask ablation or other diagnostics while all saved outermost
+values and WCS/mask geometry remained unchanged.
+
+The native radial loop now integrates `sum(w*(image-sky))` and
+`sqrt(sum(w²/INVVAR))` for every frozen radius from its
+already available **original native** valid-pixel weights.
+Both results are compared against each saved Stage04.2 record,
+independently of the saved whole-curve SHA. Underconstrained bins
+must remain null rather than fabricated as zero. The check
+reuses radial weights, does not reread FITS or multiply the
+number of full-size mask snapshots, and does not modify the
+science-state or sky/PSF/foreground assumptions.
+
+A synthetic regression deliberately changes an *internal*
+cumulative flux or sigma, recomputes the outer growth-receipt
+SHA and keeps the final aperture untouched. Both tampered
+inputs are now rejected; an entirely masked curve still
+passes as underconstrained. This fixes a numerical QA
+consistency failure, **not** missing galaxy light or
+off-diagonal noise calibration.

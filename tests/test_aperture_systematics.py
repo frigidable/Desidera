@@ -830,3 +830,48 @@ def test_smaller_scale_blank_probe_uses_same_nonadopted_sky_scenario():
     assert all(p["blank_signal_uses_same_frozen_sky_plane_as_target"]
                for p in small["probes"])
     assert not report["covariance_calibrated_for_science"]
+
+
+def test_stage043_rejects_re_receipted_inner_flux_and_variance_corruption():
+    """A matching outer point and coherent receipt do not verify inner data."""
+    from copy import deepcopy
+    from hashlib import sha256
+    f = frame(value=.31)
+    source = np.zeros(f.shape, dtype=bool)
+    source[63:66, 61:67] = True
+    manual = np.zeros(f.shape, dtype=bool)
+    curve = _curve(f, source, manual, q=.72, pa=31.,
+                   radii=(.8, 1.7, 2.9, 4.))
+    opts = dict(
+        frame=f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual)
+    clean = diagnose_aperture_systematics(**opts, curves=[curve])
+    radial = clean["radial_sky_response"]
+    assert radial["all_frozen_radial_fluxes_independently_verified"]
+    assert radial["all_frozen_radial_diagonal_sigmas_independently_verified"]
+    assert radial["no_unverified_internal_radial_samples"]
+    for field, shift in (("signed_valid_flux_nMgy", .75),
+                         ("formal_diagonal_sigma_nMgy", .15)):
+        forged = deepcopy(curve)
+        assert forged["cumulative"][1][field] is not None
+        forged["cumulative"][1][field] += shift
+        # A caller can recompute a receipt of an internally inconsistent
+        # Stage 04.2 mapping. The frozen *outer* aperture is unchanged.
+        forged["receipt_sha256"] = sha256(json.dumps(
+            {k: v for k, v in forged.items() if k != "receipt_sha256"},
+            sort_keys=True, separators=(",", ":"),
+            allow_nan=False).encode()).hexdigest()
+        with pytest.raises(ValueError, match="stale frozen Stage 04.2 radial"):
+            diagnose_aperture_systematics(**opts, curves=[forged])
+    # Underconstrained radial bins must preserve None rather than be
+    # silently replaced by zero or a fake positive flux.
+    all_masked = np.ones(f.shape, dtype=bool)
+    none_curve = _curve(f, all_masked, manual,
+                        radii=(1., 2.5, 4.))
+    all_qa = diagnose_aperture_systematics(
+        **dict(opts, effective_source_mask=all_masked),
+        curves=[none_curve])
+    assert all_qa["radial_sky_response"][
+        "all_frozen_radial_fluxes_independently_verified"]
+    assert all(r["frozen_valid_flux_nMgy"] is None for r in all_qa[
+        "radial_sky_response"]["cumulative"])
