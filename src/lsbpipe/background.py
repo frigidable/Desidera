@@ -1119,6 +1119,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "grid_fingerprint": grid,
         "draft_sha256": draft.digest,
         "catalog_sha256": contamination["catalog_sha256"],
+        "source_mask_policy_id": contamination.get("source_mask_policy_id"),
         "native_pixel_shape": list(shape),
         "original_fits_provenance_status": dataset.get(
             "original_fits_provenance_status", "NOT_HASHED"),
