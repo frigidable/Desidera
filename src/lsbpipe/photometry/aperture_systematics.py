@@ -511,6 +511,7 @@ def diagnose_aperture_systematics(
         mask = aperture.to_mask(method="exact")
         large, small = mask.get_overlap_slices(frame.shape)
         area_i = moment_x = moment_y = 0.
+        source_only_area = source_only_flux = 0.
         if large is not None:
             weights = np.asarray(mask.data[small], dtype=float)
             if (not np.isfinite(weights).all() or
@@ -528,6 +529,26 @@ def diagnose_aperture_systematics(
                     wt*(xx+large[1].start-xref), dtype=np.float64))
                 moment_y = float(np.sum(
                     wt*(yy+large[0].start-yref), dtype=np.float64))
+            # In the alternative treatment, ONLY provisional catalogue
+            # exclusions are removed. Never unmask hard-invalid or
+            # manual-excluded pixels, nor mistake their flux for proven
+            # target light. Compute the exact native-pixel flux increment
+            # directly; this avoids another full aperture run per radius.
+            extra = (frame.valid[large] & source[large] &
+                     ~manual[large] & (weights > 0.))
+            ey, ex = np.nonzero(extra)
+            if ex.size:
+                ew = weights[ey, ex]
+                source_only_area = float(np.sum(ew, dtype=np.float64))
+                sky_at_pixels = (
+                    sky.b0_nMgy_per_pixel +
+                    sky.bx_nMgy_per_pixel2 *
+                    (ex+large[1].start-xref) +
+                    sky.by_nMgy_per_pixel2 *
+                    (ey+large[0].start-yref))
+                source_only_flux = float(np.sum(
+                    ew*(frame.image_nMgy[large][ey, ex] -
+                        sky_at_pixels), dtype=np.float64))
         recorded_area = first["cumulative"][radial_index][
             "area_native_pixel2"]["valid_native_pixel2"]
         if not math.isclose(
@@ -542,6 +563,15 @@ def diagnose_aperture_systematics(
                 "signed_valid_flux_nMgy"],
             "derivative_vector_for_b0_bx_by": [
                 -area_i, -moment_x, -moment_y],
+            "provisional_source_exclusion_area_native_pixel2":
+                source_only_area,
+            "flux_added_if_only_source_mask_disabled_nMgy":
+                source_only_flux,
+            "conditional_relaxed_flux_nMgy": (
+                float(first["cumulative"][radial_index][
+                    "signed_valid_flux_nMgy"] + source_only_flux)
+                if first["cumulative"][radial_index][
+                    "signed_valid_flux_nMgy"] is not None else None),
             "status": ("CONDITIONAL_EXACT_SKY_RESPONSE"
                        if area_i > 0. else
                        "NO_VALID_NATIVE_PIXELS_NO_SKY_INFERENCE"),
@@ -563,6 +593,12 @@ def diagnose_aperture_systematics(
                 outer_row["valid_native_pixel2"] -
                 inner["valid_native_pixel2"]),
             "derivative_vector_for_b0_bx_by": vector,
+            "source_only_mask_area_native_pixel2": float(
+                outer_row["provisional_source_exclusion_area_native_pixel2"] -
+                inner["provisional_source_exclusion_area_native_pixel2"]),
+            "source_only_flux_change_nMgy": float(
+                outer_row["flux_added_if_only_source_mask_disabled_nMgy"] -
+                inner["flux_added_if_only_source_mask_disabled_nMgy"]),
             "status": ("CONDITIONAL_EXACT_RING_RESPONSE"
                        if outer_row["valid_native_pixel2"] >
                        inner["valid_native_pixel2"] + 1.e-10
@@ -582,6 +618,18 @@ def diagnose_aperture_systematics(
         manual_exclude=manual, sky=sky)
     original_flux = last["signed_valid_flux_nMgy"]
     relaxed_flux = relaxed.signed_valid_flux_nMgy
+    # Compare the independent outermost relaxed native integration to
+    # the per-radius source-only pixel sum. This checks the actual
+    # counterfactual operator while keeping hard and manual masks fixed.
+    if original_flux is not None and relaxed_flux is not None:
+        predicted = (
+            original_flux +
+            radial_rows[-1]["flux_added_if_only_source_mask_disabled_nMgy"])
+        if not math.isclose(
+                predicted, relaxed_flux, rel_tol=1.e-11, abs_tol=1.e-7):
+            raise ValueError(
+                "Stage 04.3 source-only radial mask counterfactual "
+                "disagrees with independent native integration")
     candidate_fluxes = [
         float(curve["cumulative"][-1]["signed_valid_flux_nMgy"])
         for curve in curves
@@ -636,6 +684,38 @@ def diagnose_aperture_systematics(
             "sky_level_uncertainty_assumed": None,
             "sky_plane_uncertainty_assumed": None,
             "sky_science_adopted": False,
+        },
+        "radial_catalogue_mask_counterfactual": {
+            "schema": "desidera.photometry.radial-source-mask-ablation/1",
+            "radii_arcsec": list(first["radii_arcsec"]),
+            "cumulative": [{
+                "radius_arcsec": row["radius_arcsec"],
+                "valid_area_without_source_relaxation_native_pixel2":
+                    row["valid_native_pixel2"],
+                "area_newly_available_source_only_native_pixel2":
+                    row["provisional_source_exclusion_area_native_pixel2"],
+                "signed_flux_newly_available_nMgy":
+                    row["flux_added_if_only_source_mask_disabled_nMgy"],
+                "conditional_flux_with_source_mask_removed_nMgy":
+                    row["conditional_relaxed_flux_nMgy"],
+                "baseline_underconstrained":
+                    row["frozen_valid_flux_nMgy"] is None,
+            } for row in radial_rows],
+            "disjoint_annuli": [{
+                "inner_radius_arcsec": row["inner_radius_arcsec"],
+                "outer_radius_arcsec": row["outer_radius_arcsec"],
+                "area_newly_available_source_only_native_pixel2":
+                    row["source_only_mask_area_native_pixel2"],
+                "signed_flux_newly_available_nMgy":
+                    row["source_only_flux_change_nMgy"],
+            } for row in radial_rings],
+            "outer_native_reintegration_verified": bool(
+                original_flux is not None and relaxed_flux is not None),
+            "hard_and_manual_masks_unchanged": True,
+            "positive_or_negative_flux_is_not_membership_proof": True,
+            "missing_target_light_not_reconstructed": True,
+            "no_psf_or_source_model_subtracted": True,
+            "adopted_for_science": False,
         },
         "catalogue_mask_counterfactual": {
             "flux_with_provisional_source_mask_nMgy": original_flux,

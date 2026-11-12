@@ -678,3 +678,77 @@ def test_radial_sky_jacobian_reports_missing_area_without_false_errorbars():
                [0., 0., 0.] for row in radial["cumulative"])
     assert radial["sky_parameter_covariance"] is None
     assert not radial["confidence_interval_or_sigma_calibrated"]
+
+
+def test_radial_source_only_mask_ablation_matches_exact_native_reintegration():
+    """A galaxy knot hidden by an automatic mask is measurable sensitivity,
+    not proof that the knot belongs to the galaxy or should be restored.
+    """
+    f = frame(value=1.8)
+    source = np.zeros(f.shape, dtype=bool)
+    source[55:65, 62:70] = True
+    manual = np.zeros(f.shape, dtype=bool)
+    manual[57:61, 63:67] = True
+    original_ivar = np.full(f.shape, 4.)
+    original_ivar[58:60, 68:70] = 0.
+    f = frame(value=1.8, ivar=original_ivar)
+    radii = (1., 2., 3.5, 5.)
+    sky = ApertureSkyScenario(
+        method="tilted_plane",
+        b0_nMgy_per_pixel=.02,
+        bx_nMgy_per_pixel2=.0005,
+        by_nMgy_per_pixel2=-.0007,
+        reference_xy_pix=(19., 91.),
+        evidence_id="FROZEN_MASK_ALTERNATIVE")
+    curve = _curve(f, source, manual, q=.75, pa=32.,
+                   radii=radii, sky=sky)
+    report = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=[curve], sky=sky)
+    radial = report["radial_catalogue_mask_counterfactual"]
+    assert radial["outer_native_reintegration_verified"]
+    assert radial["missing_target_light_not_reconstructed"]
+    assert radial["hard_and_manual_masks_unchanged"]
+    assert radial["adopted_for_science"] is False
+    deltas = []
+    for i, radius in enumerate(radii):
+        row = radial["cumulative"][i]
+        relaxed = measure_native_aperture(
+            f, geometry(a=radius, q=.75, pa=32.), provenance(),
+            effective_source_mask=np.zeros(f.shape, dtype=bool),
+            manual_exclude=manual, sky=sky)
+        baseline = curve["cumulative"][i]["signed_valid_flux_nMgy"]
+        delta = relaxed.signed_valid_flux_nMgy - baseline
+        assert row["signed_flux_newly_available_nMgy"] == pytest.approx(
+            delta, abs=1.e-7)
+        assert row["conditional_flux_with_source_mask_removed_nMgy"] == (
+            pytest.approx(relaxed.signed_valid_flux_nMgy, abs=1.e-7))
+        assert row["area_newly_available_source_only_native_pixel2"] >= 0.
+        deltas.append(delta)
+    assert deltas[-1] > 0.
+    for i, ring in enumerate(radial["disjoint_annuli"], start=1):
+        assert ring["signed_flux_newly_available_nMgy"] == pytest.approx(
+            deltas[i] - deltas[i-1], abs=1.e-7)
+    json.dumps(report, allow_nan=False)
+
+
+def test_radial_source_mask_ablation_preserves_signed_negative_contributions():
+    image = np.ones((121, 121))
+    image[60:63, 62:66] = -2.
+    f = frame(image=image)
+    source = np.zeros(f.shape, dtype=bool)
+    source[60:63, 62:66] = True
+    manual = np.zeros(f.shape, dtype=bool)
+    curve = _curve(f, source, manual, q=1., pa=0.,
+                   radii=(1., 2.5, 4.))
+    out = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=[curve])
+    radial = out["radial_catalogue_mask_counterfactual"]
+    assert radial["cumulative"][-1][
+        "signed_flux_newly_available_nMgy"] < 0.
+    assert out["catalogue_mask_counterfactual"][
+        "conditional_delta_nMgy"] < 0.
+    assert out["adopted_for_science"] is False

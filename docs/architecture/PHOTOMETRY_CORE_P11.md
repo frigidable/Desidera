@@ -2557,3 +2557,30 @@ Regressions check reproducibility, exact 384-pixel quotas, full
 on an irregularly masked tile, and unchanged legacy sampling.
 A better real-galaxy sky result cannot be claimed without
 independent blocked-out tests; the comparison remains diagnostic.
+
+
+### Stage 04.3: radial source-mask ablation without reconstructed flux (2026-11-13)
+
+The earlier source-mask counterfactual compared **only** the largest
+aperture with every provisional catalogue exclusion disabled.
+A single outer flux difference can hide whether the mask removes
+central high-SB target knots, off-centre contaminants or diffuse
+outer light, and it is not a membership classifier.
+
+The current operator now measures, at each existing exact radial
+footprint, the additional *original* valid pixels exposed if
+only provisional source exclusion is disabled while all hard
+and user-manual exclusions remain fixed. It records the newly
+available area, **signed** native flux under the **same frozen sky
+plane** and the corresponding conditional relaxed cumulative flux.
+Adjacent-ring deltas follow from cumulative differences without
+inventing independent errors. The last-radius result is checked
+against a separate full native re-integration with the source
+mask disabled; a disagreement fails closed.
+
+This is a read-only diagnostic treatment contrast, not source
+membership, PSF-model subtraction, masked-galaxy-light restoration
+or a reason to add this light to a total. Regressions include
+overlapping hard/manual masks, an off-centre tilted sky and
+explicit negative source-mask flux. The per-source astrophysical
+classification still requires catalog/PSF and injected truth.
