@@ -130,6 +130,8 @@ def test_stage03_snapshot_refuses_moved_target_or_foreign_brick(qtbot):
     scene._project_target=(155.4,18.)
     contam["source_quartet_key"]=["dr11","south","1555p180","r"]
     assert w._snapshot() is None
+    contam["source_quartet_key"]=None
+    assert w._snapshot() is None
     contam["source_quartet_key"]=list(identity)
     scene._source_key=("root",pid,("dr11","south","1555p180","r"),
                        "root",None)
