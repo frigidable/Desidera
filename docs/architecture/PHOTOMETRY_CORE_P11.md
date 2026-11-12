@@ -2229,3 +2229,25 @@ not changed, but old mask decisions cannot silently survive.
 
 This radius is a provisional source-screening VETO, not an adopted
 outer isophote or proof of galaxy membership.
+
+
+### Reverting a passport change must not resurrect a stale mask draft
+
+The same project can be opened under multiple scientific source-key
+identities (different native brick/field centre/target-protection
+radius). The mask draft, however, belongs to the **object**, not the
+previous source-key snapshot. Before this audit, a GUI cache entry
+from the original radius could override a newer, saved mask draft
+when the researcher changed the radius back. That silently replaced
+user edits in memory with an earlier working revision, even though
+the on-disk project held the more recent draft.
+
+On a *same-root, same-UUID* source-identity change, the editor now
+flushes its current autosave, discards obsolete cache entries for
+that object, invalidates dependent native-scene products, and reads
+the latest persisted draft. Cache restoration between genuinely
+different object projects remains available. The Qt regression
+changes the target radius, saves a newer exclusion edit, reverts the
+radius and checks that the new edit survives rather than resurrecting
+the original cached draft. This is a data-integrity fix, separate
+from the source-mask geometry verification and from science adoption.
