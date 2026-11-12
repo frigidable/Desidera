@@ -2499,3 +2499,32 @@ around a deliberately off-centre pivot and compares the predicted
 signed flux change with a fully re-integrated native exact aperture.
 The previous test was insensitive because it deliberately aligned
 its scenario reference with the reported target centre.
+
+
+### Stage 04.3: native exact per-radius sky Jacobian (2026-11-13)
+
+Following the confirmed sky-pivot correction, Stage 04.3 now
+recomputes the **valid-area first moments** for *every* frozen
+Stage 04.2 cumulative radius under the same WCS, masks and sky
+reference, not only for the largest aperture. Each row records
+`[-sum(w), -sum(w*(x-xref)), -sum(w*(y-yref))]`, conditional
+on fixed geometry and validity. A second table records the exact
+**disjoint ring** derivatives as differences between successive
+cumulative rows, without treating the resulting noise as
+independent. Every radial native valid-area measurement is
+checked against its original frozen Stage 04.2 aperture area
+before accepting any sensitivity result. Invalid exact fractional
+weights are rejected before integration at every radius.
+
+The new `radial_sky_response` payload has a dedicated versioned
+schema, records parameter order and pivot, explicitly leaves sky
+parameter covariance/uncertainty **absent**, and never adopts
+a sky model. The original largest-radius `sky_response` fields
+remain available and are now derived from the same native moment
+operator. Synthetic regressions independently reintegrate each
+aperture after changing all three sky parameters using an
+off-centre pivot and asymmetric source/manual masks, compare
+annular Jacobians with direct cumulative-flux differences, and
+check entirely excluded/underconstrained native apertures.
+This improves conditional diagnosis, **not** full noise covariance
+or total-galaxy flux calibration.

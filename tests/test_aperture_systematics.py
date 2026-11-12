@@ -591,3 +591,90 @@ def test_stage_04_3_sky_gradient_derivatives_reproduce_direct_flux_for_offcenter
     assert abs(response["dflux_dby_native_pixel3"] -
                response["dflux_dby_at_aperture_center_native_pixel3"]) > 1.
     json.dumps(report, allow_nan=False)
+
+
+def test_radial_sky_jacobian_predicts_every_native_growth_aperture_and_ring():
+    """Each saved curve point has the SAME frozen sky reference as direct flux."""
+    f = frame(value=1.7)
+    source = np.zeros(f.shape, dtype=bool)
+    source[58:65, 61:73] = True
+    manual = np.zeros(f.shape, dtype=bool)
+    manual[62:70, 49:55] = True
+    radii = (.7, 1.5, 2.8, 4.)
+    base = ApertureSkyScenario(
+        method="tilted_plane", b0_nMgy_per_pixel=.05,
+        bx_nMgy_per_pixel2=.0013,
+        by_nMgy_per_pixel2=-.0008,
+        reference_xy_pix=(9.25, 104.5),
+        evidence_id="FIXED_OFFCENTRE_SKY")
+    curve = _curve(f, source, manual, q=.73, pa=38.,
+                   radii=radii, sky=base)
+    result = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=[curve], sky=base)
+    radial = result["radial_sky_response"]
+    assert radial["sky_reference_native_xy"] == [9.25, 104.5]
+    assert radial["sky_parameter_covariance"] is None
+    assert radial["confidence_interval_or_sigma_calibrated"] is False
+    assert radial["all_frozen_radial_areas_independently_verified"]
+    assert len(radial["cumulative"]) == len(radii)
+    assert len(radial["disjoint_annuli"]) == len(radii)-1
+    db0, dbx, dby = (.011, .0007, -.0004)
+    changed = ApertureSkyScenario(
+        method="tilted_plane", b0_nMgy_per_pixel=.05+db0,
+        bx_nMgy_per_pixel2=.0013+dbx,
+        by_nMgy_per_pixel2=-.0008+dby,
+        reference_xy_pix=base.reference_xy_pix,
+        evidence_id=base.evidence_id)
+    perturbed_fluxes = []
+    for i, radius in enumerate(radii):
+        row = radial["cumulative"][i]
+        direct = measure_native_aperture(
+            f, geometry(a=radius, q=.73, pa=38.),
+            provenance(), effective_source_mask=source,
+            manual_exclude=manual, sky=changed)
+        expected = sum(delta*derivative for delta, derivative in zip(
+            (db0, dbx, dby), row["derivative_vector_for_b0_bx_by"]))
+        observed = direct.signed_valid_flux_nMgy - (
+            curve["cumulative"][i]["signed_valid_flux_nMgy"])
+        assert observed == pytest.approx(expected, abs=2.e-8)
+        assert row["valid_native_pixel2"] == pytest.approx(
+            curve["cumulative"][i]["area_native_pixel2"][
+                "valid_native_pixel2"], abs=1.e-6)
+        perturbed_fluxes.append(direct.signed_valid_flux_nMgy)
+    for i, ring in enumerate(radial["disjoint_annuli"], start=1):
+        change = (
+            perturbed_fluxes[i] - perturbed_fluxes[i-1] -
+            curve["cumulative"][i]["signed_valid_flux_nMgy"] +
+            curve["cumulative"][i-1]["signed_valid_flux_nMgy"])
+        expected = sum(delta*derivative for delta, derivative in zip(
+            (db0, dbx, dby), ring["derivative_vector_for_b0_bx_by"]))
+        assert change == pytest.approx(expected, abs=2.e-8)
+        assert ring["valid_native_pixel2"] == pytest.approx(
+            curve["independently_integrated_annuli"][i-1][
+                "valid_area_pixel2"], abs=1.e-6)
+    assert (radial["cumulative"][-1][
+            "derivative_vector_for_b0_bx_by"][1] ==
+            pytest.approx(result["sky_response"][
+                "dflux_dbx_native_pixel3"]))
+    json.dumps(result, allow_nan=False)
+
+
+def test_radial_sky_jacobian_reports_missing_area_without_false_errorbars():
+    f = frame(value=0.5)
+    source = np.ones(f.shape, dtype=bool)
+    zeros = np.zeros(f.shape, dtype=bool)
+    curve = _curve(f, source, zeros, radii=(1., 2., 4.))
+    result = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=zeros,
+        curves=[curve])
+    radial = result["radial_sky_response"]
+    assert all(row["status"] ==
+               "NO_VALID_NATIVE_PIXELS_NO_SKY_INFERENCE"
+               for row in radial["cumulative"])
+    assert all(row["derivative_vector_for_b0_bx_by"] ==
+               [0., 0., 0.] for row in radial["cumulative"])
+    assert radial["sky_parameter_covariance"] is None
+    assert not radial["confidence_interval_or_sigma_calibrated"]

@@ -489,42 +489,92 @@ def diagnose_aperture_systematics(
         pa_deg_east_of_north=float(hypothesis["pa_deg"]))
     projected = project_icrs_ellipse_to_native(outer, frame.wcs)
 
+    # Apply the same exact native-pixel integration operator to EVERY
+    # frozen radius, not only the outermost aperture.  The response is
+    # conditional on the fixed masks, WCS and sky pivot, and its spatial
+    # moments are derivatives, not an assumed uncertainty.
     from photutils.aperture import EllipticalAperture
-    aperture = EllipticalAperture(
-        (projected.x_center, projected.y_center),
-        projected.a_pix, projected.b_pix,
-        theta=projected.theta_rad_pixel_ccw)
-    mask = aperture.to_mask(method="exact")
-    large, small = mask.get_overlap_slices(frame.shape)
-    area = dx_sum = dy_sum = 0.
-    if large is not None:
-        weights = np.asarray(mask.data[small], dtype=float)
-        if (not np.isfinite(weights).all() or
-                np.any((weights < -1e-10) | (weights > 1.+1e-10))):
-            raise ValueError("Invalid Stage 04.3 exact aperture overlap fractions")
-        weights = np.clip(weights, 0., 1.)
-        usable = frame.valid[large] & ~source[large] & ~manual[large]
-        yy, xx = np.indices(weights.shape, dtype=float)
-        xx += large[1].start
-        yy += large[0].start
-        effective = weights * usable
-        area = float(np.sum(effective))
-        dx_sum = float(np.sum(effective * (xx - projected.x_center)))
-        dy_sum = float(np.sum(effective * (yy - projected.y_center)))
-    if not math.isclose(
-            area, last["area_native_pixel2"]["valid_native_pixel2"],
-            rel_tol=1e-10, abs_tol=1e-6):
-        raise ValueError("Stage 04.3 masks disagree with frozen Stage 04.2")
-
-    # The Stage 04.1/04.2 flux operator subtracts the sky plane around
-    # sky.reference_xy_pix, which need not be the aperture centre.  Its
-    # exact conditional derivative MUST use that same reference.
-    # Keep target-centred derivatives separately as explicitly
-    # reparameterized diagnostics, never as derivatives of the stored
-    # ApertureSkyScenario coefficients.
     xref, yref = sky.reference_xy_pix
-    dx_sum_scenario = dx_sum + area*(projected.x_center - xref)
-    dy_sum_scenario = dy_sum + area*(projected.y_center - yref)
+    radial_rows = []
+    for radial_index, radial_radius in enumerate(first["radii_arcsec"]):
+        radial_geom = ApertureGeometryICRS(
+            ra_deg=outer.ra_deg, dec_deg=outer.dec_deg,
+            semimajor_arcsec=float(radial_radius),
+            axis_ratio=outer.axis_ratio,
+            pa_deg_east_of_north=outer.pa_deg_east_of_north)
+        radial_projected = project_icrs_ellipse_to_native(
+            radial_geom, frame.wcs)
+        aperture = EllipticalAperture(
+            (radial_projected.x_center, radial_projected.y_center),
+            radial_projected.a_pix, radial_projected.b_pix,
+            theta=radial_projected.theta_rad_pixel_ccw)
+        mask = aperture.to_mask(method="exact")
+        large, small = mask.get_overlap_slices(frame.shape)
+        area_i = moment_x = moment_y = 0.
+        if large is not None:
+            weights = np.asarray(mask.data[small], dtype=float)
+            if (not np.isfinite(weights).all() or
+                    np.any((weights < -1e-10) |
+                           (weights > 1.+1e-10))):
+                raise ValueError(
+                    "Invalid Stage 04.3 exact aperture overlap fractions")
+            weights = np.clip(weights, 0., 1.)
+            usable = frame.valid[large] & ~source[large] & ~manual[large]
+            yy, xx = np.nonzero(usable & (weights > 0.))
+            if xx.size:
+                wt = weights[yy, xx]
+                area_i = float(np.sum(wt, dtype=np.float64))
+                moment_x = float(np.sum(
+                    wt*(xx+large[1].start-xref), dtype=np.float64))
+                moment_y = float(np.sum(
+                    wt*(yy+large[0].start-yref), dtype=np.float64))
+        recorded_area = first["cumulative"][radial_index][
+            "area_native_pixel2"]["valid_native_pixel2"]
+        if not math.isclose(
+                area_i, float(recorded_area), rel_tol=1e-10,
+                abs_tol=1e-6):
+            raise ValueError(
+                "Stage 04.3 radial masks disagree with frozen Stage 04.2")
+        radial_rows.append({
+            "radius_arcsec": float(radial_radius),
+            "valid_native_pixel2": area_i,
+            "frozen_valid_flux_nMgy": first["cumulative"][radial_index][
+                "signed_valid_flux_nMgy"],
+            "derivative_vector_for_b0_bx_by": [
+                -area_i, -moment_x, -moment_y],
+            "status": ("CONDITIONAL_EXACT_SKY_RESPONSE"
+                       if area_i > 0. else
+                       "NO_VALID_NATIVE_PIXELS_NO_SKY_INFERENCE"),
+        })
+
+    # Disjoint annular derivatives must equal differences of the same
+    # nested cumulative-aperture derivatives.  This introduces no
+    # assumption of independence between adjacent or cumulative rings.
+    radial_rings = []
+    for i in range(1, len(radial_rows)):
+        inner, outer_row = radial_rows[i-1], radial_rows[i]
+        vector = [float(a-b) for a, b in zip(
+            outer_row["derivative_vector_for_b0_bx_by"],
+            inner["derivative_vector_for_b0_bx_by"])]
+        radial_rings.append({
+            "inner_radius_arcsec": inner["radius_arcsec"],
+            "outer_radius_arcsec": outer_row["radius_arcsec"],
+            "valid_native_pixel2": float(
+                outer_row["valid_native_pixel2"] -
+                inner["valid_native_pixel2"]),
+            "derivative_vector_for_b0_bx_by": vector,
+            "status": ("CONDITIONAL_EXACT_RING_RESPONSE"
+                       if outer_row["valid_native_pixel2"] >
+                       inner["valid_native_pixel2"] + 1.e-10
+                       else "NO_VALID_ANNULAR_AREA_NO_SKY_INFERENCE"),
+        })
+    area = radial_rows[-1]["valid_native_pixel2"]
+    dx_sum_scenario = -radial_rows[-1][
+        "derivative_vector_for_b0_bx_by"][1]
+    dy_sum_scenario = -radial_rows[-1][
+        "derivative_vector_for_b0_bx_by"][2]
+    dx_sum = dx_sum_scenario - area*(projected.x_center-xref)
+    dy_sum = dy_sum_scenario - area*(projected.y_center-yref)
 
     relaxed = measure_native_aperture(
         frame, outer, provenance,
@@ -558,6 +608,21 @@ def diagnose_aperture_systematics(
         "baseline_geometry": hypothesis,
         "reference_semimajor_arcsec": radius,
         "reference_valid_flux_nMgy": original_flux,
+        "radial_sky_response": {
+            "schema": "desidera.photometry.radial-sky-jacobian/1",
+            "sky_reference_native_xy": [xref, yref],
+            "sky_parameter_order": [
+                "b0_nMgy_per_pixel",
+                "bx_nMgy_per_pixel2",
+                "by_nMgy_per_pixel2"],
+            "cumulative": radial_rows,
+            "disjoint_annuli": radial_rings,
+            "all_frozen_radial_areas_independently_verified": True,
+            "sky_parameter_covariance": None,
+            "confidence_interval_or_sigma_calibrated": False,
+            "conditional_on_unchanged_scene_masks_geometry": True,
+            "no_sky_or_psf_model_adopted": True,
+        },
         "sky_response": {
             "reference_native_xy": [xref, yref],
             "aperture_center_native_xy": [
