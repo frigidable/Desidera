@@ -496,6 +496,42 @@ def _conditional_sky_aperture_response_qa(stages):
             bg.get("dataset_source") != ap.get("dataset_source")):
         return {"state": "SCENE_OR_BAND_PROVENANCE_MISMATCH",
                 "correction_applied": False, "science_adopted": False}
+    # The names/UUID/draft alone cannot prove same native pixels.
+    # Stage03/04 may have been evaluated before a user replaced original
+    # FITS, moved the target, or reloaded the same brick with a new WCS.
+    # Do not expose a physically meaningless sky flux counterfactual.
+    source = stages.get("scene_masks") or {}
+    native = source.get("native_fits") or {}
+    if source.get("state") != "CURRENT_LOADED" or not native:
+        return {"state": "SCENE_SOURCE_NOT_VERIFIED_FOR_COMPARISON",
+                "correction_applied": False, "science_adopted": False}
+    same_fields = (
+        ("source_quartet_key", "source_quartet_key"),
+        ("grid_fingerprint", "grid_fingerprint"),
+        ("original_fits_sha256_local", "original_fits_sha256_local"),
+        ("image_unit_evidence", "image_unit_evidence"),
+        ("loaded_project_target_icrs", "loaded_project_target_icrs"),
+    )
+    for left, right in same_fields:
+        if bg.get(left) is None or ap.get(right) is None or (
+                bg[left] != ap[right]):
+            return {"state": "SCENE_OR_BAND_PROVENANCE_MISMATCH",
+                    "mismatch_key": left,
+                    "correction_applied": False, "science_adopted": False}
+    if (not isinstance(native.get("original_fits_sha256_local"), dict) or
+            bg["original_fits_sha256_local"] !=
+            native["original_fits_sha256_local"] or
+            bg["source_quartet_key"] != native.get("source_quartet_key") or
+            bg["loaded_project_target_icrs"] !=
+            native.get("loaded_target_icrs") or
+            ap.get("target_anchor_icrs") != native.get("loaded_target_icrs") or
+            bg.get("image_unit_evidence") !=
+            native.get("image_unit_evidence") or
+            bg.get("source_fits_hashes_verified_at_scene_load") is not True or
+            ap.get("source_fits_hashes_verified") is not True):
+        return {"state": "SCENE_OR_BAND_PROVENANCE_MISMATCH",
+                "mismatch_key": "full_native_source_or_target",
+                "correction_applied": False, "science_adopted": False}
     details = (ap.get("systematics_04_3") or {}).get("sky_response")
     if not isinstance(details, dict):
         return {"state": "NO_EXACT_APERTURE_RESPONSE",
