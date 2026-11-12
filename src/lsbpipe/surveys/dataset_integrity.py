@@ -64,6 +64,35 @@ def _expected_paths(data_root: Path, key: tuple[str, str, str, str]) -> dict:
     }
 
 
+def _assert_safe_original_paths(data_root: Path, paths: dict) -> None:
+    """Check every path component below a resolved native-data root.
+
+    An original FITS may itself be a regular file while its coadd,
+    chunk or brick directory is a symlink to unrelated data. Path.is_symlink
+    on the file alone cannot see this. Check all intermediate components
+    before any FITS reopening, never follow the redirected subtree.
+    """
+    root = Path(data_root).expanduser().resolve()
+    for kind, path in paths.items():
+        path = Path(path)
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError as exc:
+            raise ValueError(
+                f"Original {kind.upper()} FITS lies outside declared data root") from exc
+        if not parts:
+            raise ValueError("Original FITS path must be beneath data root")
+        current = root
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError(
+                    f"Missing or unsafe symlink original {kind.upper()} FITS: {current}")
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Missing original {kind.upper()} FITS: {path}")
+
+
 def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
     """Inventory every available science product, including orphan INVVAR/NEXP.
 
@@ -79,11 +108,12 @@ def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
     for release in ("dr9", "dr10", "dr11"):
         for region in regions_for_release(release):
             coadd = root / release / region / "coadd"
-            if not coadd.is_dir():
+            if not coadd.is_dir() or coadd.is_symlink():
                 continue
             for file in coadd.glob("*/*/legacysurvey-*.fits.fz"):
-                if file.is_symlink():
-                    continue  # Never follow an untrusted external symlink.
+                if (file.is_symlink() or file.parent.is_symlink() or
+                        file.parent.parent.is_symlink()):
+                    continue  # Never inventory through linked native directories.
                 name = file.name
                 match = BAND_PRODUCT.fullmatch(name)
                 mask = MASK_PRODUCT.fullmatch(name)
@@ -142,8 +172,11 @@ def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
     return rows
 
 
-def _sha256_file(path: Path, *, cancel_check=None) -> dict:
+def _sha256_file(path: Path, *, cancel_check=None,
+                 data_root: Path | None = None) -> dict:
     checkpoint(cancel_check)
+    if data_root is not None:
+        _assert_safe_original_paths(data_root, {"input": path})
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"Unsafe or missing original file for SHA-256: {path}")
     before = path.stat()
@@ -153,6 +186,8 @@ def _sha256_file(path: Path, *, cancel_check=None) -> dict:
             checkpoint(cancel_check)
             digest.update(block)
     checkpoint(cancel_check)
+    if data_root is not None:
+        _assert_safe_original_paths(data_root, {"input": path})
     if path.is_symlink() or not path.is_file():
         raise RuntimeError(f"Original source replaced by unsafe path: {path}")
     after = path.stat()
@@ -225,10 +260,7 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
     try:
         # Inventory metadata is merely a point-in-time observation. Files
         # can be replaced with symlinks between inventory and deep audit.
-        for kind, path in paths.items():
-            if path.is_symlink() or not path.is_file():
-                raise ValueError(
-                    f"Missing or unsafe symlink original {kind.upper()} FITS: {path}")
+        _assert_safe_original_paths(root, paths)
         with ExitStack() as stack:
             hdus = {kind: stack.enter_context(
                 fits.open(file, memmap=True, do_not_scale_image_data=False))
@@ -256,15 +288,14 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
                 numerically_valid += int(np.count_nonzero(
                     finite & ivgood & ngood & ~flagged))
             product_info = {}
+            _assert_safe_original_paths(root, paths)
             for kind, file in paths.items():
-                if file.is_symlink() or not file.is_file():
-                    raise RuntimeError(
-                        f"Original {kind.upper()} FITS became unsafe during audit")
                 info = dict(entry["products"][kind])
                 info["hdu_index"] = int(indices[kind])
                 info["bunit"] = units[kind]
                 if hash_inputs:
-                    info.update(_sha256_file(file, cancel_check=cancel_check))
+                    info.update(_sha256_file(
+                        file, cancel_check=cancel_check, data_root=root))
                 product_info[kind] = info
             result.update({
                 "status": "FITS_WCS_VALIDATED_DIAGNOSTIC",
@@ -347,10 +378,12 @@ def _sampled_footprint(data_root: Path, verified: list[dict], field: SkyField,
             # Verification and sampled-footprint extraction are separate
             # file opens. A path can be substituted after the earlier
             # quartet check; refuse symlinks before opening it again.
-            for kind, path in paths.items():
-                if path.is_symlink() or not path.is_file():
-                    raise RuntimeError(
-                        f"Unsafe original {kind.upper()} FITS during coverage sampling: {path}")
+            try:
+                _assert_safe_original_paths(data_root, paths)
+            except (OSError, ValueError) as exc:
+                raise RuntimeError(
+                    "Unsafe original FITS during coverage sampling: "
+                    + str(exc)) from exc
             with ExitStack() as stack:
                 hdus = {k: stack.enter_context(
                     fits.open(p, memmap=True)) for k, p in paths.items()}
@@ -427,7 +460,8 @@ def assert_audited_inputs_unchanged(data_root: str | Path,
             checkpoint(cancel_check)
             file = root / product["relative_path"]
             try:
-                info = _sha256_file(file, cancel_check=cancel_check)
+                info = _sha256_file(
+                    file, cancel_check=cancel_check, data_root=root)
             except OSError as exc:
                 raise RuntimeError(
                     f"Verified source disappeared before audit completion: {file}") from exc

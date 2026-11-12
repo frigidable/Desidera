@@ -1074,3 +1074,28 @@ source-SHA check remains in place. A synthetic regression substitutes
 a link **after** verified input receipt creation and requires refusal
 before the map's second FITS opening. This mitigates path replacement
 but is not a kernel-level race-free descriptor authenticity guarantee.
+
+
+### Original FITS symlinked *directory* protection across P0.2/P0.5 (2026-11-12)
+
+The per-FITS no-symlink guards added in earlier audits missed the
+case where a native IMAGE/INVVAR/NEXP/MASKBITS file was itself a
+regular file, but its `coadd`, chunk or brick parent directory was
+a symlink. In that case `path.is_symlink()` on the leaf was false,
+yet `fits.open` followed the redirected parent into untrusted data.
+
+A shared `_assert_safe_original_paths` now checks **every path
+component beneath the resolved chosen source root**, prior to the
+P0.2 deep FITS open and sampled-coverage reopen, before native P0.5
+photometry loads, and when original files are SHA-256 hashed. The
+inventory scanner also excludes linked coadd and brick paths rather
+than treating them as locally present original sources. The common
+hash helper accepts an optional trusted `data_root`; callers at
+the native FITS boundaries supply it, including before/after the
+read. This is fail-closed source-integrity hardening and does not
+claim atomic descriptor pinning against adversarial races.
+
+A regression replaces the original brick directory with a symlink
+to a valid FITS-containing external directory: inventory,
+validation, sampled coverage, photometry and SHA all refuse it.
+Source FITS are never changed by the code under test.

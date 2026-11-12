@@ -302,8 +302,43 @@ def test_sampled_coverage_refuses_symlink_substitution_after_validated_input(
         old.symlink_to(external)
     except (OSError, NotImplementedError):
         pytest.skip("Filesystem disallows symlink construction")
-    with pytest.raises(RuntimeError, match="Unsafe original IMAGE FITS"):
+    with pytest.raises(RuntimeError, match="unsafe symlink original IMAGE FITS"):
         audit._sampled_footprint(
             root, [verified], FIELD, pitch_arcsec=2.)
     assert old.is_symlink()
     assert external.is_file()
+
+
+def test_original_brick_directory_symlink_is_rejected_at_every_read_stage(
+        tmp_path):
+    """A regular FITS behind a linked brick folder is not native local data."""
+    from lsbpipe.surveys import dataset_integrity as audit
+    from lsbpipe.photometry.native_fits import load_native_legacy_quartet
+    root = tmp_path / "original-quartets"
+    paths = _make_brick(root, "0401p012")
+    inventoried = discover_dataset_inventory(root)[0]
+    verified = verify_dataset(root, inventoried)
+    assert verified["status"] == "FITS_WCS_VALIDATED_DIAGNOSTIC"
+    folder = paths["image"].parent
+    external = tmp_path / "external-brick"
+    folder.rename(external)
+    try:
+        folder.symlink_to(external, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Directory symlinks unavailable on this runner")
+    assert not paths["image"].is_symlink()
+    assert paths["image"].is_file()
+    # Inventory must not silently include a linked original brick folder.
+    assert discover_dataset_inventory(root) == []
+    denied = verify_dataset(root, inventoried)
+    assert denied["status"] == "INVALID_FITS"
+    assert "unsafe symlink original IMAGE FITS" in denied["error"]
+    with pytest.raises(ValueError, match="unsafe symlink original INPUT FITS"):
+        audit._sha256_file(paths["image"], data_root=root)
+    with pytest.raises(RuntimeError, match="unsafe symlink original IMAGE FITS"):
+        audit._sampled_footprint(
+            root, [verified], FIELD, pitch_arcsec=2.)
+    with pytest.raises(ValueError, match="unsafe symlink original IMAGE FITS"):
+        load_native_legacy_quartet(
+            root, release="dr9", region="south",
+            brick="0401p012", band="r", hash_inputs=False)

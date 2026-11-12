@@ -11,7 +11,8 @@ import json
 
 from lsbpipe.surveys.dataset_integrity import (
     KINDS, _expected_paths, _sha256_file, _validate_open_hdus,
-    IMAGE_BUNIT_ALIASES, IVAR_BUNIT_ALIASES, normalize_legacy_bunit)
+    _assert_safe_original_paths, IMAGE_BUNIT_ALIASES,
+    IVAR_BUNIT_ALIASES, normalize_legacy_bunit)
 from lsbpipe.surveys.legacy import BRICK_RE, regions_for_release
 from lsbpipe.surveys.task_control import checkpoint
 from .contracts import MaskPolicy, NativeBandFrame
@@ -46,9 +47,7 @@ def load_native_legacy_quartet(
     # The root must contain <release>/<region>/coadd, not the output folder.
     root = Path(data_root).expanduser().resolve()
     paths = _expected_paths(root, (release, region, brick, band))
-    for name, path in paths.items():
-        if not path.is_file() or path.is_symlink():
-            raise FileNotFoundError(f"Missing safe original {name}: {path}")
+    _assert_safe_original_paths(root, paths)
     checkpoint(cancel_check)
     stats = {name: path.stat() for name, path in paths.items()}
     with ExitStack() as stack:
@@ -100,10 +99,12 @@ def load_native_legacy_quartet(
         checkpoint(cancel_check)
         before = stats[name]
         if hash_inputs:
-            info = _sha256_file(path, cancel_check=cancel_check)
+            info = _sha256_file(
+                path, cancel_check=cancel_check, data_root=root)
             hashes[name] = info["sha256_local"]
             size, modified = info["size_bytes"], info["mtime_ns"]
         else:
+            _assert_safe_original_paths(root, {name: path})
             final = path.stat()
             size, modified = final.st_size, final.st_mtime_ns
         if (before.st_size, before.st_mtime_ns) != (size, modified):
