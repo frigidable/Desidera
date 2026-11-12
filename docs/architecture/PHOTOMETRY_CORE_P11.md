@@ -2461,8 +2461,11 @@ or had the correct source grid. This could conceal a stale Scene
 state in an otherwise valid-looking growth QA, even though the
 full-aperture integrator always validates masks on entry.
 
-Ring measurements now validate and snapshot both same-grid masks
-before projecting/rasterizing and before any no-overlap return.
+Ring measurements now validate both same-grid masks before
+projecting/rasterizing and before any no-overlap return. The enclosing
+growth run already snapshots editable masks once per curve: individual
+rings reuse those validated arrays rather than making two costly
+full-native-grid copies for every radius.
 The positive inner radius, frozen growth hypothesis q/PA and radial
 grid are also required to use genuine finite numeric scalars, not
 Booleans or numeric-looking strings. Accepted NumPy scalars are

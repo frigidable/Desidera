@@ -167,8 +167,8 @@ def measure_native_annulus(frame:NativeBandFrame,
     if (source.shape!=frame.shape or manual.shape!=frame.shape or
         source.dtype.kind!="b" or manual.dtype.kind!="b"):
         raise ValueError("Annulus Scene masks must be same-grid Boolean arrays")
-    source=np.array(source,dtype=bool,copy=True)
-    manual=np.array(manual,dtype=bool,copy=True)
+    # The enclosing growth-run already freezes both full-size masks once.
+    # Avoid duplicating two entire native coadd grids for every radial ring.
     e=project_icrs_ellipse_to_native(outer,frame.wcs)
     factor=ain/outer.semimajor_arcsec
     aperture=EllipticalAnnulus(
