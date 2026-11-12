@@ -1801,3 +1801,66 @@ This is a **code and synthetic-regression audit**. Real Leo P FITS
 have not been reloaded in this environment; the new header/hashing
 contract still needs a local GUI acceptance run on the scientist's
 original DR11 quartet.
+
+
+---
+
+## 2026-11-12 — Project-anchor invalidation and blank-covariance budget audit
+
+### Confirmed project lifecycle defect: same UUID, moved target
+
+The Stage02 GUI previously memoized project/source identity from
+`(project path, UUID, selected quartet, data root)`. Editing the
+project's saved ICRS target centre or field size while retaining those
+four attributes then rebinding the project could **keep old in-memory
+native pixels and source masks but update the GUI target centre**.
+Stage04 uses the target centre to project its exact apertures, making
+the mixed old-pixel/new-centre state scientifically dangerous even if
+`Copy QA` reports a matching project UUID.
+
+**Fixed:** the GUI-bound source key now additionally contains the exact
+saved project RA, Dec and field width. Rebinding with changed field
+geometry invalidates the loaded Scene, prepared masks, isophote
+diagnostics and downstream results. Each real Scene loader output also
+carries `loaded_target_icrs` and the source quartet key. The main
+thread rejects asynchronous worker results for a different target
+centre or brick (including cases where the project UUID and displayed
+band agree). The Stage03 snapshot refuses a mismatch between the
+current project centre, loaded Scene origin and prepared mask quartet;
+Stage04 independently refuses mismatch between its aperture anchor
+and the loaded Scene centre. The unified QA now compares the *fixed
+project centre* in Scene, Background and Aperture, independently of
+an optional operator-picked isophote centre.
+
+The tests deliberately move the target without changing the UUID,
+present an obsolete worker result, swap source brick IDs and corrupt
+mask lineage. The affected work is blocked or invalidated, never
+silently reused. All these controls are non-destructive.
+
+### Confirmed uncertainty-QA sampling-budget defect
+
+The empirical blank-annulus covariance routine allowed up to 40 radial
+bins and required at least `2 * n_bins + 2` independent blank
+placements, but its fixed default ceiling was 48 positions. At 31
+bins, for example, 64 placements were required while at most 48 could
+be sampled, guaranteeing a false `INSUFFICIENT_INDEPENDENT_BLANK_POSITIONS`
+conclusion regardless of available image area.
+
+**Fixed:** the default ceiling is now adaptively increased to at least
+the declared requirement, within the bounded limit of 256 placements.
+An explicitly requested lower `max_placements` remains respected and
+produces a separate
+`EXPLICIT_PLACEMENT_CAP_BELOW_REQUIRED_COVARIANCE_SAMPLE`
+status rather than being misreported as lack of clean sky. The report
+records `n_max_placements` and whether the ceiling was explicit.
+Regression tests cover 31-ring vectors and the explicit impossible
+cap. These are *diagnostic* independent placements on a single
+correlated coadd, not a calibrated full-galaxy flux covariance.
+
+### Still open
+
+The user must still validate new source/anchor and FITS-header guards
+against real original DR11 Leo P files. A synthetic pass is not a
+measurement of PSF far wings, correlated noise covariance, bias from
+upstream sky subtraction, masked galaxy-light restoration, or source
+membership. The full science release remains blocked.
