@@ -34,6 +34,25 @@ MASK_PRODUCT = re.compile(
 MAX_DATASETS = 64
 MAX_GRID_CELLS = 160_000
 
+# P0.2 and P0.5 share exactly one accepted optical-unit contract.
+# Lexical aliases do not authorize any numerical flux rescaling.
+IMAGE_BUNIT_ALIASES = frozenset((
+    "nanomaggy", "nanomaggies", "nmgy",
+    "nanomaggy/pixel", "nanomaggies/pixel", "nmgy/pixel",
+    "nanomaggy/pix", "nanomaggies/pix", "nmgy/pix",
+))
+IVAR_BUNIT_ALIASES = frozenset((
+    "1/nanomaggies^2", "1/nanomaggy^2", "1/nmgy^2",
+    "nanomaggies^-2", "nanomaggy^-2", "nmgy^-2",
+    "1/(nanomaggies)^2", "1/(nanomaggy)^2", "1/(nmgy)^2",
+))
+
+
+def normalize_legacy_bunit(value) -> str:
+    """Normalize written BUNIT spelling, never the underlying data."""
+    return str(value).lower().replace(" ", "").replace("**", "^")
+
+
 
 def _expected_paths(data_root: Path, key: tuple[str, str, str, str]) -> dict:
     release, region, brick, band = key
@@ -170,11 +189,15 @@ def _validate_open_hdus(hdus: dict, band: str):
         if arrays[kind].shape != shape:
             raise ValueError(f"{kind}: raster shape mismatch")
         _check_wcs_compatible(systems["image"], systems[kind], shape, kind)
-    img_unit = str(units["image"] or "").lower().replace(" ", "")
-    if img_unit and img_unit not in (
-            "nanomaggy", "nanomaggies", "nanomaggies/pixel",
-            "nanomaggy/pixel", "nanomaggy/pix", "nanomaggies/pix"):
-        raise ValueError(f"IMAGE BUNIT is not expected nanomaggies: {units['image']}")
+    img_unit = normalize_legacy_bunit(units["image"] or "")
+    ivar_unit = normalize_legacy_bunit(units["invvar"] or "")
+    if img_unit and img_unit not in IMAGE_BUNIT_ALIASES:
+        raise ValueError(
+            f"IMAGE BUNIT is not expected nanomaggies: {units['image']}")
+    if ivar_unit and ivar_unit not in IVAR_BUNIT_ALIASES:
+        raise ValueError(
+            "INVVAR BUNIT must represent inverse squared nanomaggies, "
+            f"not {units['invvar']!r}")
     return arrays, systems["image"], indices, units
 
 
@@ -234,6 +257,15 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
                 "status": "FITS_WCS_VALIDATED_DIAGNOSTIC",
                 "products": product_info,
                 "shape": list(image.shape),
+                "unit_evidence": {
+                    "image": ("EXPLICIT_NANOMAGGIES_BUNIT"
+                              if units["image"] and str(units["image"]).strip()
+                              else "BUNIT_MISSING_SURVEY_DOCUMENTATION_ASSUMPTION"),
+                    "invvar": ("EXPLICIT_INVERSE_SQUARED_NANOMAGGIES_BUNIT"
+                               if units["invvar"] and str(units["invvar"]).strip()
+                               else "BUNIT_MISSING_SURVEY_DOCUMENTATION_ASSUMPTION"),
+                    "no_numerical_unit_conversion_performed": True,
+                },
                 "fractions": {
                     "finite_image": finite_image / total,
                     "positive_invvar": positive_ivar / total,

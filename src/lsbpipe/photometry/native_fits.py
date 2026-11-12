@@ -10,25 +10,16 @@ from pathlib import Path
 import json
 
 from lsbpipe.surveys.dataset_integrity import (
-    KINDS, _expected_paths, _sha256_file, _validate_open_hdus)
+    KINDS, _expected_paths, _sha256_file, _validate_open_hdus,
+    IMAGE_BUNIT_ALIASES, IVAR_BUNIT_ALIASES, normalize_legacy_bunit)
 from lsbpipe.surveys.legacy import BRICK_RE, regions_for_release
 from lsbpipe.surveys.task_control import checkpoint
 from .contracts import MaskPolicy, NativeBandFrame
 
-_ALLOWED_IMAGE_UNITS = {
-    "nanomaggy", "nanomaggies", "nmgy",
-    "nanomaggy/pixel", "nanomaggies/pixel", "nmgy/pixel",
-    "nanomaggy/pix", "nanomaggies/pix", "nmgy/pix"}
-_ALLOWED_IVAR_UNITS = {
-    "1/nanomaggies^2", "1/nanomaggy^2", "1/nmgy^2",
-    "nanomaggies^-2", "nanomaggy^-2", "nmgy^-2",
-    "1/(nanomaggies)^2", "1/(nanomaggy)^2",
-}
-
-
-def _norm(value):
-    return str(value).lower().replace(" ", "").replace("**", "^")
-
+# Identical P0.2/P0.5 unit checks, without duplicate alias tables.
+_ALLOWED_IMAGE_UNITS = IMAGE_BUNIT_ALIASES
+_ALLOWED_IVAR_UNITS = IVAR_BUNIT_ALIASES
+_norm = normalize_legacy_bunit
 
 def load_native_legacy_quartet(
     data_root: str | Path, *, release: str, region: str,
