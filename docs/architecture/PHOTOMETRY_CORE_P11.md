@@ -2251,3 +2251,29 @@ changes the target radius, saves a newer exclusion edit, reverts the
 radius and checks that the new edit survives rather than resurrecting
 the original cached draft. This is a data-integrity fix, separate
 from the source-mask geometry verification and from science adoption.
+
+
+### Autosave conflict gate on source switching / project unbinding
+
+A follow-up review found a conflict-resolution hazard in that cache
+repair: `flush_autosave` deliberately uses optimistic HEAD revision
+checking and preserves unsaved Scene edits on failure, but a subsequent
+source switch or project unbind would still discard the only live
+in-memory copy. Additionally, `bind_project` updated its target ICRS
+before confirming that the previous draft had been saved, which could
+make a rejected transition display an inconsistent target.
+
+**Fixed:** all source-identity transitions now check whether a dirty
+draft actually became saved after `flush_autosave`; an unresolved
+concurrent revision conflict blocks the transition while keeping
+the original loaded Scene, bound target, source key and edit draft.
+The new target is not committed to GUI state until after this guard.
+Project unbinding applies the same safeguard. The Qt regression
+creates a conflicting externally updated `HEAD.json`, attempts both
+a radius-only rebind and unbind, and checks that neither loses the
+unsaved local edit nor overwrites the external saved edit.
+
+This protects the in-session editor operation; it is **not** a claim
+that the application or operating system can persist unsaved edits
+after a forced process termination. User intervention is still
+required to resolve an explicit optimistic-concurrency conflict.
