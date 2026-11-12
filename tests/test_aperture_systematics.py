@@ -919,3 +919,71 @@ def test_blank_native_centres_match_target_subpixel_phase_and_noise_weights():
     assert not result["covariance_calibrated_for_science"]
     assert result["no_science_covariance_calibration_from_phase_matching"]
     json.dumps(result, allow_nan=False)
+
+
+def test_blank_covariance_reports_target_vs_blank_ivar_heterogeneity():
+    """Target noise scale can differ even for identical subpixel-ring geometry."""
+    from photutils.aperture import EllipticalAperture
+    from lsbpipe.photometry.aperture_flux import project_icrs_ellipse_to_native
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    shape = (321, 321)
+    image = np.random.default_rng(2036).normal(0., .1, shape)
+    invvar = np.full(shape, 4., dtype=float)
+    # A low-exposure/large-noise region covers the original galaxy
+    # but not the non-overlapping blank control fields.
+    invvar[140:181, 140:181] = .04
+    f = frame(image=image, shape=shape, w=pixel_wcs, ivar=invvar)
+    none = np.zeros(shape, dtype=bool)
+    target = geometry(ra=155.400039, dec=18.000034, a=1.6,
+                      q=.77, pa=28.)
+    radii = (.6, 1.1, 1.6)
+    out = estimate_blank_annulus_covariance(
+        f, target, radii,
+        effective_source_mask=none, manual_exclude=none)
+    qa = out["native_diagonal_variance_comparability"]
+    assert qa["schema"] == (
+        "desidera.photometry.blank-vs-target-diagonal-variance/1")
+    assert len(qa["target_partial_ring_formal_variance_nMgy2"]) == 3
+    assert len(qa["median_full_blank_ring_formal_variance_nMgy2"]) == 3
+    assert all(ratio > 20. for ratio in qa[
+        "target_to_median_blank_diagonal_variance_ratio"])
+    assert qa["native_ivar_is_diagonal_only_not_coadd_covariance"]
+    assert qa["ratio_not_a_science_covariance_rescaling_factor"]
+    assert qa["no_automatic_target_noise_correction"]
+    # Independent analytic check for the smallest cumulative disk:
+    projected = project_icrs_ellipse_to_native(target, f.wcs)
+    disk = EllipticalAperture(
+        (projected.x_center, projected.y_center),
+        projected.a_pix*radii[0]/radii[-1],
+        projected.b_pix*radii[0]/radii[-1],
+        theta=projected.theta_rad_pixel_ccw)
+    m = disk.to_mask(method="exact")
+    large, small = m.get_overlap_slices(shape)
+    weights = np.asarray(m.data[small], dtype=float)
+    reference_variance = float(np.sum(
+        weights**2 / invvar[large], dtype=np.float64))
+    assert qa["target_partial_ring_formal_variance_nMgy2"][0] == (
+        pytest.approx(reference_variance, abs=1.e-10))
+    assert out["covariance_calibrated_for_science"] is False
+    json.dumps(qa, allow_nan=False)
+
+
+def test_blank_ivar_comparison_retains_null_for_fully_masked_target_rings():
+    rng = np.random.default_rng(20261113)
+    data = rng.normal(0., .2, (321, 321))
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    f = frame(image=data, shape=(321, 321), w=pixel_wcs)
+    target_mask = np.zeros(f.shape, dtype=bool)
+    yy, xx = np.indices(f.shape)
+    target_mask[(xx-160)**2 + (yy-160)**2 < 9.**2] = True
+    out = estimate_blank_annulus_covariance(
+        f, geometry(a=1.6, q=.8, pa=24.), (.5, 1., 1.6),
+        effective_source_mask=target_mask,
+        manual_exclude=np.zeros(f.shape, dtype=bool))
+    qa = out["native_diagonal_variance_comparability"]
+    assert qa["target_partial_ring_formal_variance_nMgy2"][0] is None
+    assert qa["target_to_median_blank_diagonal_variance_ratio"][0] is None
+    assert qa["median_full_blank_ring_formal_variance_nMgy2"][0] is not None
+    assert out["covariance_calibrated_for_science"] is False

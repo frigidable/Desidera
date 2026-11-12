@@ -199,11 +199,42 @@ def estimate_blank_annulus_covariance(
         full_radius_pix = full_projection.a_pix
         if full_radius_pix < projected.a_pix:
             raise ValueError("Full target exclusion cannot be smaller than blank rings")
+    # The blank sampling distribution can have a very different
+    # diagonal inverse variance from the actual galaxy aperture,
+    # especially across NEXP boundaries. Compare the *same fractional
+    # pixel operators* before attempting any covariance interpretation.
+    # Hard and source/manual masks remain effective at the target.
+    target_ring_formal_variances = []
+    target_ring_usable_areas = []
+    for i in range(len(radii)):
+        target_mask = _ring_aperture(
+            projected.x_center, projected.y_center,
+            projected, radii, i).to_mask(method="exact")
+        tlarge, tsmall = target_mask.get_overlap_slices(frame.shape)
+        if tlarge is None:
+            target_ring_formal_variances.append(None)
+            target_ring_usable_areas.append(0.)
+            continue
+        tw = np.asarray(target_mask.data[tsmall], dtype=float)
+        if (not np.isfinite(tw).all() or
+                np.any((tw < -1.e-10) | (tw > 1.+1.e-10))):
+            raise ValueError("Invalid target-ring exact weights in blank QA")
+        tw = np.clip(tw, 0., 1.)
+        target_usable = (tw > 0.) & ~invalid[tlarge]
+        target_ring_usable_areas.append(float(np.sum(
+            tw[target_usable], dtype=np.float64)))
+        if np.any(target_usable):
+            target_ring_formal_variances.append(float(np.sum(
+                tw[target_usable]**2 /
+                frame.invvar_nMgy2[tlarge][target_usable],
+                dtype=np.float64)))
+        else:
+            target_ring_formal_variances.append(None)
     exclusion_distance_pix = full_radius_pix + projected.a_pix + 3.
     margin = int(math.ceil(projected.a_pix + 3))
     step = max(2 * margin + 2, 8)
     ny, nx = frame.shape
-    centres, samples = [], []
+    centres, samples, blank_ring_formal_variances = [], [], []
     examined, rejected = 0, 0
     required = max(min_placements, 2 * len(radii) + 2)
     # A heavily masked large CCD must not trigger an unbounded search.
@@ -234,6 +265,7 @@ def estimate_blank_annulus_covariance(
             rejected += 1
             continue
         vector = []
+        formal_vector = []
         for i in range(len(radii)):
             mask = _ring_aperture(x, y, projected, radii, i).to_mask(
                 method="exact")
@@ -274,12 +306,38 @@ def estimate_blank_annulus_covariance(
             vector.append(float(np.sum(
                 weights[support] * pixel_values,
                 dtype=np.float64)))
+            diagonal_variance = float(np.sum(
+                weights[support]**2 /
+                frame.invvar_nMgy2[large][support], dtype=np.float64))
+            if not np.isfinite(diagonal_variance):
+                raise ValueError("Nonfinite blank native diagonal variance")
+            formal_vector.append(diagonal_variance)
         if len(vector) != len(radii):
             rejected += 1
             continue
         centres.append([float(x), float(y)])
         accepted_by_quadrant[quadrant] += 1
         samples.append(vector)
+        blank_ring_formal_variances.append(formal_vector)
+
+    if blank_ring_formal_variances:
+        blank_formal_array = np.asarray(
+            blank_ring_formal_variances, dtype=float)
+        median_blank_formal = np.median(
+            blank_formal_array, axis=0).tolist()
+        target_to_blank_formal = [
+            (float(t/b) if t is not None and b > 0. else None)
+            for t, b in zip(target_ring_formal_variances,
+                            median_blank_formal)]
+        blank_formal_min = np.min(
+            blank_formal_array, axis=0).tolist()
+        blank_formal_max = np.max(
+            blank_formal_array, axis=0).tolist()
+    else:
+        median_blank_formal = [None]*len(radii)
+        target_to_blank_formal = [None]*len(radii)
+        blank_formal_min = [None]*len(radii)
+        blank_formal_max = [None]*len(radii)
 
     report = {
         "schema": _BLANK_SCHEMA,
@@ -296,6 +354,27 @@ def estimate_blank_annulus_covariance(
         "target_native_subpixel_phase_xy": [phase_x, phase_y],
         "blank_lattice_translation_is_integer_pixels_after_phase_match": True,
         "no_science_covariance_calibration_from_phase_matching": True,
+        "native_diagonal_variance_comparability": {
+            "schema": "desidera.photometry.blank-vs-target-diagonal-variance/1",
+            "target_partial_ring_usable_area_native_pixel2":
+                target_ring_usable_areas,
+            "target_partial_ring_formal_variance_nMgy2":
+                target_ring_formal_variances,
+            "median_full_blank_ring_formal_variance_nMgy2":
+                median_blank_formal,
+            "min_full_blank_ring_formal_variance_nMgy2":
+                blank_formal_min,
+            "max_full_blank_ring_formal_variance_nMgy2":
+                blank_formal_max,
+            "target_to_median_blank_diagonal_variance_ratio":
+                target_to_blank_formal,
+            "blank_measurements_use_complete_valid_rings": True,
+            "target_measurements_keep_original_source_and_manual_exclusions":
+                True,
+            "native_ivar_is_diagonal_only_not_coadd_covariance": True,
+            "ratio_not_a_science_covariance_rescaling_factor": True,
+            "no_automatic_target_noise_correction": True,
+        },
         "candidate_storage_policy": "ROW_BLOCKS_AND_COPRIME_INDEX_STRIDE_NO_CENTER_ARRAY",
         "candidate_grid_nodes_by_quadrant": available_by_quadrant,
         "accepted_centres_by_quadrant": accepted_by_quadrant,

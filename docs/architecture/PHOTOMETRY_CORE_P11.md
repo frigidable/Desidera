@@ -2784,3 +2784,35 @@ removes one known mismatch but does not correct spatial
 variability of pixel IVAR, field-scale correlated noise,
 sky/foreground contamination, or galaxy light missing from
 survey coadds. The covariance remains diagnostic only.
+
+
+### Stage 04.3: do not mistake blank-field variance for target-pixel IVAR (2026-11-13)
+
+Matching all blank placements to the target's fractional native
+pixel phase removes a *geometric* disparity, but the coadd
+INVVAR/NEXP field can vary by orders of magnitude across the
+galaxy and blank sky regions. The empirical sample variance of
+noise from high-coverage blanks cannot be treated as the
+galaxy's noise variance in a lower-coverage target aperture.
+The same issue arises when target pixels are excluded by a
+manual or provisional source mask: blanks still use complete
+rings while the measured target flux uses only its valid area.
+
+The blank covariance QA now separately integrates the expected
+**original native diagonal-only** formal `sum(w²/INVVAR)` in
+each target ring *after its original source/manual/hard masks*,
+and for every unmasked complete blank ring. It reports the
+target variance, the distribution of blank formal variances
+and their target-to-median ratios by radial index. Missing
+target ring flux remains null, and no invented zero or
+uncertainty correction is made. The formal ratios are explicitly
+**not** full-coadd correlation corrections, covariance
+normalization factors, sky-error likelihoods or evidence of
+galaxy completeness. The existing empirical covariance is
+left entirely unscaled.
+
+Synthetic regression uses a known strongly heterogeneous IVAR
+field (noise-heavy around the target, quiet in blank fields)
+and independently integrates the smallest-ring exact native
+weights; a second test checks a fully masked target inner
+ring stays null despite valid off-target control rings.
