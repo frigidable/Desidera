@@ -777,7 +777,22 @@ def _diagnostic_findings(stages, project):
         findings.append("APERTURE_SENSITIVE_TO_UNADOPTED_SKY_FITS")
     provenance=stages.get("cross_stage_source_lineage") or {}
     if provenance.get("state")=="CROSS_STAGE_SOURCE_IDENTITY_MISMATCH":
-        findings.append("CROSS_STAGE_SOURCE_FITS_PROVENANCE_MISMATCH")
+        findings.append("CROSS_STAGE_SOURCE_OR_MASK_LINEAGE_MISMATCH")
+        comparisons=list((provenance.get("stage_comparisons") or {}).values())
+        source_fields=(
+            "quartet_matches","full_original_sha256_matches",
+            "native_grid_fingerprint_matches","image_unit_evidence_matches",
+            "project_target_icrs_matches")
+        if any(any(row.get(k) is False for k in source_fields)
+               for row in comparisons):
+            findings.append("CROSS_STAGE_SOURCE_FITS_PROVENANCE_MISMATCH")
+        if any(row.get("source_mask_geometry_policy_matches") is False
+               for row in comparisons):
+            findings.append("CROSS_STAGE_MASK_RASTER_POLICY_MISMATCH")
+        if any(any(match is False for match in (
+                row.get("native_mask_fingerprint_matches") or {}).values())
+               for row in comparisons):
+            findings.append("CROSS_STAGE_NATIVE_MASK_PIXEL_FINGERPRINT_MISMATCH")
     if provenance.get("state")=="SCENE_SOURCE_NOT_FULLY_VERIFIED":
         findings.append("SCENE_FITS_OR_UNITS_NOT_FULLY_VERIFIED")
     foreground = stages.get("foreground_aperture_overlap") or {}
