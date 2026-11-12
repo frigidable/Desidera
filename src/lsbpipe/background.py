@@ -1029,7 +1029,8 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     All fitted results remain explicitly non-adopted research diagnostics.
     """
     from dataclasses import asdict, replace
-    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    from lsbpipe.photometry.sky_masks import (
+        evaluate_mask_draft, native_boolean_mask_sha256)
     from lsbpipe.scene import grid_fingerprint
 
     if (not isinstance(dataset, dict) or
@@ -1093,6 +1094,16 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     preview = evaluate_mask_draft(
         working_draft, dataset["wcs"], shape, band,
         native_hard=hard, automatic_contaminants=auto)
+    source_mask_hash = native_boolean_mask_sha256(preview["effective_auto"])
+    manual_mask_hash = native_boolean_mask_sha256(preview["manual_exclude"])
+    for key, actual in (
+            ("effective_source_mask_sha256", source_mask_hash),
+            ("manual_exclude_mask_sha256", manual_mask_hash)):
+        expected = contamination.get(key)
+        if expected is not None and expected != actual:
+            raise ValueError(
+                "Stage03 native Scene/sky mask geometry fingerprint mismatch: "
+                + key)
     sky_train, sky_holdout, selection = _automatic_scene_sky_pixels(
         dataset, preview, contamination)
     sky_protected = protected | preview["target_protect"] | preview["isophote_candidate"]
@@ -1120,6 +1131,8 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "draft_sha256": draft.digest,
         "catalog_sha256": contamination["catalog_sha256"],
         "source_mask_policy_id": contamination.get("source_mask_policy_id"),
+        "effective_source_mask_sha256": source_mask_hash,
+        "manual_exclude_mask_sha256": manual_mask_hash,
         "native_pixel_shape": list(shape),
         "original_fits_provenance_status": dataset.get(
             "original_fits_provenance_status", "NOT_HASHED"),
