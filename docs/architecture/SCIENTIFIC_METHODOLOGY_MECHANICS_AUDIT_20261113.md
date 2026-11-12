@@ -485,3 +485,157 @@ new directories or modifying `main`.
 4. On a larger stratified galaxy sample and the relevant sky angular scales, compare science results to deeper independent imaging or a CCD-level upstream-sky forward model, and calibrate confidence-interval coverage. Do not use internal coadd agreement alone to certify systematic accuracy.
 
 **Scientific gate:** all measurements remain DIAGNOSTIC_ONLY/MEASURED_PARTIAL/UNDERCONSTRAINED and `SCIENCE HOLD`. No native observation was reprocessed for this audit, no additional directories/branches were created, and original FITS and `main` remain untouched. References for the stellar weighting/selection context: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html and https://docs.astropy.org/projects/photutils/en/stable/user_guide/psf.html .
+
+
+## Further method audit — identical pixel operators and nonstationary blank covariance (2026-11-13)
+
+This follow-up to findings F11/M19–M22 examines the observable
+difference between (1) the native pixel weights and diagonal formal
+variance at the **actual galaxy location**, and (2) the sky-field
+control-ring measurements used as a surrogate covariance. The
+numerical fixes here are scientifically motivated, explicitly
+**non-adopted**, and do not claim a final Leo P result or a
+calibrated error budget.
+
+### M23 — blank covariances were estimated with different subpixel weights — CONFIRMED INCONSISTENCY; FIXED
+
+**Implementation:** `photometry/aperture_systematics.py`,
+`estimate_blank_annulus_covariance`, commit `ff223c0`.
+The frozen galaxy aperture is centred at the native WCS
+projection of its ICRS anchor, usually not an integer native
+pixel. Original blank candidates were always centred at
+**integer** native pixels. As the exact
+Photutils `EllipticalAperture` / `EllipticalAnnulus` operators
+integrate fractional boundary overlap, a blank with identical
+geometrical size and position angle but a different subpixel
+phase uses a **different vector of linear pixel coefficients**.
+For independent input pixels with variances `1/ivar_p`,
+the formal flux variance is `sum(w_p**2/ivar_p)`; equal
+geometrical area does not imply equal `sum(w**2)` at different
+subpixel phase.
+
+The deterministic, quadrant-stratified candidate lattice is
+now translated by the target's fractional native `(x,y)`
+phase, so each blank is an **integer-pixel translation
+of the true target aperture**, without interpolating any
+native pixel value. Full-target exclusion, source/manual
+masking and pairwise placement separation stay unchanged.
+Schema `blank-annulus-covariance/3` explicitly records the
+target phase and phase-matched placement method. A synthetic
+fractional-centre regression verifies each blank's matching
+phase and its direct `sum(w**2)` relative to the true
+target mask. This proves pixel-operator consistency only:
+real correlated-noise covariance is not thereby identified.
+
+### M24 — blank regions can have radically different inverse variance from the target — CONFIRMED LIMIT; MEASURED
+
+**Implementation:** the same blank covariance operator,
+commit `6ceb93b`.
+Native Legacy coadds combine exposure coverage and
+inverse-variance structure that vary across field, source
+masks and target pixels. A phase-matched blank sample can
+therefore have a very different diagonal formal variance
+from the **partially observed actual galaxy aperture**.
+Simply assigning the blank covariance to the galaxy is
+not statistically justified by matching radius and shape.
+
+Stage04.3 now computes the independent formal per-ring
+`sum(w**2 / ivar)` on the original unmodified native
+target pixels, using its **actual** hard, provisional
+source and manual masks; and for every accepted, fully
+unmasked blank ring. The report records original target
+usable area, target formal ring variance, minimum/median/
+maximum blank formal variance and target-to-blank variance
+ratios, with null values for entirely excluded rings.
+This is a **comparison**, not a correction to the
+empirical covariance, a model for background gradients or
+a calibration of spatially correlated coadd pixels.
+
+Tests synthesize a target region with 100x worse
+inverse variance than the surrounding blanks and
+independently reproduce the formal variance from native
+fractional weights; fully masked target rings retain
+unavailable variance rather than being silently imputed.
+
+### M25 — between-region residual means are mixed into one noise covariance — LIMIT MADE OBSERVABLE
+
+**Implementation:** the same blank covariance operator,
+commits `fbe26fd` and `e91905b`.
+
+Sample covariance across spatially distributed blank-ring
+fluxes includes variation of the **regional means**.
+A large-scale residual sky structure, scattered-star wing,
+extended target light outside protection, or a different
+source distribution can create quadrant-to-quadrant
+offsets that the sample covariance folds into what looks
+like correlated noise. Spatial quadrant means are not
+independent exposures, nor can a quadrant contrast be
+identified as pure sky from coadd data alone.
+
+The diagnostic now uses the **actual phase-shifted native
+centre** of every accepted blank to assign a quadrant;
+the nominal unshifted search-lattice stratification
+remains separately recorded. For a valid full-scale
+sample in multiple quadrants, it reports the exact
+finite-sample decomposition in each annular radius,
+
+`SS_total = SS_within_quadrants + SS_between_quadrant_means`,
+
+with per-quadrant signed means and fractions of total
+squared scatter attributable to mean offsets. A
+numerical closure gate verifies the identity. On a
+synthetic native field with small random noise but a
+known quadrant-dependent residual offset, the
+between-quadrant term dominates. No physical assignment
+of this component, automatic covariance removal, chi-square
+confidence or sky-science adoption is performed. Missing
+or single-quadrant coverage remains explicitly
+underconstrained.
+
+### Why the three revisions must not be overinterpreted
+
+- **Phase matching** controls the linear observation operator
+  `w` but does not control the independent variance map,
+  resampling kernel, CCD provenance, large-scale covariance,
+  or contaminants.
+- **Formal variance comparison** controls the diagonal
+  `INVVAR` model only and cannot rescale uncalibrated
+  off-diagonal covariance or reconstruct excluded light.
+- **Quadrant scatter decomposition** detects an observable
+  lack of stationarity within the same coadd. It does not
+  reveal whether the signal is Galactic foreground,
+  unmasked galaxy outskirts, a sky gradient or survey
+  reduction artifacts.
+- The entire analysis remains conditional on fixed
+  source masks, sky scenario, target centre and fixed
+  isophotal shape; none is astrophysically inferred in
+  these changes.
+
+### Next falsifiable experiments
+
+1. **Known stationary white-noise field**: inject native
+   independent noise with several fractional target
+   centroids and test target vs blank empirical variance,
+   keeping `sum(w²/ivar)` as an algebraic reference.
+2. **Nonstationary NEXP and resampled noise**: synthesize
+   spatially varying diagonal and correlated noise;
+   compare the target/blank formal variance ratios to
+   the actual empirical target error over independent
+   realizations, NOT just within one coadd.
+3. **Large-scale sky and foreground modes**: inject smooth
+   sky gradients, broad PSF halos and diffuse target light.
+   Measure between-region scatter, sky-tile contamination
+   and bias in galaxy flux after **re-running** the scene,
+   mask, sky and aperture selection steps.
+4. **Real DR11 Leo P**: run all new Stage04.3 diagnostics
+   read-only at saved mask/PSF/sky alternatives and inspect
+   radial covariance validity, spatial coverage,
+   source-mask ablations and the coexistence of bright-star
+   wings with faint outer galactic light.
+
+These experiments are required before a science
+covariance/total-light estimate or statistical interval
+may be adopted. Original FITS have not been rerun here;
+existing `SCIENCE HOLD` is unchanged. All code and
+regressions remain on draft PR #84, in existing
+`src/tests/docs` directories, with no new branches.
