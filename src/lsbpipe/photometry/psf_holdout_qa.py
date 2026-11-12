@@ -407,10 +407,13 @@ def heldout_final_kernel_residual(
     goodness-of-fit. Never convert an invalid signed model to a pass here.
     """
     kernel = np.asarray(final_kernel, dtype=float)
-    if (kernel.ndim != 2 or not np.all(np.isfinite(kernel))
-            or np.any(kernel < 0.) or
+    if (kernel.ndim != 2 or any(size < 15 or size % 2 == 0
+                                      for size in kernel.shape)
+            or not np.all(np.isfinite(kernel)) or np.any(kernel < 0.) or
             not np.isclose(float(np.sum(kernel)), 1., rtol=0., atol=1e-8)):
-        raise ValueError("Final holdout kernel must be finite, nonnegative and normalized")
+        raise ValueError(
+            "Final holdout kernel must be finite, nonnegative and normalized; "
+            "an odd-sized native grid of at least 15 pixels is required")
     # Reuse precisely the same fitting/radial scoring mathematics as the
     # signed precursor so discrepancies can be attributed to the kernel
     # transformation rather than to a different comparison procedure.

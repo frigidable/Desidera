@@ -227,3 +227,17 @@ def test_growth_signed_and_delivered_use_same_native_aperture_geometry():
         assert a["n_valid_native_pixels"] == b["n_valid_native_pixels"]
     with pytest.raises(ValueError, match="Duplicate holdout"):
         summarize_core_normalized_growth([before, before])
+
+
+@pytest.mark.parametrize("shape", ((30, 30), (30, 31), (13, 13)))
+def test_delivered_final_holdout_requires_odd_adequate_native_psf_grid(shape):
+    yy, xx = np.indices(shape)
+    cy, cx = (np.array(shape)-1)/2.
+    kernel = np.exp(-.5*(((xx-cx)/2.)**2+((yy-cy)/2.)**2))
+    kernel /= kernel.sum()
+    with pytest.raises(ValueError, match="odd-sized"):
+        heldout_final_kernel_residual(
+            source_id="bad-final-grid", image=kernel,
+            sqrt_ivar=np.ones_like(kernel), final_kernel=kernel,
+            local_center_xy=(cx,cy), guessed_fwhm_pix=4.8,
+            measured_peak=1.)

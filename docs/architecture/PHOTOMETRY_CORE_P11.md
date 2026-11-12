@@ -2415,3 +2415,21 @@ supra-unity and NaN overlap fractions through the `photutils`
 interface and requires explicit rejection. This does not replace
 correlated-noise covariance, actual isophotal fitting or scientific
 sky/PSF validation.
+
+
+### PSF core and holdout input consistency (2026-11-12)
+
+The finite-native-core evaluator could previously report a measured
+kernel FWHM while storing a NaN, infinite, nonpositive or Boolean
+finder-FWHM prior. This allowed nonsensical comparative evidence
+and potentially a non-JSON-serializable NaN in PSF QA. It now
+returns INVALID_DETECTION_FWHM_PRIOR before measuring the core.
+
+The held-out star evaluator for a *delivered* normalized nonnegative
+PSF kernel previously allowed even-sized kernel arrays. This could
+silently introduce a half-pixel reference-centre ambiguity despite
+the upstream native PSF contract requiring odd dimensions of at
+least 15 pixels. It now checks this same kernel-shape contract
+before fitting holdout amplitudes, preserving identical radial
+comparison mathematics for valid kernels. Neither correction
+promotes experimental stellar PSFs to scientific adoption.
