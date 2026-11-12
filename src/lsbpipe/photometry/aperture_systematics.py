@@ -228,13 +228,18 @@ def estimate_blank_annulus_covariance(
                 raise ValueError("Invalid blank-aperture exact weights")
             weights = np.clip(weights, 0., 1.)
             # This checks all partially covered boundary pixels too.
-            bad_area = float(np.sum(weights * invalid[large]))
-            area = float(np.sum(weights))
-            if area <= 0. or bad_area > 1e-6 * area:
+            # Reject every positive-area contact with a bad pixel. A
+            # tiny tolerated masked fraction is not an unmasked blank.
+            # Crucially, even a zero fractional weight times NaN is NaN
+            # in NumPy: never sum the entire rectangular mask bounding
+            # box, which may contain invalid pixels OUTSIDE the ring.
+            support = weights > 0.
+            if (not np.any(support) or
+                    np.any(invalid[large] & support)):
                 vector = []
                 break
             vector.append(float(np.sum(
-                weights * frame.image_nMgy[large],
+                weights[support] * frame.image_nMgy[large][support],
                 dtype=np.float64)))
         if len(vector) != len(radii):
             rejected += 1
