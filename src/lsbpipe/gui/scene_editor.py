@@ -228,6 +228,8 @@ def load_scene_original_cutout(project_root: str, band: str,
         source_hashes[kind] = info["sha256_local"]
     data = original["data"]
     shape = original["pixel_shape"]
+    from lsbpipe.scene import grid_fingerprint
+    source_grid_fingerprint = grid_fingerprint(original["wcs"], shape)
     if np.prod(shape) > MAX_RENDER_PIXELS:
         raise ValueError("Cutout too large for native-pixel editor; use a smaller view")
     validity, _ = legacy_validity(
@@ -251,6 +253,7 @@ def load_scene_original_cutout(project_root: str, band: str,
                                float(project.field.dec_deg)],
         "loaded_project_field_width_arcmin": float(project.field.width_arcmin),
         "source_quartet_key": [release, region, brick, band],
+        "grid_fingerprint": source_grid_fingerprint,
         "hdu_indices": original["hdu_indices"],
         "original_fits_sha256_local": source_hashes,
         "observed_header_units": observed_units,
@@ -3103,6 +3106,7 @@ class SceneEditor(QWidget):
                 "loaded_project_field_width_arcmin": dataset.get(
                     "loaded_project_field_width_arcmin"),
                 "source_quartet_key": dataset.get("source_quartet_key"),
+                "grid_fingerprint": dataset.get("grid_fingerprint"),
                 "native_pixel_shape": dataset["pixel_shape"],
                 "display_width_arcmin": dataset["display_width_arcmin"],
                 "project_field_width_arcmin":
