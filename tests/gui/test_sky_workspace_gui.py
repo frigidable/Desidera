@@ -102,6 +102,42 @@ def test_stage03_requires_current_scene_and_discards_stale_result(qtbot,monkeypa
 
 
 
+def test_stage03_snapshot_refuses_moved_target_or_foreign_brick(qtbot):
+    """Do not pair old original pixels with new centre or Tractor masks."""
+    identity=("dr11","south","1554p180","r")
+    pid="p"
+    ds={"project_id":pid,"band":"r","source":"DR11 south · 1554p180 · r",
+        "source_quartet_key":list(identity),
+        "loaded_target_icrs":[155.4,18.]}
+    contam={
+        "status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+        "project_id":pid,"band":"r","dataset_source":ds["source"],
+        "source_quartet_key":list(identity),
+        "draft_digest":"a"*64,"catalog_sha256":"b"*64}
+    scene=SimpleNamespace(
+        _band="r",_future=None,_project_root=Path("/not/read"),
+        _project_id=pid,_project_target=(155.4,18.),
+        _source_key=("root",pid,identity,"root",None),
+        _loaded=ds,
+        _draft=SimpleNamespace(project_id=pid,digest="a"*64),
+        _contamination=contam)
+    w=SkyWorkspace(scene)
+    qtbot.addWidget(w)
+    assert w._snapshot() is not None
+    assert w.run_btn.isEnabled()
+    scene._project_target=(155.401,18.)
+    assert w._snapshot() is None
+    scene._project_target=(155.4,18.)
+    contam["source_quartet_key"]=["dr11","south","1555p180","r"]
+    assert w._snapshot() is None
+    contam["source_quartet_key"]=list(identity)
+    scene._source_key=("root",pid,("dr11","south","1555p180","r"),
+                       "root",None)
+    assert w._snapshot() is None
+    scene._source_key=("root",pid,identity,"root",None)
+    assert w._snapshot() is not None
+
+
 def test_stage03_readout_exposes_synthetic_sky_leakage_not_only_recovery():
     result = {
         "dataset_source": "DR11 south sample r",
