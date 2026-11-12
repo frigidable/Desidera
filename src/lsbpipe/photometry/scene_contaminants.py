@@ -370,6 +370,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
     """
     from lsbpipe.photometry.sky_masks import (
         SkyMaskShape, is_legacy_isophote_protection,
+        native_boolean_mask_sha256,
     )
     if (project.project_id != dataset["project_id"] or
             project.selected_dataset is None or
@@ -540,6 +541,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "dataset_source": dataset["source"],
         "source_quartet_key": list(expected_key),
         "source_mask_policy_id": _SCENE_MASK_POLICY,
+        "effective_source_mask_sha256": native_boolean_mask_sha256(auto),
+        "manual_exclude_mask_sha256": native_boolean_mask_sha256(manual_excluded),
         "source_mask_native_geometry": (
             "TAN_INTERMEDIATE_PROJECTION_PLANE_JACOBIAN_NO_EXTRA_COS_DECLINATION"),
         "band": band,
