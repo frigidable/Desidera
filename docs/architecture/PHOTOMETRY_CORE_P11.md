@@ -2528,3 +2528,32 @@ annular Jacobians with direct cumulative-flux differences, and
 check entirely excluded/underconstrained native apertures.
 This improves conditional diagnosis, **not** full noise covariance
 or total-galaxy flux calibration.
+
+
+### Stage 03: predeclared 2-D sky pixel sampling comparison (2026-11-13)
+
+The automatic sky selector previously limited dense tiles to 384
+valid native pixels using a regular `linspace` over the **row-major
+index** of eligible positions. That is deterministic and brightness-
+independent, but may alias with coadd/CCD sampling patterns and does
+not explicitly balance a tile's two-dimensional spatial support.
+This is an *observed algorithmic limitation*, not proof that the
+existing Leo P fit is biased.
+
+Stage 03 now offers an alternative, explicitly versioned
+`SPATIAL_8X8_PROPORTIONAL_V2` diagnostic subsampling policy:
+split each eligible tile into 8×8 native-pixel subcells, assign
+the 384-sample budget proportionally to the number of eligible
+pixels (largest-remainder allocation), and choose native indices
+with a fixed per-tile NumPy seed independent of IMAGE and sky RMS.
+The default `ROW_MAJOR_UNIFORM_V1` and its pixels remain **exactly
+unchanged**. The new method is included as a sixth predeclared
+sky-grid sensitivity experiment, without post-fitting model
+selection or science adoption. The selected strategy, seed and
+subcell geometry are recorded in the selection/experiment receipts.
+
+Regressions check reproducibility, exact 384-pixel quotas, full
+64-cell coverage on an unmasked dense tile, no fabricated pixels
+on an irregularly masked tile, and unchanged legacy sampling.
+A better real-galaxy sky result cannot be claimed without
+independent blocked-out tests; the comparison remains diagnostic.

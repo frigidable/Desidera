@@ -336,10 +336,60 @@ def _sky_circle_native_patch(shape, x, y, radius_arcsec, jacobian):
     return slice(y0, y1), slice(x0, x1), mask
 
 
+def _sample_native_sky_tile_pixels(
+        yy, xx, footprint_shape, *, policy, tile_origin):
+    """Sample at most 384 eligible native positions without using brightness.
+
+    V1 is retained as the unchanged default for baseline comparability.
+    V2 is a PREDECLARED alternative: allocate quotas proportional to the
+    number of eligible pixels in each of 8x8 spatial cells, then select
+    native indices with a fixed per-tile RNG seed. Unequal masking does
+    not overweight low-occupancy cells; the two designs can be compared
+    without post-fit cherry-picking.
+    """
+    if policy not in ("ROW_MAJOR_UNIFORM_V1",
+                      "SPATIAL_8X8_PROPORTIONAL_V2"):
+        raise ValueError("Unsupported fixed native sky tile sampling policy")
+    count = len(xx)
+    if count <= 384:
+        return yy, xx
+    if policy == "ROW_MAJOR_UNIFORM_V1":
+        selected = np.linspace(0, count-1, 384, dtype=np.int64)
+        return yy[selected], xx[selected]
+    ny, nx = footprint_shape
+    cells = (np.minimum(7, yy*8//ny)*8 +
+             np.minimum(7, xx*8//nx))
+    sizes = np.bincount(cells, minlength=64)
+    expected = sizes*(384. / count)
+    quota = np.floor(expected).astype(np.int64)
+    remainder = 384-int(quota.sum())
+    # Largest-remainder proportional allocation, tie-broken by the
+    # fixed spatial cell ID rather than by image brightness or RMS.
+    order = np.argsort(-(expected-quota), kind="stable")
+    for cell in order[:remainder]:
+        quota[cell] += 1
+    seed = np.random.SeedSequence([
+        20261113, int(tile_origin[0]) & 0xffffffff,
+        int(tile_origin[1]) & 0xffffffff])
+    rng = np.random.default_rng(seed)
+    chosen = []
+    for cell in range(64):
+        n = int(quota[cell])
+        if n:
+            candidates = np.flatnonzero(cells == cell)
+            chosen.extend(rng.choice(candidates, size=n,
+                                     replace=False).tolist())
+    if len(chosen) != 384 or len(set(chosen)) != 384:
+        raise RuntimeError("Invalid deterministic sky tile sampling quota")
+    selected = np.sort(np.asarray(chosen, dtype=np.int64))
+    return yy[selected], xx[selected]
+
+
 def _automatic_scene_sky_pixels(
         dataset, preview, contamination, *,
         tile_edge_native_pix=None, grid_offset_xy_native_pix=(0, 0),
-        target_guard_factor=1.0, source_guard_factor=1.0):
+        target_guard_factor=1.0, source_guard_factor=1.0,
+        sample_policy="ROW_MAJOR_UNIFORM_V1"):
     """Deterministic spatially disjoint source-vetoed tiles, no image-based picking.
 
     Selection is solely based on geometry, validity, existing Scene
@@ -351,6 +401,9 @@ def _automatic_scene_sky_pixels(
 
     shape = tuple(dataset["pixel_shape"])
     ny, nx = shape
+    if sample_policy not in ("ROW_MAJOR_UNIFORM_V1",
+                             "SPATIAL_8X8_PROPORTIONAL_V2"):
+        raise ValueError("Invalid predeclared sky sampling policy")
     if (not np.isfinite(target_guard_factor) or target_guard_factor < 1.
             or not np.isfinite(source_guard_factor) or source_guard_factor < 1.):
         raise ValueError("Sensitivity guards may only extend original exclusions")
@@ -488,9 +541,9 @@ def _automatic_scene_sky_pixels(
             yy, xx = np.nonzero(footprint)
             # Cap the nominal pixel weighting per tile. This is a
             # deterministic spatial subsample, not sigma clipping.
-            if len(xx) > 384:
-                index = np.linspace(0, len(xx)-1, 384, dtype=np.int64)
-                yy, xx = yy[index], xx[index]
+            yy, xx = _sample_native_sky_tile_pixels(
+                yy, xx, footprint.shape, policy=sample_policy,
+                tile_origin=(grid_x0, grid_y0))
             ty, tx = ((grid_y0+offset_y)//tile,
                       (grid_x0+offset_x)//tile)
             is_holdout = (tx+2*ty) % 5 == 0
@@ -532,6 +585,14 @@ def _automatic_scene_sky_pixels(
         "tile_inner_border_native_pix": border,
         "min_eligible_fraction_per_tile": .65,
         "max_sampled_pixels_per_tile": 384,
+        "sky_tile_subsampling_policy": sample_policy,
+        "sky_tile_subsampling_seed": (
+            20261113 if sample_policy == "SPATIAL_8X8_PROPORTIONAL_V2"
+            else None),
+        "sky_tile_subsampling_uses_original_flux": False,
+        "sky_tile_stratification_cells_per_axis": (
+            8 if sample_policy == "SPATIAL_8X8_PROPORTIONAL_V2"
+            else None),
         "target_outskirts_guard_native_pix": target_guard_px,
         "source_neighbour_guard_native_pix": source_guard_px,
         "bright_gaia_veto_is_unvalidated_radius_heuristic": True,
@@ -790,6 +851,8 @@ _SKY_FIXED_SENSITIVITY_TRIALS = (
     ("tile_128_origin", {"tile_edge_native_pix": 128}),
     ("expanded_target_1p5", {"target_guard_factor": 1.5}),
     ("expanded_sources_1p5", {"source_guard_factor": 1.5}),
+    ("spatial_cells_8x8_v2", {
+        "sample_policy": "SPATIAL_8X8_PROPORTIONAL_V2"}),
 )
 
 
@@ -812,6 +875,8 @@ def _audit_current_project_sky_grid_sensitivity(
                     "tile_grid_offset_xy_native_pix"],
                 "target_guard_factor": selection["target_guard_factor"],
                 "source_guard_factor": selection["source_guard_factor"],
+                "sky_tile_subsampling_policy":
+                    selection["sky_tile_subsampling_policy"],
             },
             "training_tiles": selection["training_tiles"],
             "holdout_tiles": selection["holdout_tiles"],

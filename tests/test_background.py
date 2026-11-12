@@ -741,13 +741,14 @@ def test_project_stage03_fixed_grid_sensitivity_and_frozen_aperture_injections()
     assert report["status"] == "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
     grid = report["sky_grid_sensitivity_qa"]
     assert grid["schema"] == "desidera.sky.internal-grid-sensitivity/1"
-    assert grid["n_predeclared_variants"] == 5
-    assert len(grid["trials"]) == 5
+    assert grid["n_predeclared_variants"] == 6
+    assert len(grid["trials"]) == 6
     assert grid["original_tile_selection_unchanged"] is True
     assert grid["no_science_adoption"] is True
     assert {r["name"] for r in grid["trials"]} == {
         "tile_72_origin", "tile_96_shift48", "tile_128_origin",
-        "expanded_target_1p5", "expanded_sources_1p5"}
+        "expanded_target_1p5", "expanded_sources_1p5",
+        "spatial_cells_8x8_v2"}
     assert all(r["parameters"]["target_guard_factor"] >= 1.
                and r["parameters"]["source_guard_factor"] >= 1.
                for r in grid["trials"])
@@ -933,3 +934,72 @@ def test_residual_sky_settings_reject_boolean_fractional_and_string_thresholds()
     assert type(settings.min_holdout_quadrants) is int
     assert type(settings.huber_t) is float
     assert type(settings.max_abs_holdout_tile_median_nMgy) is float
+
+
+def test_predeclared_spatial_sky_tile_sampling_balances_native_subcells():
+    """Compare the unchanged row-major sampler with a 2-D fixed alternative."""
+    from lsbpipe.background import _sample_native_sky_tile_pixels
+    yy, xx = np.indices((80, 80))
+    yy, xx = yy.ravel(), xx.ravel()
+    kwargs = dict(footprint_shape=(80, 80),
+                  tile_origin=(37, -14))
+    a_y, a_x = _sample_native_sky_tile_pixels(
+        yy, xx, policy="SPATIAL_8X8_PROPORTIONAL_V2", **kwargs)
+    b_y, b_x = _sample_native_sky_tile_pixels(
+        yy, xx, policy="SPATIAL_8X8_PROPORTIONAL_V2", **kwargs)
+    assert len(a_x) == 384
+    assert np.array_equal(a_x, b_x)
+    assert np.array_equal(a_y, b_y)
+    assert len(set(zip(a_y, a_x))) == 384
+    cells = (np.minimum(7, a_y*8//80)*8 +
+             np.minimum(7, a_x*8//80))
+    assert np.bincount(cells, minlength=64).tolist() == [6]*64
+    legacy_y, legacy_x = _sample_native_sky_tile_pixels(
+        yy, xx, policy="ROW_MAJOR_UNIFORM_V1", **kwargs)
+    expected = np.linspace(0, len(xx)-1, 384, dtype=np.int64)
+    np.testing.assert_array_equal(legacy_y, yy[expected])
+    np.testing.assert_array_equal(legacy_x, xx[expected])
+    assert not np.array_equal(a_x, legacy_x)
+
+    # An unevenly masked tile must still sample exactly 384 distinct
+    # eligible positions without fabricating sky pixels or changing data.
+    valid = ((yy > 20) & (xx < 53)) | ((yy < 16) & (xx > 60))
+    uneven_y, uneven_x = _sample_native_sky_tile_pixels(
+        yy[valid], xx[valid],
+        policy="SPATIAL_8X8_PROPORTIONAL_V2", **kwargs)
+    assert len(uneven_x) == 384
+    assert len(set(zip(uneven_y, uneven_x))) == 384
+    assert all(valid.reshape(80, 80)[y, x]
+               for y, x in zip(uneven_y, uneven_x))
+    with pytest.raises(ValueError, match="sampling policy"):
+        _sample_native_sky_tile_pixels(
+            yy, xx, policy="UNKNOWN_SKY_SAMPLER", **kwargs)
+
+
+def test_stage03_spatial_sampler_is_alternative_not_default_selection():
+    from lsbpipe.background import _automatic_scene_sky_pixels
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+    dataset, draft, contamination = _stage03_project_fixture(
+        with_regions=False)
+    preview = evaluate_mask_draft(
+        draft, dataset["wcs"], dataset["pixel_shape"], "r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    _, _, baseline = _automatic_scene_sky_pixels(
+        dataset, preview, contamination)
+    _, _, alternative = _automatic_scene_sky_pixels(
+        dataset, preview, contamination,
+        sample_policy="SPATIAL_8X8_PROPORTIONAL_V2")
+    assert baseline["sky_tile_subsampling_policy"] == (
+        "ROW_MAJOR_UNIFORM_V1")
+    assert alternative["sky_tile_subsampling_policy"] == (
+        "SPATIAL_8X8_PROPORTIONAL_V2")
+    assert baseline["sky_tile_subsampling_seed"] is None
+    assert alternative["sky_tile_subsampling_seed"] == 20261113
+    assert not alternative["sky_tile_subsampling_uses_original_flux"]
+    assert alternative["sky_tile_stratification_cells_per_axis"] == 8
+    assert baseline["training_tiles"] == alternative["training_tiles"]
+    assert baseline["holdout_tiles"] == alternative["holdout_tiles"]
+    with pytest.raises(ValueError, match="sampling policy"):
+        _automatic_scene_sky_pixels(
+            dataset, preview, contamination, sample_policy="BAD")
