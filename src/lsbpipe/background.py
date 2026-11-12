@@ -458,7 +458,24 @@ def _automatic_scene_sky_pixels(
         return distance_transform_edt(~mask) <= radius
 
     target_veto = guarded(target, target_guard_px)
-    catalog_veto = guarded(source, source_guard_px)
+    # Ambiguous Tractor footprints intersecting the protected dwarf
+    # are not auto-masked in photometry; veto the full contested source
+    # footprint ONLY from sky fitting, including its exterior portion.
+    ambiguous_raw = contamination.get("unresolved_target_overlap_sky_veto_mask")
+    if ambiguous_raw is None:
+        ambiguous_sky_veto = np.zeros(shape, dtype=bool)
+    else:
+        ambiguous_sky_veto = np.asarray(ambiguous_raw)
+        if (ambiguous_sky_veto.shape != shape or
+                ambiguous_sky_veto.dtype.kind != "b"):
+            raise ValueError("Unresolved target-overlap sky veto must be native Boolean")
+        from lsbpipe.photometry.sky_masks import native_boolean_mask_sha256
+        if (not isinstance(contamination.get(
+                "unresolved_target_overlap_sky_veto_sha256"), str) or
+                native_boolean_mask_sha256(ambiguous_sky_veto) !=
+                contamination["unresolved_target_overlap_sky_veto_sha256"]):
+            raise ValueError("Unresolved target-overlap sky-veto provenance mismatch")
+    catalog_veto = guarded(source | ambiguous_sky_veto, source_guard_px)
 
     # Existing Tractor/Gaia sources only. These radii are intentionally
     # conservative pilot vetoes and NOT a measured bright-star halo model.
@@ -648,6 +665,11 @@ def _automatic_scene_sky_pixels(
             int(np.count_nonzero(safe)),
         "target_guard_veto_pixels": int(np.count_nonzero(target_veto)),
         "catalogue_guard_veto_pixels": int(np.count_nonzero(catalog_veto)),
+        "unresolved_target_overlap_sky_veto_present": ambiguous_raw is not None,
+        "unresolved_target_overlap_sky_veto_native_pixels": int(
+            np.count_nonzero(ambiguous_sky_veto)),
+        "unresolved_overlap_source_mask_and_manual_mask_unchanged": True,
+        "unresolved_overlap_source_veto_is_not_membership_proof": True,
         "bright_star_veto_pixels": int(np.count_nonzero(bright_veto)),
         "training_pixels": int(np.count_nonzero(train)),
         "holdout_pixels": int(np.count_nonzero(holdout)),

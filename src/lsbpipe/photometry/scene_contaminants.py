@@ -83,6 +83,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     inner_preview_centres = []
     red_preview = np.zeros((ny,nx), dtype=bool)
     red_preview_centres = []
+    ambiguous_overlap_sky_veto = np.zeros((ny, nx), dtype=bool)
+    ambiguous_overlap_sources = 0
     red_source_audit = []
     red_source_audit_truncated = 0
     conflicts = []
@@ -290,6 +292,10 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 else:
                     inventory_truncated += 1
                 continue
+            # Preserve potential target light in photometry but never
+            # presume the unresolved source envelope is galaxy-free sky.
+            ambiguous_overlap_sky_veto[y1:y2, x1:x2] |= disk
+            ambiguous_overlap_sources += 1
             near += 1
             in_sga = (sga_core is not None and
                       0 <= int(round(x)) < nx and
@@ -310,6 +316,12 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 conflicts.append({
                     "x": x, "y": y, "objid": row.get("objid"),
                     "type": source_type, "radius_pix": r_pix,
+                    "n_footprint_native_pixels": int(np.count_nonzero(disk)),
+                    "n_footprint_overlap_target_protection_pixels": int(
+                        np.count_nonzero(disk & protected[y1:y2, x1:x2])),
+                    "n_footprint_outside_target_protection_pixels": int(
+                        np.count_nonzero(disk & ~protected[y1:y2, x1:x2])),
+                    "sky_only_unresolved_source_veto": True,
                     "classification": classification,
                     "sga_core_overlap": bool(in_sga),
                     "ref_cat": row.get("ref_cat"),
@@ -331,7 +343,12 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     output.setflags(write=False)
     inner_preview.setflags(write=False)
     red_preview.setflags(write=False)
+    ambiguous_overlap_sky_veto.setflags(write=False)
     return output, {
+        "unresolved_target_overlap_sky_veto_mask": ambiguous_overlap_sky_veto,
+        "unresolved_target_overlap_sky_veto_sources": int(ambiguous_overlap_sources),
+        "unresolved_target_overlap_sky_veto_native_pixels": int(
+            np.count_nonzero(ambiguous_overlap_sky_veto)),
         "masked_catalog_sources": accepted,
         "gaia_inner_preview_mask": inner_preview,
         "gaia_inner_preview_sources": len(inner_preview_centres),
@@ -466,6 +483,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                               if red_extended_preview else None))
     inner_gaia_mask = counts.pop("gaia_inner_preview_mask")
     red_extended_mask = counts.pop("red_extended_preview_mask")
+    ambiguous_sky_veto = counts.pop("unresolved_target_overlap_sky_veto_mask")
     source_inventory = build_scene_source_inventory(
         catalog, pixel_shape=shape, protected=protected,
         screen_stats=counts, release=release, region=region,
@@ -500,6 +518,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
              "PROVISIONAL_PROTECTED_TARGET_RADIUS"]
     if counts["skipped_target_overlap"]:
         flags.append("TARGET_NEIGHBOURS_REQUIRE_MANUAL_REVIEW")
+    if counts["unresolved_target_overlap_sky_veto_sources"]:
+        flags.append("UNRESOLVED_TARGET_OVERLAP_VETOED_FROM_SKY_ONLY")
     if foreground_review_ids and counts["gaia_inner_preview_sources"] < (
             len(foreground_review_ids)):
         flags.append("PROTECTED_GAIA_ASTROMETRY_STARS_NOT_REMOVED")
@@ -535,6 +555,10 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "red_extended_preview_mask": red_extended_mask.copy(),
         "red_extended_preview_enabled": bool(red_extended_preview),
         "protected": protected.copy(),
+        "unresolved_target_overlap_sky_veto_mask": ambiguous_sky_veto.copy(),
+        "unresolved_target_overlap_sky_veto_sha256": (
+            native_boolean_mask_sha256(ambiguous_sky_veto)),
+        "unresolved_overlap_veto_does_not_remove_photometric_light": True,
         "hard": hard.copy(),
         "project_id": project.project_id,
         "draft_digest": draft.digest,

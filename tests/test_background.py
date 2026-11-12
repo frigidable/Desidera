@@ -1074,3 +1074,40 @@ def test_stage03_zero_sky_reference_is_ranked_without_authorizing_subtraction():
     assert ranked["no_sky_subtraction_authorized"] is True
     assert output["automatic_sky_background_correction_authorized"] is False
     assert output["sky_model_adopted"] is False
+
+
+def test_stage03_sky_veto_for_ambiguous_target_source_preserves_flux_mask():
+    from lsbpipe.background import _automatic_scene_sky_pixels
+    from lsbpipe.photometry.sky_masks import (
+        evaluate_mask_draft, native_boolean_mask_sha256)
+    dataset, draft, contamination = _stage03_project_fixture(with_regions=False)
+    preview = evaluate_mask_draft(
+        draft, dataset["wcs"], dataset["pixel_shape"], "r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    base_train, base_hold, before = _automatic_scene_sky_pixels(
+        dataset, preview, contamination)
+    yy, xx = np.indices(dataset["pixel_shape"])
+    ambiguous = ((xx-94.)**2+(yy-59.5)**2 < 25.**2)
+    amended = dict(contamination)
+    amended["unresolved_target_overlap_sky_veto_mask"] = ambiguous
+    amended["unresolved_target_overlap_sky_veto_sha256"] = (
+        native_boolean_mask_sha256(ambiguous))
+    train, hold, after = _automatic_scene_sky_pixels(
+        dataset, preview, amended)
+    assert after["unresolved_target_overlap_sky_veto_present"]
+    assert after["unresolved_target_overlap_sky_veto_native_pixels"] > 0
+    assert after["geometry_eligible_pixels_before_tile_sampling"] < (
+        before["geometry_eligible_pixels_before_tile_sampling"])
+    assert not np.any((train | hold) & ambiguous)
+    assert np.array_equal(contamination["auto_mask"], amended["auto_mask"])
+    assert after["unresolved_overlap_source_mask_and_manual_mask_unchanged"]
+    bad = dict(amended)
+    bad["unresolved_target_overlap_sky_veto_sha256"] = "0"*64
+    with pytest.raises(ValueError, match="provenance mismatch"):
+        _automatic_scene_sky_pixels(dataset, preview, bad)
+    bad = dict(amended)
+    bad["unresolved_target_overlap_sky_veto_mask"] = ambiguous.astype(np.uint8)
+    with pytest.raises(ValueError, match="native Boolean"):
+        _automatic_scene_sky_pixels(dataset, preview, bad)
+    assert np.any(base_train | base_hold)

@@ -1295,3 +1295,29 @@ def test_gaia_leave_one_out_is_strictly_read_only_and_restores_overlap():
         conservative_catalogue_mask(
             protected.shape,positions,rows,**kwargs,
             gaia_inner_skip_objids=(-1,))
+
+
+def test_protected_overlapping_tractor_source_is_sky_only_veto_not_flux_mask():
+    """An ambiguous source is not erased from galaxy photometry."""
+    shape = (241, 241)
+    yy, xx = np.indices(shape)
+    protected = (xx-120.)**2+(yy-120.)**2 <= 25.**2
+    row = _row("PSF", flux=1.e6)
+    row["objid"] = 2035
+    auto, evidence = conservative_catalogue_mask(
+        shape, np.array([[155., 120.]]), (row,),
+        arcsec_per_pixel=1., protected=protected, wcs=_wcs())
+    sky_veto = evidence["unresolved_target_overlap_sky_veto_mask"]
+    assert evidence["skipped_target_overlap"] == 1
+    assert evidence["masked_catalog_sources"] == 0
+    assert evidence["unresolved_target_overlap_sky_veto_sources"] == 1
+    assert not auto.any()
+    assert sky_veto[120, 155] and sky_veto[120, 179]
+    assert np.any(sky_veto & protected)
+    assert np.any(sky_veto & ~protected)
+    conflict = evidence["near_target_sources"][0]
+    assert conflict["n_footprint_native_pixels"] == (
+        conflict["n_footprint_overlap_target_protection_pixels"] +
+        conflict["n_footprint_outside_target_protection_pixels"])
+    assert conflict["sky_only_unresolved_source_veto"]
+    assert not sky_veto.flags.writeable

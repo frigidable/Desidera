@@ -1143,3 +1143,33 @@ FITS quartets behind linked brick directories and ensure both the
 generic GUI adapter and source-bound Scene reader refuse them.
 No data are copied from an external symlink target and no
 original FITS are altered by the application.
+
+
+### Unresolved target-overlap source footprint is sky-only veto (2026-11-13)
+
+Stage 02 deliberately leaves an entire Tractor footprint unmasked if
+it intersects preliminary target protection: masking the disputed
+pixels could remove genuine dwarf light. But the previous Stage 03
+sky-region generator only excluded the actual auto-source mask and
+the protected target's fixed distance buffer. The **outside-target**
+part of such an unresolved source can therefore contaminate sky
+pixels although the code had already detected the overlap.
+
+The source selector now exports a separate Boolean native-grid
+`unresolved_target_overlap_sky_veto_mask` and source count,
+plus per-conflict footprint/target-overlap/exterior-area evidence.
+The mask is bound by native-pixel SHA-256 at the Scene-project
+boundary. Stage 03 checks its grid/type/digest and extends sky-only
+source exclusion over this region; it does **not** change the
+photometric auto-source mask, manual edits, original FITS, galaxy
+membership, source models or numerical sky adoption. Previously
+saved source evidence lacking this optional new field remains
+diagnostic-only and does not establish all-source completeness.
+
+Synthetic tests check that an overlapping bright Tractor source
+is not removed from photometry but its outer pixels are excluded
+from the sky candidate pool, and test refusal of modified/malformed
+sky-veto evidence. More conservative sky sampling can yield
+insufficient sky coverage and should fail closed instead of
+forcing a fitted background. It is not a certified PSF-wing
+model or proof that the remaining pixels are galaxy-free.
