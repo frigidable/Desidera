@@ -23,6 +23,23 @@ PURPOSES = frozenset(("exclude", "restore_auto", "protect_target",
 BANDS = frozenset(("g", "r", "i", "z"))
 
 
+def native_boolean_mask_sha256(mask) -> str:
+    """Hash exact native-grid Boolean mask geometry, including array shape.
+
+    A catalogue SHA and a draft edit SHA identify the inputs, not the
+    evaluated pixels: different rasterizers or accidental array edits
+    may produce different exclusions from otherwise identical labels.
+    Canonical C-order bytes are independent of view strides.
+    """
+    arr = np.asarray(mask)
+    if arr.ndim != 2 or arr.dtype.kind != "b":
+        raise ValueError("Mask fingerprint requires a 2D Boolean native grid")
+    digest = sha256()
+    digest.update(f"desidera-native-bool-v1:{arr.shape[0]}x{arr.shape[1]}:".encode())
+    digest.update(np.ascontiguousarray(arr).tobytes(order="C"))
+    return digest.hexdigest()
+
+
 def _angle(value: float) -> float:
     try:
         number = float(value)
