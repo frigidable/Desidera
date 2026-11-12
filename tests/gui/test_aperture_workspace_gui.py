@@ -118,6 +118,24 @@ def test_aperture_refuses_foreign_source_quartet_even_if_display_label_matches()
     assert good["source_quartet_key"] == ds["source_quartet_key"]
 
 
+def test_aperture_recipe_exposes_changed_scene_mask_geometry_policy():
+    """A fixed catalogue/draft with a new raster recipe is a new product."""
+    ds,draft,contamination=_inputs()
+    original=build_project_aperture_growth(
+        ds,draft,contamination,source_triplet=("dr11","south","1554p180"),
+        target_icrs=(155.4,18.))
+    contamination["source_mask_policy_id"]=(
+        "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS")
+    updated=build_project_aperture_growth(
+        ds,draft,contamination,source_triplet=("dr11","south","1554p180"),
+        target_icrs=(155.4,18.))
+    assert updated["source_policy_id"] == contamination["source_mask_policy_id"]
+    assert updated["source_policy_id"] != original["source_policy_id"]
+    assert updated["curves"][0]["cumulative"][0]["recipe_sha256"] != (
+        original["curves"][0]["cumulative"][0]["recipe_sha256"])
+    assert not updated["adopted_for_science"]
+
+
 def test_aperture_source_sha_propagates_into_each_exact_flux_recipe():
     """The full original-FITS SHA identity follows Scene -> Stage04."""
     ds,draft,contam=_inputs()
