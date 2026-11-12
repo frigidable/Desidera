@@ -22,7 +22,8 @@ from lsbpipe.photometry.sky_masks import (
     SkyMaskDraft, SkyMaskEdit, SkyMaskShape, evaluate_mask_draft,
 )
 from lsbpipe.surveys.legacy import SkyField
-from lsbpipe.surveys.object_projects import create_object_project
+from lsbpipe.surveys.object_projects import (
+    create_object_project, save_object_project)
 
 
 def _native_wcs(*, flipped=False):
@@ -81,6 +82,44 @@ def _make_editor(qtbot,tmp_path,monkeypatch):
     assert not (p.root/"analyses").exists()
     w._accept_dataset(_data(p.project_id))
     return w,p
+
+
+def test_same_uuid_project_centre_rebind_invalidates_loaded_scene(
+        qtbot,tmp_path,monkeypatch):
+    """Moving a project target must discard previous native pixels/masks."""
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    original_key=scene._source_key
+    assert scene._loaded is not None
+    assert scene._project_target == (359.999, 60.)
+    project.field=SkyField(359.9995, 60.00025, 5.)
+    save_object_project(project)
+    scene.bind_project(project.root)
+    assert scene._project_id==project.project_id
+    assert scene._project_target==(359.9995,60.00025)
+    assert scene._source_key!=original_key
+    assert scene._loaded is None
+    assert scene._contamination is None
+    assert scene._isophote_proposal is None
+    assert scene._foreground_psf_result is None
+    assert scene._draft is not None
+    # Even an asynchronous load result from the old passport cannot
+    # be displayed as if it used the new target anchor.
+    old=_data(project.project_id)
+    old["loaded_target_icrs"]=[359.999,60.]
+    with pytest.raises(ValueError,match="target ICRS differs"):
+        scene._accept_dataset(old)
+    assert scene._loaded is None
+
+
+def test_scene_rejects_cross_brick_worker_result_without_mutating_gui(
+        qtbot,tmp_path,monkeypatch):
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    old_dataset=scene._loaded
+    dataset=_data(project.project_id)
+    dataset["source_quartet_key"]=["dr11","south","1555p600","g"]
+    with pytest.raises(ValueError,match="quartet differs"):
+        scene._accept_dataset(dataset)
+    assert scene._loaded is old_dataset
 
 
 def test_scene_is_real_second_stage_without_auto_loading_fits(
