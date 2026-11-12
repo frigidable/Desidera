@@ -806,7 +806,9 @@ def test_blank_covariance_respects_exact_same_conditional_plane_as_target():
 def test_smaller_scale_blank_probe_uses_same_nonadopted_sky_scenario():
     w = wcs()
     w.wcs.crpix = [161., 161.]
-    f = frame(value=1., shape=(321, 321), w=w)
+    rng = np.random.default_rng(20261113)
+    image = 1. + rng.normal(0., .002, (321, 321))
+    f = frame(image=image, shape=(321, 321), w=w)
     masks = np.zeros(f.shape, dtype=bool)
     sky = ApertureSkyScenario(
         method="constant", b0_nMgy_per_pixel=1.,
