@@ -228,6 +228,16 @@ def estimate_blank_annulus_covariance(
             "NONOVERLAPPING_PLACEMENTS_MAY_STILL_SHARE_LARGE_SCALE_NOISE",
         ],
     }
+    # Quasi-independent positions across a single coadd are not
+    # automatically representative. Capture that failure explicitly
+    # even if the nominal sample covariance matrix is finite.
+    if len(centres) > 0:
+        if report["n_quadrants_with_accepted_blanks"] < 3:
+            report["warnings"].append(
+                "BLANK_APERTURE_SPATIAL_QUADRANT_COVERAGE_LIMITED")
+        if max(accepted_by_quadrant) / len(centres) > .5:
+            report["warnings"].append(
+                "BLANK_APERTURE_SAMPLES_DOMINATED_BY_ONE_QUADRANT")
     if required > max_placements:
         report["status"] = "EXPLICIT_PLACEMENT_CAP_BELOW_REQUIRED_COVARIANCE_SAMPLE"
         report["warnings"].append(
