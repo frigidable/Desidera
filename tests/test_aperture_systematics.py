@@ -253,7 +253,7 @@ def test_constant_sky_response_and_mask_counterfactual_are_exact():
     json.dumps(result, allow_nan=False)
 
 
-def test_tilted_sky_derivatives_use_target_center_native_coordinates():
+def test_tilted_sky_derivatives_use_declared_frozen_sky_reference():
     f = frame(value=.5)
     source = np.zeros(f.shape, dtype=bool)
     source[60:65, 65:69] = True  # asymmetry makes sky slopes observable
@@ -545,3 +545,49 @@ def test_stage_04_3_rejects_invalid_exact_weights_in_sky_derivative(
             provenance=provenance(), effective_source_mask=zeros,
             manual_exclude=zeros, curves=[curve])
     assert calls[0] == 2
+
+
+def test_stage_04_3_sky_gradient_derivatives_reproduce_direct_flux_for_offcenter_reference():
+    """An off-centre sky-plane pivot must not be replaced by the target centre."""
+    f = frame(value=.6)
+    source = np.zeros(f.shape, dtype=bool)
+    source[59:64, 64:70] = True
+    manual = np.zeros(f.shape, dtype=bool)
+    base = ApertureSkyScenario(
+        method="tilted_plane", b0_nMgy_per_pixel=.03,
+        bx_nMgy_per_pixel2=.0004, by_nMgy_per_pixel2=-.0009,
+        reference_xy_pix=(7.5, 92.25),
+        evidence_id="SYNTHETIC_FIXED_REFERENCE")
+    curve = _curve(f, source, manual, q=.7, pa=27., sky=base)
+    report = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=[curve], sky=base)
+    response = report["sky_response"]
+    assert response["reference_native_xy"] == [7.5, 92.25]
+    assert response["gradient_reference_matches_frozen_sky_scenario"] is True
+    assert response["aperture_center_native_xy"] != [7.5, 92.25]
+    db0, dbx, dby = .002, .0003, -.0002
+    changed = ApertureSkyScenario(
+        method="tilted_plane", b0_nMgy_per_pixel=base.b0_nMgy_per_pixel+db0,
+        bx_nMgy_per_pixel2=base.bx_nMgy_per_pixel2+dbx,
+        by_nMgy_per_pixel2=base.by_nMgy_per_pixel2+dby,
+        reference_xy_pix=base.reference_xy_pix,
+        evidence_id=base.evidence_id)
+    measured = measure_native_aperture(
+        f, geometry(a=4., q=.7, pa=27.), provenance(),
+        effective_source_mask=source, manual_exclude=manual, sky=changed)
+    observed_change = (measured.signed_valid_flux_nMgy -
+                       report["reference_valid_flux_nMgy"])
+    predicted_change = (
+        db0*response["dflux_db0_native_pixel2"] +
+        dbx*response["dflux_dbx_native_pixel3"] +
+        dby*response["dflux_dby_native_pixel3"])
+    assert observed_change == pytest.approx(predicted_change, abs=1e-8)
+    # A target-centred derivative is a legitimate alternative
+    # parameterization, but is NOT the actual stored scenario derivative.
+    assert abs(response["dflux_dbx_native_pixel3"] -
+               response["dflux_dbx_at_aperture_center_native_pixel3"]) > 1.
+    assert abs(response["dflux_dby_native_pixel3"] -
+               response["dflux_dby_at_aperture_center_native_pixel3"]) > 1.
+    json.dumps(report, allow_nan=False)

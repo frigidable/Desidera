@@ -516,6 +516,16 @@ def diagnose_aperture_systematics(
             rel_tol=1e-10, abs_tol=1e-6):
         raise ValueError("Stage 04.3 masks disagree with frozen Stage 04.2")
 
+    # The Stage 04.1/04.2 flux operator subtracts the sky plane around
+    # sky.reference_xy_pix, which need not be the aperture centre.  Its
+    # exact conditional derivative MUST use that same reference.
+    # Keep target-centred derivatives separately as explicitly
+    # reparameterized diagnostics, never as derivatives of the stored
+    # ApertureSkyScenario coefficients.
+    xref, yref = sky.reference_xy_pix
+    dx_sum_scenario = dx_sum + area*(projected.x_center - xref)
+    dy_sum_scenario = dy_sum + area*(projected.y_center - yref)
+
     relaxed = measure_native_aperture(
         frame, outer, provenance,
         effective_source_mask=np.zeros(frame.shape, dtype=bool),
@@ -549,11 +559,15 @@ def diagnose_aperture_systematics(
         "reference_semimajor_arcsec": radius,
         "reference_valid_flux_nMgy": original_flux,
         "sky_response": {
-            "reference_native_xy": [
+            "reference_native_xy": [xref, yref],
+            "aperture_center_native_xy": [
                 projected.x_center, projected.y_center],
+            "gradient_reference_matches_frozen_sky_scenario": True,
             "dflux_db0_native_pixel2": -area,
-            "dflux_dbx_native_pixel3": -dx_sum,
-            "dflux_dby_native_pixel3": -dy_sum,
+            "dflux_dbx_native_pixel3": -dx_sum_scenario,
+            "dflux_dby_native_pixel3": -dy_sum_scenario,
+            "dflux_dbx_at_aperture_center_native_pixel3": -dx_sum,
+            "dflux_dby_at_aperture_center_native_pixel3": -dy_sum,
             "sky_level_uncertainty_assumed": None,
             "sky_plane_uncertainty_assumed": None,
             "sky_science_adopted": False,

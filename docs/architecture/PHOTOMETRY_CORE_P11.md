@@ -2473,3 +2473,29 @@ canonicalized to Python floats, consistent with the full-aperture
 geometry contract. Synthetic tests check off-frame annuli,
 mismatched and non-Boolean masks and malformed geometry controls.
 No masked flux is reconstructed or declared scientifically adopted.
+
+
+### Methodological correction: Stage 04.3 sky-gradient pivot (2026-11-13)
+
+**Confirmed scientific formula defect.** Stage 04.1 computes conditional
+sky subtraction using
+`B(x,y)=b0+bx*(x-sky.reference_xy_pix[0])+by*(y-sky.reference_xy_pix[1])`.
+Stage 04.3's published `dflux_dbx` and `dflux_dby` instead
+computed `-sum(w*(x-aperture_center_x))` and similarly in y,
+regardless of the frozen sky scenario's actual origin. This is a
+different parameterization of a plane and is only equivalent when
+the reference pixels coincide. For an asymmetric masked aperture,
+nonzero slopes and a distant pivot, the old Stage04.3 derivatives
+misrepresented the sensitivity to the very parameters of the
+saved Stage04.2 sky scenario.
+
+Stage04.3 now reports `reference_native_xy` equal to the **actual
+frozen sky-scenario pivot**, computes `dflux_dbx_native_pixel3` and
+`dflux_dby_native_pixel3` with that pivot, and retains separately
+named aperture-centred reparameterizations in the QA. The direct
+aperture operator, science HOLD and sky selection are unchanged.
+A new scientific regression perturbs all three plane coefficients
+around a deliberately off-centre pivot and compares the predicted
+signed flux change with a fully re-integrated native exact aperture.
+The previous test was insensitive because it deliberately aligned
+its scenario reference with the reported target centre.
