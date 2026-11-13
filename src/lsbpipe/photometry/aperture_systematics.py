@@ -17,7 +17,7 @@ import numpy as np
 from .aperture_flux import (
     ApertureGeometryICRS, ApertureProvenance, ApertureSkyScenario,
     measure_native_aperture, project_icrs_ellipse_to_native,
-    _snapshot_native_boolean_mask,
+    _snapshot_native_boolean_mask, _FrozenApertureMaskDigests,
 )
 from .contracts import NativeBandFrame
 
@@ -708,7 +708,8 @@ def _smaller_blank_scales(frame, full_outer, full_radii, source, manual, *,
 
 
 def _verify_frozen_growth_curves(frame, anchor_icrs, provenance,
-                                 source, manual, curves, sky):
+                                 source, manual, curves, sky,
+                                 frozen_mask_digests=None):
     """Fail closed on stale Stage 04.2 inputs, including same-area mask edits.
 
     Comparing only valid pixel area cannot identify changed source pixels,
@@ -761,7 +762,8 @@ def _verify_frozen_growth_curves(frame, anchor_icrs, provenance,
             pa_deg_east_of_north=float(hypothesis["pa_deg"]))
         fresh = measure_native_aperture(
             frame, outer, provenance,
-            effective_source_mask=source, manual_exclude=manual, sky=sky)
+            effective_source_mask=source, manual_exclude=manual, sky=sky,
+            _frozen_mask_digests=frozen_mask_digests)
         if fresh.recipe_sha256 != final.get("recipe_sha256"):
             raise ValueError(
                 "Stage 04.2 aperture recipe mismatch: mask pixels, "
@@ -804,8 +806,14 @@ def diagnose_aperture_systematics(
     sky = ApertureSkyScenario() if sky is None else sky
     if not isinstance(sky, ApertureSkyScenario):
         raise TypeError("Versioned frozen sky scenario required")
+    # Stage04.3 remeasures the largest aperture of EVERY frozen
+    # hypothesis. Compute the full native source/manual SHA pair once
+    # per science worker snapshot; the measurement method still
+    # verifies exact source+manual object identity on every call.
+    frozen_mask_digests = _FrozenApertureMaskDigests(source, manual)
     _verify_frozen_growth_curves(
-        frame, anchor_icrs, provenance, source, manual, curves, sky)
+        frame, anchor_icrs, provenance, source, manual, curves, sky,
+        frozen_mask_digests=frozen_mask_digests)
     first = curves[0]
     last = first["cumulative"][-1]
     radius = float(first["radii_arcsec"][-1])
