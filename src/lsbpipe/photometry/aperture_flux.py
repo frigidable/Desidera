@@ -288,6 +288,29 @@ def _mask_for(name, mask, shape):
     return np.array(values, dtype=bool, copy=True)
 
 
+
+def _sector_ids_from_broadcast_native_centres(
+        shape, x_offset, y_offset, inverse_tangent_jacobian):
+    """Original eight PA sectors, without dense native x/y/stack copies.
+
+    These are descriptive PIXEL-CENTRE sectors, not exact angular
+    sector-pixel overlap operators. Retain the precise original
+    arctan2(east, north) and floor-by-45-degrees convention.
+    """
+    inv = np.asarray(inverse_tangent_jacobian, dtype=float)
+    if inv.shape != (2, 2) or not np.isfinite(inv).all():
+        raise ValueError("Invalid native east/north sector transform")
+    ny, nx = map(int, shape)
+    if ny <= 0 or nx <= 0:
+        raise ValueError("Invalid native sector raster shape")
+    px = np.arange(nx, dtype=float) + float(x_offset)
+    py = np.arange(ny, dtype=float) + float(y_offset)
+    east = inv[0, 0]*px[None, :] + inv[0, 1]*py[:, None]
+    north = inv[1, 0]*px[None, :] + inv[1, 1]*py[:, None]
+    angles = np.mod(np.arctan2(east, north), 2*np.pi)
+    return np.floor(angles/(np.pi/4)).astype(int) % 8
+
+
 def measure_native_aperture(
         frame: NativeBandFrame, geometry: ApertureGeometryICRS,
         provenance: ApertureProvenance, *,
@@ -426,9 +449,10 @@ def measure_native_aperture(
                 magnitude = float(22.5-2.5*math.log10(flux))
         # Eight *diagnostic* sectors use pixel-centre membership; flux
         # itself uses exact fractional elliptical pixel overlap.
-        yy,xx = np.indices(weights.shape,dtype=float)
-        xx += large[1].start-ellipse.x_center
-        yy += large[0].start-ellipse.y_center
+        # Keep the exact same pixel-centre convention. The original
+        # dense np.indices + np.stack path temporarily allocated
+        # multiple full-size float64 x/y/tangent coordinate arrays;
+        # 1-D offsets broadcast directly into east/north components.
         # Rebuild local east/north from the same SVD-free WCS sampling.
         # Pixel position angle can have arbitrary handedness.
         from astropy import units as u
@@ -442,11 +466,11 @@ def measure_native_aperture(
         matrix = np.column_stack([
             [ex-ellipse.x_center, ey-ellipse.y_center],
             [nx-ellipse.x_center, ny-ellipse.y_center]])
-        tangent = np.linalg.inv(matrix) @ np.stack(
-            [xx.ravel(),yy.ravel()])
-        angles = np.mod(np.arctan2(tangent[0],tangent[1]),2*np.pi)
-        sec = (np.floor(angles/(np.pi/4)).astype(int)%8).reshape(
-            weights.shape)
+        sec = _sector_ids_from_broadcast_native_centres(
+            weights.shape,
+            large[1].start-ellipse.x_center,
+            large[0].start-ellipse.y_center,
+            np.linalg.inv(matrix))
         for k in range(8):
             selection = sec == k
             sector_in = float(np.sum(weights[selection]))
