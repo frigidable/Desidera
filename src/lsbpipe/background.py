@@ -684,6 +684,72 @@ def _automatic_scene_sky_pixels(
 
 
 
+def _audit_sky_training_target_geometry(training, target_xy):
+    """Geometry-only check: is the target bracketed by actual sky samples?
+
+    Disjoint train/holdout masks and even three represented quadrants do
+    not ensure that an affine sky plane is INTERPOLATED at the galaxy.
+    A target outside the training-pixel convex hull is a geometric
+    extrapolation, regardless of the fitted sky or heldout residuals.
+    This has no implication for sky truth, PSF-wing leakage, covariance
+    or model acceptance; a target inside the hull may still be biased.
+    """
+    from scipy.spatial import ConvexHull, QhullError
+
+    used = np.asarray(training)
+    if used.ndim != 2 or used.dtype.kind != "b":
+        raise ValueError("Sky training support must be native-grid Boolean")
+    if (not isinstance(target_xy, (list, tuple, np.ndarray)) or
+            len(target_xy) != 2 or
+            any(isinstance(v, (bool, np.bool_, str)) for v in target_xy)):
+        raise ValueError("Target sky support centre requires finite native x/y")
+    x, y = map(float, target_xy)
+    if not np.isfinite([x, y]).all():
+        raise ValueError("Nonfinite target sky support centre")
+    ny, nx = used.shape
+    ty, tx = np.nonzero(used)
+    result = {
+        "schema": "desidera.sky.target-training-convex-support/1",
+        "n_original_training_pixels": int(len(tx)),
+        "target_native_xy": [x, y],
+        "target_inside_original_native_image": bool(
+            0. <= x < nx and 0. <= y < ny),
+        "status": "NO_NONDEGENERATE_SPATIAL_TRAINING_HULL",
+        "target_inside_training_pixel_convex_hull": None,
+        "max_signed_supporting_line_distance_native_pix": None,
+        "n_convex_hull_vertices": None,
+        "geometry_only_independent_of_image_flux": True,
+        "only_selected_native_training_pixel_positions_used": True,
+        "training_and_holdout_may_share_large_scale_sky_modes": True,
+        "inside_hull_does_not_prove_unbiased_sky": True,
+        "no_sky_or_psf_correction_authorized": True,
+    }
+    if len(tx) < 3:
+        return result
+    points = np.column_stack((tx, ty)).astype(float)
+    try:
+        hull = ConvexHull(points)
+    except QhullError:
+        return result
+    # ConvexHull.equations are normalized half-spaces A*x+b <= 0.
+    # The greatest signed line distance is positive for extrapolation.
+    distances = (hull.equations[:, :2] @ np.array([x, y])
+                 + hull.equations[:, 2])
+    max_signed = float(np.max(distances))
+    if not np.isfinite(max_signed):
+        raise ValueError("Nonfinite sky training spatial support")
+    result.update({
+        "status": ("TARGET_INTERPOLATION_GEOMETRY_ONLY"
+                   if max_signed <= 1e-8
+                   else "TARGET_EXTRAPOLATION_GEOMETRY_ONLY"),
+        "target_inside_training_pixel_convex_hull": bool(
+            max_signed <= 1e-8),
+        "max_signed_supporting_line_distance_native_pix": max_signed,
+        "n_convex_hull_vertices": int(len(hull.vertices)),
+    })
+    return result
+
+
 def _audit_automatic_sky_tile_residuals(image, sky_train, sky_holdout,
                                         selection, candidates):
     """Equal-area-tile descriptive checks without treating pixels as iid.
@@ -1334,6 +1400,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
         "method_comparison": None,
         "provisional_automatic_model": None,
         "automatic_sky_spatial_qa": None,
+        "target_training_geometry_qa": None,
         "zero_additional_correction_baseline": None,
         "model_improvement_vs_zero_baseline": None,
         "recommended_science_action": "NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED",
@@ -1417,6 +1484,18 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     x, y = float(x), float(y)
     if not (np.isfinite(x) and np.isfinite(y)):
         raise ValueError("Project target WCS anchor is not finite")
+    # Explicitly flag a tilted-plane prediction at the galaxy that is
+    # extrapolated from its actual geometrically selected sky pixels,
+    # even if all internal same-coadd holdout scores appear excellent.
+    target_support = _audit_sky_training_target_geometry(
+        sky_train, (x, y))
+    base["target_training_geometry_qa"] = target_support
+    if target_support["target_inside_training_pixel_convex_hull"] is False:
+        base["warnings"].append(
+            "SKY_AT_TARGET_EXTRAPOLATED_OUTSIDE_TRAINING_CONVEX_HULL")
+    elif target_support["target_inside_training_pixel_convex_hull"] is None:
+        base["warnings"].append(
+            "SKY_TRAINING_SPATIAL_HULL_UNDERCONSTRAINED")
     const, plane = candidates["constant"], candidates["tilted_plane"]
     b_const = float(const.evaluate_at(x,y))
     b_plane = float(plane.evaluate_at(x,y))
