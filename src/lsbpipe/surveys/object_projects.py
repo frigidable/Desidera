@@ -294,6 +294,24 @@ def read_object_project(root: str | Path) -> ObjectProject:
     return project
 
 
+def read_registered_object_project(
+        root: str | Path, expected_project_id: str) -> ObjectProject:
+    """Read one *registered* galaxy, refusing a different on-disk UUID.
+
+    An unchanged directory path is NOT proof of object identity: the user
+    may have moved, replaced, or restored another galaxy's project into
+    that path. Explicit import/relink remain available for intentional moves.
+    """
+    expected = _project_id(expected_project_id)
+    project = read_object_project(root)
+    if project.project_id != expected:
+        raise ValueError(
+            "Project UUID mismatch: this library entry now points to a "
+            "different galaxy passport. Find and relink the original "
+            "project folder or explicitly import the other galaxy.")
+    return project
+
+
 def _registry_payload() -> dict:
     """Read optional dismissal state without changing the existing schema."""
     path = library_index_path()
@@ -375,11 +393,39 @@ def recent_projects() -> list[dict]:
     registry = _registry_payload()
     rows = registry["projects"]
     hidden = set(registry["dismissed_legacy_roots"])
-    items = [
-        {**r, "available": project_path(r["root"]).is_file()}
-        for r in rows if isinstance(r, dict) and
-        isinstance(r.get("root"), str) and isinstance(r.get("project_id"), str)
-    ]
+    items = []
+    for row in rows:
+        if (not isinstance(row, dict) or
+                not isinstance(row.get("root"), str) or
+                not isinstance(row.get("project_id"), str)):
+            continue
+        # The registry is a NAVIGATION INDEX, not proof that the current
+        # bytes under its path still belong to the registered galaxy UUID.
+        # A copied/replaced directory must never silently become that
+        # registered project. Reads are non-mutating and offline.
+        item = {**row, "available": False}
+        path = project_path(row["root"])
+        if not path.is_file() or path.is_symlink():
+            item["availability_issue"] = (
+                "INVALID_PASSPORT" if path.is_symlink() else "MISSING")
+        else:
+            try:
+                passport = read_object_project(row["root"])
+            except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+                item["availability_issue"] = "INVALID_PASSPORT"
+            else:
+                if passport.project_id != row["project_id"]:
+                    item["availability_issue"] = "UUID_MISMATCH"
+                else:
+                    # Display the authoritative readable passport revision.
+                    # Do not rewrite the registry simply because a project
+                    # was renamed or a last-opened timestamp changed.
+                    item.update({
+                        "available": True,
+                        "display_name": passport.display_name,
+                        "last_opened_at": passport.last_opened_at,
+                    })
+        items.append(item)
     old = last_project_directory()
     if old is not None:
         original = old.parent if old.name == "data" else old
