@@ -1382,3 +1382,79 @@ def test_frozen_sky_injection_broadcast_grid_matches_independent_dense_reference
     np.testing.assert_array_equal(dataset["data"]["image"], frozen_image)
     assert report["sky_model_adopted"] is False
     assert qa["original_arrays_mutated"] is False
+
+
+
+def test_stage03_guard_cache_reuses_exact_baseline_and_rejects_mutated_masks(
+        monkeypatch):
+    """Six fixed grid trials need not repeat the same two full-grid EDTs."""
+    import scipy.ndimage as ndimage
+    from lsbpipe.background import _automatic_scene_sky_pixels
+    from lsbpipe.photometry.sky_masks import evaluate_mask_draft
+
+    dataset, draft, contamination = _stage03_project_fixture(
+        with_regions=False)
+    preview = evaluate_mask_draft(
+        draft, dataset["wcs"], dataset["pixel_shape"], "r",
+        native_hard=dataset["native_hard"],
+        automatic_contaminants=contamination["auto_mask"])
+    original_edt = ndimage.distance_transform_edt
+    edt_calls = []
+    def track_edt(*args, **kwargs):
+        edt_calls.append(np.shape(args[0]))
+        return original_edt(*args, **kwargs)
+    monkeypatch.setattr(ndimage, "distance_transform_edt", track_edt)
+    cache = {}
+    variants = (
+        {},
+        {"tile_edge_native_pix": 72},
+        {"tile_edge_native_pix": 96,
+         "grid_offset_xy_native_pix": (48, 48)},
+        {"tile_edge_native_pix": 128},
+        {"target_guard_factor": 1.5},
+        {"source_guard_factor": 1.5},
+        {"sample_policy": "SPATIAL_8X8_PROPORTIONAL_V2"},
+    )
+    cached_outputs = [
+        _automatic_scene_sky_pixels(
+            dataset, preview, contamination,
+            _guard_cache=cache, **opts)
+        for opts in variants]
+    assert len(edt_calls) == 4  # 2 baseline + 1 per expanded guard
+    assert set(cache) == {"target", "catalogue"}
+    assert all(not item[1].flags.writeable and
+               not item[2].flags.writeable
+               for item in cache.values())
+    for opts, (train, hold, report) in zip(variants, cached_outputs):
+        reference = _automatic_scene_sky_pixels(
+            dataset, preview, contamination, **opts)
+        np.testing.assert_array_equal(train, reference[0])
+        np.testing.assert_array_equal(hold, reference[1])
+        assert report == reference[2]
+    assert len(edt_calls) == 4 + 2*len(variants)
+
+    # Cached radii are not evidence of identical masks. An edit to a
+    # source exclusion must trigger re-evaluation of the altered mask.
+    before = len(edt_calls)
+    preview["manual_exclude"][37:43, 40:46] = True
+    changed = _automatic_scene_sky_pixels(
+        dataset, preview, contamination, _guard_cache=cache)
+    assert len(edt_calls) == before + 1
+    direct = _automatic_scene_sky_pixels(
+        dataset, preview, contamination)
+    np.testing.assert_array_equal(changed[0], direct[0])
+    np.testing.assert_array_equal(changed[1], direct[1])
+    assert changed[2] == direct[2]
+
+    # The protected target is a separate cache input with its own
+    # exact-pixel invalidation, independent of centre/area estimates.
+    contamination["protected"][60:63, 83:86] = True
+    before = len(edt_calls)
+    changed = _automatic_scene_sky_pixels(
+        dataset, preview, contamination, _guard_cache=cache)
+    assert len(edt_calls) == before + 2  # changed target AND source
+    direct = _automatic_scene_sky_pixels(
+        dataset, preview, contamination)
+    np.testing.assert_array_equal(changed[0], direct[0])
+    np.testing.assert_array_equal(changed[1], direct[1])
+    assert changed[2] == direct[2]
