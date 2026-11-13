@@ -120,6 +120,11 @@ def conservative_catalogue_mask(shape, positions, rows, *,
     # a diagnostic; true wide-field celestial nonlinearity is not
     # represented by a constant 2x2 Jacobian.
     jacobian = None
+    # The same local TAN WCS applies to EVERY Tractor row in one Scene
+    # mask build. The singular-value lower bound is source-independent:
+    # computing SVD once rather than per source preserves the exact
+    # conservative sky-circle/ellipse bounding-box policy.
+    min_native_scale_arcsec_per_pixel = float(arcsec_per_pixel)
     if wcs is not None:
         cd = np.asarray(wcs.celestial.pixel_scale_matrix, dtype=float)
         jacobian = cd * 3600.
@@ -127,6 +132,8 @@ def conservative_catalogue_mask(shape, positions, rows, *,
                 not np.isfinite(jacobian).all() or
                 abs(float(np.linalg.det(jacobian))) < 1e-8):
             raise ValueError("Invalid local WCS for Tractor morphology")
+        min_native_scale_arcsec_per_pixel = float(
+            np.min(np.linalg.svd(jacobian, compute_uv=False)))
     nearest_arcsec = None
     if red_extended_preview:
         if jacobian is None:
@@ -193,9 +200,7 @@ def conservative_catalogue_mask(shape, positions, rows, *,
         # The geometric-mean scale is insufficient for a rotated or
         # anisotropic native WCS: bound *both* axes by the smallest
         # singular value of the local east/north pixel Jacobian.
-        min_scale = (float(np.min(np.linalg.svd(jacobian, compute_uv=False)))
-                     if jacobian is not None else arcsec_per_pixel)
-        r_pix = major/min_scale
+        r_pix = major/min_native_scale_arcsec_per_pixel
         if (x+r_pix < 0 or x-r_pix >= nx or
                 y+r_pix < 0 or y-r_pix >= ny):
             outside += 1
