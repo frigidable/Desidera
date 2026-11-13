@@ -20,7 +20,6 @@ from .aperture_flux import (
     _snapshot_native_boolean_mask,
 )
 from .contracts import NativeBandFrame
-from lsbpipe.scene import grid_fingerprint
 
 
 _SCHEMA = "desidera.photometry.aperture-systematics/1"
@@ -721,7 +720,7 @@ def _verify_frozen_growth_curves(frame, anchor_icrs, provenance,
     """
     if not isinstance(curves, (tuple, list)) or not curves:
         raise ValueError("At least one frozen Stage 04.2 curve required")
-    expected_grid = grid_fingerprint(frame.wcs, frame.shape)
+    expected_grid = frame.native_grid_fingerprint
     expected_native_input = frame.native_input_sha256
     reference_radii = tuple(curves[0]["radii_arcsec"])
     anchor = tuple(map(float, anchor_icrs))
