@@ -347,6 +347,85 @@ def run(*, size, repeats):
         "pixel_center_qa_not_exact_angular_sector_photometry": True,
     })
 
+    # The old descriptive sector QA computed eight separate pairs
+    # of reductions and constructed temporary selection masks.
+    # The new implementation uses two weighted 8-bin histograms.
+    from lsbpipe.photometry.aperture_flux import (
+        _aggregate_native_pa_sector_areas,
+        _FrozenApertureMaskDigests)
+    sec_labels = broadcast_native_sectors()
+    sector_weights = rng.random(shape)
+    sector_usable = rng.random(shape) > .18
+
+    def eight_separate_sector_reductions():
+        return (
+            [float(np.sum(sector_weights[sec_labels == k]))
+             for k in range(8)],
+            [float(np.sum(
+                sector_weights[(sec_labels == k) & sector_usable]))
+             for k in range(8)],
+        )
+
+    def weighted_sector_histograms():
+        return _aggregate_native_pa_sector_areas(
+            sec_labels, sector_weights, sector_usable)
+
+    legacy_in, legacy_valid = eight_separate_sector_reductions()
+    optimized_in, optimized_valid = weighted_sector_histograms()
+    if (not np.allclose(legacy_in, optimized_in, rtol=1.e-12, atol=1.e-12)
+            or not np.allclose(
+                legacy_valid, optimized_valid, rtol=1.e-12, atol=1.e-12)):
+        raise RuntimeError("Weighted native sector areas changed")
+    sector_accumulation_result = _compare(
+        eight_separate_sector_reductions,
+        weighted_sector_histograms, repeats)
+    sector_accumulation_result.update({
+        "legacy_independent_sector_reductions": 16,
+        "optimized_native_weighted_histograms": 2,
+        "eight_sector_fractional_area_reference_verified": True,
+        "numerical_float_sum_order_may_differ_by_roundoff": True,
+        "no_change_to_exact_native_photometric_flux": True,
+    })
+
+    # Receipt metadata hashes immutable source/manual native grids,
+    # which are constant over the full Stage04.2 growth sequence.
+    # Compare one pair of externally identical SHA-256 digests with
+    # rehashing both full rasters independently on every radius.
+    import hashlib
+    frozen_source = _snapshot_native_boolean_mask("source", source, shape)
+    frozen_manual = _snapshot_native_boolean_mask("manual", manual, shape)
+
+    def repeat_full_mask_hashes():
+        return [(
+            hashlib.sha256(frozen_source.tobytes()).hexdigest(),
+            hashlib.sha256(frozen_manual.tobytes()).hexdigest()
+        ) for _ in range(n_radii)]
+
+    def one_verified_frozen_mask_hash_pair():
+        evidence = _FrozenApertureMaskDigests(
+            frozen_source, frozen_manual)
+        return [
+            (evidence.verify_inputs(
+                frozen_source, frozen_manual)["effective_source"],
+             evidence.verify_inputs(
+                frozen_source, frozen_manual)["manual_exclude"])
+            for _ in range(n_radii)
+        ]
+
+    if repeat_full_mask_hashes() != one_verified_frozen_mask_hash_pair():
+        raise RuntimeError("Frozen source/manual mask SHA receipts changed")
+    mask_receipt_result = _compare(
+        repeat_full_mask_hashes,
+        one_verified_frozen_mask_hash_pair, repeats)
+    mask_receipt_result.update({
+        "growth_radii": n_radii,
+        "legacy_full_grid_sha256_computations": 2*n_radii,
+        "optimized_full_grid_sha256_computations": 2,
+        "bitwise_identical_original_mask_sha256": True,
+        "immutable_mask_identity_checked_per_radius": True,
+        "no_cross_project_or_global_digest_cache": True,
+    })
+
     return {
         "schema": "desidera.performance.synthetic-operator-benchmark/1",
         "size_native_pixels": [size, size],
@@ -366,9 +445,13 @@ def run(*, size, repeats):
                 sky_guard_result,
             "native_pa_sector_dense_xy_vs_broadcast_tangent":
                 sector_result,
+            "native_sector_eight_reductions_vs_weighted_histograms":
+                sector_accumulation_result,
+            "ten_radii_full_mask_hashing_vs_immutable_sha_receipt_pair":
+                mask_receipt_result,
         },
         "interpretation": [
-            "Seven distinct computational kernels, not end-to-end FITS loading time",
+            "Nine distinct computational kernels, not end-to-end FITS loading time",
             "No network, original FITS, catalogue fetch or GUI involved",
             "No scientific sky, PSF, photometric, SBF or covariance adoption",
             "Ratio depends on machine, NumPy, Photutils, OS cache and FITS size",
