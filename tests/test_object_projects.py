@@ -12,7 +12,8 @@ from lsbpipe.surveys.legacy import BrickHit, SkyField, product_for
 from lsbpipe.surveys.object_projects import (
     SCHEMA, PROJECT_FILENAME, REGISTRY_SCHEMA,
     create_object_project, import_object_project, library_index_path,
-    read_object_project, recent_projects, register_object_project,
+    read_object_project, read_registered_object_project, recent_projects,
+    register_object_project,
     relink_object_project, save_object_project, touch_object_project,
 )
 
@@ -712,3 +713,57 @@ def test_create_rejects_bad_name_before_making_empty_project_directory(
         create_object_project("Bad|Name", root)
     assert not root.exists()
     assert not library_index_path().is_file()
+
+
+def test_registry_path_replacement_is_not_accepted_as_same_galaxy(tmp_path):
+    """The SAME pathname can now hold ANOTHER UUID: fail closed."""
+    old = create_object_project("Original galaxy", tmp_path / "old", field=FIELD)
+    foreign = create_object_project("Different galaxy", tmp_path / "foreign")
+    original_data = old.root / "original-image-g.fits.fz"
+    original_data.write_bytes(b"immutable original science image")
+    original_registry = library_index_path().read_bytes()
+    passport = old.root / PROJECT_FILENAME
+    foreign_bytes = (foreign.root / PROJECT_FILENAME).read_bytes()
+    passport.write_bytes(foreign_bytes)
+
+    # The explicitly selected old library row cannot open another galaxy,
+    # even though its path still exists and points to valid project JSON.
+    with pytest.raises(ValueError, match="UUID mismatch"):
+        read_registered_object_project(old.root, old.project_id)
+    assert read_object_project(old.root).project_id == foreign.project_id
+
+    by_id = {r["project_id"]: r for r in recent_projects()}
+    assert not by_id[old.project_id]["available"]
+    assert by_id[old.project_id]["availability_issue"] == "UUID_MISMATCH"
+    assert by_id[old.project_id]["display_name"] == "Original galaxy"
+    assert by_id[foreign.project_id]["available"]
+    assert original_data.read_bytes() == b"immutable original science image"
+    assert passport.read_bytes() == foreign_bytes
+    assert library_index_path().read_bytes() == original_registry
+
+
+def test_project_library_display_uses_current_passport_without_mutating_registry(
+        tmp_path):
+    """Project list is navigation; passport retains authoritative name."""
+    project = create_object_project("Initial name", tmp_path / "initial")
+    index_before = library_index_path().read_bytes()
+    project.display_name = "Updated passport name"
+    save_object_project(project)
+    rows = recent_projects()
+    assert len(rows) == 1
+    assert rows[0]["available"] is True
+    assert rows[0]["display_name"] == "Updated passport name"
+    assert library_index_path().read_bytes() == index_before
+
+
+def test_invalid_passport_is_not_offered_as_valid_registered_galaxy(
+        tmp_path):
+    project = create_object_project("Galaxy", tmp_path / "galaxy")
+    index_before = library_index_path().read_bytes()
+    passport = project.root / PROJECT_FILENAME
+    passport.write_bytes(b'{"schema": "other.invalid/1"}')
+    rows = recent_projects()
+    assert len(rows) == 1
+    assert rows[0]["available"] is False
+    assert rows[0]["availability_issue"] == "INVALID_PASSPORT"
+    assert library_index_path().read_bytes() == index_before
