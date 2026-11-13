@@ -32,6 +32,7 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
         "native_frame_two_materializations_vs_one",
         "ten_radii_full_mask_copies_vs_immutable_snapshot_reuse",
         "exact_blank_ring_rasterization_vs_integer_template_translation",
+        "sky_frozen_injection_dense_xy_vs_broadcast_reusable_distance",
     }
     for row in report["comparison"].values():
         assert row["reference_median_ms"] >= 0.
@@ -42,6 +43,14 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
     assert ring["reference_exact_rasterizations"] == 160
     assert ring["optimized_exact_rasterizations"] == 8
     assert ring["independent_exact_overlap_area_verified"]
+    injection = report["comparison"][
+        "sky_frozen_injection_dense_xy_vs_broadcast_reusable_distance"]
+    assert injection["full_synthetic_flux_reference_verified"]
+    assert injection["nominal_persistent_coordinate_grid_bytes_avoided"] == (
+        2*192*192*8)
+    assert injection["full_float64_coordinate_grids_avoided"] == 2
+    assert injection["repeated_elliptical_distance_maps_avoided"] == 2
+    assert injection["peak_rss_not_measured"]
     json.dumps(report, allow_nan=False)
     with pytest.raises(ValueError, match="Synthetic benchmark size"):
         module.run(size=32, repeats=1)
