@@ -1,6 +1,6 @@
 """Reproducible, offline computational-kernel benchmark for Desidera.
 
-Measures ONLY the three optimized inner operations on synthetic native
+Measures ONLY selected optimized inner operations on synthetic native
 arrays. It is not a full pipeline benchmark, astrophysical certification,
 or a stable CI timing threshold. Never accesses or writes original FITS.
 
@@ -166,6 +166,56 @@ def run(*, size, repeats):
         "independent_exact_overlap_area_verified": True,
     })
 
+    # Reference Stage03 implementation materialized two full float64
+    # coordinate grids and recomputed the same elliptical radius once
+    # for each factor. The optimized one uses broadcast 1-D offsets
+    # and a single reusable ellipse-distance map.
+    x_anchor = size/2. - .37
+    y_anchor = size/2. + .21
+    trial_scales = (14., 28., 56.)
+
+    def dense_stage03_distance_trials():
+        yy, xx = np.indices(shape, dtype=float)
+        selection = np.hypot(xx-x_anchor, yy-y_anchor) < 70.
+        output = []
+        for h in trial_scales:
+            ellipse = np.hypot(xx-x_anchor, (yy-y_anchor)/.65)
+            signal = .005*np.exp(-ellipse/h)
+            output.append((float(np.sum(signal)),
+                           float(np.sum(signal[selection]))))
+        return output
+
+    def broadcast_stage03_distance_trials():
+        dx = np.arange(size, dtype=float)-x_anchor
+        dy = np.arange(size, dtype=float)-y_anchor
+        selection = np.hypot(dx[None, :], dy[:, None]) < 70.
+        ellipse = np.hypot(dx[None, :], dy[:, None]/.65)
+        output = []
+        for h in trial_scales:
+            signal = .005*np.exp(-ellipse/h)
+            output.append((float(np.sum(signal)),
+                           float(np.sum(signal[selection]))))
+        return output
+
+    direct = dense_stage03_distance_trials()
+    broadcast = broadcast_stage03_distance_trials()
+    if not np.allclose(direct, broadcast, rtol=1.e-13, atol=1.e-11):
+        raise RuntimeError(
+            "Broadcast Stage03 ellipse-distance operator changed injected flux")
+    injection_result = _compare(
+        dense_stage03_distance_trials,
+        broadcast_stage03_distance_trials, repeats)
+    injection_result.update({
+        "n_scale_length_trials": len(trial_scales),
+        "full_float64_coordinate_grids_avoided": 2,
+        "nominal_persistent_coordinate_grid_bytes_avoided":
+            2*size*size*np.dtype(np.float64).itemsize,
+        "repeated_elliptical_distance_maps_avoided":
+            len(trial_scales)-1,
+        "full_synthetic_flux_reference_verified": True,
+        "peak_rss_not_measured": True,
+    })
+
     return {
         "schema": "desidera.performance.synthetic-operator-benchmark/1",
         "size_native_pixels": [size, size],
@@ -177,9 +227,11 @@ def run(*, size, repeats):
                 mask_result,
             "exact_blank_ring_rasterization_vs_integer_template_translation":
                 ring_result,
+            "sky_frozen_injection_dense_xy_vs_broadcast_reusable_distance":
+                injection_result,
         },
         "interpretation": [
-            "Three distinct computational kernels, not end-to-end FITS loading time",
+            "Four distinct computational kernels, not end-to-end FITS loading time",
             "No network, original FITS, catalogue fetch or GUI involved",
             "No scientific sky, PSF, photometric, SBF or covariance adoption",
             "Ratio depends on machine, NumPy, Photutils, OS cache and FITS size",
