@@ -283,3 +283,69 @@ def test_stage042_closure_gate_does_not_invent_flux_in_unobserved_ring():
         np.isfinite(row["signed_flux_nMgy"])
         for row in result["independently_integrated_annuli"])
     assert result["adopted_for_science"] is False
+
+
+def test_growth_reuses_immutable_mask_snapshots_without_resnapshotting_each_radius(
+        monkeypatch):
+    """Stage04.2 must use exactly two owned byte-backed masks for all radii."""
+    import lsbpipe.photometry.aperture_flux as aperture_flux
+    original = aperture_flux._mask_for
+    observed = []
+    def inspect_mask(name, mask, shape):
+        result = original(name, mask, shape)
+        observed.append((name, mask, result))
+        return result
+    monkeypatch.setattr(aperture_flux, "_mask_for", inspect_mask)
+    f = frame(value=.7, shape=(121, 121))
+    source = np.zeros(f.shape, dtype=bool)
+    manual = np.zeros(f.shape, dtype=bool)
+    source[53:60, 58:64] = True
+    manual[63:67, 65:69] = True
+    radii = (1., 2., 3., 4., 5., 6., 7., 8.)
+    result = run_curve(
+        f, source=source, manual=manual, radii=radii)
+    assert result["n_measured_direct_apertures"] == len(radii)
+    assert len(observed) == 2*len(radii)
+    for kind in ("effective source mask", "manual exclusion"):
+        rows = [(inp, out) for key, inp, out in observed if key == kind]
+        assert len(rows) == len(radii)
+        assert len({id(inp) for inp, _ in rows}) == 1
+        assert all(out is inp for inp, out in rows)
+        assert all(not inp.flags.writeable for inp, _ in rows)
+        for inp, _ in rows:
+            with pytest.raises(ValueError):
+                inp.setflags(write=True)
+    assert all(
+        row["signed_valid_flux_nMgy"] == pytest.approx(
+            row["area_native_pixel2"]["valid_native_pixel2"]*.7, abs=1e-7)
+        for row in result["cumulative"])
+
+
+def test_byte_backed_mask_fast_path_rejects_mutable_and_readonly_views():
+    """Readonly flags do not establish real immutability of a NumPy view."""
+    from lsbpipe.photometry.aperture_flux import (
+        _mask_for, _snapshot_native_boolean_mask)
+
+    source = np.zeros((22, 23), bool)
+    source[7, 9] = True
+    verified = _snapshot_native_boolean_mask(
+        "effective source mask", source, source.shape)
+    assert _mask_for(
+        "effective source mask", verified, source.shape) is verified
+    with pytest.raises(ValueError):
+        verified.setflags(write=True)
+
+    mutable_view = source.view()
+    mutable_view.flags.writeable = False
+    detached = _mask_for(
+        "effective source mask", mutable_view, source.shape)
+    assert detached is not mutable_view
+    source[7, 9] = False
+    assert detached[7, 9] and verified[7, 9]
+    source[:] = True
+    assert not np.all(detached)
+    assert not np.all(verified)
+
+    with pytest.raises(ValueError, match="same-grid boolean"):
+        _snapshot_native_boolean_mask(
+            "manual exclusion", np.ones(source.shape, float), source.shape)
