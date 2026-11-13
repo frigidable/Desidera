@@ -1343,3 +1343,42 @@ def test_weighted_sky_lstsq_uses_its_own_singular_values_without_second_svd(
         collinear, signal, weights, max_condition=1.e12)
     assert invalid is None
     assert condition > 1.e12
+
+
+
+def test_frozen_sky_injection_broadcast_grid_matches_independent_dense_reference():
+    """One reusable ellipse-distance grid is numerically identical to dense xy."""
+    from lsbpipe.background import diagnose_current_project_residual_sky
+
+    dataset, draft, contamination = _stage03_project_fixture(
+        with_regions=False)
+    frozen_image = dataset["data"]["image"].copy()
+    report = diagnose_current_project_residual_sky(
+        dataset, draft, contamination)
+    qa = report["sky_injection_recovery_qa"]
+    assert qa["status"] == (
+        "SAME_COADD_FROZEN_MASK_INJECTION_DIAGNOSTIC_ONLY")
+    shape = dataset["pixel_shape"]
+    yy, xx = np.indices(shape, dtype=float)
+    ax, ay = map(float, dataset["wcs"].all_world2pix(
+        *contamination["anchor_icrs"], 0))
+    target_radius = np.sqrt(
+        np.count_nonzero(contamination["protected"])/np.pi)
+    usable = (
+        np.hypot(xx-ax, yy-ay) <= 2.*target_radius) & (
+        ~dataset["native_hard"]) & (
+        ~contamination["auto_mask"])
+    for factor, scenario in zip((.5, 1., 2.), qa["scenarios"]):
+        h = factor*target_radius
+        independent_signal = .005*np.exp(
+            -np.hypot(xx-ax, (yy-ay)/.65)/h)
+        assert scenario["scale_length_native_pix"] == pytest.approx(h)
+        assert scenario["injected_total_image_flux_nMgy"] == pytest.approx(
+            float(independent_signal.sum()), rel=1e-12)
+        assert scenario["injected_flux_in_unmasked_aperture_nMgy"] == (
+            pytest.approx(float(independent_signal[usable].sum()),
+                          rel=1e-12))
+        assert scenario["unmasked_aperture_pixels"] == np.count_nonzero(usable)
+    np.testing.assert_array_equal(dataset["data"]["image"], frozen_image)
+    assert report["sky_model_adopted"] is False
+    assert qa["original_arrays_mutated"] is False
