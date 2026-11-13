@@ -380,3 +380,51 @@ The dataset/analysis registry and operation journals have their
 own separate update paths and remain subject to a further
 targeted audit. The scientific HOLD and existing data schemas
 are unchanged.
+
+
+## 7. Dataset-index transaction follow-up — separate focused PR
+
+This audit identified a second real **lost update** channel in
+`surveys/dataset_registry.py`. The index is one atomic
+`datasets/index.json` sidecar per galaxy; an atomic JSON replace
+only prevents partial files, **not** two writers reading the same
+prior generation and both publishing different derived snapshots.
+
+**Affected paths before the repair:** `import_legacy_fits`,
+`register_external_fits`, and `verify_asset_checksum`.
+The last one was particularly problematic: it read a whole
+registry generation, hashed potentially large source FITS files,
+then saved the **original stale registry**, erasing any new
+asset registrations made while the hash was running.
+
+The narrowly scoped `fix/dataset-index-transactions` branch:
+- reuses PR #85's cross-platform OS advisory lock in a stable
+  project-local `datasets/index.json.lock` sidecar;
+- serializes the full read–modify–atomic-replace transaction for
+  FITS discovery imports and user-selected external FITS assets;
+- performs full source-file SHA-256 **outside** the index lock,
+  then acquires it, **re-reads the current index**, and verifies
+  asset ID, source, path reference, size, mtime, product type,
+  band, import identity, previous checksum and current on-disk
+  file metadata before committing the original SHA-256 receipt;
+- rejects stale or changed metadata rather than publishing a
+  valid hash over another file's current identity;
+- preserves any concurrently imported unrelated sources and
+  assets; retains the previous `CHECKSUM_VERIFIED` and
+  FITS-unvalidated semantics rather than asserting scientific
+  image validity; and
+- supplies actual separate-process races (concurrent external
+  imports, import during a deliberately slow SHA-256), a
+  concurrent metadata-mutation refusal and a symlinked-lock
+  negative test.
+
+**Scope limits:** neither project-passport nor GUI resume/journal
+transactions are covered by this lock. Third-party software
+that disregards the sidecar lock can still rewrite
+`index.json`; no general distributed/SMB/NFS protocol is claimed.
+SHA validation detects ordinary timestamp/size changes around
+the read/commit but is not a proof against malicious filesystems
+that replace content while preserving those metadata fields.
+No FITS is modified, merged, repixelized or scientifically
+adopted. Acceptance requires exact-HEAD Windows+Ubuntu CI and
+the deliberately interleaved process tests before merge.
