@@ -313,7 +313,12 @@ def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
     assert out["status"]=="AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
     assert out["schema"]=="desidera.sky.project-native-residual-diagnostic/2"
     hull = out["target_training_geometry_qa"]
-    assert hull["schema"] == "desidera.sky.target-training-convex-support/1"
+    assert hull["schema"] == "desidera.sky.target-training-convex-support/2"
+    assert hull["n_hull_candidate_row_extrema"] <= 2*dataset["pixel_shape"][0]
+    assert hull["exact_convex_hull_from_native_row_extrema"]
+    assert hull["n_provisional_target_protected_pixels"] > 0
+    assert hull["n_provisional_target_pixels_outside_training_hull"] == 0
+    assert hull["provisional_target_footprint_fully_inside_training_hull"] is True
     assert hull["target_inside_training_pixel_convex_hull"] is True
     assert hull["status"] == "TARGET_INTERPOLATION_GEOMETRY_ONLY"
     assert hull["max_signed_supporting_line_distance_native_pix"] < 0
@@ -1222,3 +1227,81 @@ def test_project_sky_report_flags_target_extrapolation_without_adopting(monkeypa
         out["warnings"])
     assert out["sky_model_adopted"] is False
     assert out["automatic_sky_background_correction_authorized"] is False
+
+
+
+def test_sky_convex_hull_row_extrema_equal_full_pixel_hull_and_bounded_memory():
+    """Every on-row interior point is a convex combination of its endpoints."""
+    from scipy.spatial import ConvexHull
+    from lsbpipe.background import _audit_sky_training_target_geometry
+
+    rng = np.random.default_rng(309)
+    train = rng.random((173, 251)) < .75
+    yy, xx = np.nonzero(train)
+    full = ConvexHull(np.column_stack((xx, yy)).astype(float))
+    assert len(xx) > 30000
+    for x, y in ((2., 3.), (120.5, 94.25), (250., 172.),
+                 (-4., 88.), (275., 90.), (120., 210.)):
+        result = _audit_sky_training_target_geometry(train, (x, y))
+        direct = float(np.max(
+            full.equations[:, :2] @ np.array([x, y])
+            + full.equations[:, 2]))
+        assert result["max_signed_supporting_line_distance_native_pix"] == (
+            pytest.approx(direct, abs=1e-9))
+        assert result["n_convex_hull_vertices"] == len(full.vertices)
+        assert result["n_hull_candidate_row_extrema"] <= 2*train.shape[0]
+        assert (result["n_hull_candidate_row_extrema"] <
+                result["n_original_training_pixels"]/60)
+        assert result["exact_convex_hull_from_native_row_extrema"]
+
+
+def test_sky_protected_footprint_can_extrapolate_with_center_inside_hull():
+    """Measuring the centre alone cannot certify a long/asymmetric galaxy."""
+    from lsbpipe.background import _audit_sky_training_target_geometry
+
+    train = np.zeros((80, 90), dtype=bool)
+    for xs, ys in ((slice(9, 16), slice(10, 17)),
+                   (slice(42, 49), slice(10, 17)),
+                   (slice(9, 16), slice(45, 52)),
+                   (slice(42, 49), slice(45, 52))):
+        train[ys, xs] = True
+    protected = np.zeros_like(train)
+    protected[25:33, 25:40] = True       # Bracketed by sky train
+    protected[25:33, 65:75] = True       # Target's outer asymmetry
+    original = train.copy(), protected.copy()
+    result = _audit_sky_training_target_geometry(
+        train, (28.5, 29.), target_protection=protected)
+    assert result["status"] == "TARGET_INTERPOLATION_GEOMETRY_ONLY"
+    assert result["target_inside_training_pixel_convex_hull"] is True
+    assert result["provisional_target_footprint_fully_inside_training_hull"] is False
+    assert result["n_provisional_target_protected_pixels"] == 200
+    assert result["n_provisional_target_pixels_outside_training_hull"] == 80
+    assert result["fraction_provisional_target_pixels_outside_training_hull"] == (
+        pytest.approx(.4))
+    assert result["max_provisional_target_extrapolation_distance_native_pix"] > 0
+    assert result["provisional_target_protection_not_a_measured_isophote"]
+    assert result["protected_pixel_coverage_does_not_certify_actual_galaxy_extent"]
+    np.testing.assert_array_equal(train, original[0])
+    np.testing.assert_array_equal(protected, original[1])
+    with pytest.raises(ValueError, match="same-grid Boolean"):
+        _audit_sky_training_target_geometry(
+            train, (28.5, 29.), target_protection=protected.astype(int))
+    with pytest.raises(ValueError, match="same-grid Boolean"):
+        _audit_sky_training_target_geometry(
+            train, (28.5, 29.), target_protection=protected[:, :-1])
+
+
+def test_sky_protected_footprint_null_for_unmeasured_or_collinear_training():
+    from lsbpipe.background import _audit_sky_training_target_geometry
+
+    train = np.zeros((60, 60), bool)
+    train[5, 5] = train[10, 10] = train[15, 15] = True
+    target = np.zeros_like(train)
+    target[15:25, 25:35] = True
+    report = _audit_sky_training_target_geometry(
+        train, (27., 20.), target_protection=target)
+    assert report["status"] == "NO_NONDEGENERATE_SPATIAL_TRAINING_HULL"
+    assert report["n_provisional_target_protected_pixels"] == 100
+    assert report["n_provisional_target_pixels_outside_training_hull"] is None
+    assert report["fraction_provisional_target_pixels_outside_training_hull"] is None
+    assert report["provisional_target_footprint_fully_inside_training_hull"] is None
