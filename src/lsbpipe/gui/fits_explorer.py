@@ -475,7 +475,7 @@ class FITSExplorer(QWidget):
         self.clear_data()
         self._dataset = dataset
         self.pixel_info.setText(
-            "Hover or focus the image and use arrows for original FITS values.")
+            "Hover over the image or focus it and use arrows for original FITS values.")
         self.viewport_hint.setText(
             "Wheel: zoom · drag: pan · arrows: inspect pixel · "
             "Shift+arrows: 10 pixels · Esc: clear cursor")

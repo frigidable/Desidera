@@ -340,6 +340,31 @@ def main():
             finally:
                 window.close()
                 app.processEvents()
+    # S8: a deliberately long, offline-only status with its complete text open.
+    # This checks the real left navigation at laptop sizes, without HTTP/FITS.
+    with offline_legacy_viewer():
+        window = SurveyExplorer(restore_session=False, launch_remote=False)
+        try:
+            window.show()
+            window.message.setText(
+                "SYNTHETIC STATUS (not a real archive failure). "
+                "Original FITS were not modified. " * 8
+            )
+            window.message_details_btn.setChecked(True)
+            for _ in range(6):
+                app.processEvents()
+            if (not window.full_message_box.isVisible() or
+                    "SYNTHETIC STATUS" not in
+                    window.full_message_box.toPlainText()):
+                raise AssertionError("Complete accessible status not expanded")
+            for w, h in SIZES:
+                window.navigation_scroll.ensureWidgetVisible(
+                    window.full_message_box, 6, 10)
+                reports.append(_capture(
+                    window, app, outdir, w, h, "S8"))
+        finally:
+            window.close()
+            app.processEvents()
     # Synthetic three-band comparison at a realistic desktop viewport.
     # This fixture contains NO DESI pixels; it is strictly geometry evidence.
     with offline_legacy_viewer():
@@ -397,6 +422,7 @@ def main():
             "S4–S6 are mock UI content; no original FITS are opened",
             "S5 FITS raster is artificial and cannot support scientific conclusions",
             "S7 band comparison is synthetic and contains no original survey pixels",
+            "S8 status is synthetic and does not represent a real failure",
             "Offscreen Qt capture cannot verify real monitor / DPI rendering",
             "This job does not certify accessibility or scientific validity",
         ],
