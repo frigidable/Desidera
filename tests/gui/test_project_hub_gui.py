@@ -709,3 +709,48 @@ def test_hub_blocks_automatic_resume_of_wrong_project_uuid(
     hub._auto_resume_last_project()
     assert hub.workspace is None
     assert "DIFFERENT galaxy project UUID" in hub.hint.text()
+
+
+def test_create_dialog_validation_is_visible_and_blocks_invalid_submit(
+        qtbot, tmp_path):
+    """Partial or invalid coordinates cannot be submitted via the default button."""
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.name.setText("A faint galaxy")
+    assert dialog.create_btn.isEnabled()  # Coordinate-less objects are allowed.
+    dialog.ra.setText("02:40:23.09")
+    assert not dialog.create_btn.isEnabled()
+    assert "both RA and Dec" in dialog.description.text()
+    assert "Correct" in dialog.create_btn.accessibleDescription()
+    dialog.dec.setText("+95:13:45")
+    assert not dialog.create_btn.isEnabled()
+    assert "Check coordinates" in dialog.description.text()
+    dialog.dec.setText("+01:13:45.3")
+    assert dialog.create_btn.isEnabled()
+    assert "ICRS" in dialog.description.text()
+    assert dialog.ra.accessibleName() and dialog.dec.accessibleName()
+    dialog.dec.clear()
+    dialog.ra.clear()
+    assert dialog.create_btn.isEnabled()  # Still supports unidentified targets.
+
+
+def test_hub_keyboard_search_new_project_and_activation_contract(
+        hub, qtbot, monkeypatch, tmp_path):
+    """Window shortcuts and list activation are usable without a mouse."""
+    create_object_project("Leo P", tmp_path / "leo-p")
+    hub.refresh()
+    assert hub._search_shortcut.key().toString() == "Ctrl+F"
+    assert hub._new_project_shortcut.key().toString() == "Ctrl+N"
+    assert hub.filter.accessibleName() == "Search recent galaxy projects"
+    assert hub.projects.accessibleName() == "Recent galaxy projects"
+    hub.filter.setText("Leo")
+    hub.projects.setFocus()
+    hub._search_shortcut.activated.emit()
+    assert hub.filter.hasFocus()
+    assert hub.filter.selectedText() == "Leo"
+    actions = []
+    monkeypatch.setattr(hub, "_new_project", lambda: actions.append("new"))
+    monkeypatch.setattr(hub, "_open_selected", lambda: actions.append("open"))
+    hub._new_project_shortcut.activated.emit()
+    hub.projects.itemActivated.emit(hub.projects.currentItem())
+    assert actions == ["new", "open"]

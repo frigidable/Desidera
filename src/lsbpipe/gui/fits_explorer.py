@@ -134,6 +134,7 @@ class FITSExplorer(QWidget):
         bar.addWidget(QLabel("Layer"))
         self.layer = QComboBox()
         self.layer.setObjectName("fits_layer_selector")
+        self.layer.setAccessibleName("Local FITS data layer")
         for name, kind in (
             ("IMAGE · nanomaggy", "image"),
             ("INVVAR · log weight", "invvar"),
@@ -145,11 +146,13 @@ class FITSExplorer(QWidget):
         bar.addWidget(self.layer)
         self.contrast = QComboBox()
         self.contrast.setObjectName("fits_contrast_selector")
+        self.contrast.setAccessibleName("FITS display stretch preset")
         self.contrast.addItem("Standard", "standard")
         self.contrast.addItem("Faint features", "faint")
         # Transfer controls are assembled below after both selectors exist.
         self.scaling = QComboBox()
         self.scaling.setObjectName("fits_scaling_selector")
+        self.scaling.setAccessibleName("FITS display intensity scaling")
         for name, key in (
                 ("Auto", "auto"), ("Linear", "linear"),
                 ("Asinh", "asinh"), ("Log10", "log")):
@@ -183,12 +186,14 @@ class FITSExplorer(QWidget):
         scale_row.addWidget(QLabel("Min"))
         self.vmin = QLineEdit()
         self.vmin.setObjectName("fits_display_vmin")
+        self.vmin.setAccessibleName("Minimum FITS display value in native units")
         self.vmin.setPlaceholderText("auto")
         self.vmin.setToolTip("Lower display limit in native FITS units")
         scale_row.addWidget(self.vmin, 1)
         scale_row.addWidget(QLabel("Max"))
         self.vmax = QLineEdit()
         self.vmax.setObjectName("fits_display_vmax")
+        self.vmax.setAccessibleName("Maximum FITS display value in native units")
         self.vmax.setPlaceholderText("auto")
         self.vmax.setToolTip("Upper display limit in native FITS units")
         scale_row.addWidget(self.vmax, 1)
@@ -205,6 +210,7 @@ class FITSExplorer(QWidget):
         layout.addLayout(range_actions)
         self.range_info = QLabel("Display limits: automatic · native units")
         self.range_info.setObjectName("fits_display_range_info")
+        self.range_info.setAccessibleName("Current displayed FITS intensity range")
         self.range_info.setWordWrap(True)
         self.scale_bar = QLabel()
         self.scale_bar.setObjectName("fits_numeric_colorbar")
@@ -295,6 +301,10 @@ class FITSExplorer(QWidget):
         self.scene = QGraphicsScene(self)
         self.view = FITSGraphicsView()
         self.view.setObjectName("fits_graphics_view")
+        self.view.setAccessibleName("Interactive local FITS pixel image")
+        self.view.setAccessibleDescription(
+            "Display only. Pixels, masks, raw values and WCS are inspected "
+            "without modifying original scientific FITS.")
         self.view.setScene(self.scene)
         self.view.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -310,14 +320,13 @@ class FITSExplorer(QWidget):
         self.pixel_info.setObjectName("fits_pixel_readout")
         self.pixel_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.pixel_info.setWordWrap(True)
-        self.pixel_info.setStyleSheet("font-size: 11px;")
+        self.pixel_info.setStyleSheet("font-size: 12px;")
         image_layout.addWidget(self.pixel_info)
 
         self.provenance = QLabel(
             "LOCAL ORIGINAL FITS · DISPLAY ONLY · DIAGNOSTIC_NOT_ADOPTED")
         self.provenance.setObjectName("fits_science_status")
-        self.provenance.setStyleSheet(
-            "color: palette(mid); font-size: 11px;")
+        self.provenance.setStyleSheet("font-size: 12px;")
         detail_layout.addWidget(self.provenance)
         self.base_item = QGraphicsPixmapItem()
         self.base_item.setZValue(0)

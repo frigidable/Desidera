@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QMenu, QCheckBox,
@@ -58,23 +59,29 @@ class CreateProjectDialog(QDialog):
 
         self.name = QLineEdit()
         self.name.setObjectName("project_new_name")
+        self.name.setAccessibleName("Galaxy project name")
         self.name.setPlaceholderText("e.g. UGC 2162")
         self.ra = QLineEdit()
         self.ra.setObjectName("project_new_ra")
+        self.ra.setAccessibleName("Optional ICRS right ascension, decimal degrees or hours")
         self.ra.setPlaceholderText("Optional · degrees or hh:mm:ss")
         self.dec = QLineEdit()
         self.dec.setObjectName("project_new_dec")
+        self.dec.setAccessibleName("Optional ICRS declination, decimal degrees")
         self.dec.setPlaceholderText("Optional · degrees or ±dd:mm:ss")
         self.width_arcmin = QDoubleSpinBox()
         self.width_arcmin.setObjectName("project_new_width")
+        self.width_arcmin.setAccessibleName("Square search field width in arcminutes")
         self.width_arcmin.setRange(0.1, 120.)
         self.width_arcmin.setValue(5.)
         self.width_arcmin.setSuffix(" arcmin")
         self.directory = QLineEdit()
         self.directory.setObjectName("project_new_root")
+        self.directory.setAccessibleName("Local project directory")
         self.directory.setPlaceholderText("Local folder for this galaxy")
         self.description = QLabel()
         self.description.setObjectName("project_new_summary")
+        self.description.setAccessibleName("Project creation summary and input validation")
         self.description.setWordWrap(True)
 
         layout = QVBoxLayout(self)
@@ -91,10 +98,10 @@ class CreateProjectDialog(QDialog):
 
         identity = QFormLayout()
         identity.setVerticalSpacing(10)
-        identity.addRow("Object / project name", self.name)
-        identity.addRow("RA (ICRS)", self.ra)
-        identity.addRow("Dec (ICRS)", self.dec)
-        identity.addRow("Search field", self.width_arcmin)
+        identity.addRow("&Object / project name", self.name)
+        identity.addRow("&RA (ICRS)", self.ra)
+        identity.addRow("&Dec (ICRS)", self.dec)
+        identity.addRow("&Search field", self.width_arcmin)
         layout.addLayout(identity)
         note = QLabel(
             "Coordinates are optional for an unidentified object. "
@@ -102,7 +109,9 @@ class CreateProjectDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        layout.addWidget(QLabel("Local project storage"))
+        storage_label = QLabel("&Local project storage")
+        storage_label.setBuddy(self.directory)
+        layout.addWidget(storage_label)
         storage = QHBoxLayout()
         storage.addWidget(self.directory, 1)
         browse = QPushButton("Browse…")
@@ -170,18 +179,24 @@ class CreateProjectDialog(QDialog):
     def _update_preview(self, *_):
         name = self.name.text().strip()
         directory = self.directory.text().strip()
+        coordinates_valid = True
         try:
             field = self._field()
             position = ("Position: not specified (can be added later)"
                         if field is None else
                         f"ICRS: {field.ra_deg:.8f}°, {field.dec_deg:+.8f}°")
         except ValueError as exc:
+            coordinates_valid = False
             position = f"Check coordinates: {exc}"
         self.description.setText(
             f"{position}\n"
             f"Project directory: {directory or 'not selected'}\n"
             "Creates local metadata only · no network, download or FITS changes.")
-        self.create_btn.setEnabled(bool(name and directory))
+        self.create_btn.setEnabled(bool(name and directory) and coordinates_valid)
+        self.create_btn.setAccessibleDescription(
+            "Correct the ICRS coordinates before creating a project."
+            if not coordinates_valid else
+            "Create local project metadata without downloading science data.")
 
     def _create(self):
         try:
@@ -251,6 +266,7 @@ class ProjectHub(QMainWindow):
         self.new_btn = QPushButton("New galaxy project")
         self.new_btn.setObjectName("hub_new_project")
         self.new_btn.clicked.connect(self._new_project)
+        self.new_btn.setToolTip("Create a galaxy project (Ctrl+N); no download")
         self.import_btn = QPushButton("Import existing folder…")
         self.import_btn.setObjectName("hub_import_project")
         self.import_btn.clicked.connect(self._import_dialog)
@@ -279,12 +295,18 @@ class ProjectHub(QMainWindow):
         left.addWidget(QLabel("Recent galaxies"))
         self.filter = QLineEdit()
         self.filter.setObjectName("hub_project_filter")
+        self.filter.setAccessibleName("Search recent galaxy projects")
+        self.filter.setToolTip("Filter saved galaxy projects (Ctrl+F)")
         self.filter.setClearButtonEnabled(True)
         self.filter.setPlaceholderText("Search galaxies or folder paths…")
         self.filter.textChanged.connect(self._filter_rows)
         left.addWidget(self.filter)
         self.projects = QListWidget()
         self.projects.setObjectName("hub_project_list")
+        self.projects.setAccessibleName("Recent galaxy projects")
+        self.projects.setAccessibleDescription(
+            "Use arrow keys to select a galaxy. Press Enter to open it "
+            "or relink its folder if missing.")
         self.projects.setWordWrap(True)
         self.projects.setSpacing(5)
         self.projects.setStyleSheet(
@@ -293,8 +315,12 @@ class ProjectHub(QMainWindow):
             "QListWidget::item { padding: 6px; border-radius: 5px; } "
             "QListWidget::item:selected { background: palette(highlight); "
             "color: palette(highlighted-text); }")
-        self.projects.itemDoubleClicked.connect(
-            lambda _: self._open_selected())
+        # Qt itemActivated handles both Enter and double-click without two opens.
+        self.projects.itemActivated.connect(lambda _: self._open_selected())
+        self._search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self._search_shortcut.activated.connect(self._focus_project_filter)
+        self._new_project_shortcut = QShortcut(QKeySequence("Ctrl+N"), self)
+        self._new_project_shortcut.activated.connect(lambda: self._new_project())
         self.projects.itemSelectionChanged.connect(self._selection_changed)
         left.addWidget(self.projects, 1)
         self.empty_panel = QWidget()
@@ -467,6 +493,11 @@ class ProjectHub(QMainWindow):
         outer.addWidget(self.hint)
         self.setCentralWidget(content)
         self.refresh()
+
+    def _focus_project_filter(self):
+        """Find the current galaxy without requiring a mouse."""
+        self.filter.setFocus(Qt.ShortcutFocusReason)
+        self.filter.selectAll()
 
     def refresh(self):
         prior = self.projects.currentItem()

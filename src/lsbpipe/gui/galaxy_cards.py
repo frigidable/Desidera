@@ -94,6 +94,7 @@ class GalaxyDetailCard(QFrame):
         image_layout.setContentsMargins(0, 0, 0, 0)
         self.preview = QLabel("No preview")
         self.preview.setObjectName("galaxy_card_preview")
+        self.preview.setAccessibleName("Display-only galaxy image preview")
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setTextFormat(Qt.PlainText)
         self.preview.setWordWrap(True)
@@ -200,6 +201,7 @@ class GalaxyDetailCard(QFrame):
 
         self.details_toggle = QPushButton("Sources & QA details  ▾")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
+        self.details_toggle.setAccessibleName("Show or hide catalogue and FITS QA evidence")
         self.details_toggle.setCheckable(True)
         self.details_toggle.setChecked(False)
         body.addWidget(self.details_toggle)
@@ -299,6 +301,7 @@ class GalaxyDetailCard(QFrame):
             self.coordinates.setText("Select a project from the list.")
             self.preview.setPixmap(QPixmap())
             self.preview.setText("No galaxy selected")
+            self.preview.setAccessibleDescription("No galaxy selected.")
             self.preview_note.hide()
             self.dataset.clear()
             self.fits.clear()
@@ -538,6 +541,7 @@ class GalaxyDetailCard(QFrame):
         if snapshot.thumbnail is None:
             tooltip += " Link local FITS or select a dataset to obtain a preview."
         self.preview.setToolTip(tooltip)
+        self.preview.setAccessibleDescription(tooltip)
 
     def _update_preview(self) -> None:
         if self._pixmap is not None:

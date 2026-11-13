@@ -351,3 +351,13 @@ def test_explicit_render_shutdown_drops_late_result_and_refuses_reuse(
     assert not explorer._render_timer.isActive()
     with pytest.raises(RuntimeError, match="shut down"):
         explorer.set_dataset(synthetic_dataset())
+
+def test_fits_display_controls_expose_meaning_and_science_status(explorer):
+    """Native units and display-only semantics survive keyboard/AT inspection."""
+    assert explorer.layer.accessibleName() == "Local FITS data layer"
+    assert "display" in explorer.contrast.accessibleName().lower()
+    assert "scaling" in explorer.scaling.accessibleName().lower()
+    assert "native units" in explorer.vmin.accessibleName()
+    assert "native units" in explorer.vmax.accessibleName()
+    assert "Display only" in explorer.view.accessibleDescription()
+    assert "DIAGNOSTIC_NOT_ADOPTED" in explorer.provenance.text()
