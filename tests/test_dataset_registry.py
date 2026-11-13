@@ -254,6 +254,13 @@ def test_registry_never_reads_external_symlinked_index_or_directory(
     moved = holder / "index.json"
     index.rename(moved)
     folder = index.parent
+    # A transaction lock is a persistent inode by design. Deleting it
+    # while another process waits could split the lock domain; move the
+    # test fixture's unused lock into the external holder, not unlink it.
+    # The actual product never deletes lock files during normal work.
+    lock = folder / "index.json.lock"
+    if lock.exists():
+        lock.rename(holder / lock.name)
     folder.rmdir()
     try:
         folder.symlink_to(holder, target_is_directory=True)

@@ -16,6 +16,7 @@ import uuid
 from .dataset_integrity import discover_dataset_inventory
 from .local_project import _atomic_json
 from .object_projects import read_object_project
+from .project_locking import exclusive_metadata_lock
 
 SCHEMA = "lsbpipe.dataset-index/1"
 CONFIG_SCHEMA = "lsbpipe.analysis-configuration/1"
@@ -38,6 +39,12 @@ def registry_path(project_root: str | Path) -> Path:
 
 def _project(root: str | Path):
     return read_object_project(root)
+
+
+def _index_transaction(project_root: str | Path):
+    """Serialize cooperative data-index writers without locking original FITS."""
+    index = registry_path(project_root)
+    return exclusive_metadata_lock(index.with_name(index.name + ".lock"))
 
 
 def _path_ref(path: Path, project_root: Path) -> dict:
@@ -161,89 +168,90 @@ def import_legacy_fits(project_root: str | Path, data_root: str | Path) -> dict:
                    root / "data").is_dir():
         root = (root / "data").resolve()
     inventory = discover_dataset_inventory(root)
-    registry = read_dataset_index(project.root)
-    source_by_key = {s.get("import_key"): s for s in registry["sources"]}
-    asset_by_key = {a.get("import_key"): a for a in registry["assets"]}
-    sources_added = assets_added = assets_changed = 0
-    for entry in inventory:
-        release, region, brick = (entry["release"], entry["region"], entry["brick"])
-        # Distinguish multiple local reductions of the *same* release/region
-        # by exact import root, rather than conflating their provenance.
-        skey = f"legacy_surveys/{release}/{region}/{root}"
-        source = source_by_key.get(skey)
-        if source is None:
-            source = {
-                "source_id": str(uuid.uuid4()),
-                "import_key": skey,
-                "provider": "legacy_surveys",
-                "release": release,
-                "region": region,
-                "data_root": _path_ref(root, project.root),
-                "observation_lineage": INDEPENDENCE_UNKNOWN,
-                "calibration_status": "UNASSESSED",
-                "created_at": _now(),
-            }
-            registry["sources"].append(source)
-            source_by_key[skey] = source
-            sources_added += 1
-        for kind, product in entry["products"].items():
-            if kind not in PRODUCT_KINDS:
-                continue
-            relative = product["relative_path"]
-            file = root / relative
-            # Skip nonexistent products; incomplete quartets are represented
-            # through the inventory receipt, not as invented FITS files.
-            if product["presence"] == "MISSING":
-                continue
-            if file.is_symlink():
-                raise ValueError(f"Original FITS symlink not allowed: {file}")
-            stat = file.stat()
-            akey = f"{skey}/{relative}"
-            existing = asset_by_key.get(akey)
-            if existing is not None:
-                if (existing.get("size_bytes") != stat.st_size or
-                        existing.get("mtime_ns") != stat.st_mtime_ns):
-                    existing["presence"] = "PRESENT_UNVERIFIED"
-                    existing["checksum_status"] = (
-                        CHECKSUM_CHANGED if existing.get("sha256") else
-                        CHECKSUM_PENDING)
-                    existing["fits_status"] = FITS_UNVERIFIED
-                    existing["size_bytes"] = stat.st_size
-                    existing["mtime_ns"] = stat.st_mtime_ns
-                    assets_changed += 1
-                continue
-            asset = {
-                "asset_id": str(uuid.uuid4()),
-                "source_id": source["source_id"],
-                "import_key": akey,
-                "brick": brick,
-                "band": None if kind == "maskbits" else entry["band"],
-                "product_kind": kind,
-                "product_family": "resampled_coadd",
-                "path_ref": _path_ref(file, project.root),
-                "size_bytes": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
-                "presence": ("EMPTY_FILE" if stat.st_size == 0 else
-                             "PRESENT_UNVERIFIED"),
-                "sha256": None,
-                "checksum_status": CHECKSUM_PENDING,
-                "fits_status": FITS_UNVERIFIED,
-                "exposure_lineage": INDEPENDENCE_UNKNOWN,
-                "created_at": _now(),
-            }
-            registry["assets"].append(asset)
-            asset_by_key[akey] = asset
-            assets_added += 1
-    _save(project.root, registry)
-    return {
-        "sources_added": sources_added,
-        "assets_added": assets_added,
-        "assets_changed": assets_changed,
-        "sources_total": len(registry["sources"]),
-        "assets_total": len(registry["assets"]),
-        "science_status": "NOT_SCIENTIFICALLY_ADOPTED",
-        "location": str(registry_path(project.root)),
-    }
+    with _index_transaction(project.root):
+        registry = read_dataset_index(project.root)
+        source_by_key = {s.get("import_key"): s for s in registry["sources"]}
+        asset_by_key = {a.get("import_key"): a for a in registry["assets"]}
+        sources_added = assets_added = assets_changed = 0
+        for entry in inventory:
+            release, region, brick = (entry["release"], entry["region"], entry["brick"])
+            # Distinguish multiple local reductions of the *same* release/region
+            # by exact import root, rather than conflating their provenance.
+            skey = f"legacy_surveys/{release}/{region}/{root}"
+            source = source_by_key.get(skey)
+            if source is None:
+                source = {
+                    "source_id": str(uuid.uuid4()),
+                    "import_key": skey,
+                    "provider": "legacy_surveys",
+                    "release": release,
+                    "region": region,
+                    "data_root": _path_ref(root, project.root),
+                    "observation_lineage": INDEPENDENCE_UNKNOWN,
+                    "calibration_status": "UNASSESSED",
+                    "created_at": _now(),
+                }
+                registry["sources"].append(source)
+                source_by_key[skey] = source
+                sources_added += 1
+            for kind, product in entry["products"].items():
+                if kind not in PRODUCT_KINDS:
+                    continue
+                relative = product["relative_path"]
+                file = root / relative
+                # Skip nonexistent products; incomplete quartets are represented
+                # through the inventory receipt, not as invented FITS files.
+                if product["presence"] == "MISSING":
+                    continue
+                if file.is_symlink():
+                    raise ValueError(f"Original FITS symlink not allowed: {file}")
+                stat = file.stat()
+                akey = f"{skey}/{relative}"
+                existing = asset_by_key.get(akey)
+                if existing is not None:
+                    if (existing.get("size_bytes") != stat.st_size or
+                            existing.get("mtime_ns") != stat.st_mtime_ns):
+                        existing["presence"] = "PRESENT_UNVERIFIED"
+                        existing["checksum_status"] = (
+                            CHECKSUM_CHANGED if existing.get("sha256") else
+                            CHECKSUM_PENDING)
+                        existing["fits_status"] = FITS_UNVERIFIED
+                        existing["size_bytes"] = stat.st_size
+                        existing["mtime_ns"] = stat.st_mtime_ns
+                        assets_changed += 1
+                    continue
+                asset = {
+                    "asset_id": str(uuid.uuid4()),
+                    "source_id": source["source_id"],
+                    "import_key": akey,
+                    "brick": brick,
+                    "band": None if kind == "maskbits" else entry["band"],
+                    "product_kind": kind,
+                    "product_family": "resampled_coadd",
+                    "path_ref": _path_ref(file, project.root),
+                    "size_bytes": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                    "presence": ("EMPTY_FILE" if stat.st_size == 0 else
+                                 "PRESENT_UNVERIFIED"),
+                    "sha256": None,
+                    "checksum_status": CHECKSUM_PENDING,
+                    "fits_status": FITS_UNVERIFIED,
+                    "exposure_lineage": INDEPENDENCE_UNKNOWN,
+                    "created_at": _now(),
+                }
+                registry["assets"].append(asset)
+                asset_by_key[akey] = asset
+                assets_added += 1
+        _save(project.root, registry)
+        return {
+            "sources_added": sources_added,
+            "assets_added": assets_added,
+            "assets_changed": assets_changed,
+            "sources_total": len(registry["sources"]),
+            "assets_total": len(registry["assets"]),
+            "science_status": "NOT_SCIENTIFICALLY_ADOPTED",
+            "location": str(registry_path(project.root)),
+        }
 
 
 def register_external_fits(
@@ -259,43 +267,44 @@ def register_external_fits(
         raise FileNotFoundError("External input must be an existing ordinary FITS")
     if not file.name.lower().endswith((".fits", ".fit", ".fits.fz", ".fts")):
         raise ValueError("Unsupported external FITS filename")
-    registry = read_dataset_index(project.root)
-    file_ref = _path_ref(file, project.root)
-    for existing in registry["assets"]:
-        if (existing.get("path_ref") == file_ref and
-                existing.get("band") == band.strip() and
-                any(source["source_id"] == existing["source_id"] and
-                    source.get("provider") == provider.strip()
-                    for source in registry["sources"])):
-            # Reattaching the same original is idempotent; keep provenance
-            # and SHA-256 receipts instead of creating duplicate assets.
-            return {"source_id": existing["source_id"],
-                    "asset_id": existing["asset_id"]}
-    source = {
-        "source_id": str(uuid.uuid4()),
-        "import_key": None,
-        "provider": provider.strip(), "release": None, "region": None,
-        "data_root": None, "observation_lineage": INDEPENDENCE_UNKNOWN,
-        "calibration_status": "UNASSESSED", "description": description,
-        "created_at": _now(),
-    }
-    stat = file.stat()
-    asset = {
-        "asset_id": str(uuid.uuid4()),
-        "source_id": source["source_id"], "import_key": None,
-        "brick": None, "band": band.strip(),
-        "product_kind": "image", "product_family": "external_original_unknown",
-        "path_ref": _path_ref(file, project.root),
-        "size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns,
-        "presence": "PRESENT_UNVERIFIED",
-        "sha256": None, "checksum_status": CHECKSUM_PENDING,
-        "fits_status": FITS_UNVERIFIED,
-        "exposure_lineage": INDEPENDENCE_UNKNOWN, "created_at": _now(),
-    }
-    registry["sources"].append(source)
-    registry["assets"].append(asset)
-    _save(project.root, registry)
-    return {"source_id": source["source_id"], "asset_id": asset["asset_id"]}
+    with _index_transaction(project.root):
+        registry = read_dataset_index(project.root)
+        file_ref = _path_ref(file, project.root)
+        for existing in registry["assets"]:
+            if (existing.get("path_ref") == file_ref and
+                    existing.get("band") == band.strip() and
+                    any(source["source_id"] == existing["source_id"] and
+                        source.get("provider") == provider.strip()
+                        for source in registry["sources"])):
+                # Reattaching the same original is idempotent; keep provenance
+                # and SHA-256 receipts instead of creating duplicate assets.
+                return {"source_id": existing["source_id"],
+                        "asset_id": existing["asset_id"]}
+        source = {
+            "source_id": str(uuid.uuid4()),
+            "import_key": None,
+            "provider": provider.strip(), "release": None, "region": None,
+            "data_root": None, "observation_lineage": INDEPENDENCE_UNKNOWN,
+            "calibration_status": "UNASSESSED", "description": description,
+            "created_at": _now(),
+        }
+        stat = file.stat()
+        asset = {
+            "asset_id": str(uuid.uuid4()),
+            "source_id": source["source_id"], "import_key": None,
+            "brick": None, "band": band.strip(),
+            "product_kind": "image", "product_family": "external_original_unknown",
+            "path_ref": _path_ref(file, project.root),
+            "size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+            "presence": "PRESENT_UNVERIFIED",
+            "sha256": None, "checksum_status": CHECKSUM_PENDING,
+            "fits_status": FITS_UNVERIFIED,
+            "exposure_lineage": INDEPENDENCE_UNKNOWN, "created_at": _now(),
+        }
+        registry["sources"].append(source)
+        registry["assets"].append(asset)
+        _save(project.root, registry)
+        return {"source_id": source["source_id"], "asset_id": asset["asset_id"]}
 
 
 def verify_asset_checksum(project_root: str | Path, asset_id: str) -> dict:
@@ -325,19 +334,52 @@ def verify_asset_checksum(project_root: str | Path, asset_id: str) -> dict:
             before.st_mtime_ns != after.st_mtime_ns):
         raise RuntimeError("FITS changed during SHA256 verification")
     sha = digest.hexdigest()
-    previous = asset.get("sha256")
-    if previous is not None and previous != sha:
-        raise RuntimeError("Indexed FITS content changed; import a new asset version")
-    asset.update({
-        "sha256": sha, "size_bytes": after.st_size,
-        "mtime_ns": after.st_mtime_ns,
-        "checksum_status": CHECKSUM_VERIFIED,
-        "presence": "PRESENT_UNVERIFIED",  # FITS validation remains separate
-    })
-    _save(root, registry)
-    return {"asset_id": asset_id, "sha256": sha,
+    # Hash the (potentially large) original FITS OUTSIDE the index
+    # lock. Re-read the latest index INSIDE the lock before publishing
+    # this receipt, preserving unrelated assets and concurrent imports.
+    # A source/asset identity, size or timestamp change during hashing
+    # invalidates the result instead of overwriting newer evidence.
+    with _index_transaction(root):
+        latest = read_dataset_index(root)
+        current = next((a for a in latest["assets"]
+                        if a["asset_id"] == asset_id), None)
+        if current is None:
+            raise RuntimeError("Indexed FITS asset disappeared during SHA256 verification")
+        for key in ("source_id", "path_ref", "size_bytes", "mtime_ns",
+                    "product_kind", "band", "import_key"):
+            if current.get(key) != asset.get(key):
+                raise RuntimeError(
+                    "Indexed FITS metadata changed during SHA256 verification")
+        # Keep the historical public diagnostic for a verified
+        # original with a changed full-content SHA, even after an
+        # inventory refresh marks the asset CHANGED_SINCE_CHECKSUM.
+        previous = current.get("sha256")
+        if previous is not None and previous != sha:
+            raise RuntimeError(
+                "Indexed FITS content changed; import a new asset version")
+        if (current.get("size_bytes") != before.st_size or
+                current.get("mtime_ns") != before.st_mtime_ns or
+                current.get("checksum_status") == CHECKSUM_CHANGED):
+            raise RuntimeError(
+                "Indexed FITS changed; re-import original asset before verification")
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError(
+                "Indexed FITS became unsafe while committing SHA256 verification")
+        commit_stat = path.stat()
+        if (commit_stat.st_size != after.st_size or
+                commit_stat.st_mtime_ns != after.st_mtime_ns):
+            raise RuntimeError(
+                "Indexed FITS changed before SHA256 receipt publication")
+        current.update({
+            "sha256": sha, "size_bytes": after.st_size,
+            "mtime_ns": after.st_mtime_ns,
             "checksum_status": CHECKSUM_VERIFIED,
-            "fits_status": asset["fits_status"]}
+            "presence": "PRESENT_UNVERIFIED",  # FITS validation separate
+        })
+        _save(root, latest)
+        return {"asset_id": asset_id, "sha256": sha,
+                "checksum_status": CHECKSUM_VERIFIED,
+                "fits_status": current["fits_status"]}
 
 
 def science_cache_key(
