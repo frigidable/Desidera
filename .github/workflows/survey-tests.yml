@@ -12,7 +12,11 @@ on:
       - "tests/**"
       - "scripts/**"
       - "pyproject.toml"
-      - ".github/workflows/survey-tests.yml"
+      - "README.md"
+      - "AGENTS.md"
+      - "docs/architecture/**"
+      - "docs/ux/**"
+      - ".github/workflows/**"
 
 permissions:
   contents: read
