@@ -1458,3 +1458,51 @@ def test_stage03_guard_cache_reuses_exact_baseline_and_rejects_mutated_masks(
     np.testing.assert_array_equal(changed[0], direct[0])
     np.testing.assert_array_equal(changed[1], direct[1])
     assert changed[2] == direct[2]
+
+
+
+def test_sky_hull_footprint_streamed_halfspaces_match_full_dense_reference():
+    """P45: no hull-edge-by-pixel matrix needed for exact native support."""
+    from scipy.spatial import ConvexHull
+    from lsbpipe.background import _audit_sky_training_target_geometry
+
+    shape = (307, 331)
+    yy, xx = np.indices(shape, dtype=float)
+    cx, cy = 163., 149.
+    radii = np.hypot(xx-cx, yy-cy)
+    phase = np.arctan2(yy-cy, xx-cx)
+    serrated_edge = 109. + 16.*np.sin(17.*phase)
+    training = (radii > serrated_edge-5.) & (radii <= serrated_edge)
+    protection = (
+        (((xx-173.)/102.)**2+((yy-157.)/81.)**2 < 1.) |
+        ((xx > 260.) & (xx < 280.) & (yy > 90.) & (yy < 170.)))
+    pristine_train, pristine_protection = (
+        training.copy(), protection.copy())
+    result = _audit_sky_training_target_geometry(
+        training, (cx, cy), target_protection=protection)
+    ty, tx = np.nonzero(training)
+    hull = ConvexHull(np.column_stack((tx, ty)).astype(float))
+    py, px = np.nonzero(protection)
+    # Intentionally dense independent full-matrix reference, restricted
+    # to this modest fixture, NEVER used by the production implementation.
+    direct_distances = (
+        hull.equations[:, 0, None]*px[None, :] +
+        hull.equations[:, 1, None]*py[None, :] +
+        hull.equations[:, 2, None])
+    furthest_per_pixel = direct_distances.max(axis=0)
+    outside = np.count_nonzero(furthest_per_pixel > 1.e-8)
+    assert len(hull.vertices) >= 8
+    assert result["n_convex_hull_vertices"] == len(hull.vertices)
+    assert result["n_original_training_pixels"] == len(tx)
+    assert result["n_provisional_target_protected_pixels"] == len(px)
+    assert result["n_provisional_target_pixels_outside_training_hull"] == outside
+    assert result["fraction_provisional_target_pixels_outside_training_hull"] == (
+        pytest.approx(outside/len(px), rel=1.e-13))
+    assert result["max_signed_provisional_target_hull_distance_native_pix"] == (
+        pytest.approx(float(furthest_per_pixel.max()), abs=1.e-9))
+    assert result["max_provisional_target_extrapolation_distance_native_pix"] == (
+        pytest.approx(float(max(0., furthest_per_pixel.max())), abs=1.e-9))
+    assert result["n_hull_candidate_row_extrema"] <= 2*shape[0]
+    assert result["exact_convex_hull_from_native_row_extrema"]
+    np.testing.assert_array_equal(training, pristine_train)
+    np.testing.assert_array_equal(protection, pristine_protection)
