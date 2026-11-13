@@ -36,6 +36,8 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
         "native_wcs_grid_header_serialization_vs_per_frame_fingerprint",
         "sky_six_fixed_trials_full_edt_vs_exact_guard_reuse",
         "native_pa_sector_dense_xy_vs_broadcast_tangent",
+        "native_sector_eight_reductions_vs_weighted_histograms",
+        "ten_radii_full_mask_hashing_vs_immutable_sha_receipt_pair",
     }
     for row in report["comparison"].values():
         assert row["reference_median_ms"] >= 0.
@@ -72,6 +74,19 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
     assert sector["dense_tangent_input_stack_not_constructed"]
     assert sector["eight_native_pa_sectors_identical"]
     assert sector["pixel_center_qa_not_exact_angular_sector_photometry"]
+    sector_area = report["comparison"][
+        "native_sector_eight_reductions_vs_weighted_histograms"]
+    assert sector_area["legacy_independent_sector_reductions"] == 16
+    assert sector_area["optimized_native_weighted_histograms"] == 2
+    assert sector_area["eight_sector_fractional_area_reference_verified"]
+    assert sector_area["no_change_to_exact_native_photometric_flux"]
+    receipts = report["comparison"][
+        "ten_radii_full_mask_hashing_vs_immutable_sha_receipt_pair"]
+    assert receipts["legacy_full_grid_sha256_computations"] == 20
+    assert receipts["optimized_full_grid_sha256_computations"] == 2
+    assert receipts["bitwise_identical_original_mask_sha256"]
+    assert receipts["immutable_mask_identity_checked_per_radius"]
+    assert receipts["no_cross_project_or_global_digest_cache"]
     json.dumps(report, allow_nan=False)
     with pytest.raises(ValueError, match="Synthetic benchmark size"):
         module.run(size=32, repeats=1)
