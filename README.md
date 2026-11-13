@@ -4,14 +4,15 @@
 
 **Scientific status:** research prototype. A feature being implemented, a successful test or a saved diagnostic does **not** certify a calibrated astronomical measurement. No PSF-based or SBF distance measurement, background estimate, reconstructed total flux or catalogue association is adopted automatically.
 
-**Performance development candidate:** `v0.2.1.dev3` is in existing Draft PR #84 (not tagged or merged). It preserves prior performance improvements to native FITS loading, source masks, sky-trial distance guards, WCS identity, radial growth curves and the Qt source inventory. This revision additionally replaces sixteen full-aperture descriptive PA-sector reductions with two weighted histograms, reuses full-content SHA-256 of genuinely immutable source/manual masks across radial measurements and independent Stage04.3 hypothesis checks, and eliminates oversized temporary arrays in Stage03 convex-hull target-coverage QA. Neither original FITS nor science measurement operators are approximated. Absolute real-FITS throughput, GUI responsiveness and peak process RSS remain unmeasured. See [the performance audit](docs/architecture/PERFORMANCE_AUDIT_20261113.md). Reproduce nine synthetic computational-kernel comparisons offline with `python scripts/benchmark_desidera_performance.py --size 512 --repeats 3`. Scientific adoption remains on HOLD.
+**Current infrastructure development candidate:** `v0.2.1.dev4` is in existing Draft PR #84 (not tagged or merged). It preserves the earlier `v0.2.1.dev3` [performance revisions](docs/architecture/PERFORMANCE_AUDIT_20261113.md), and tightens **architecture and reproducibility**: scientific/GUI CI coverage, per-PR GUI concurrency, SHA-pinned GitHub Actions, installed-wheel smoke tests, declared `test-gui` extras, explicit manual-only remote CCD acceptance, safer portable object-project paths and an enforced headless scientific-core import boundary. Read the [architecture and infrastructure audit](docs/architecture/INFRASTRUCTURE_ARCHITECTURE_AUDIT_20261113.md) for confirmed fixes, remaining cross-process write races, packaging restrictions, and acceptance criteria. A green CI does not certify a photometric science release; **SCIENCE HOLD remains**.
 
 ## Quick start
 
-Requires Python 3.10+ and an editable checkout:
+For local development, use Python 3.10+ and an editable checkout:
 
 ```powershell
-python -m pip install -e ".[exact,gui,knowledge,test]" pytest-qt
+python -m pip install -e ".[exact,gui,knowledge,test,test-gui]"
+python -m pip check
 python -m desidera.gui
 ```
 
@@ -66,12 +67,13 @@ The `--background` input is **caller-supplied residual sky in nMgy/pixel**, not 
 ## Testing and contribution
 
 ```powershell
-python -m pip install -e ".[exact,gui,knowledge,test]" pytest-qt
+python -m pip install -e ".[exact,gui,knowledge,test,test-gui]"
+python -m pip check
 python -m pytest -q tests --ignore=tests/gui
 python -m pytest -q tests/gui
 ```
 
-These are local commands, not a claim that they were executed on a given machine. Consult [GitHub Actions](https://github.com/frigidable/Desidera/actions) for exact-commit CI results. Offscreen Windows Qt captures do not replace manual Windows/Legacy Viewer/FITS inspection, and successful tests do not imply scientific acceptance.
+These are local commands, not a claim that they were executed on a given machine. The CI matrix separately builds and installs the **non-editable distribution wheel** to verify the `desidera`/`lsbpipe` imports and all five advertised console-script entry points; PR real-archive acceptance runs offline, while explicit `workflow_dispatch` is required to fetch official CCD FITS. Consult [GitHub Actions](https://github.com/frigidable/Desidera/actions) for exact-commit CI results. Offscreen Windows Qt captures do not replace manual Windows/Legacy Viewer/FITS inspection, and successful tests do not imply scientific acceptance.
 
 See [contribution and scientific-safety rules](AGENTS.md), the [documentation and evidence index](docs/README.md), and the [current roadmap](https://github.com/frigidable/Desidera/issues/44). Historical phase reports remain accessible under `docs/`, but they describe their dated branch/commit, not necessarily the present `main`.
 
