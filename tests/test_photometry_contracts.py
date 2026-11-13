@@ -362,3 +362,32 @@ def test_native_fits_loader_detects_changes_after_immutable_materialization(
         load_native_legacy_quartet(
             tmp_path, release="dr9", region="south",
             brick="0401p012", band="r")
+
+
+
+def test_native_frame_grid_identity_is_exact_and_cached_without_exposing_wcs(
+        monkeypatch):
+    """Repeated Stage04 receipts serialize the same immutable grid once."""
+    import lsbpipe.scene as scene
+
+    f = frame()
+    reference = scene.grid_fingerprint(f.wcs, f.shape)
+    original = scene.grid_fingerprint
+    calls = []
+    def observed_grid(wcs, shape):
+        calls.append((id(wcs), tuple(shape)))
+        return original(wcs, shape)
+    monkeypatch.setattr(scene, "grid_fingerprint", observed_grid)
+    assert f.native_grid_fingerprint == reference
+    assert f.native_grid_fingerprint == reference
+    assert len(calls) == 1
+
+    external = f.wcs
+    external.wcs.crval[0] += .1
+    assert f.native_grid_fingerprint == reference
+    assert len(calls) == 1
+    assert original(external, f.shape) != reference
+
+    g = frame(brick="0402p012")
+    assert g.native_grid_fingerprint == reference  # same WCS and shape
+    assert len(calls) == 2  # per frame, never a global/WCS-id cache
