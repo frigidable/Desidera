@@ -637,3 +637,73 @@ def test_hub_import_shows_passport_revision_conflict_in_warning(
     assert "changed in another process" in hub.hint.text()
     assert messages and "Import was not completed" in messages[-1][0]
     assert "reopen" in messages[-1][1]
+
+
+def test_hub_never_opens_different_galaxy_after_saved_folder_replaced(
+        hub, tmp_path, monkeypatch):
+    """A stale visible library row cannot switch silently to another UUID."""
+    from PySide6.QtWidgets import QMessageBox
+    import lsbpipe.surveys.object_projects as storage
+    from lsbpipe.surveys.object_projects import PROJECT_FILENAME
+
+    original = create_object_project(
+        "Original galaxy", tmp_path / "original",
+        field=SkyField(40.096208, 1.229250, 5.))
+    foreign = create_object_project(
+        "Different galaxy", tmp_path / "foreign",
+        field=SkyField(50.0, 2.0, 5.))
+    hub.refresh()
+    hub.filter.setText("Original galaxy")
+    assert hub.projects.currentItem() is not None
+    row = hub.projects.currentItem().data(Qt.UserRole)
+    assert row["project_id"] == original.project_id
+    assert row["available"]
+
+    # The project was replaced between displaying the card and clicking
+    # Open. This is a late TOCTOU mismatch, not a missing folder.
+    original_path = original.root / PROJECT_FILENAME
+    foreign_bytes = (foreign.root / PROJECT_FILENAME).read_bytes()
+    original_path.write_bytes(foreign_bytes)
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda *args, **kwargs: warnings.append((args[1], args[2])))
+    hub._open_selected()
+    assert hub.workspace is None
+    assert warnings and "Cannot open project" in warnings[-1][0]
+    assert "UUID mismatch" in warnings[-1][1]
+    assert original_path.read_bytes() == foreign_bytes
+
+    # After refresh, show the mismatch explicitly and disable unsafe
+    # regular open/previews, while preserving the registered old UUID.
+    hub.refresh()
+    hub.filter.setText("Original galaxy")
+    row = hub.projects.currentItem().data(Qt.UserRole)
+    assert row["project_id"] == original.project_id
+    assert row["available"] is False
+    assert row["availability_issue"] == "UUID_MISMATCH"
+    assert "UUID" in hub.detail_status.text()
+    assert "ORIGINAL" in hub.detail_note.text()
+    assert "Relink" in hub.continue_btn.text()
+    assert not hub.preview_btn.isEnabled()
+    assert not hub.rgb_btn.isEnabled()
+    assert not hub.config_btn.isEnabled()
+
+
+def test_hub_blocks_automatic_resume_of_wrong_project_uuid(
+        hub, tmp_path):
+    """Startup must not silently auto-resume an unrelated replacement."""
+    from lsbpipe.surveys.object_projects import PROJECT_FILENAME
+    a = create_object_project("Original", tmp_path / "original")
+    foreign = create_object_project("Other", tmp_path / "other")
+    # Hide the unrelated project's registry row, leaving the original as
+    # the only saved recent project. Its path now contains a different UUID.
+    from lsbpipe.surveys.object_projects import forget_recent_project
+    forget_recent_project(foreign.project_id, foreign.root)
+    (a.root / PROJECT_FILENAME).write_bytes(
+        (foreign.root / PROJECT_FILENAME).read_bytes())
+    hub.refresh()
+    hub.auto_resume.setChecked(True)
+    hub._auto_resume_last_project()
+    assert hub.workspace is None
+    assert "DIFFERENT galaxy project UUID" in hub.hint.text()
