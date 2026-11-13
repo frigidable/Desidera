@@ -278,7 +278,7 @@ class FITSExplorer(QWidget):
         self.render_status.setWordWrap(True)
         self.detail_toggle = QToolButton()
         self.detail_toggle.setObjectName("fits_toggle_diagnostics")
-        self.detail_toggle.setText("Details & provenance")
+        self.detail_toggle.setText("Details and provenance")
         self.detail_toggle.setCheckable(True)
         self.detail_toggle.setChecked(False)
         self.detail_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)

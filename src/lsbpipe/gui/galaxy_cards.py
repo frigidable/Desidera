@@ -199,7 +199,7 @@ class GalaxyDetailCard(QFrame):
         self.next_step_title.hide()
         self.next_step.hide()
 
-        self.details_toggle = QPushButton("Sources & QA details  ▾")
+        self.details_toggle = QPushButton("Show sources and QA details")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
         self.details_toggle.setAccessibleName("Show or hide catalogue and FITS QA evidence")
         self.details_toggle.setCheckable(True)
@@ -279,8 +279,8 @@ class GalaxyDetailCard(QFrame):
     def _details_toggled(self, checked: bool):
         self.details_panel.setVisible(checked)
         self.details_toggle.setText(
-            "Hide sources & QA details  ▴" if checked
-            else "Sources & QA details  ▾")
+            "Hide sources and QA details" if checked
+            else "Show sources and QA details")
 
     def _set_preview_side(self, side: int):
         """Square preview, responsive down to the 300 px narrow inspector."""

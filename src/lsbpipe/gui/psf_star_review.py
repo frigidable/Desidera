@@ -313,7 +313,7 @@ class PSFStarReviewDialog(QDialog):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         footer.addWidget(self.cancel_button)
-        self.apply_button = QPushButton("Apply, save exclusions & rebuild")
+        self.apply_button = QPushButton("Apply, save exclusions and rebuild")
         self.apply_button.setObjectName("psf0_apply_exclusions")
         self.apply_button.clicked.connect(self.accept)
         footer.addWidget(self.apply_button)

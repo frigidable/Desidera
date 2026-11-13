@@ -293,7 +293,7 @@ class PhotometryWorkspace(QWidget):
         center_scroll.setWidget(central)
         psf_stage_layout.addWidget(center_scroll, 1)
         self.scene_editor = SceneEditor(self.stage_tabs)
-        self.stage_tabs.addTab(self.scene_editor, "2 · Scene & Masks")
+        self.stage_tabs.addTab(self.scene_editor, "2 · Scene and Masks")
         self.stage_tabs.setTabToolTip(
             1, "Original FITS/WCS editor; editable ICRS mask drafts. "
                "No final galaxy segmentation or adopted photometry.")
