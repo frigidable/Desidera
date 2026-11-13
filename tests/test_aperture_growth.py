@@ -349,3 +349,27 @@ def test_byte_backed_mask_fast_path_rejects_mutable_and_readonly_views():
     with pytest.raises(ValueError, match="same-grid boolean"):
         _snapshot_native_boolean_mask(
             "manual exclusion", np.ones(source.shape, float), source.shape)
+
+
+
+def test_growth_receipts_share_one_exact_immutable_native_grid_fingerprint(
+        monkeypatch):
+    """Twenty cumulative/ring computations cannot reserialize WCS metadata."""
+    import lsbpipe.scene as scene
+
+    original = scene.grid_fingerprint
+    calls = []
+    def counted(wcs, shape):
+        calls.append(1)
+        return original(wcs, shape)
+    monkeypatch.setattr(scene, "grid_fingerprint", counted)
+    f = frame(value=.12)
+    output = run_curve(
+        f, radii=(1., 2., 3., 4., 5., 6., 7., 8., 9., 10.))
+    assert len(calls) == 1
+    assert output["grid_fingerprint"] == original(f.wcs, f.shape)
+    assert all(
+        row["grid_fingerprint"] == output["grid_fingerprint"]
+        for row in output["cumulative"])
+    assert output["receipt_sha256"]
+    assert not output["adopted_for_science"]
