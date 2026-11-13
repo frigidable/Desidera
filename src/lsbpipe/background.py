@@ -146,12 +146,18 @@ def _weighted_lstsq(design, values, weights, max_condition):
     sqrtw = np.sqrt(weights / np.median(weights))
     matrix = design * sqrtw[:, None]
     rhs = values * sqrtw
-    singular = np.linalg.svd(matrix, compute_uv=False)
-    condition = float(singular[0] / singular[-1]) if singular[-1] > 0 else np.inf
-    if not np.isfinite(condition) or condition > max_condition:
-        return None, condition
-    coefficients, _, rank, _ = np.linalg.lstsq(matrix, rhs, rcond=None)
-    if rank != design.shape[1] or not np.all(np.isfinite(coefficients)):
+    # LAPACK's least-squares solver already returns the design's
+    # singular values and numerical rank. The earlier SVD check
+    # decomposed exactly the same weighted matrix a second time on
+    # EVERY robust IRLS iteration; use the single least-squares
+    # decomposition for both the original conditioning gate and fit.
+    coefficients, _, rank, singular = np.linalg.lstsq(
+        matrix, rhs, rcond=None)
+    condition = (float(singular[0] / singular[-1])
+                 if len(singular) and singular[-1] > 0 else np.inf)
+    if (not np.isfinite(condition) or condition > max_condition or
+            rank != design.shape[1] or
+            not np.all(np.isfinite(coefficients))):
         return None, condition
     return coefficients, condition
 
