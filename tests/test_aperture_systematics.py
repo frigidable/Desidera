@@ -1278,7 +1278,7 @@ def test_null_baseline_counterfactual_reintegration_catches_corrupt_relaxed_flux
 
     monkeypatch.setattr(systematics, "measure_native_aperture",
                         corrupt_only_relaxed)
-    with pytest.raises(ValueError, match="counterfactual.*reintegration"):
+    with pytest.raises(ValueError, match="counterfactual.*independent native integration"):
         diagnose_aperture_systematics(
             f, anchor_icrs=(155.4, 18.), provenance=provenance(),
             effective_source_mask=source, manual_exclude=manual,
