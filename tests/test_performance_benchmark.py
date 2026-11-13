@@ -35,6 +35,7 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
         "sky_frozen_injection_dense_xy_vs_broadcast_reusable_distance",
         "native_wcs_grid_header_serialization_vs_per_frame_fingerprint",
         "sky_six_fixed_trials_full_edt_vs_exact_guard_reuse",
+        "native_pa_sector_dense_xy_vs_broadcast_tangent",
     }
     for row in report["comparison"].values():
         assert row["reference_median_ms"] >= 0.
@@ -65,6 +66,12 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
     assert guards["optimized_distance_transforms_maximum"] == 4
     assert guards["exact_native_source_target_geometry_verified"]
     assert guards["cache_lifetime"] == "ONE_STAGE03_CALL_NO_GLOBAL_STATE"
+    sector = report["comparison"][
+        "native_pa_sector_dense_xy_vs_broadcast_tangent"]
+    assert sector["full_coordinate_grids_not_constructed"] == 2
+    assert sector["dense_tangent_input_stack_not_constructed"]
+    assert sector["eight_native_pa_sectors_identical"]
+    assert sector["pixel_center_qa_not_exact_angular_sector_photometry"]
     json.dumps(report, allow_nan=False)
     with pytest.raises(ValueError, match="Synthetic benchmark size"):
         module.run(size=32, repeats=1)
