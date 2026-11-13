@@ -684,15 +684,16 @@ def _automatic_scene_sky_pixels(
 
 
 
-def _audit_sky_training_target_geometry(training, target_xy):
-    """Geometry-only check: is the target bracketed by actual sky samples?
+def _audit_sky_training_target_geometry(
+        training, target_xy, *, target_protection=None):
+    """Exact pixel-geometry support for centre AND provisional target region.
 
-    Disjoint train/holdout masks and even three represented quadrants do
-    not ensure that an affine sky plane is INTERPOLATED at the galaxy.
-    A target outside the training-pixel convex hull is a geometric
-    extrapolation, regardless of the fitted sky or heldout residuals.
-    This has no implication for sky truth, PSF-wing leakage, covariance
-    or model acceptance; a target inside the hull may still be biased.
+    For a set of selected native sky pixel centres, the convex hull is
+    EXACTLY the hull of the leftmost and rightmost selected centre in
+    each occupied native row. Never send millions of coadd sky samples
+    to Qhull when at most 2*height extrema give the same enclosing hull.
+    Compute protected-footprint occupancy against that same hull using
+    bounded row-local arrays. Nothing here certifies sky astrophysics.
     """
     from scipy.spatial import ConvexHull, QhullError
 
@@ -707,10 +708,20 @@ def _audit_sky_training_target_geometry(training, target_xy):
     if not np.isfinite([x, y]).all():
         raise ValueError("Nonfinite target sky support centre")
     ny, nx = used.shape
-    ty, tx = np.nonzero(used)
+    if target_protection is not None:
+        protected = np.asarray(target_protection)
+        if (protected.shape != used.shape or
+                protected.dtype.kind != "b"):
+            raise ValueError(
+                "Target-protection support must be same-grid Boolean")
+    else:
+        protected = None
+    ntrain = int(np.count_nonzero(used))
+    nprotected = (int(np.count_nonzero(protected))
+                  if protected is not None else None)
     result = {
-        "schema": "desidera.sky.target-training-convex-support/1",
-        "n_original_training_pixels": int(len(tx)),
+        "schema": "desidera.sky.target-training-convex-support/2",
+        "n_original_training_pixels": ntrain,
         "target_native_xy": [x, y],
         "target_inside_original_native_image": bool(
             0. <= x < nx and 0. <= y < ny),
@@ -718,35 +729,79 @@ def _audit_sky_training_target_geometry(training, target_xy):
         "target_inside_training_pixel_convex_hull": None,
         "max_signed_supporting_line_distance_native_pix": None,
         "n_convex_hull_vertices": None,
+        "n_hull_candidate_row_extrema": 0,
+        "exact_convex_hull_from_native_row_extrema": True,
+        "n_provisional_target_protected_pixels": nprotected,
+        "n_provisional_target_pixels_outside_training_hull": None,
+        "fraction_provisional_target_pixels_outside_training_hull": None,
+        "max_provisional_target_extrapolation_distance_native_pix": None,
+        "provisional_target_footprint_fully_inside_training_hull": None,
+        "provisional_target_protection_not_a_measured_isophote": True,
+        "protected_pixel_coverage_does_not_certify_actual_galaxy_extent":
+            True,
         "geometry_only_independent_of_image_flux": True,
         "only_selected_native_training_pixel_positions_used": True,
         "training_and_holdout_may_share_large_scale_sky_modes": True,
         "inside_hull_does_not_prove_unbiased_sky": True,
         "no_sky_or_psf_correction_authorized": True,
     }
-    if len(tx) < 3:
+    if ntrain < 3:
         return result
-    points = np.column_stack((tx, ty)).astype(float)
+    # A convex combination of a row's two extrema contains all native
+    # centres in that row; the global hull is mathematically unchanged.
+    rows = np.flatnonzero(np.any(used, axis=1))
+    if not len(rows):
+        return result
+    minx = np.argmax(used[rows], axis=1)
+    maxx = nx - 1 - np.argmax(used[rows, ::-1], axis=1)
+    points = np.concatenate((
+        np.column_stack((minx, rows)),
+        np.column_stack((maxx, rows)))).astype(float)
+    result["n_hull_candidate_row_extrema"] = int(len(points))
     try:
         hull = ConvexHull(points)
     except QhullError:
         return result
-    # ConvexHull.equations are normalized half-spaces A*x+b <= 0.
-    # The greatest signed line distance is positive for extrapolation.
-    distances = (hull.equations[:, :2] @ np.array([x, y])
-                 + hull.equations[:, 2])
-    max_signed = float(np.max(distances))
+    # Qhull half-spaces are normalized: A*x+b <= 0 is inside the hull.
+    equations = np.asarray(hull.equations, dtype=float)
+    signed = equations[:, :2] @ np.array([x, y]) + equations[:, 2]
+    max_signed = float(np.max(signed))
     if not np.isfinite(max_signed):
         raise ValueError("Nonfinite sky training spatial support")
+    eps = 1.e-8
     result.update({
         "status": ("TARGET_INTERPOLATION_GEOMETRY_ONLY"
-                   if max_signed <= 1e-8
+                   if max_signed <= eps
                    else "TARGET_EXTRAPOLATION_GEOMETRY_ONLY"),
         "target_inside_training_pixel_convex_hull": bool(
-            max_signed <= 1e-8),
+            max_signed <= eps),
         "max_signed_supporting_line_distance_native_pix": max_signed,
         "n_convex_hull_vertices": int(len(hull.vertices)),
     })
+    if protected is not None and nprotected:
+        # Row-local, bounded-memory evaluation of every actually
+        # protected native pixel. Elliptic/source guards can be very
+        # asymmetric; testing only the galaxy anchor misses this.
+        outside = 0
+        furthest = -np.inf
+        for iy in np.flatnonzero(np.any(protected, axis=1)):
+            xs = np.flatnonzero(protected[iy])
+            distances = (
+                equations[:, 0, None] * xs[None, :]
+                + equations[:, 1, None] * float(iy)
+                + equations[:, 2, None])
+            furthest_row = np.max(distances, axis=0)
+            outside += int(np.count_nonzero(furthest_row > eps))
+            furthest = max(furthest, float(np.max(furthest_row)))
+        result.update({
+            "n_provisional_target_pixels_outside_training_hull": outside,
+            "fraction_provisional_target_pixels_outside_training_hull":
+                float(outside/nprotected),
+            "max_provisional_target_extrapolation_distance_native_pix":
+                float(furthest),
+            "provisional_target_footprint_fully_inside_training_hull":
+                bool(outside == 0),
+        })
     return result
 
 
@@ -1488,7 +1543,7 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     # extrapolated from its actual geometrically selected sky pixels,
     # even if all internal same-coadd holdout scores appear excellent.
     target_support = _audit_sky_training_target_geometry(
-        sky_train, (x, y))
+        sky_train, (x, y), target_protection=sky_protected)
     base["target_training_geometry_qa"] = target_support
     if target_support["target_inside_training_pixel_convex_hull"] is False:
         base["warnings"].append(
@@ -1496,6 +1551,11 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
     elif target_support["target_inside_training_pixel_convex_hull"] is None:
         base["warnings"].append(
             "SKY_TRAINING_SPATIAL_HULL_UNDERCONSTRAINED")
+    if target_support[
+            "provisional_target_footprint_fully_inside_training_hull"
+            ] is False:
+        base["warnings"].append(
+            "SKY_PROVISIONAL_TARGET_FOOTPRINT_EXTRAPOLATES_BEYOND_TRAINING_HULL")
     const, plane = candidates["constant"], candidates["tilted_plane"]
     b_const = float(const.evaluate_at(x,y))
     b_plane = float(plane.evaluate_at(x,y))
