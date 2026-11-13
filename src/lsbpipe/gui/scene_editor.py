@@ -1657,6 +1657,10 @@ class SceneEditor(QWidget):
             "scene_source_inventory_list")
         self.source_registry_list.setMinimumHeight(112)
         self.source_registry_list.setMaximumHeight(200)
+        # Tractor rows have one common font/line height. Do not ask Qt
+        # to recalculate every item's preferred geometry on each
+        # filter/search update for a dense catalogue inventory.
+        self.source_registry_list.setUniformItemSizes(True)
         self.source_registry_list.currentRowChanged.connect(
             self._inspect_source_registry)
         registry_layout.addWidget(self.source_registry_list)
@@ -2900,9 +2904,11 @@ class SceneEditor(QWidget):
         evidence = self._source_registry
         self._source_registry_visible = []
         self.source_registry_list.blockSignals(True)
+        self.source_registry_list.setUpdatesEnabled(False)
         self.source_registry_list.clear()
         if evidence is None:
             self.source_registry_list.blockSignals(False)
+            self.source_registry_list.setUpdatesEnabled(True)
             self.source_registry_details.setPlainText(
                 "No current native Tractor catalogue evidence.")
             self._refresh_controls()
@@ -2939,20 +2945,24 @@ class SceneEditor(QWidget):
             elif (selected != "ALL" and
                   entry["screening_disposition"] != selected):
                 continue
-            search = " ".join((
-                str(entry["source_id"]),
-                str(entry["reference_id"]),
-                str(entry["tractor_type"]),
-                str(entry["screening_disposition"]),
-                " ".join(entry["evidence_flags"]),
-                " ".join(entry["maskbits_names"]),
-                " ".join(entry["fitbits_names"]),
-                str(entry.get("foreground_evidence_assessment", "")),
-                str(entry.get("proposed_source_treatment", "")),
-                str(entry.get("red_extended_first_failure", "")),
-            )).casefold()
-            if term and term not in search:
-                continue
+            # Initial list display and category-only filtering need
+            # none of these ten relatively long QA strings. Construct
+            # the searchable text ONLY for an actual nonempty query.
+            if term:
+                search = " ".join((
+                    str(entry["source_id"]),
+                    str(entry["reference_id"]),
+                    str(entry["tractor_type"]),
+                    str(entry["screening_disposition"]),
+                    " ".join(entry["evidence_flags"]),
+                    " ".join(entry["maskbits_names"]),
+                    " ".join(entry["fitbits_names"]),
+                    str(entry.get("foreground_evidence_assessment", "")),
+                    str(entry.get("proposed_source_treatment", "")),
+                    str(entry.get("red_extended_first_failure", "")),
+                )).casefold()
+                if term not in search:
+                    continue
             self._source_registry_visible.append(entry)
             disp = entry["screening_disposition"]
             badge = ("REVIEW" if disp == "PROTECTED_OVERLAP"
@@ -2976,6 +2986,7 @@ class SceneEditor(QWidget):
                 f"{badge} · OBJID {ident} · "
                 f"{entry['tractor_type']}{ref}")
         self.source_registry_list.blockSignals(False)
+        self.source_registry_list.setUpdatesEnabled(True)
         self.source_registry_status.setText(
             f"{len(self._source_registry_visible)} shown of "
             f"{evidence['stored_count']} relevant Tractor sources; "
