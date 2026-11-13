@@ -778,3 +778,129 @@ As before, these revisions modify neither original FITS nor `main`;
 the single active feature branch remains the PR #84 draft.
 **SCIENCE HOLD** remains mandatory until real-data and end-to-end
 recovery tests meet preregistered criteria.
+
+
+## Extended spatial-operator and conditional-estimand audit: M29–M31 (2026-11-13)
+
+All findings here are based on code-level comparison of the actually
+computed quantities with their scientific interpretation. These edits
+do not imply scientific adoption of any residual sky, PSF, partial
+galaxy flux, coadd covariance, colour, total magnitude or SBF distance.
+Only `feature/scene-wcs-editor-sc1` / Draft PR #84 is changed.
+
+### M29 — phase-shifted blank centres not used consistently in spatial QA — FIXED
+
+**Source:** `aperture_systematics.estimate_blank_annulus_covariance`.
+M23 made every blank's subpixel phase match the target. M25
+correctly assigned the **actual phase-shifted** blank centre to a
+quadrant for the between-quadrant residual-mean decomposition.
+However the top-level `accepted_centres_by_quadrant`, total quadrant
+count, and spatial-coverage/dominant-quadrant warnings still used the
+integer **pre-shift lattice node**. A placement that crossed the native
+image midline after the fractional translation could be labelled as
+covering four quadrants when its actual sky samples populated only two.
+
+**Correction:** scientific spatial-coverage counts and warnings now
+use the physical native blank centre. Lattice counts remain a separate
+`accepted_lattice_nodes_by_quadrant` QA field. The report explicitly
+distinguishes these and keeps the original candidate-search
+stratification independent of brightness. No empty aperture, source
+mask or covariance sample is added/removed because of this fix. A
+deterministic synthetic regression forces x=160 integer lattice nodes
+to translate to x=160.75 on a 321-pixel image: all accepted positions
+land right of the 160.5-pixel midline, although the original lattice
+has nominal left/right candidates. It checks the *actual* quadrant
+count and limited-spatial-coverage warning.
+
+A diverse set of control positions still cannot certify stationarity
+or independent noise realizations in a single resampled coadd.
+
+### M30 — fully source-masked baseline suppressed observable conditional flux — FIXED
+
+**Source:** `aperture_systematics.diagnose_aperture_systematics`,
+`radial_source_mask_ablation`. When all original Stage04.2 usable
+pixels in one aperture were excluded by the provisional source mask,
+the baseline signed flux was correctly `null` / underconstrained.
+Stage04.3 independently measured the signed native flux of pixels
+newly exposed by disabling **only** that source mask, but it still
+reported `conditional_flux_with_source_mask_removed_nMgy = null`
+unless the baseline was measurable.
+
+This hid a genuine **conditional counterfactual**. With no observed
+baseline pixels, the counterfactual flux on newly exposed valid pixels
+is simply the signed, sky-scenario-subtracted source-only contribution.
+It is directly observable without inferring physical membership.
+
+**Correction:** for each frozen radial aperture, report a finite
+counterfactual if either the original valid-area flux exists OR
+disabling the provisional source mask reveals any original usable
+pixel. Preserve the original `null` baseline and
+`conditional_delta_nMgy = null` when the baseline does not exist.
+Add an explicit `relaxed_flux_measured_only_after_unmasking_source`
+flag. Hard-invalid and manual exclusions still never become observed
+light, and the counterfactual is not automatic deblending, missing
+galaxy light, a valid stellar-population estimate, or an approved
+photometric correction.
+
+Regressions compare the signed radial counterfactual with *independent
+native photutils aperture reintegration* under a fixed nonzero sky
+scenario. A fully source-masked input shows observable relaxed flux
+while retaining a null baseline; fully manually excluded regions
+remain `null` even after relaxing source masks.
+
+### M31 — sky-tile quadrant coverage does not establish interpolation at the galaxy — NEW READ-ONLY DIAGNOSTIC
+
+**Source:** `background.py`, Stage03 automatic sky. It requires
+multiple spatially distributed train and holdout tiles and checks
+condition number, but does not indicate whether the galaxy centre is
+actually bracketed by the **selected train pixels**. A tilted-sky
+plane evaluated at a target *outside* their native-coordinate convex
+hull is an extrapolation, even if the holdout pixels in the same coadd
+give an excellent residual RMS and a numerically well-conditioned fit.
+
+A deterministic, flux-independent diagnostic now computes the
+two-dimensional convex hull of **actual native training-pixel
+coordinates**, then evaluates the target position against the
+normalized hull half-spaces. It reports:
+- `TARGET_INTERPOLATION_GEOMETRY_ONLY` when inside the support hull,
+  or `TARGET_EXTRAPOLATION_GEOMETRY_ONLY` when outside;
+- maximum signed distance to a supporting line (pixel units;
+  **not** an extrapolation-flux bias or a statistical significance);
+- number of actual selected training pixels and convex-hull vertices;
+- null geometry status for an empty/collinear set;
+- a visible warning if the target is outside the sampled convex hull.
+
+The original constant/tilted-plane fit coefficients, candidate
+ranking, sky masks, heldout pixels and original FITS remain untouched.
+Simple square-corner, off-frame, degenerate-collinear and integrated
+Stage03 synthetic tests validate the geometric classification and
+ensure that no fitted sky is adopted. A target lying **inside** the
+training convex hull is **not** proof that its surrounding regions
+are galaxy-free: spatial correlation, PSF wings, unmodelled galaxies
+and upstream DR11 sky loss remain unmeasured.
+
+### Remaining physical validation requirements
+
+1. **True independent sky residual realizations.** Separate
+   exposures/CCDs where available, buffered spatial validation at
+   measured angular correlation scales, and realistic sky/PSF
+   injections. The convex hull is necessary for a simple
+   interpolation label, not sufficient for sky accuracy.
+2. **Source physics.** Distinguish foreground Gaia stars, member
+   stars and diffuse H II components; repeat the full segmentation
+   and mask construction after galaxy+foreground injection, not just
+   a frozen-mask ablation. Record false positive and false negative
+   masking against independent truth.
+3. **Aperture/coverage scientific estimand.** Keep native observed
+   partial-area flux separate from a total galaxy flux. Compare
+   mask-relaxed counterfactuals and asymmetric sector completeness
+   with blind injected truth. A source-only mask ablation provides
+   *sensitivity*, not a photometric correction.
+4. **Coadd-noise covariance.** Phase/spatial QA and the analytic
+   diagonal-pixel ring covariance do not identify
+   `W K_pixel W^T` from the resampling/coadd noise. Calibrate
+   full-scale and cross-band error/interval coverage externally.
+
+**SCIENCE HOLD remains mandatory.** No original Leo P FITS or
+independent sky/PSF observations have been rerun in this source-only
+review. No branches or directories were created; `main` is unchanged.
