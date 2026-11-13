@@ -1040,3 +1040,27 @@ def test_dataset_audit_passport_conflict_is_not_hidden_by_success_status(
     assert "FITS audit: 1/2 quartets" not in status
     assert "Dataset integrity audit saved" in window.message.text()
     assert (project.root / "lsbpipe-object.json").read_bytes() == original
+
+
+def test_survey_long_status_is_fully_readable_and_explicitly_copyable(
+        offline_explorer, qtbot):
+    """A compact footer may be truncated visually, but no message is lost."""
+    from PySide6.QtWidgets import QApplication
+    w = offline_explorer
+    detail = ("Synthetic failure: FITS validation could not complete; "
+              "original science data remain unchanged. " * 10)
+    w.message.setText(detail)
+    assert w.message.text() == detail
+    assert w.message.toolTip() == detail
+    assert w.message.accessibleDescription() == detail
+    assert w.message_details_btn.isEnabled()
+    w.message_details_btn.click()
+    assert w.full_message_box.isVisible()
+    assert w.full_message_box.toPlainText() == detail
+    w.message_copy_btn.click()
+    assert QApplication.clipboard().text() == detail
+    w.message.setText("Recovered: manual inspection required.")
+    assert w.full_message_box.toPlainText() == "Recovered: manual inspection required."
+    w.message.setText("")
+    assert not w.message_details_btn.isEnabled()
+    assert not w.full_message_box.isVisible()

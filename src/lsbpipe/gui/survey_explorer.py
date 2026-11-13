@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QInputDialog,
     QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QHeaderView, QDockWidget, QScrollArea, QSizePolicy,
-    QTabWidget)
+    QTabWidget, QToolButton, QPlainTextEdit)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
 
@@ -90,6 +90,17 @@ class _NoWebEngineSky(QLabel):
     def runJavaScript(self, _script, callback=None):
         if callback is not None:
             callback(None)
+
+
+class _FullStatusLabel(QLabel):
+    """Keep a complete accessible status while the compact footer may wrap."""
+    textUpdated = Signal(str)
+
+    def setText(self, text):
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+        self.textUpdated.emit(text)
 
 
 class SurveyExplorer(QMainWindow):
@@ -584,11 +595,38 @@ class SurveyExplorer(QMainWindow):
         self.progress_widget.setLayout(progress_controls)
         panel.addWidget(self.progress_widget)
         self.progress_widget.setVisible(False)
-        self.message = QLabel("")
+        status_row = QHBoxLayout()
+        self.message = _FullStatusLabel("")
+        self.message.setObjectName("survey_task_status")
+        self.message.setAccessibleName("Current survey operation status")
         self.message.setWordWrap(True)
-        self.message.setStyleSheet("color: palette(text); font-size: 11px;")
-        self.message.setMaximumHeight(58)
-        panel.addWidget(self.message)
+        self.message.setStyleSheet("color: palette(text); font-size: 12px;")
+        self.message.setMaximumHeight(64)
+        status_row.addWidget(self.message, 1)
+        self.message_details_btn = QToolButton()
+        self.message_details_btn.setObjectName("survey_status_details_toggle")
+        self.message_details_btn.setText("Full status")
+        self.message_details_btn.setAccessibleName("Expand complete survey status message")
+        self.message_details_btn.setCheckable(True)
+        self.message_details_btn.setEnabled(False)
+        status_row.addWidget(self.message_details_btn, 0, Qt.AlignTop)
+        panel.addLayout(status_row)
+        self.full_message_box = QPlainTextEdit()
+        self.full_message_box.setObjectName("survey_full_status_text")
+        self.full_message_box.setAccessibleName("Complete selectable survey status message")
+        self.full_message_box.setReadOnly(True)
+        self.full_message_box.setMaximumHeight(130)
+        self.full_message_box.hide()
+        self.message_details_btn.toggled.connect(self.full_message_box.setVisible)
+        panel.addWidget(self.full_message_box)
+        self.message_copy_btn = QPushButton("Copy full status")
+        self.message_copy_btn.setObjectName("survey_copy_full_status")
+        self.message_copy_btn.setToolTip("Copy the entire current status message, including errors")
+        self.message_copy_btn.clicked.connect(self._copy_full_status)
+        self.message_copy_btn.hide()
+        self.message_details_btn.toggled.connect(self.message_copy_btn.setVisible)
+        panel.addWidget(self.message_copy_btn)
+        self.message.textUpdated.connect(self._status_text_updated)
 
         # A/B isolation for recurrent top-left ghost overlays on Windows.
         # This never changes the scientific data path or the user's FITS.
@@ -1939,6 +1977,15 @@ class SurveyExplorer(QMainWindow):
             lines.extend(console[-12:] or ["No console messages captured"])
             QMessageBox.information(self, "Legacy Viewer status", chr(10).join(lines))
         self.sky.page().runJavaScript(probe, done)
+
+    def _status_text_updated(self, text):
+        self.full_message_box.setPlainText(text)
+        self.message_details_btn.setEnabled(bool(text))
+        if not text and self.message_details_btn.isChecked():
+            self.message_details_btn.setChecked(False)
+
+    def _copy_full_status(self):
+        QApplication.clipboard().setText(self.message.text())
 
     def _start(self, action, finished, on_error=None, *,
                operation_name="background"):

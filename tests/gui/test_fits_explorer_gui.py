@@ -8,6 +8,7 @@ pytest.importorskip("astropy")
 
 from astropy.wcs import WCS
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
 
 from lsbpipe.gui.fits_explorer import FITSExplorer
 from lsbpipe.surveys.legacy import SkyField
@@ -361,3 +362,43 @@ def test_fits_display_controls_expose_meaning_and_science_status(explorer):
     assert "native units" in explorer.vmax.accessibleName()
     assert "Display only" in explorer.view.accessibleDescription()
     assert "DIAGNOSTIC_NOT_ADOPTED" in explorer.provenance.text()
+
+
+def test_keyboard_fits_cursor_inspects_original_grid_without_writing(explorer, qtbot):
+    dataset = synthetic_dataset()
+    original = {k: v.copy() for k, v in dataset["data"].items()}
+    explorer.set_dataset(dataset)
+    explorer.view.setFocus()
+    qtbot.keyClick(explorer.view, Qt.Key_Right)
+    assert explorer.keyboard_cursor.isVisible()
+    assert "Pixel (4, 3)" in explorer.pixel_info.text()
+    assert "ICRS" in explorer.pixel_info.text()
+    qtbot.keyClick(explorer.view, Qt.Key_Up)
+    assert "Pixel (4, 4)" in explorer.pixel_info.text()
+    qtbot.keyClick(explorer.view, Qt.Key_Right, modifier=Qt.ShiftModifier)
+    assert "Pixel (7, 4)" in explorer.pixel_info.text()
+    for _ in range(20):
+        qtbot.keyClick(explorer.view, Qt.Key_Up)
+    assert "Pixel (7, 5)" in explorer.pixel_info.text()
+    assert explorer.copy_pixel_btn.isEnabled()
+    explorer.copy_pixel_btn.click()
+    assert QApplication.clipboard().text() == explorer.pixel_info.text()
+    qtbot.keyClick(explorer.view, Qt.Key_Escape)
+    assert not explorer.keyboard_cursor.isVisible()
+    for key, value in original.items():
+        np.testing.assert_array_equal(dataset["data"][key], value)
+
+
+def test_keyboard_cursor_is_removed_when_source_is_invalidated(explorer, qtbot):
+    explorer.set_dataset(synthetic_dataset())
+    qtbot.keyClick(explorer.view, Qt.Key_Left)
+    assert explorer.keyboard_cursor.isVisible()
+    explorer.clear_data()
+    assert not explorer.keyboard_cursor.isVisible()
+    assert not explorer.copy_pixel_btn.isEnabled()
+    assert explorer.view._keyboard_pixel is None
+    qtbot.keyClick(explorer.view, Qt.Key_Left)
+    assert not explorer.keyboard_cursor.isVisible()
+    explorer.set_dataset(synthetic_dataset())
+    assert explorer.view._keyboard_pixel is None
+    assert not explorer.keyboard_cursor.isVisible()
