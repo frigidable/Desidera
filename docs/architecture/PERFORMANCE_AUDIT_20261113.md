@@ -368,7 +368,7 @@ coadd pixel values or silently changing source/sky decisions.
 the initial automatic sky selection and six predeclared fixed
 sensitivity trials. Every call previously recalculated the full
 Euclidean distance transform of native **target** protection and
-the combined provisional-source/unresolved-footprint veto. Five
+the combined provisional-source/unresolved-footprint veto. Four
 of the six variants change only tile edges, tile offsets or the
 sampling policy. The other two increase one guard radius each:
 `expanded_target_1p5` and `expanded_sources_1p5`.
