@@ -188,12 +188,12 @@ def test_remote_rgb_auto_fetch_can_be_disabled_and_restored_from_hub(
     assert not reopened._rgb_auto_timer.isActive()
     qtbot.wait(750)
     assert seen == []
-    manual = []
+    manual_calls = []
     monkeypatch.setattr(reopened, "_fetch_rgb_preview",
-                        lambda *, manual=True: manual.append(manual))
+                        lambda *, manual=True: manual_calls.append(manual))
     assert reopened.rgb_action.isEnabled()
     reopened.rgb_action.trigger()
-    assert manual == [True]
+    assert manual_calls == [True]
     # Opting in again schedules, but does not immediately perform, a fetch.
     reopened.auto_rgb_action.setChecked(True)
     assert reopened._rgb_auto_timer.isActive()
