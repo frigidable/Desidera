@@ -1305,3 +1305,41 @@ def test_sky_protected_footprint_null_for_unmeasured_or_collinear_training():
     assert report["n_provisional_target_pixels_outside_training_hull"] is None
     assert report["fraction_provisional_target_pixels_outside_training_hull"] is None
     assert report["provisional_target_footprint_fully_inside_training_hull"] is None
+
+
+def test_weighted_sky_lstsq_uses_its_own_singular_values_without_second_svd(
+        monkeypatch):
+    """LAPACK least squares returns the same conditioning evidence as SVD."""
+    import lsbpipe.background as module
+
+    rng = np.random.default_rng(20261113)
+    x = np.linspace(-1., 1., 180)
+    design = np.column_stack((np.ones_like(x), x, x*x))
+    weights = rng.uniform(.05, 50., len(x))
+    truth = np.array([.012, -.0008, .002])
+    signal = design @ truth + rng.normal(0., 1.e-6, len(x))
+    sqrtw = np.sqrt(weights / np.median(weights))
+    original_singular = np.linalg.svd(
+        design * sqrtw[:, None], compute_uv=False)
+    expected_condition = original_singular[0]/original_singular[-1]
+
+    def svd_must_not_be_called(*args, **kwargs):
+        raise AssertionError("duplicate weighted design SVD")
+    monkeypatch.setattr(module.np.linalg, "svd", svd_must_not_be_called)
+    fitted, condition = module._weighted_lstsq(
+        design, signal, weights, max_condition=1.e8)
+    assert fitted == pytest.approx(
+        np.linalg.lstsq(
+            design*sqrtw[:, None], signal*sqrtw, rcond=None)[0],
+        rel=1.e-11, abs=1.e-11)
+    assert condition == pytest.approx(expected_condition, rel=1.e-11)
+    rejected, poor_condition = module._weighted_lstsq(
+        design, signal, weights, max_condition=1.01)
+    assert rejected is None
+    assert poor_condition == pytest.approx(expected_condition, rel=1.e-11)
+
+    collinear = np.column_stack((np.ones_like(x), x, x))
+    invalid, condition = module._weighted_lstsq(
+        collinear, signal, weights, max_condition=1.e12)
+    assert invalid is None
+    assert condition > 1.e12
