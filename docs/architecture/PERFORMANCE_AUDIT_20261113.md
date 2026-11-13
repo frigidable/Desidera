@@ -41,7 +41,7 @@ hardware-specific observational benchmark, not inferred timings.
 
 These are source-identified mechanisms and prioritization judgments,
 not demonstrated relative runtime contributions on a real galaxy.
-The three corrected bottlenecks were chosen because the scientific
+The initial v0.2.1.dev0 bottlenecks were chosen because the scientific
 operator can be preserved exactly without broad architectural change.
 
 ## Optimization P0.1 — exact same-phase ring-template translation
@@ -127,12 +127,14 @@ python scripts/benchmark_desidera_performance.py --size 512 --repeats 3
 ```
 
 The script generates **only synthetic native arrays**, performs
-three separately timed reference-vs-optimized kernel comparisons and
+four separately timed reference-vs-optimized kernel comparisons and
 prints a JSON report:
 1. two immutable native-frame materializations vs one;
 2. ten full-mask snapshots vs byte-backed reusable snapshots;
 3. each blank-ring exact Photutils rasterization vs a translated
-   single exact ring template per radius.
+   single exact ring template per radius;
+4. three dense exponential-profile sky-injection grids vs broadcasted
+   coordinate offsets and one reusable elliptical-radius operator.
 
 The third kernel independently checks exact-overlap integrated area
 before reporting times. Ratios are specific to one machine/run.
@@ -178,7 +180,7 @@ semantics independently.
 
 ## Release policy
 
-`0.2.1.dev0` is an **installable development candidate** on Draft
+`0.2.1.dev1` is an **installable development candidate** on Draft
 PR #84, NOT a Git tag, merged main release, verified performance SLA
 or validated astronomy science release. The same on-disk object-project
 formats, legacy `lsbpipe` API, preserved original FITS and scientific
