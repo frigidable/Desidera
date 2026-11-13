@@ -734,6 +734,7 @@ def _audit_sky_training_target_geometry(
         "n_provisional_target_protected_pixels": nprotected,
         "n_provisional_target_pixels_outside_training_hull": None,
         "fraction_provisional_target_pixels_outside_training_hull": None,
+        "max_signed_provisional_target_hull_distance_native_pix": None,
         "max_provisional_target_extrapolation_distance_native_pix": None,
         "provisional_target_footprint_fully_inside_training_hull": None,
         "provisional_target_protection_not_a_measured_isophote": True,
@@ -797,8 +798,10 @@ def _audit_sky_training_target_geometry(
             "n_provisional_target_pixels_outside_training_hull": outside,
             "fraction_provisional_target_pixels_outside_training_hull":
                 float(outside/nprotected),
-            "max_provisional_target_extrapolation_distance_native_pix":
+            "max_signed_provisional_target_hull_distance_native_pix":
                 float(furthest),
+            "max_provisional_target_extrapolation_distance_native_pix":
+                float(max(0., furthest)),
             "provisional_target_footprint_fully_inside_training_hull":
                 bool(outside == 0),
         })
