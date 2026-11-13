@@ -1,4 +1,4 @@
-# Desidera performance audit — v0.2.1.dev2 (2026-11-13)
+# Desidera performance audit — v0.2.1.dev3 (2026-11-13)
 
 Status: **development candidate in existing Draft PR #84**,
 `feature/scene-wcs-editor-sc1`. No merge, new branch or directory,
@@ -557,3 +557,205 @@ CI timing conditions.
 not a tagged scientific release.** The original
 NativeBandFrame arrays, FITS data, `main` branch
 and SCIENCE HOLD are unchanged.
+
+
+## Fourth performance audit — v0.2.1.dev3, P43–P45 (2026-11-13)
+
+This cycle continues P0.1–P42 on the **same**
+`feature/scene-wcs-editor-sc1` Draft PR #84. No new branches or
+directories. The three fixes below target redundant full-pixel
+passes and memory allocations while preserving the original
+native FITS, exact fractional Photutils aperture integration,
+immutable source masks, receipt semantics and all science guards.
+
+### P43 — eight repeated full-aperture sector scans — FIXED
+
+**Source:** `photometry/aperture_flux.measure_native_aperture`.
+Each of the eight descriptive 45-degree PA sectors previously
+performed two full mask/weight selections and summations:
+`np.sum(weights[sec == k])` and
+`np.sum(weights[(sec == k) & usable])`. For 8 sectors
+this caused **16 separate array reductions**, with additional
+per-sector Boolean allocations, at EVERY cumulative aperture.
+
+**Correction:** compute the two area vectors with
+`np.bincount(sec.ravel(), weights=..., minlength=8)`:
+one histogram of all fractional Photutils overlaps and one
+histogram of overlaps valid after the unchanged hard/source/
+manual exclusion precedence. Keep exactly the same sector
+labels, fraction definition and zero-area/null behavior.
+
+This is a descriptive **pixel-centre sector** QA only,
+not the science flux operator. The histogram summation order
+may differ from NumPy's multi-pass pairwise reduction by
+floating-point roundoff (usually below 1e-12 in synthetic
+tests); do not claim bitwise identical sector areas. The
+**native signed flux, IVAR diagonal variance, exact aperture
+fractional weights, masks, provenance and source-selection
+decision remain unchanged.** Synthetic tests independently
+reproduce all 16 old reductions on random heteroscedastic
+fractional weights with masked/zero-area pixels. The
+expanded benchmark tests both approaches before timing.
+
+### P44 — rehashing the same full-sized source/manual masks for each radius — FIXED
+
+**Source:** Stage04.2
+`measure_growth_diagnostic → measure_native_aperture` and
+Stage04.3 `_verify_frozen_growth_curves`. Prior P0.3 avoided
+copying the Boolean masks for every radius but the aperture
+recipe still called `sha256(source.tobytes())` and
+`sha256(manual.tobytes())` **twice per radius**,
+even when these were literally the same immutable
+byte-backed inputs.
+
+For `R` growth radii, this caused `2R` full-image
+content-hash computations (20 at the default 10 radii).
+The Stage04.3 independent outer-aperture verification of
+several hypotheses repeated the same work again.
+
+**Correction:** a private frozen evidence object,
+`_FrozenApertureMaskDigests`, is constructed exactly once
+from two native Boolean masks with genuinely immutable
+`bytes` roots; its constructor computes the original
+full-content SHA-256 for each mask exactly once.
+Every subsequent aperture reuses the digests **only if**
+both input arrays are the exact same immutable objects
+(`is` identity plus verified bytes-root immutability).
+No arbitrary caller-provided digest is trusted; forged
+evidence types, mutable NumPy buffers, read-only NumPy
+views backed by mutable storage, and swapped/equal-valued
+different arrays are rejected. Ordinary standalone aperture
+calls still compute independent full-mask SHA-256 directly.
+
+The original `recipe_sha256` JSON structure, mask hashes,
+data/geometry/sky validity and remeasurement in Stage04.3
+are unchanged. No full FITS SHA verification is skipped.
+Regression coverage includes **exact equality of all
+cumulative aperture record fields** against standalone
+re-integration at each radius under a nonzero tilted sky,
+a test that counts just two original full-grid hash
+calculations across the entire growth curve, source-array
+mutation isolation, and a negative wrong-identity test.
+The Stage04.3 regression verifies one immutable source/
+manual hash pair across all independently recomputed
+geometry hypotheses; its distinct source-mask-removed
+counterfactual still derives its own independent hashes.
+
+The main benefit is memory bandwidth: even with fast
+SHA-256 implementations, reading both full-grid masks
+dozens of times per object is unnecessary. There is no
+module-global or cross-object hash cache.
+
+### P45 — convex sky hull QA still allocated full-grid slices and an edges×pixels matrix — FIXED
+
+**Source:** `background._audit_sky_training_target_geometry`.
+The M33 row-extrema implementation eliminated an expensive
+Qhull input cloud but used `used[rows]` and
+`used[rows, ::-1]` (NumPy advanced indexing) before
+`argmax`, creating **two copies of occupied rows**.
+On an almost completely occupied grid these two copies
+approach `2 × image_pixels × 1 byte` before building the
+small row-extrema list.
+
+More critically, the M32 protected-target coverage QA
+used a broadcasted matrix of **n_hull_edges ×
+n_protected_pixels_in_row** signed half-space distances.
+This can be large for an irregular spatial training hull.
+The previous description of this as unconditionally
+bounded by native image width was inaccurate.
+
+**Correction:** obtain min/max extrema by performing
+`argmax` along the original native array's rows and its
+**stride-reversed view**, then gather only the O(n_rows)
+indices. No full-frame fancy-indexing copy is created.
+For protected-target pixel centres, initialize one
+length-`n_protected_row_pixels` vector to `-inf`
+and update its maximum signed convex-halfspace distance
+sequentially for each hull edge with `np.maximum(...,
+out=...)`. Temporary memory is now O(native row width),
+independent of the number of hull edges. The same exact
+SciPy ConvexHull equations, `1e-8` boundary tolerance,
+inside/outside counts and greatest extrapolation
+distance are retained; there is no coarse spatial
+subsampling or changed sky acceptance.
+
+An adversarial independent regression constructs a
+serrated multi-edge training footprint, computes its
+**full-pixel** SciPy ConvexHull and the dense reference
+edge-by-pixel matrix on a bounded synthetic fixture,
+and compares all outside counts, fractions, maximum
+signed distance, hull vertices and unchanged original
+Boolean masks.
+
+### Reproducible performance evidence
+
+The existing standalone offline command remains:
+
+```powershell
+python scripts/benchmark_desidera_performance.py --size 512 --repeats 3
+```
+
+It now exposes **nine separately timed synthetic kernel
+comparisons**, adding eight separate PA-sector sums versus
+two weighted histograms, and twenty full-grid mask
+hashes (ten radii) versus two identical authenticated
+immutable-mask SHA receipts. The historical reference
+outputs are recomputed and compared numerically or
+exactly (for SHA) before reporting any timing.
+The Stage03 hull change has the independent dense
+geometry test but no additional wall-clock benchmark
+yet; do not infer whole-pipeline speedup from it.
+
+No benchmark has yet profiled real Leo P FITS, a
+representative dense Tractor field, advanced ePSF,
+Windows GUI first-pixel latency, coadd decompression,
+cold/warm cache, actual process peak RSS, GPU usage,
+parallel band loads or the integrated Stage01–04
+workflow. The synthetic kernel medians are machine-
+and package-dependent and are deliberately not
+pass/fail thresholds in CI.
+
+### Remaining performance and scientific caveats
+
+* **Stage01 ePSF:** no reduction of empirical PSF
+  stamp extraction, iterative stacking, candidate
+  selection, cross-fitting or long-range PSF-wing
+  validation was performed. These require a separate
+  correctness-preserving profile.
+* **Stage02 Tractor and visual catalogue:** many
+  per-source ellipses still produce local patch
+  rasterizations and Qt's `QListWidget` is still
+  rebuilt on search/filter changes. Investigate
+  source geometry reuse and virtualized models only
+  after recording native-input identity and live GUI
+  selection behavior.
+* **Stage03 FITS/candidate fit:** six fixed trial
+  variants still reconstruct Scene layers and
+  perform independent constant/tilted sky
+  estimates; source WCS/bright Gaia exclusions
+  are deliberately reevaluated. Sky, galaxy
+  outskirts and same-coadd holdout remain
+  astrophysically uncalibrated.
+* **Stage04 WCS:** cached native-grid identity
+  does not skip repeated 16-boundary-point
+  affine geometry validation. Exact full
+  ellipse/ring pixel integration remains
+  computationally necessary for each radius
+  and independent closure test.
+* **Resident memory:** the Boolean guard cache
+  adds temporary allocations, while the hull
+  improvement avoids large edge×pixel buffers.
+  These are source-level bounds, not observed
+  changes to peak RSS.
+* **Operational benchmark:** keep identical original
+  DESI Legacy FITS, original Scene masks,
+  star catalogues, hardware, software versions,
+  random seeds and test objects; record p50/p95
+  processing and GUI latencies, cold/warm
+  disk I/O, peak RSS per stage, actual cache
+  hit rates, and exact flux/variance/receipt
+  comparisons against the prior version.
+
+**v0.2.1.dev3 remains a non-science-adopted development
+candidate, Draft PR #84. Main and original native FITS
+are unmodified. SCIENCE HOLD remains active.**
