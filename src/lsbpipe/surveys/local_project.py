@@ -7,6 +7,7 @@ is scientifically valid merely because it is present on disk.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field as dc_field
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ import re
 import tempfile
 
 from .legacy import BrickHit, SkyField, product_for
+from .project_locking import exclusive_metadata_lock
 
 PROJECT_FILE = "lsbpipe-project.json"
 SCHEMA = "lsbpipe.local-project/0.1"
@@ -50,7 +52,10 @@ def session_pointer_path() -> Path:
 
 def last_project_directory() -> Path | None:
     path = session_pointer_path()
-    if not path.is_file():
+    # A recent-session hint is not a trusted path or a science receipt.
+    # Never follow external metadata through a symlinked pointer or
+    # symlinked user-settings directory.
+    if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -63,20 +68,36 @@ def last_project_directory() -> Path | None:
 
 
 def remember_project_directory(root: Path) -> None:
-    _atomic_json(session_pointer_path(), {
+    path = session_pointer_path()
+    if (path.is_symlink() or path.parent.is_symlink() or
+            (path.exists() and not path.is_file())):
+        raise ValueError("Unsafe legacy last-project session pointer")
+    _atomic_json(path, {
         "schema": SCHEMA, "root": str(Path(root).resolve())})
 
 
-def _read_metadata(path: Path) -> dict | None:
+def _read_metadata_with_sha(path: Path) -> tuple[dict | None, str | None]:
+    """Return metadata and SHA of the SAME bytes used to parse it.
+
+    This exact original-file revision is an optimistic-write token for
+    local project sessions, not a verified native FITS fingerprint.
+    """
+    if path.is_symlink():
+        raise ValueError(f"Unsafe symlinked local project metadata: {path}")
     if not path.is_file():
-        return None
+        return None, None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        raw = path.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, UnicodeError) as exc:
         raise ValueError(f"Unreadable project metadata: {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"Project metadata must contain a JSON object: {path}")
-    return data
+    return data, hashlib.sha256(raw).hexdigest()
+
+
+def _read_metadata(path: Path) -> dict | None:
+    return _read_metadata_with_sha(path)[0]
 
 
 def _data_roots(path: Path):
@@ -113,6 +134,12 @@ class LocalProject:
     sky_outer_arcsec: float = 180.
     last_science: dict = dc_field(default_factory=dict)
     field_source: str = ""
+    # Private optimistic-concurrency token for this exact historical
+    # session JSON. Never serialized as a science or project field.
+    metadata_sha256: str | None = dc_field(
+        default=None, repr=False, compare=False)
+    metadata_observed: bool = dc_field(
+        default=False, repr=False, compare=False)
 
 
 def open_local_project(directory: str | Path, *,
@@ -141,7 +168,8 @@ def open_local_project(directory: str | Path, *,
             "choose the original download root or its parent containing data/.")
     data_root, items = max(alternatives, key=lambda x: len(x[1]))
     project_root = data_root.parent if data_root.name == "data" else data_root
-    metadata = _read_metadata(project_root / PROJECT_FILE)
+    metadata, metadata_sha256 = _read_metadata_with_sha(
+        project_root / PROJECT_FILE)
     if metadata is not None and metadata.get("schema") != SCHEMA:
         raise ValueError(f"Unknown {PROJECT_FILE} schema; not overwriting it")
     report = _read_metadata(data_root / "download-report.json")
@@ -301,26 +329,51 @@ def open_local_project(directory: str | Path, *,
         hits=hits, complete=complete, on_disk=on_disk, selected=selected,
         target_radius_arcsec=target, sky_inner_arcsec=inner,
         sky_outer_arcsec=outer, last_science=last_science,
-        field_source=source)
+        field_source=source, metadata_sha256=metadata_sha256,
+        metadata_observed=True)
 
 
 def save_local_project(project: LocalProject) -> Path:
-    """Atomically persist session metadata *outside* the FITS data tree."""
+    """Persist an observed session revision without lost cross-process edits.
+
+    A second GUI instance must reopen the current session after a conflict.
+    The lock covers read/check/write; the original FITS are never touched.
+    """
     path = project.root / PROJECT_FILE
-    existing = _read_metadata(path)
-    if existing is not None and existing.get("schema") != SCHEMA:
-        raise ValueError(f"Refusing to overwrite an unknown {PROJECT_FILE}")
-    record = {
-        "schema": SCHEMA,
-        "field": asdict(project.field),
-        "data_root": str(project.data_root),
-        "selected": list(project.selected) if project.selected else None,
-        "target_radius_arcsec": project.target_radius_arcsec,
-        "sky_inner_arcsec": project.sky_inner_arcsec,
-        "sky_outer_arcsec": project.sky_outer_arcsec,
-        "last_science": project.last_science,
-        "status": "LOCAL_FILES_PRESENT_NOT_SCIENTIFICALLY_ADOPTED",
-    }
-    _atomic_json(path, record)
+    with exclusive_metadata_lock(
+            path.with_name(path.name + ".lock")):
+        existing, current_sha = _read_metadata_with_sha(path)
+        if existing is not None and existing.get("schema") != SCHEMA:
+            raise ValueError(f"Refusing to overwrite an unknown {PROJECT_FILE}")
+        if not project.metadata_observed:
+            # Directly constructed LocalProject objects were never tied
+            # to an existing JSON revision. They may create a new
+            # session, but may not blindly replace one already on disk.
+            if current_sha is not None:
+                raise RuntimeError(
+                    "Local project session was not opened from this revision; "
+                    "reopen the project before saving")
+        elif current_sha != project.metadata_sha256:
+            raise RuntimeError(
+                "Local project session changed in another process; "
+                "reopen the project before saving")
+        record = {
+            "schema": SCHEMA,
+            "field": asdict(project.field),
+            "data_root": str(project.data_root),
+            "selected": list(project.selected) if project.selected else None,
+            "target_radius_arcsec": project.target_radius_arcsec,
+            "sky_inner_arcsec": project.sky_inner_arcsec,
+            "sky_outer_arcsec": project.sky_outer_arcsec,
+            "last_science": project.last_science,
+            "status": "LOCAL_FILES_PRESENT_NOT_SCIENTIFICALLY_ADOPTED",
+        }
+        _atomic_json(path, record)
+        # Derive the next token from the exact file bytes published by
+        # _atomic_json, not a pre-rendered approximation of its JSON.
+        project.metadata_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        project.metadata_observed = True
+    # The user's last-active pointer is an independent best-effort UI
+    # hint. No false atomicity across these two different files.
     remember_project_directory(project.root)
     return path
