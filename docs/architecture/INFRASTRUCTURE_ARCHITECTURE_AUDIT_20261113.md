@@ -1,10 +1,13 @@
 # Desidera infrastructure and architecture audit — 2026-11-13
 
-**Status:** source-backed implementation audit of the existing
-`frigidable/Desidera` repository, branch
-`feature/scene-wcs-editor-sc1`, Draft PR #84. Source baseline
+**Original audit:** source-backed implementation of the
+`frigidable/Desidera` repository, originally in
+`feature/scene-wcs-editor-sc1`, PR #84. Source baseline
 `6036485323dfb16af7b0d82753b7093306719e8e`
-(`0.2.1.dev3`); corrected candidate `0.2.1.dev4`.
+(`0.2.1.dev3`), corrected engineering version `0.2.1.dev4`.
+PR #84 was subsequently **merged into main** on 2026-11-13
+as squash commit `07f139b69614ee3cc1a1780bbfa9f2fa54452e1f`.
+Later corrections are developed in separate narrowly scoped PRs.
 
 **Scope:** application boundaries, installable packaging, GitHub Actions
 coverage and trust, GUI/science dependency separation, project-state
@@ -220,12 +223,16 @@ snapshot per registration. A negative regression instruments
 and demands exactly one read. Existing atomic
 `os.replace` file publication is retained.
 
-**NOT FIXED:** two application processes can still simultaneously
-read the same registry, perform independent modifications and
-replace it in arbitrary order. A multi-process transaction would
-need one explicit lock protocol **around read–modify–write**,
-collision handling, bounded retries and crash recovery. A single
-snapshot merely avoids inconsistency *within one operation*.
+**Historical limitation (fixed separately in follow-up branch):**
+at the time of PR #84, two application processes could still read
+the same registry, perform independent modifications and overwrite
+one another. The new `fix/project-library-concurrency` change
+introduces a stable OS-level advisory lock covering read–modify–write
+for this **one user-local projects registry**; read its separate PR
+and exact-commit CI before treating that follow-up as accepted.
+Dataset indices, project passports and GUI resume/operation journals
+are **not** automatically transactional merely because this registry
+uses a lock.
 
 ### A09 — untested erosion of GUI/science separation — **GUARDED / P1**
 
@@ -328,3 +335,48 @@ Do **not** automatically restructure the large existing GUI
 classes, rename `lsbpipe` APIs, start another feature branch,
 merge to `main`, download additional telescope FITS, or
 change scientific calibration from this infrastructure audit.
+
+
+## 6. Follow-up: object project library race — separate focused PR
+
+The original A08 registry **single-snapshot** repair prevented
+intra-call mixing of payload generations but not cross-process
+lost updates. In `fix/project-library-concurrency`, a
+`project_locking.exclusive_metadata_lock` context manager now
+holds one stable advisory file lock through the entire
+user-local project-library transaction:
+
+- Linux/Unix uses `fcntl.flock(LOCK_EX | LOCK_NB)`;
+  Windows uses `msvcrt.locking(LK_NBLCK, 1)`, with a bounded
+  retry timeout. Both are OS locks released after process death.
+- The `projects.json.lock` sidecar remains on disk to prevent
+  accidentally splitting the lock domain between waiting processes.
+  Its bytes are a non-scientific sentinel, **not** a project index.
+- `create_object_project` protects duplicate-name checks,
+  passport creation and first registration under one library
+  transaction, using the inner already-locked registry writer
+  to avoid nested non-reentrant OS locking.
+- `register_object_project` and `forget_recent_project` now
+  serialize reading, validation, modification and atomic replacement.
+  Reads by `recent_projects` remain lock-free and safe against
+  *incomplete JSON publication* because the writer still uses
+  same-directory `os.replace`. A reader may see the prior or
+  new complete generation.
+- Reject symlinked/nonregular lock paths and an inode/path swap
+  observed while acquiring the lock. No source FITS are opened,
+  renamed, downloaded or otherwise modified by the mechanism.
+- Regression tests invoke **actual different Python processes**,
+  force a paused stale reader while another writer tries to update,
+  assert that both project UUIDs survive, test lock-timeout and
+  OS cleanup on abrupt `os._exit`, and reject a symlink lock.
+
+**Limits:** the protocol coordinates only cooperating local
+Desidera processes on filesystems supporting the stated OS locks.
+It is not a distributed/SMB/NFS concurrency proof. Multiple
+metadata files still lack a unified project-level transaction;
+a process crash after writing an object passport but before
+registering it may require ordinary explicit project import.
+The dataset/analysis registry and operation journals have their
+own separate update paths and remain subject to a further
+targeted audit. The scientific HOLD and existing data schemas
+are unchanged.
