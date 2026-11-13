@@ -4,6 +4,8 @@
 
 **Scientific status:** research prototype. A feature being implemented, a successful test or a saved diagnostic does **not** certify a calibrated astronomical measurement. No PSF-based or SBF distance measurement, background estimate, reconstructed total flux or catalogue association is adopted automatically.
 
+**Performance development candidate:** `v0.2.1.dev0` is in existing Draft PR #84 (not tagged or merged). It removes redundant full-image native-frame construction, repeated source/manual mask snapshots in radial photometry, and repeated exact blank-annulus rasterization through mathematically identical native integer translations. These are engineering optimizations; absolute real-FITS speedup and peak RAM have not been benchmarked. See [the performance audit](docs/architecture/PERFORMANCE_AUDIT_20261113.md). Reproduce synthetic computational-kernel timings offline with `python scripts/benchmark_desidera_performance.py --size 512 --repeats 3`. Scientific adoption remains on HOLD.
+
 ## Quick start
 
 Requires Python 3.10+ and an editable checkout:
