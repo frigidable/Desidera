@@ -314,6 +314,39 @@ def run(*, size, repeats):
         "cache_memory_cost_not_peak_rss_measured": True,
     })
 
+    # Stage04 pixel-centre diagnostic sectors formerly constructed
+    # two full float64 native coordinate grids and an additional
+    # 2×N dense matrix for tangent-frame multiplication. Preserve
+    # the exact eight-sector labels with 1-D native broadcasting.
+    from lsbpipe.photometry.aperture_flux import (
+        _sector_ids_from_broadcast_native_centres)
+    inv_tangent = np.array([[.91, .04], [-.075, 1.07]])
+    x_offset, y_offset = -size*.47-.163, -size*.52+.217
+
+    def dense_native_sectors():
+        ygrid, xgrid = np.indices(shape, dtype=float)
+        xgrid += x_offset
+        ygrid += y_offset
+        tangent = inv_tangent @ np.stack((xgrid.ravel(), ygrid.ravel()))
+        angles = np.mod(
+            np.arctan2(tangent[0], tangent[1]), 2*np.pi)
+        return (np.floor(angles/(np.pi/4)).astype(int) % 8).reshape(shape)
+
+    def broadcast_native_sectors():
+        return _sector_ids_from_broadcast_native_centres(
+            shape, x_offset, y_offset, inv_tangent)
+
+    if not np.array_equal(dense_native_sectors(), broadcast_native_sectors()):
+        raise RuntimeError("Broadcast Stage04 sectors changed native PA labels")
+    sector_result = _compare(
+        dense_native_sectors, broadcast_native_sectors, repeats)
+    sector_result.update({
+        "full_coordinate_grids_not_constructed": 2,
+        "dense_tangent_input_stack_not_constructed": True,
+        "eight_native_pa_sectors_identical": True,
+        "pixel_center_qa_not_exact_angular_sector_photometry": True,
+    })
+
     return {
         "schema": "desidera.performance.synthetic-operator-benchmark/1",
         "size_native_pixels": [size, size],
@@ -331,9 +364,11 @@ def run(*, size, repeats):
                 grid_identity_result,
             "sky_six_fixed_trials_full_edt_vs_exact_guard_reuse":
                 sky_guard_result,
+            "native_pa_sector_dense_xy_vs_broadcast_tangent":
+                sector_result,
         },
         "interpretation": [
-            "Six distinct computational kernels, not end-to-end FITS loading time",
+            "Seven distinct computational kernels, not end-to-end FITS loading time",
             "No network, original FITS, catalogue fetch or GUI involved",
             "No scientific sky, PSF, photometric, SBF or covariance adoption",
             "Ratio depends on machine, NumPy, Photutils, OS cache and FITS size",
