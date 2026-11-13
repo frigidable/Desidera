@@ -585,3 +585,64 @@ Discard local changes* interface should preserve unsaved
 drafts without misrepresenting which version is authoritative.
 Neither background autosave nor worker completion should
 silently retry an object save against an unobserved version.
+
+
+## 11. Crash window between galaxy passport and library index — 2026-11-14
+
+### Confirmed problem
+
+A newly imported historical FITS directory has two distinct metadata
+publication steps: the authoritative `lsbpipe-object.json` with a new
+immutable UUID, followed by the user-local `projects.json` registry row.
+The original `import_object_project` did its first passport existence
+check **before** scanning the legacy FITS directory. Two Desidera
+processes could both observe the absence of an object passport and
+start the same import independently, then race to publish different
+UUIDs. A crash after passport publication but before registry
+publication leaves an unlisted, valid object project. The passport
+must NEVER be replaced with a new identity during recovery.
+
+### Narrow repair: `fix/import-project-transaction-recovery`
+
+- All passport + library modifications made by
+  `touch_object_project` and `import_object_project` now use one
+  existing user-local registry lock. The lock acquisition order
+  when both locks are needed is **registry → galaxy passport**;
+  `_touch_object_project_unlocked` calls the already-locked
+  registration writer to avoid recursive acquisition.
+- Potentially expensive `open_local_project` FITS *path inventory*
+  remains **outside** the library lock. Upon reacquiring the lock,
+  import rechecks the passport in the actual authoritative
+  `prior.root` (including input via `data/`) BEFORE generating a
+  new UUID. A competing importer therefore reuses the winner's
+  verified UUID and existing immutable passport.
+- If a process dies or raises between the two JSON publications,
+  an explicit subsequent `import_object_project(root)` reads the
+  existing passport and repairs the missing library row **without
+  touching the original FITS, inventing coordinates, changing the
+  project identity or treating QA as adopted**.
+- `create_object_project` validates user-facing identity metadata
+  before creating a new project folder, preventing leftover empty
+  pseudo-project directories for invalid names.
+
+### Evidence and explicit limits
+
+Offline regression uses two REAL Python interpreters, each paused
+after completing its original-FITS filename inventory and before
+publishing the passport. Both must return the SAME UUID and exactly
+one registry row. Another regression injects `SystemExit` precisely
+after the passport write and before the registry write; the explicit
+reimport must restore the missing registry row and preserve existing
+original-FITS bytes. Invalid names must not leave project folders.
+
+This is a **recoverable ordered publication**, not an atomic
+transaction spanning two separate files. Without a discoverable
+folder path, Desidera cannot automatically scan all user drives for
+an orphaned project, so explicit Import existing folder remains
+necessary after such a crash. Multiple independent project data
+stores (dataset index, operation journal, UI resume, scientific QA)
+do not acquire a global project lock and are not guaranteed to
+represent one instantaneous distributed snapshot. The approach is
+for cooperating local processes only; network filesystem lock
+semantics, power-loss durability and observational science
+acceptance remain separately unverified. `SCIENCE HOLD` persists.

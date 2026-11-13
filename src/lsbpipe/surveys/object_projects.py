@@ -426,10 +426,22 @@ def _register_object_project_unlocked(project: ObjectProject) -> None:
         **payload, "projects": updated})
 
 
-def touch_object_project(project: ObjectProject) -> None:
+def _touch_object_project_unlocked(project: ObjectProject) -> None:
+    """Update passport then registry while holding the library lock.
+
+    Lock ordering is ALWAYS library-index -> passport when both are
+    required. A crash between these atomic files leaves the immutable
+    passport available for explicit re-import with the same project UUID.
+    """
     project.last_opened_at = _now()
     save_object_project(project)
-    register_object_project(project)
+    _register_object_project_unlocked(project)
+
+
+def touch_object_project(project: ObjectProject) -> None:
+    """Keep passport and library publication in one cooperative transaction."""
+    with _registry_transaction():
+        _touch_object_project_unlocked(project)
 
 
 def create_object_project(name: str, directory: str | Path, *,
@@ -442,10 +454,13 @@ def create_object_project(name: str, directory: str | Path, *,
         if any(item["display_name"].casefold() == name.strip().casefold()
                and item.get("available") for item in recent_projects()):
             raise ValueError("A project with this name is already in the library")
-        root.mkdir(parents=True, exist_ok=True)
         project = ObjectProject(
             project_id=str(uuid.uuid4()), display_name=name, root=root,
             field=field)
+        # Validate before creating a user-visible directory: an invalid
+        # name/radius must not leave a confusing empty pseudo-project.
+        _validate(project)
+        root.mkdir(parents=True, exist_ok=True)
         save_object_project(project)
         _register_object_project_unlocked(project)
         return project
@@ -454,33 +469,45 @@ def create_object_project(name: str, directory: str | Path, *,
 def import_object_project(directory: str | Path, *,
                           fallback_field: SkyField | None = None,
                           display_name: str | None = None) -> ObjectProject:
-    """Adopt old 0.1/download-report files without mutating either."""
+    """Adopt or recover one legacy folder without changing original FITS.
+
+    Legacy FITS discovery may require directory traversal, so it occurs
+    OUTSIDE the user-library lock. Re-check the passport INSIDE the lock
+    before generating any new UUID; a concurrent importer must reuse
+    the winner's actual immutable project identity.
+    """
     root = Path(directory).expanduser().resolve()
-    if (root / PROJECT_FILENAME).is_file():
-        project = read_object_project(root)
-        touch_object_project(project)
-        return project
+    with _registry_transaction():
+        if project_path(root).is_file():
+            project = read_object_project(root)
+            _touch_object_project_unlocked(project)
+            return project
+
     prior = open_local_project(root, fallback_field=fallback_field)
-    # Importing the data/ child of an already registered project must keep
-    # the existing immutable UUID, not attempt to overwrite its manifest.
-    if project_path(prior.root).is_file():
-        project = read_object_project(prior.root)
-        touch_object_project(project)
+    with _registry_transaction():
+        # Both a parent folder and its data/ child can refer to the same
+        # object. A passport may have appeared during the FITS inventory.
+        # In particular this repairs a crash between passport publication
+        # and project-library registration without ever assigning a new UUID.
+        if project_path(prior.root).is_file():
+            project = read_object_project(prior.root)
+            _touch_object_project_unlocked(project)
+            return project
+
+        # Legacy imports use the folder name only as a descriptive default,
+        # not an official or scientifically confirmed galaxy identity.
+        project = ObjectProject(
+            project_id=str(uuid.uuid4()),
+            display_name=display_name or prior.root.name, root=prior.root,
+            data_root=prior.data_root, field=prior.field,
+            target_source=prior.field_source, selected_dataset=prior.selected,
+            last_science=prior.last_science,
+            target_radius_arcsec=prior.target_radius_arcsec,
+            sky_inner_arcsec=prior.sky_inner_arcsec,
+            sky_outer_arcsec=prior.sky_outer_arcsec)
+        save_object_project(project)
+        _register_object_project_unlocked(project)
         return project
-    # Name is user-editable. Legacy imports use the folder name only as
-    # a descriptive default, never as the official galaxy identity.
-    project = ObjectProject(
-        project_id=str(uuid.uuid4()),
-        display_name=display_name or prior.root.name, root=prior.root,
-        data_root=prior.data_root, field=prior.field,
-        target_source=prior.field_source, selected_dataset=prior.selected,
-        last_science=prior.last_science,
-        target_radius_arcsec=prior.target_radius_arcsec,
-        sky_inner_arcsec=prior.sky_inner_arcsec,
-        sky_outer_arcsec=prior.sky_outer_arcsec)
-    save_object_project(project)
-    register_object_project(project)
-    return project
 
 
 def relink_object_project(project_id: str, new_directory: str | Path) -> ObjectProject:
