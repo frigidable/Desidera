@@ -1108,6 +1108,25 @@ def test_fractional_ring_shared_boundary_has_white_noise_cross_covariance():
     assert result[1, 2] > 0.
     assert qa["n_nonzero_off_diagonal_pairs"] >= 2
     assert qa["max_off_diagonal_correlation"] > 0.
+    transfer = np.tril(np.ones((len(radii), len(radii))))
+    reference_cumulative = transfer @ reference @ transfer.T
+    np.testing.assert_allclose(
+        qa["cumulative_diagonal_pixel_formal_variance_nMgy2"],
+        np.diag(reference_cumulative), rtol=1e-11, atol=1e-10)
+    assert max(
+        qa["cumulative_variance_increase_vs_independent_ring_sum"]) > 0.
+    # Stage 04.1 computes the cumulative white-noise variance directly
+    # from the full exact aperture, rather than by summing ring sigmas.
+    for i, radius in enumerate(radii):
+        ap = measure_native_aperture(
+            f, geometry(ra=target.ra_deg, dec=target.dec_deg,
+                        a=radius, q=target.axis_ratio,
+                        pa=target.pa_deg_east_of_north),
+            provenance(), effective_source_mask=source,
+            manual_exclude=manual)
+        assert (ap.formal_diagonal_sigma_nMgy**2 ==
+                pytest.approx(reference_cumulative[i, i],
+                              rel=1e-9, abs=1e-7))
     assert np.linalg.eigvalsh(result).min() > -1e-10
     assert qa["off_diagonal_terms_are_present_even_for_white_pixel_noise"]
     assert qa["excludes_resampling_noise_correlations_and_sky_uncertainty"]
