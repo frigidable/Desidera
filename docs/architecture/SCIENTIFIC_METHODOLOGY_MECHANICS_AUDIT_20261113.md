@@ -904,3 +904,97 @@ and upstream DR11 sky loss remain unmeasured.
 **SCIENCE HOLD remains mandatory.** No original Leo P FITS or
 independent sky/PSF observations have been rerun in this source-only
 review. No branches or directories were created; `main` is unchanged.
+
+
+## Extended native-sky support and masked-baseline closure audit: M32–M34 (2026-11-13)
+
+The following refinements change read-only diagnostics and their
+verification, not original FITS, adopted sky subtraction, galaxy
+membership, a scientifically calibrated coadd covariance, or a total
+photometric magnitude.
+
+### M32 — central interpolation hides target-footprint extrapolation — FIXED
+
+**Source:** Stage03 `_audit_sky_training_target_geometry` and
+`diagnose_current_project_residual_sky`. M31 checked only the native
+sky coordinate of the galaxy centre against the convex hull of actual
+background-training pixels. The classification `centre inside` can
+remain true while a diffuse/asymmetric or displaced protected target
+footprint straddles the outer boundary of the region supported by the
+sky fit. Evaluating a tilted sky across that region then requires
+partial **extrapolation**, despite good centre geometry and same-coadd
+heldout RMS.
+
+**Correction:** the identical hull is now evaluated at EVERY native
+pixel centre belonging to the union of the actual Scene-target
+protection, the user target protection and provisional isophote
+candidate. Report: the protected count, count and fraction outside
+the training hull, maximum nonnegative extrapolation distance in
+native pixels, signed supporting-line distance (negative when safely
+inside), and boolean coverage status. If the provisional footprint
+has any pixels outside the hull, Stage03 records an explicit warning
+even when the centre remains geometrically interpolated. Compute
+distances in bounded native row batches; do not allocate a dense
+`n_hull_edges × n_protected_pixels` matrix.
+
+This measures coverage of a **provisional Scene protection**,
+not a measured LSB isophote or actual profile extent. Inside the
+training hull never certifies stellar halo exclusion, independent
+background exposures or a valid residual sky-plane correction.
+The diagnostic neither changes training pixels nor selects/adopts a
+sky model.
+
+### M33 — constructing a sky hull from every training pixel has avoidable astronomical-scale cost — FIXED
+
+**Source:** Stage03 M31 hull implementation. On a large native coadd
+the actual training set can contain millions of pixels.
+The earlier implementation allocated a full `N × 2` floating
+point coordinates matrix and passed every pixel to Qhull. This
+increases memory and CPU cost for a diagnostic whose result depends
+only on the *convex extent* of these locations.
+
+**Exact mathematical reduction:** for each occupied native image
+row, retain only the first and last selected training pixel centre.
+Every other training centre in that row is a convex combination of
+these endpoints. Thus the convex hull of all training pixels is
+identical to the hull of at most `2 × N_native_rows` row endpoints.
+This is exact for a Boolean native grid, not spatial downsampling
+or numerical approximation. A regression compares supporting-line
+distances and convex-hull vertex counts with full-pixel
+`scipy.spatial.ConvexHull` for reproducibly random heterogeneous
+spatial support. Occupancy is still tested against the original
+selected native pixels; no interpolation or sky pixel reassignment.
+
+### M34 — null-baseline source-mask counterfactual lacked independent native closure — FIXED
+
+**Source:** Stage04.3 M30. After exposing direct conditional flux
+when a baseline aperture is entirely provisional-source-masked,
+the existing independent outer-aperture reintegration test was still
+skipped whenever that baseline flux was `null`.
+Thus the new exceptional branch was not subject to the same
+production-level mathematical identity check as ordinary
+source-mask relaxations.
+
+**Correction:** always compare the conditional source-mask-relaxed
+outer flux with `measure_native_aperture` on the original frame
+using all-zero provisional source mask and unchanged hard/manual
+masks. Test **both** matching null measurability and matching signed
+flux when measurable, including nonzero frozen sky scenarios.
+Preserve the baseline `null` and undefined delta: observing
+previously source-masked pixels does not infer physical galaxy light.
+Synthetic tests require this verification flag even when the
+baseline is null, and retain the fully manually blocked no-signal
+case.
+
+### Observational limits remain unchanged
+
+All three issues involve a well-defined numerical operation or
+diagnostic-support geometry. They are not an independent observation
+of the correct DESI coadd sky. The decisive outstanding experiments
+remain injection–recovery through the **whole Stage01–04 chain**
+(including PSF, detection, masks and background reselection),
+calibration of actual correlated-noise coverage, and independent
+exposure / reference-imaging comparisons for faint galaxy outskirts.
+
+**SCIENCE HOLD remains.** These source tests do not rerun Leo P
+native FITS; PR #84 stays Draft and `main` stays untouched.
