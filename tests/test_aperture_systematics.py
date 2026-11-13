@@ -1142,7 +1142,8 @@ def test_target_ring_covariance_has_nulls_for_unmeasured_masked_annulus():
     f = frame(image=np.zeros(shape), shape=shape, w=pixel_wcs)
     source = np.zeros(shape, dtype=bool)
     yy, xx = np.indices(shape)
-    source[(xx-160)**2 + (yy-160)**2 < 9.**2] = True
+    # Only the inner ring is entirely lost; the outer ring remains measured.
+    source[(xx-160)**2 + (yy-160)**2 < 4.5**2] = True
     out = estimate_blank_annulus_covariance(
         f, geometry(a=1.6, q=.8, pa=24.), (.5, 1., 1.6),
         effective_source_mask=source,
