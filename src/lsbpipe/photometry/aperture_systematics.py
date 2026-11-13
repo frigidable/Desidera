@@ -285,6 +285,25 @@ def estimate_blank_annulus_covariance(
          if i in measured_ring_indices and j in measured_ring_indices
          else None for j in range(len(radii))]
         for i in range(len(radii))]
+    # Cumulative aperture weights sum the underlying exact ring weights.
+    # Omitting their shared boundary-pixel covariance would understate
+    # even the purely DIAGONAL-INVVAR cumulative measurement variance.
+    transfer = np.tril(np.ones((len(radii), len(radii))))
+    target_cumulative_diagonal_covariance = (
+        transfer @ target_diagonal_covariance @ transfer.T)
+    independent_ring_variance_sum = np.cumsum(
+        np.diag(target_diagonal_covariance))
+    cumulative_valid = [
+        any(v is not None for v in target_ring_formal_variances[:i+1])
+        for i in range(len(radii))]
+    cumulative_formal_variances = [
+        float(target_cumulative_diagonal_covariance[i, i])
+        if cumulative_valid[i] else None for i in range(len(radii))]
+    cumulative_variance_increase = [
+        float(target_cumulative_diagonal_covariance[i, i] /
+              independent_ring_variance_sum[i] - 1.)
+        if cumulative_valid[i] and independent_ring_variance_sum[i] > 0.
+        else None for i in range(len(radii))]
     exclusion_distance_pix = full_radius_pix + projected.a_pix + 3.
     margin = int(math.ceil(projected.a_pix + 3))
     step = max(2 * margin + 2, 8)
@@ -441,6 +460,11 @@ def estimate_blank_annulus_covariance(
                 "covariance_nMgy2": target_diagonal_covariance_json,
                 "n_nonzero_off_diagonal_pairs": len(off_diagonal_pairs),
                 "max_off_diagonal_correlation": max_boundary_correlation,
+                "cumulative_diagonal_pixel_formal_variance_nMgy2":
+                    cumulative_formal_variances,
+                "cumulative_variance_increase_vs_independent_ring_sum":
+                    cumulative_variance_increase,
+                "cumulative_covariance_uses_exact_ring_transfer": True,
                 "null_row_and_column_means_no_usable_target_pixels": True,
                 "exact_fractional_boundaries_can_share_native_pixels": True,
                 "off_diagonal_terms_are_present_even_for_white_pixel_noise": True,
