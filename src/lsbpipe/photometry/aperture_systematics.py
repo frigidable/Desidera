@@ -476,9 +476,14 @@ def estimate_blank_annulus_covariance(
         },
         "candidate_storage_policy": "ROW_BLOCKS_AND_COPRIME_INDEX_STRIDE_NO_CENTER_ARRAY",
         "candidate_grid_nodes_by_quadrant": available_by_quadrant,
-        "accepted_centres_by_quadrant": accepted_by_quadrant,
+        # A phase shift can cross the half-image boundary: spatial
+        # coverage QA must refer to ACTUALLY PLACED native centres,
+        # not the quadrant originally assigned to each integer lattice node.
+        "accepted_centres_by_quadrant": physical_quadrant_counts,
+        "accepted_lattice_nodes_by_quadrant": accepted_by_quadrant,
+        "accepted_centres_are_actual_phase_shifted_native_positions": True,
         "n_quadrants_with_accepted_blanks": sum(
-            n > 0 for n in accepted_by_quadrant),
+            n > 0 for n in physical_quadrant_counts),
         "n_examined": int(examined),
         "n_rejected": int(rejected),
         "n_accepted": len(centres),
@@ -529,7 +534,7 @@ def estimate_blank_annulus_covariance(
         if report["n_quadrants_with_accepted_blanks"] < 3:
             report["warnings"].append(
                 "BLANK_APERTURE_SPATIAL_QUADRANT_COVERAGE_LIMITED")
-        if max(accepted_by_quadrant) / len(centres) > .5:
+        if max(physical_quadrant_counts) / len(centres) > .5:
             report["warnings"].append(
                 "BLANK_APERTURE_SAMPLES_DOMINATED_BY_ONE_QUADRANT")
     if required > max_placements:
@@ -878,11 +883,21 @@ def diagnose_aperture_systematics(
                 source_only_area,
             "flux_added_if_only_source_mask_disabled_nMgy":
                 source_only_flux,
+            # An entirely source-masked baseline has no measured flux.
+            # Still, after relaxing ONLY that mask, the exposed original
+            # pixels can be integrated exactly; keep the baseline null.
+            # This is a conditional CONTAMINANT+TARGET flux, not repaired
+            # galaxy photometry or a missing-light estimate.
             "conditional_relaxed_flux_nMgy": (
-                float(first["cumulative"][radial_index][
-                    "signed_valid_flux_nMgy"] + source_only_flux)
-                if first["cumulative"][radial_index][
-                    "signed_valid_flux_nMgy"] is not None else None),
+                float((first["cumulative"][radial_index][
+                    "signed_valid_flux_nMgy"] or 0.) + source_only_flux)
+                if (first["cumulative"][radial_index][
+                    "signed_valid_flux_nMgy"] is not None or
+                    source_only_area > 0.) else None),
+            "relaxed_flux_measured_only_after_unmasking_source": bool(
+                first["cumulative"][radial_index][
+                    "signed_valid_flux_nMgy"] is None and
+                source_only_area > 0.),
             "status": ("CONDITIONAL_EXACT_SKY_RESPONSE"
                        if area_i > 0. else
                        "NO_VALID_NATIVE_PIXELS_NO_SKY_INFERENCE"),
@@ -1016,6 +1031,8 @@ def diagnose_aperture_systematics(
                     row["conditional_relaxed_flux_nMgy"],
                 "baseline_underconstrained":
                     row["frozen_valid_flux_nMgy"] is None,
+                "relaxed_flux_measured_only_after_unmasking_source":
+                    row["relaxed_flux_measured_only_after_unmasking_source"],
             } for row in radial_rows],
             "disjoint_annuli": [{
                 "inner_radius_arcsec": row["inner_radius_arcsec"],
@@ -1027,6 +1044,8 @@ def diagnose_aperture_systematics(
             } for row in radial_rings],
             "outer_native_reintegration_verified": bool(
                 original_flux is not None and relaxed_flux is not None),
+            "relaxed_flux_may_be_observable_with_null_baseline": True,
+            "no_missing_galaxy_light_claim_for_relaxed_flux": True,
             "hard_and_manual_masks_unchanged": True,
             "positive_or_negative_flux_is_not_membership_proof": True,
             "missing_target_light_not_reconstructed": True,
