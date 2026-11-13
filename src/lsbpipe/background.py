@@ -1189,8 +1189,13 @@ def _audit_current_project_sky_injection_recovery(
     ivar = np.asarray(inverse_variance)
     ny,nx = original.shape
     ax,ay = map(float, anchor_native_xy)
-    yy,xx = np.indices(original.shape,dtype=float)
-    rr = np.hypot(xx-ax,yy-ay)
+    # Broadcast 1-D coordinate offsets instead of materializing two
+    # additional full-frame float64 x/y grids. Each frozen synthetic
+    # profile reuses the same immutable elliptical-radius map; only
+    # its scale length h changes across the three predeclared trials.
+    x_offset = np.arange(nx, dtype=float) - ax
+    y_offset = np.arange(ny, dtype=float) - ay
+    rr = np.hypot(x_offset[None, :], y_offset[:, None])
     effective_target_radius = float(
         np.sqrt(np.count_nonzero(protected)/pi))
     if effective_target_radius < 3.:
@@ -1215,7 +1220,15 @@ def _audit_current_project_sky_injection_recovery(
             "unmasked_aperture_pixels": n_usable,
             "science_adopted": False,
         }
-    ax_ap, ay_ap = xx[aperture],yy[aperture]
+    aperture_y, aperture_x = np.nonzero(aperture)
+    ax_ap = aperture_x.astype(float)
+    ay_ap = aperture_y.astype(float)
+    # The circular selection is no longer needed. Reuse the ellipse
+    # distance for every scale, without allocating another full-grid
+    # coordinate pair or recomputing the same hypot three times.
+    del rr
+    elliptical_radius = np.hypot(
+        x_offset[None, :], y_offset[:, None] / 0.65)
     # Frozen training and holdout are queried through exactly the same
     # Scene operation masks as fit_residual_background. Synthetic light
     # leaking into these samples is the mechanism this experiment probes.
@@ -1232,7 +1245,6 @@ def _audit_current_project_sky_injection_recovery(
     # morphological/stellar population model. q=0.65 test ellipse.
     for factor in (0.5, 1.0, 2.0):
         h = factor*effective_target_radius
-        elliptical_radius = np.hypot(xx-ax,(yy-ay)/0.65)
         signal = 0.005*np.exp(-elliptical_radius/h)
         # Promote FITS float32 to float64 before injection so the known
         # synthetic increment is not rounded away on brighter coadd pixels.
