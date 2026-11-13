@@ -1384,3 +1384,67 @@ def test_integer_translated_aperture_bbox_slices_are_exact_at_native_edges():
     with pytest.raises(TypeError, match="integer pixels"):
         _translated_exact_aperture_overlap_slices(
             mask, shape, .5, 0)
+
+
+
+def test_systematics_nested_probes_share_exact_immutable_mask_roots():
+    """No repeated full-grid copies for already frozen source/manual masks."""
+    from lsbpipe.photometry.aperture_systematics import _scene_masks
+    from lsbpipe.photometry.aperture_flux import _snapshot_native_boolean_mask
+
+    f = frame(value=.6)
+    source = np.zeros(f.shape, bool)
+    manual = np.zeros(f.shape, bool)
+    source[12:35, 13:37] = True
+    manual[41:55, 68:79] = True
+    first_source, first_manual = _scene_masks(f, source, manual)
+    assert first_source is not source
+    assert first_manual is not manual
+    for _ in range(8):
+        next_source, next_manual = _scene_masks(
+            f, first_source, first_manual)
+        assert next_source is first_source
+        assert next_manual is first_manual
+        assert _snapshot_native_boolean_mask(
+            "source", first_source, f.shape) is first_source
+        assert _snapshot_native_boolean_mask(
+            "manual", first_manual, f.shape) is first_manual
+    source[:] = True
+    manual[:] = True
+    assert first_source.sum() == 23*24
+    assert first_manual.sum() == 14*11
+    with pytest.raises(ValueError):
+        first_source.setflags(write=True)
+    with pytest.raises(ValueError):
+        first_manual.setflags(write=True)
+
+    # A NumPy read-only VIEW over mutable storage must not pass the
+    # byte-root check even if it presents writeable=False.
+    view = source.view()
+    view.flags.writeable = False
+    copy, _ = _scene_masks(f, view, first_manual)
+    assert copy is not view
+    source[:] = False
+    assert copy.all()
+
+
+def test_blank_covariance_is_exactly_invariant_under_proven_immutable_masks():
+    """Snapshot reuse changes allocations, never source geometry or flux QA."""
+    from lsbpipe.photometry.aperture_flux import _snapshot_native_boolean_mask
+    f = frame(image=np.random.default_rng(70).normal(
+        0., .2, (321, 321)), shape=(321, 321))
+    source = np.zeros(f.shape, bool)
+    manual = np.zeros(f.shape, bool)
+    source[61:79, 77:91] = True
+    manual[205:214, 191:202] = True
+    frozen_s = _snapshot_native_boolean_mask("source", source, f.shape)
+    frozen_m = _snapshot_native_boolean_mask("manual", manual, f.shape)
+    common = dict(frame=f, outer=geometry(a=1.6, q=.71, pa=22.),
+                  radii_arcsec=(.5, 1., 1.6), max_placements=24)
+    a = estimate_blank_annulus_covariance(
+        **common, effective_source_mask=source, manual_exclude=manual)
+    b = estimate_blank_annulus_covariance(
+        **common, effective_source_mask=frozen_s,
+        manual_exclude=frozen_m)
+    assert a == b
+    assert b["covariance_calibrated_for_science"] is False
