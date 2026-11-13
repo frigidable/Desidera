@@ -1,4 +1,4 @@
-# Desidera performance audit — v0.2.1.dev1 (2026-11-13)
+# Desidera performance audit — v0.2.1.dev2 (2026-11-13)
 
 Status: **development candidate in existing Draft PR #84**,
 `feature/scene-wcs-editor-sc1`. No merge, new branch or directory,
@@ -352,3 +352,208 @@ FITS I/O, GUI event processing or large image cutouts.
 **Development status: v0.2.1.dev1 candidate, Draft PR #84.**
 No new branches/directories. Keep the original FITS and `main`
 unaltered, preserve all science safeguards and SCIENCE HOLD.
+
+
+## Third performance audit — v0.2.1.dev2, P39–P42 (2026-11-13)
+
+This further investigation follows P35–P38 and the earlier P0
+optimization cycle, all on the **same existing feature branch and
+Draft PR #84**. It adds four additional optimizations without
+replacing original FITS, skipping any scientific gate, modifying
+coadd pixel values or silently changing source/sky decisions.
+
+### P39 — repeat Stage03 full-image Euclidean distance transforms across fixed grid trials — FIXED
+
+**Source:** `background._automatic_scene_sky_pixels` is run for
+the initial automatic sky selection and six predeclared fixed
+sensitivity trials. Every call previously recalculated the full
+Euclidean distance transform of native **target** protection and
+the combined provisional-source/unresolved-footprint veto. Five
+of the six variants change only tile edges, tile offsets or the
+sampling policy. The other two increase one guard radius each:
+`expanded_target_1p5` and `expanded_sources_1p5`.
+
+**Correction:** `diagnose_current_project_residual_sky` creates a
+private dictionary, and passes it to the initial sky selector and
+six trials. Only the **first, baseline** target and catalogue
+guard-distance threshold masks are retained. At every possible
+reuse, both the radius and **all original native Boolean mask
+pixels** are compared to the cached source mask snapshot.
+If either differs, the EDT is recomputed; altered-radius trials
+never evict the baseline. There is no module-global cache, user
+project cache, cross-band reuse or lookup based only on mtime,
+input object identity, sky flux, or number of masked pixels.
+
+With both protected/source masks nonempty and seven selections,
+full-grid EDT calls decrease from `7×2=14` to
+`2 baseline + 2 expanded guards = 4`. Boolean AND/OR,
+source-inventory screening, tile selection, same-coadd holdout,
+fit-quality gates and original sky values are still recomputed
+for each fixed trial.
+
+**Memory tradeoff:** the cache holds two Boolean source-mask
+snapshots and two Boolean threshold-result rasters. At
+2048×2048 this is **approximately 16 MiB** of additional
+byte-packed-in-NumPy Boolean `itemsize=1` array storage,
+before other temporary arrays. Unlike caching float64 EDT
+distance fields, this memory use remains bounded and the
+cache is discarded when the Stage03 call completes. It
+is not a measured reduction of process peak RSS.
+
+**Tests:** compare every cached train/holdout tile mask and the
+entire selection QA dictionary against a no-cache run for
+all six variants plus baseline; instrument EDT calls to
+require exactly four. Deliberately mutate a source-exclusion
+mask and a target-protection mask after cache creation;
+the changed regions **must not** reuse stale guards. This
+is geometry preservation, not evidence of truly empty sky.
+
+### P40 — repeated serialization of an unchanged native WCS header per radial aperture — FIXED
+
+**Source:** `measure_native_aperture` previously computed
+`grid_fingerprint(wcs, shape)` for every radius, and
+`_verify_frozen_growth_curves` recomputed it again.
+This calls `WCS.to_header(relax=True)`, sorts header cards,
+constructs a JSON payload and hashes it. The frame already
+owns its native celestial WCS and shape independently of
+external callers.
+
+**Correction:** `NativeBandFrame.native_grid_fingerprint`
+calculates the **same exact** `lsbpipe.scene.grid_fingerprint`
+once and memoizes the result in that frame. Stage04
+aperture receipts and Stage04.3 frozen-curve verification use
+the cached value. The public `frame.wcs` property **still
+returns a deep copy**; no caller obtains a mutable pointer
+to the private source WCS through the cache. Changing
+a separate WCS object does not change the frame fingerprint.
+
+The expensive boundary-based WCS **affine projection quality
+check is still performed for every ellipse** and must not be
+confused with the cached geometry *identity*. Tests check
+exact SHA/string equality against an independently
+serialized WCS, one fingerprint serialization across a
+ten-radius full growth curve, per-frame (not global)
+cache boundaries, and isolation from external WCS edits.
+Existing receipt provenance and scientific status remain unchanged.
+
+### P41 — repeated catalogue-search string assembly and intermediate Qt paints — FIXED
+
+**Source:** `gui/scene_editor.SceneEditor._render_source_registry`
+joined and case-folded ten fields of Tractor QA text for
+**every** record, even with an empty search query. It
+then cleared and rebuilt a `QListWidget` item by item,
+allowing unnecessary viewport updates for inventories up
+to the existing safety cap.
+
+**Correction:** build text only when a real nonempty
+search term exists; use Qt uniform item sizes for homogeneous
+one-line rows, suppress viewport updates during the batch
+rebuild and restore them before status/selection handling.
+All filters still select the same source entries, search
+remains synchronous and case-insensitive, and no source
+evidence or QA state is lost. Existing offline Qt regression
+covers all filter/search modes; the test now also verifies
+uniform-size mode and repaint re-enablement.
+
+This is a modest **main-thread efficiency** improvement,
+not a measured large-catalogue responsiveness guarantee.
+For very large source lists, a proper virtualized
+`QAbstractListModel`, search-token index and controlled
+debouncing may be warranted, but require identity/selection
+and keyboard-accessibility tests.
+
+### P42 — full 2D coordinate-stack allocations in Stage04 sector QA — FIXED
+
+**Source:** `measure_native_aperture` constructs **eight
+descriptive pixel-centre sectors** using dense 2D native x/y
+coordinate grids plus a stacked `2 × n_pixels` matrix to
+multiply by the local inverse east/north tangent Jacobian.
+That was avoidable temporary allocation in every radial
+aperture, especially for larger ellipses.
+
+**Correction:** a private
+`_sector_ids_from_broadcast_native_centres` computes 1-D
+native x/y offsets, broadcasts their two affine combinations
+directly into east and north tangent coordinates, and uses
+the **same** `atan2(east, north)`, modulo 2π and floor
+into 45-degree labels. It preserves WCS handedness,
+the same local tangent basis, the same eight sector
+area accounting, and original pixel-centre semantics.
+No modification is made to **exact fractional-pixel
+flux integration** or to the fact that sector boundaries
+remain descriptive rather than true exact angular sectors.
+
+A deterministic seeded regression compares the new
+native sector labels **elementwise** against the previous
+dense matrix expression on multiple rectangular grids
+and shear/rotation combinations. The enlarged benchmark
+also checks this identity before reporting elapsed times.
+
+### New performance evidence and verification boundaries
+
+The existing offline benchmark remains the documented
+command, now with **seven** reference-vs-optimized
+computational kernel comparisons:
+
+```powershell
+python scripts/benchmark_desidera_performance.py --size 512 --repeats 3
+```
+
+Its new Stage03 variant recomputes baseline and fixed tile
+controls with and without guard caching and verifies
+deterministic selected-tile counts, guard radii and quadrant
+coverage. Its new WCS comparison checks the exact original
+header identity. Its native-sector comparison checks identical
+eight-sector labels.
+
+A median kernel-time ratio is **not** an end-to-end Leo P
+speed measurement or a measurement of Windows GUI latency.
+Neither total elapsed time nor resident memory has been
+measured for the actual DR11 quartet on the researcher's
+machine by this code audit. The benchmark comparisons
+are deliberately non-gating to avoid flaky cross-platform
+CI timing conditions.
+
+### Remaining prioritized bottlenecks and risks
+
+1. **Original-FITS cold-start I/O:** FITS decompression,
+   all four source hashes, redundant opening paths,
+   sharing of verified immutable pixel buffers and
+   GUI raster construction remain plausible major
+   contributors; no shortcut may replace full content
+   lineage with `mtime` as if it were immutable identity.
+2. **Native RAM and multi-band concurrency:** three
+   `float64` full-band layers, a uint32 MASKBITS raster,
+   validity/reason masks, sky sensitivity variants,
+   ePSF kernel/stars, Qt RGB/pixmap buffers and parallel
+   background workers can overlap in memory. Record
+   **real peak RSS**, not just summed array sizes.
+3. **Stage04 scientific WCS projections:** caching the
+   **fingerprint** does not remove the repeated 16-sky-
+   boundary-point accuracy tests. Potential reuse of
+   radial WCS basis needs per-radius affine-error checks
+   and exact saved recipe equivalence before adoption.
+4. **Stage03 still-repeated bright-Gaia rasterization
+   and Scene/QA object construction:** no source-
+   inventory or star-wing safety checks were skipped;
+   any future reuse must include verified identities
+   and protect the source-screening invariants.
+5. **Stage01 empirical PSF and extended diagnostics:**
+   profile ePSF iterations, star stamps/holdouts and
+   optional wing probes on real original coadds,
+   keeping QA completeness and scientific HOLD explicit.
+6. **Qt large-catalogue/scene redraw:** evaluate a
+   virtualized model, bounded preview-image cache and
+   WCS-consistent overlay redraw only with real
+   responsiveness and memory metrics.
+7. **True performance benchmark:** a pinned real-data
+   Leo P / dense-Tractor / large-extended-galaxy
+   corpus with identical science receipt identities,
+   CPU wall time, peak RSS, I/O byte counts, worker
+   concurrency, GUI first-image time, and p50/p95
+   event latency across at least cold/warm runs.
+
+**v0.2.1.dev2 is a Draft-PR development revision,
+not a tagged scientific release.** The original
+NativeBandFrame arrays, FITS data, `main` branch
+and SCIENCE HOLD are unchanged.
