@@ -643,7 +643,6 @@ def test_hub_never_opens_different_galaxy_after_saved_folder_replaced(
         hub, tmp_path, monkeypatch):
     """A stale visible library row cannot switch silently to another UUID."""
     from PySide6.QtWidgets import QMessageBox
-    import lsbpipe.surveys.object_projects as storage
     from lsbpipe.surveys.object_projects import PROJECT_FILENAME
 
     original = create_object_project(
@@ -703,7 +702,10 @@ def test_hub_blocks_automatic_resume_of_wrong_project_uuid(
     (a.root / PROJECT_FILENAME).write_bytes(
         (foreign.root / PROJECT_FILENAME).read_bytes())
     hub.refresh()
+    # Avoid changing persistent QSettings outside this fixture.
+    hub.auto_resume.blockSignals(True)
     hub.auto_resume.setChecked(True)
+    hub.auto_resume.blockSignals(False)
     hub._auto_resume_last_project()
     assert hub.workspace is None
     assert "DIFFERENT galaxy project UUID" in hub.hint.text()
