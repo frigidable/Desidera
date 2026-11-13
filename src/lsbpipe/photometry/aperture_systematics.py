@@ -17,6 +17,7 @@ import numpy as np
 from .aperture_flux import (
     ApertureGeometryICRS, ApertureProvenance, ApertureSkyScenario,
     measure_native_aperture, project_icrs_ellipse_to_native,
+    _snapshot_native_boolean_mask,
 )
 from .contracts import NativeBandFrame
 from lsbpipe.scene import grid_fingerprint
@@ -27,13 +28,14 @@ _BLANK_SCHEMA = "desidera.photometry.blank-annulus-covariance/3"
 
 
 def _scene_masks(frame, source_mask, manual_exclude):
-    """Snapshot user-controlled masks and retain immutable hard invalidity."""
+    """Snapshot GUI masks once; nested radial probes reuse immutable buffers."""
     arrays = []
     for name, raw in (("source", source_mask), ("manual", manual_exclude)):
         array = np.asarray(raw)
         if array.dtype.kind != "b" or array.shape != frame.shape:
             raise ValueError(name + " mask must be native-grid Boolean")
-        arrays.append(np.array(array, dtype=bool, copy=True))
+        arrays.append(_snapshot_native_boolean_mask(
+            name, array, frame.shape))
     return arrays[0], arrays[1]
 
 
