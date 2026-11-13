@@ -350,15 +350,18 @@ def verify_asset_checksum(project_root: str | Path, asset_id: str) -> dict:
             if current.get(key) != asset.get(key):
                 raise RuntimeError(
                     "Indexed FITS metadata changed during SHA256 verification")
+        # Keep the historical public diagnostic for a verified
+        # original with a changed full-content SHA, even after an
+        # inventory refresh marks the asset CHANGED_SINCE_CHECKSUM.
+        previous = current.get("sha256")
+        if previous is not None and previous != sha:
+            raise RuntimeError(
+                "Indexed FITS content changed; import a new asset version")
         if (current.get("size_bytes") != before.st_size or
                 current.get("mtime_ns") != before.st_mtime_ns or
                 current.get("checksum_status") == CHECKSUM_CHANGED):
             raise RuntimeError(
                 "Indexed FITS changed; re-import original asset before verification")
-        previous = current.get("sha256")
-        if previous is not None and previous != sha:
-            raise RuntimeError(
-                "Indexed FITS content changed; import a new asset version")
         if path.is_symlink() or not path.is_file():
             raise RuntimeError(
                 "Indexed FITS became unsafe while committing SHA256 verification")
