@@ -186,6 +186,8 @@ class NativeBandFrame:
     _area: float = field(init=False, repr=False, compare=False)
     _native_input_digest: str | None = field(
         init=False, default=None, repr=False, compare=False)
+    _native_grid_digest: str | None = field(
+        init=False, default=None, repr=False, compare=False)
 
     def __post_init__(self, native_wcs):
         if self.region not in regions_for_release(self.release):
@@ -266,6 +268,23 @@ class NativeBandFrame:
     @property
     def local_pixel_area_arcsec2(self):
         return self._area
+
+    @property
+    def native_grid_fingerprint(self) -> str:
+        """One exact WCS/header+shape identity for the immutable frame.
+
+        Serializing the same FITS WCS to sorted header cards once per
+        nested aperture was redundant. The frame privately owns a
+        defensive WCS copy; public .wcs still returns an independent
+        copy on every read and never exposes this cached source.
+        """
+        cached = self._native_grid_digest
+        if cached is not None:
+            return cached
+        from lsbpipe.scene import grid_fingerprint
+        value = grid_fingerprint(self._wcs, self.shape)
+        object.__setattr__(self, "_native_grid_digest", value)
+        return value
 
     @property
     def native_input_sha256(self) -> str:
