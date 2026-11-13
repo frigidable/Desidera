@@ -290,10 +290,28 @@ claimed merely from this review.
    magnitude, coadd covariance, SBF distance or galaxy
    source membership.
 
-**Current status:** implementation commits staged on the existing
-feature branch. The final exact HEAD results must be appended
-after checking GitHub Actions; until then do not claim this
-revision's CI or a wheel-release certification is complete.
+**Observed CI evidence for implementation commit
+`f4189b5ae6b53fc4070c0cb1e391be4f4f34676e`:**
+
+- Scientific matrix on Ubuntu/Windows × Python 3.10/3.12,
+  GUI-import and the **new noneditable wheel job**: [all
+  successful](https://github.com/frigidable/Desidera/actions/runs/43503182675).
+- Windows full scientific/GUI workflow: [successful](https://github.com/frigidable/Desidera/actions/runs/43503182660):
+  **963 scientific tests passed**, 3 skipped and one expected
+  `NoDetectionsWarning`; **264 GUI tests passed**; 31 general
+  and 25 photometry screenshots produced (not manually
+  reviewed for visual acceptance).
+- Real CCD archive acceptance workflow: [successful offline
+  validation](https://github.com/frigidable/Desidera/actions/runs/43503182650).
+  The actual remote FITS download, archive printout and
+  artifact upload were explicitly **SKIPPED** on the PR event.
+
+These results establish correctness only for that exact
+implementation commit, not the eventual distribution release.
+The final PR description and GitHub checks identify the
+latest HEAD, including any subsequent documentation-only
+commits. In no case does green CI certify astrophysical
+sky/PSF/SBF science adoption.
 
 ## 5. Practical prioritized next phase
 
