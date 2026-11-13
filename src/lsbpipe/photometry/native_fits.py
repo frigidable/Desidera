@@ -50,6 +50,13 @@ def load_native_legacy_quartet(
     _assert_safe_original_paths(root, paths)
     checkpoint(cancel_check)
     stats = {name: path.stat() for name, path in paths.items()}
+    # Strict FITS checks precede expensive full-file hashing. Keep the
+    # read-only FITS handles open through the hash and construct the
+    # immutable science frame ONLY ONCE, after complete source evidence
+    # is available. Previously an intermediate NativeBandFrame was
+    # discarded and a second frame rebuilt, duplicating all four
+    # float64/uint32 arrays, validity masks and every invalidity layer.
+    # For large bricks this was a costly extra full-image memory pass.
     with ExitStack() as stack:
         hdus = {
             name: stack.enter_context(fits.open(path, memmap=True))
@@ -73,6 +80,38 @@ def load_native_legacy_quartet(
             ivar_evidence = "INVVAR_FITS_BUNIT_CONFIRMED"
         else:
             ivar_evidence = "LEGACY_SURVEY_DOCUMENTATION_ASSUMPTION"
+
+        checkpoint(cancel_check)
+        hashes = {}
+        for name, path in paths.items():
+            checkpoint(cancel_check)
+            before = stats[name]
+            if hash_inputs:
+                info = _sha256_file(
+                    path, cancel_check=cancel_check, data_root=root)
+                hashes[name] = info["sha256_local"]
+                size, modified = info["size_bytes"], info["mtime_ns"]
+            else:
+                _assert_safe_original_paths(root, {name: path})
+                final = path.stat()
+                size, modified = final.st_size, final.st_mtime_ns
+            if (before.st_size, before.st_mtime_ns) != (size, modified):
+                raise RuntimeError(
+                    "Original FITS changed during photometric input preparation: "
+                    + str(path))
+
+        evidence = {
+            "data_root": str(root),
+            "files": {k: str(v) for k, v in paths.items()},
+            "hdu_indices": indices,
+            "observed_header_units": units,
+            "image_unit_evidence": unit_evidence,
+            "invvar_unit_evidence": ivar_evidence,
+            "data_status": "NATIVE_FITS_WCS_VALIDATED_NOT_SCIENCE_ADOPTED",
+            "local_hashes": hashes,
+            "hash_provenance": ("LOCAL_SHA256_NOT_REMOTE_AUTHENTICITY"
+                                if hash_inputs else "INPUT_HASHES_NOT_COMPUTED"),
+        }
         checkpoint(cancel_check)
         frame = NativeBandFrame(
             image_nMgy=arrays["image"],
@@ -82,56 +121,18 @@ def load_native_legacy_quartet(
             native_wcs=wcs,
             release=release, region=region, brick=brick, band=band,
             policy=mask_policy if mask_policy is not None else MaskPolicy(),
-            source_evidence={
-                "data_root": str(root),
-                "files": {k: str(v) for k, v in paths.items()},
-                "hdu_indices": indices,
-                "observed_header_units": units,
-                "image_unit_evidence": unit_evidence,
-                "invvar_unit_evidence": ivar_evidence,
-                "data_status": "NATIVE_FITS_WCS_VALIDATED_NOT_SCIENCE_ADOPTED",
-                "local_hashes": {},
-            })
-        # All pixel arrays are now immutable copies detached from the HDU.
-    checkpoint(cancel_check)
-    hashes = {}
-    for name, path in paths.items():
+            source_evidence=evidence)
+        # The frame is detached and immutable before closing FITS handles.
+        # A final safe-path/stat gate covers modifications while its
+        # buffers were materialized (even after the SHA-256 pass).
         checkpoint(cancel_check)
-        before = stats[name]
-        if hash_inputs:
-            info = _sha256_file(
-                path, cancel_check=cancel_check, data_root=root)
-            hashes[name] = info["sha256_local"]
-            size, modified = info["size_bytes"], info["mtime_ns"]
-        else:
-            _assert_safe_original_paths(root, {name: path})
+        _assert_safe_original_paths(root, paths)
+        for name, path in paths.items():
             final = path.stat()
-            size, modified = final.st_size, final.st_mtime_ns
-        if (before.st_size, before.st_mtime_ns) != (size, modified):
-            raise RuntimeError(
-                "Original FITS changed during photometric input preparation: "
-                + str(path))
-    # Rebuild only metadata; pixel data/WCS remain their detached immutable
-    # snapshots. Avoid hashing data while holding FITS file handles open.
-    evidence = {
-        "data_root": str(root),
-        "files": {k: str(v) for k, v in paths.items()},
-        "hdu_indices": indices,
-        "observed_header_units": units,
-        "image_unit_evidence": unit_evidence,
-        "invvar_unit_evidence": ivar_evidence,
-        "data_status": "NATIVE_FITS_WCS_VALIDATED_NOT_SCIENCE_ADOPTED",
-        "local_hashes": hashes,
-        "hash_provenance": ("LOCAL_SHA256_NOT_REMOTE_AUTHENTICITY"
-                            if hash_inputs else "INPUT_HASHES_NOT_COMPUTED"),
-    }
-    checkpoint(cancel_check)
-    return NativeBandFrame(
-        image_nMgy=frame.image_nMgy,
-        invvar_nMgy2=frame.invvar_nMgy2,
-        nexp=frame.nexp,
-        maskbits=frame.maskbits,
-        native_wcs=frame.wcs,
-        release=release, region=region, brick=brick, band=band,
-        policy=frame.policy,
-        source_evidence=evidence)
+            original = stats[name]
+            if (original.st_size, original.st_mtime_ns) != (
+                    final.st_size, final.st_mtime_ns):
+                raise RuntimeError(
+                    "Original FITS changed during photometric input preparation: "
+                    + str(path))
+    return frame
