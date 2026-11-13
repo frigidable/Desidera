@@ -944,18 +944,22 @@ def diagnose_aperture_systematics(
         manual_exclude=manual, sky=sky)
     original_flux = last["signed_valid_flux_nMgy"]
     relaxed_flux = relaxed.signed_valid_flux_nMgy
-    # Compare the independent outermost relaxed native integration to
-    # the per-radius source-only pixel sum. This checks the actual
-    # counterfactual operator while keeping hard and manual masks fixed.
-    if original_flux is not None and relaxed_flux is not None:
-        predicted = (
-            original_flux +
-            radial_rows[-1]["flux_added_if_only_source_mask_disabled_nMgy"])
-        if not math.isclose(
-                predicted, relaxed_flux, rel_tol=1.e-11, abs_tol=1.e-7):
-            raise ValueError(
-                "Stage 04.3 source-only radial mask counterfactual "
-                "disagrees with independent native integration")
+    # An original galaxy aperture can be entirely source-masked.  The
+    # M30 counterfactual is then still observable if relaxing ONLY the
+    # source mask reveals valid native pixels. Verify that result against
+    # independent direct reintegration too; do not restrict this identity
+    # to cases that already had a baseline observed-area flux.
+    predicted_relaxed_flux = radial_rows[-1]["conditional_relaxed_flux_nMgy"]
+    if (relaxed_flux is None) != (predicted_relaxed_flux is None):
+        raise ValueError(
+            "Stage 04.3 source-only radial mask counterfactual "
+            "observability disagrees with independent native integration")
+    if relaxed_flux is not None and not math.isclose(
+            predicted_relaxed_flux, relaxed_flux,
+            rel_tol=1.e-11, abs_tol=1.e-7):
+        raise ValueError(
+            "Stage 04.3 source-only radial mask counterfactual "
+            "disagrees with independent native integration")
     candidate_fluxes = [
         float(curve["cumulative"][-1]["signed_valid_flux_nMgy"])
         for curve in curves
@@ -1042,8 +1046,9 @@ def diagnose_aperture_systematics(
                 "signed_flux_newly_available_nMgy":
                     row["source_only_flux_change_nMgy"],
             } for row in radial_rings],
-            "outer_native_reintegration_verified": bool(
-                original_flux is not None and relaxed_flux is not None),
+            "outer_native_reintegration_verified": True,
+            "outer_reintegration_includes_null_baseline_case": True,
+            "outer_reintegration_checks_null_observability_as_well_as_flux": True,
             "relaxed_flux_may_be_observable_with_null_baseline": True,
             "no_missing_galaxy_light_claim_for_relaxed_flux": True,
             "hard_and_manual_masks_unchanged": True,
