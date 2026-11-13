@@ -18,6 +18,7 @@ import numpy as np
 from .aperture_flux import (
     ApertureGeometryICRS, ApertureProvenance, ApertureSkyScenario,
     measure_native_aperture, project_icrs_ellipse_to_native, _finite_float,
+    _snapshot_native_boolean_mask,
 )
 from .contracts import NativeBandFrame
 
@@ -242,9 +243,14 @@ def measure_growth_diagnostic(
             or any(b<=a for a,b in zip(radii[:-1],radii[1:]))):
         raise ValueError("Growth radii must be strictly increasing")
     sky=sky if sky is not None else ApertureSkyScenario()
-    # Explicitly copy user-editable draft masks once for the full run.
-    source=np.array(effective_source_mask,copy=True)
-    manual=np.array(manual_exclude,copy=True)
+    # Snapshot user-editable masks ONCE at the whole-growth boundary,
+    # in unforgeable read-only byte storage. Cumulative apertures reuse
+    # the same frozen identity instead of reallocating two complete
+    # native rasters per radius; exact flux operators are unchanged.
+    source = _snapshot_native_boolean_mask(
+        "effective source mask", effective_source_mask, frame.shape)
+    manual = _snapshot_native_boolean_mask(
+        "manual exclusion", manual_exclude, frame.shape)
     geometry_base={
         "ra_deg":float(anchor_icrs[0]),"dec_deg":float(anchor_icrs[1]),
         "axis_ratio":hypothesis.q,
