@@ -639,3 +639,142 @@ may be adopted. Original FITS have not been rerun here;
 existing `SCIENCE HOLD` is unchanged. All code and
 regressions remain on draft PR #84, in existing
 `src/tests/docs` directories, with no new branches.
+
+
+## Further conditional-noise and validation-cohort audit: M26–M28 (2026-11-13)
+
+This pass checked the actual mathematical operators in Stage04.1–04.3 and
+the population selection in PSF-0 Stage01, following M23–M25. The
+changes are diagnostics and independent validation safeguards, **not**
+adopted residual sky, galaxy flux, total magnitude or calibrated SBF.
+
+### M26 — exact annular boundary pixels induce covariance with *white* noise — FIXED DIAGNOSTIC GAP
+
+**Source:** `photometry/aperture_systematics.py` and the Stage04.2
+`photutils` exact masks. An exact elliptical annulus is geometrically
+nonoverlapping with the adjacent annulus, but **pixels are not indivisible
+independent ring measurements**. One pixel can have nonzero fractional
+weight in both annuli at a shared boundary. For diagonal native-pixel
+noise with inverse variances `v_p` and hard/source/manual exclusions,
+the target's formal covariance is
+
+```text
+C_ring,ij^(diagonal pixels) = sum_{p usable} w_i,p w_j,p / v_p
+C_cumulative = T C_ring T^T,    T_ij = 1 if j <= i else 0.
+```
+
+Therefore `C_ring,ij` may be strictly positive for `i != j` **even
+without any resampling-induced pixel correlation**. Summing annular
+variances as though the rings had independent noise generally
+underestimates the variance of the observed cumulative aperture.
+
+The Stage04.3 native target-versus-blank INVVAR diagnostic now includes
+`exact-target-ring-diagonal-pixel-covariance/1`: the entire small
+ring-by-ring analytic matrix, off-diagonal pair count, maximum formal
+boundary correlation and cumulative formal variance. The computation
+uses only the **actual** target's mask, subpixel phase and original
+validated INVVAR. A sparse whitened annulus-by-pixel operator forms a
+small Gram matrix; it does not create the dense coadd pixel covariance.
+A completely unobserved target ring has `null` entries rather than
+a fictitious zero-uncertainty claim. A cumulative flux containing some
+observed rings can nevertheless have a well-defined *partial-pixel*
+formal variance.
+
+Independent regressions reconstruct the exact native fractional
+weights from `photutils`, build the covariance directly from the
+diagonal pixel-noise model, verify nonzero adjacent-ring covariance,
+PSD, mask exclusion, and `T C_ring T^T` against direct cumulative
+Stage04.1 `sum(w^2/INVVAR)` uncertainty. The fully masked ring's
+covariance is required to remain unavailable. This is a **numerical
+operator reconciliation** only: the *physical* coadd noise also has
+off-diagonal pixel covariance `K_pq`, requiring the full
+`W K W^T` for calibrated photometry. No empirical blank covariance is
+automatically replaced or rescaled by this analytic term.
+
+The underlying exact-overlap and white-noise error-propagation
+conventions are documented in Photutils:
+https://docs.astropy.org/projects/photutils/en/stable/user_guide/aperture.html
+
+### M27 — Gaia holdout helped define its own stellar-width selection — FIXED COHORT LEAKAGE
+
+**Source:** `photometry/psf_empirical.py`,
+`build_empirical_coadd_psf`. Before this pass, the Gaia field-relative
+core-width reference was computed using *all* accepted Gaia stars,
+and only then were final train/holdout roles assigned. Although the
+held-out stamps were excluded from the ePSF fit, they influenced the
+population reference that rejected width outliers. The same test
+population therefore helped determine its own eligibility.
+
+**Fix:** freeze a deterministic spatially ordered train/holdout split
+immediately after the original independent per-star detection,
+isolation, native-sky and morphology screens, **before** estimating
+the field-level relative Gaia core-width distribution. Derive that
+reference exclusively from nonholdout Gaia candidates, including any
+not eventually used because of a training cap. Only nonholdout
+training candidates are width-screened. Fixed holdouts are retained,
+including unusual stellar shapes that may make the fitted model fail
+QA. The downstream ePSF training cap, manual exclusions, training-only
+outlier pruning and heldout amplitude tests remain separated. If the
+nonholdout Gaia cohort cannot establish a reference, the existing
+quality rejection remains in force rather than borrowing stars from
+validation. The report now explicitly records this provenance.
+
+A synthetic catalogue-backed integration regression intercepts the
+actual `assess_sample_widths` reference-star IDs, verifies they are
+disjoint from the held-out Gaia identifiers, and checks that manual
+train-star exclusions do not change the frozen holdout or reference
+cohort.
+
+**Residual qualification:** an ePSF-fit holdout is still **not** an
+untouched astrophysically independent stellar sample. DAO detection,
+per-star signal/noise and morphology selection are shared. Gaia DR3
+identification is not an external PSF-kernel standard. Independent
+stellar fields, spatial separation, magnitude ranges and calibration
+of stellar wings remain essential before PSF science adoption.
+
+### M28 — spatial sky holdout is disjoint in pixels but not statistically independent — OPEN SCIENCE PROTOCOL
+
+Stage03 training and holdout use disjoint selected native coadd pixels
+and predeclared geometric tiles. That protects against exact reuse of
+training pixels. However adjacent blocks can share PSF-wing residuals,
+correlated Lanczos-resampled noise, extended target light or large-scale
+sky modes. Their different pixel addresses do not establish independent
+realizations. Per-tile median and unweighted/INVVAR-weighted RMS diagnostics
+are descriptive. Neither a small holdout RMS nor agreement with the
+zero-additional-sky baseline proves unbiased subtraction of the original
+galaxy outskirts.
+
+**Required evaluation:** hold out entire regions separated by a
+predeclared physical angular buffer; repeat with multiple *fixed*
+spatial folds without choosing the best fit; compare leave-sector-out
+sky planes with the Stage04 sky Jacobian, and test all folds on
+independent injection realizations. Also compare separate CCDs with
+known provenance when available. The separation scale must be tied to
+measured coadd residual correlation, not chosen from pixel count or
+holdout RMS. This is an experiment design requirement, not a claim that
+the current coadd supplies a statistically independent sky truth.
+
+### Prioritized science acceptance after M26–M28
+
+1. **Stage01:** test train-only Gaia width selection on original Leo P
+   star fields, perform truly disjoint independent-star/CCD evaluation,
+   and calibrate wing/sky degeneracy across stellar brightness and field
+   position.
+2. **Stage02–03:** rerun source finding, source masks, sky tiles and
+   candidate sky models *after each injection*; test stars projected
+   onto galactic diffuse light, extended PSF and large-scale sky modes.
+3. **Stage04:** compare analytic diagonal-boundary covariance, blank
+   spatial covariance and empirical errors from *independent noise
+   realizations* for stationary and inhomogeneous NEXP maps; report
+   interval coverage for each radius and for the inferred total
+   separately. Do not conflate pixel-operator covariance with actual
+   coadd off-diagonal pixel covariance.
+4. **External validation:** independent deep imaging or CCD-level
+   backgrounds are needed to constrain previously subtracted light.
+   Include semi-resolved stellar populations and asymmetric low-SB
+   outskirts in the blind tests.
+
+As before, these revisions modify neither original FITS nor `main`;
+the single active feature branch remains the PR #84 draft.
+**SCIENCE HOLD** remains mandatory until real-data and end-to-end
+recovery tests meet preregistered criteria.
