@@ -1253,3 +1253,33 @@ def test_fully_source_masked_radial_counterfactual_remains_directly_observable()
         and row["relaxed_flux_measured_only_after_unmasking_source"] is False
         for row in still_absent["radial_catalogue_mask_counterfactual"]["cumulative"])
     json.dumps(still_absent, allow_nan=False)
+
+
+def test_null_baseline_counterfactual_reintegration_catches_corrupt_relaxed_flux(
+        monkeypatch):
+    """M34 must check an observable relaxed flux even with a null baseline."""
+    from dataclasses import replace
+    import lsbpipe.photometry.aperture_systematics as systematics
+
+    f = frame(value=1.25)
+    source = np.ones(f.shape, bool)
+    manual = np.zeros(f.shape, bool)
+    curve = _curve(f, source, manual, radii=(1., 2.5, 4.))
+    original_measure = systematics.measure_native_aperture
+
+    def corrupt_only_relaxed(*args, **kwargs):
+        result = original_measure(*args, **kwargs)
+        if (not np.any(kwargs["effective_source_mask"]) and
+                result.signed_valid_flux_nMgy is not None):
+            return replace(
+                result, signed_valid_flux_nMgy=(
+                    result.signed_valid_flux_nMgy + 0.01))
+        return result
+
+    monkeypatch.setattr(systematics, "measure_native_aperture",
+                        corrupt_only_relaxed)
+    with pytest.raises(ValueError, match="counterfactual.*reintegration"):
+        diagnose_aperture_systematics(
+            f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+            effective_source_mask=source, manual_exclude=manual,
+            curves=[curve])
