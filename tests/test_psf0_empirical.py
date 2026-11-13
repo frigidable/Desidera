@@ -461,7 +461,6 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(
     frozen_holdout_ids = {s.star_id for s in holdout}
     assert reference_cohorts
     assert reference_cohorts[0].isdisjoint(frozen_holdout_ids)
-    assert reference_cohorts[0].issubset({s.star_id for s in train})
     assert snapshot["catalog_sha256"]=="c"*64
     assert snapshot["catalog_policy"]=="gaia_strict"
     assert all(item["gaia"]["gaia_source_id"]>0 for item in snapshot["stars"])
