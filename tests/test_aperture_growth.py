@@ -373,3 +373,50 @@ def test_growth_receipts_share_one_exact_immutable_native_grid_fingerprint(
         for row in output["cumulative"])
     assert output["receipt_sha256"]
     assert not output["adopted_for_science"]
+
+
+
+def test_growth_hashes_each_frozen_full_native_mask_once_for_all_radii(
+        monkeypatch):
+    """P44: exact receipt per radius, only two expensive full-grid hashes."""
+    import lsbpipe.photometry.aperture_flux as module
+
+    f = frame(value=.37, shape=(241, 249))
+    source = np.zeros(f.shape, bool)
+    manual = np.zeros(f.shape, bool)
+    source[108:131, 115:132] = True
+    manual[145:152, 106:119] = True
+    sky = ApertureSkyScenario(
+        method="tilted_plane", b0_nMgy_per_pixel=.013,
+        bx_nMgy_per_pixel2=.00004,
+        by_nMgy_per_pixel2=-.00007,
+        reference_xy_pix=(38.2, 77.6),
+        evidence_id="P44_FROZEN_MASK_SHA_INTEGRITY_TEST")
+    original_hash = module.sha256
+    full_grid_hash_calls = []
+    def counted_sha256(data=b""):
+        if isinstance(data, bytes) and len(data) == source.size:
+            full_grid_hash_calls.append(original_hash(data).hexdigest())
+        return original_hash(data)
+    monkeypatch.setattr(module, "sha256", counted_sha256)
+    radii = (1.2, 2.2, 3.2, 4.4, 5.8, 7.2, 9.1, 12.)
+    report = run_curve(
+        f, source=source, manual=manual, radii=radii,
+        q=.72, pa=34., sky=sky)
+    assert len(full_grid_hash_calls) == 2
+    assert len(report["cumulative"]) == len(radii)
+    assert report["n_comparable_nested_radial_closures_verified"] > 0
+    assert not report["adopted_for_science"]
+    for i, radius in enumerate(radii):
+        direct = measure_native_aperture(
+            f, ApertureGeometryICRS(
+                155.4, 18., radius, .72, 34.), provenance(),
+            effective_source_mask=source, manual_exclude=manual,
+            sky=sky)
+        assert report["cumulative"][i] == direct.to_dict()
+    # Direct independent measurements above intentionally perform one
+    # two-mask full-grid hash per radius: no receipt was bypassed.
+    assert len(full_grid_hash_calls) == 2 + 2*len(radii)
+    assert report["receipt_sha256"] == run_curve(
+        f, source=source, manual=manual, radii=radii,
+        q=.72, pa=34., sky=sky)["receipt_sha256"]
