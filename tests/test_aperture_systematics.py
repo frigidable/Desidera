@@ -1222,7 +1222,9 @@ def test_fully_source_masked_radial_counterfactual_remains_directly_observable()
     radial = out["radial_catalogue_mask_counterfactual"]
     assert out["reference_valid_flux_nMgy"] is None
     assert out["catalogue_mask_counterfactual"]["conditional_delta_nMgy"] is None
-    assert not radial["outer_native_reintegration_verified"]
+    assert radial["outer_native_reintegration_verified"]
+    assert radial["outer_reintegration_includes_null_baseline_case"]
+    assert radial["outer_reintegration_checks_null_observability_as_well_as_flux"]
     assert radial["relaxed_flux_may_be_observable_with_null_baseline"]
     for i, radius in enumerate(radii):
         row = radial["cumulative"][i]
