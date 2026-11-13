@@ -1248,6 +1248,8 @@ def test_readonly_source_inventory_shows_all_ambiguous_and_unfitted_gaia(
     }
     editor._accept_contamination_result(result)
     assert editor.source_registry_toggle.isEnabled()
+    assert editor.source_registry_list.uniformItemSizes()
+    assert editor.source_registry_list.updatesEnabled()
     assert editor.source_registry_list.count()==3
     assert "3 shown of 3" in editor.source_registry_status.text()
     assert editor.source_registry_details.toPlainText()
@@ -1301,6 +1303,7 @@ def test_readonly_source_inventory_shows_all_ambiguous_and_unfitted_gaia(
     assert "NO_NEW_ACTION_READ_ONLY" in exported
     assert "OBJID=40" not in exported
     editor.source_registry_search.setText("nonexistent_source")
+    assert editor.source_registry_list.updatesEnabled()
     assert editor.source_registry_list.count()==0
     assert not editor.source_registry_copy.isEnabled()
     editor._discard_prepared_masks()
