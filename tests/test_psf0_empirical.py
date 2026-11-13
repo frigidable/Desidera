@@ -404,7 +404,8 @@ def test_manual_exclusion_recipe_rejects_malformed_or_duplicated_ids():
         PSF0Config(excluded_training_star_ids=("star-0003", "star-0002"))
 
 
-def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(built):
+def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(
+        built, monkeypatch):
     from dataclasses import replace
     from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
     from lsbpipe.photometry.psf_empirical import PSF0QualityError
@@ -430,6 +431,17 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
     matcher=TractorGaiaMatcher(
         "synthetic-tractor.fits","c"*64,frame.dataset_id,rows,positions)
 
+    # An apparently disjoint ePSF holdout previously still entered the
+    # shared Gaia width reference before the role split. Trace the actual
+    # reference-star IDs, not just the final kernel training inventory.
+    from lsbpipe.photometry import psf_empirical as epsf_module
+    original_width = epsf_module.assess_sample_widths
+    reference_cohorts = []
+    def audited_width(entries):
+        reference_cohorts.append({star_id for star_id, _ in entries})
+        return original_width(entries)
+    monkeypatch.setattr(epsf_module, "assess_sample_widths", audited_width)
+
     def run(recipe):
         try:
             result=build_empirical_coadd_psf(
@@ -446,6 +458,10 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
     assert len(train)>=base.min_train_stars
     assert len(holdout)>=base.min_holdout_stars
     assert all(s.gaia_source_id is not None for s in train+holdout)
+    frozen_holdout_ids = {s.star_id for s in holdout}
+    assert reference_cohorts
+    assert reference_cohorts[0].isdisjoint(frozen_holdout_ids)
+    assert reference_cohorts[0].issubset({s.star_id for s in train})
     assert snapshot["catalog_sha256"]=="c"*64
     assert snapshot["catalog_policy"]=="gaia_strict"
     assert all(item["gaia"]["gaia_source_id"]>0 for item in snapshot["stars"])
@@ -455,6 +471,9 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
     assert selected not in {s.star_id for s in reduced}
     assert {s.star_id for s in holdout}=={
         s.star_id for s in holdout_again}
+    assert len(reference_cohorts) >= 2
+    assert reference_cohorts[1].isdisjoint(frozen_holdout_ids)
+    assert reference_cohorts[0] == reference_cohorts[1]
     assert len(reduced)==len(train)-1
     assert next(item for item in review_again["stars"]
                 if item["star_id"]==selected)["role"]=="excluded"
