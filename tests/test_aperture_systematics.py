@@ -1448,3 +1448,44 @@ def test_blank_covariance_is_exactly_invariant_under_proven_immutable_masks():
         manual_exclude=frozen_m)
     assert a == b
     assert b["covariance_calibrated_for_science"] is False
+
+
+
+def test_systematics_verification_reuses_only_its_own_frozen_mask_hashes(
+        monkeypatch):
+    """P44: each geometry still gets independent native re-integration."""
+    import lsbpipe.photometry.aperture_flux as flux_module
+
+    f = frame(value=.8)
+    source = np.zeros(f.shape, bool)
+    manual = np.zeros(f.shape, bool)
+    source[51:57, 62:68] = True
+    manual[70:75, 47:52] = True
+    curves = [
+        _curve(f, source, manual, q=.7, pa=21.),
+        _curve(f, source, manual, q=.85, pa=81.),
+    ]
+    original = flux_module.sha256
+    native_hash_calls = []
+    def counted_sha256(payload=b""):
+        if isinstance(payload, bytes) and len(payload) == source.size:
+            native_hash_calls.append(original(payload).hexdigest())
+        return original(payload)
+    monkeypatch.setattr(flux_module, "sha256", counted_sha256)
+    out = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=curves)
+    assert out["stage_04_2_receipts_and_outer_apertures_verified"] == 2
+    assert out["adopted_for_science"] is False
+    # Two original source/manual digests shared across both outer
+    # re-integrations, plus the one independently verified counterfactual
+    # which relaxes the source mask but retains manual+hard exclusions.
+    assert len(native_hash_calls) == 4
+    assert out["radial_catalogue_mask_counterfactual"][
+        "outer_native_reintegration_verified"]
+    original_report = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=curves)
+    assert original_report == out
