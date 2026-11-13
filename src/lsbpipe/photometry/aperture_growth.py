@@ -18,7 +18,7 @@ import numpy as np
 from .aperture_flux import (
     ApertureGeometryICRS, ApertureProvenance, ApertureSkyScenario,
     measure_native_aperture, project_icrs_ellipse_to_native, _finite_float,
-    _snapshot_native_boolean_mask,
+    _snapshot_native_boolean_mask, _FrozenApertureMaskDigests,
 )
 from .contracts import NativeBandFrame
 
@@ -251,6 +251,10 @@ def measure_growth_diagnostic(
         "effective source mask", effective_source_mask, frame.shape)
     manual = _snapshot_native_boolean_mask(
         "manual exclusion", manual_exclude, frame.shape)
+    # Hash both immutable native snapshots ONCE, rather than reading
+    # two entire FITS-sized Boolean rasters at every aperture radius.
+    # The private token refuses any different input-array identity.
+    frozen_mask_digests = _FrozenApertureMaskDigests(source, manual)
     geometry_base={
         "ra_deg":float(anchor_icrs[0]),"dec_deg":float(anchor_icrs[1]),
         "axis_ratio":hypothesis.q,
@@ -263,7 +267,8 @@ def measure_growth_diagnostic(
             semimajor_arcsec=outer,**geometry_base)
         cumulative.append(measure_native_aperture(
             frame,geom,provenance,effective_source_mask=source,
-            manual_exclude=manual,sky=sky))
+            manual_exclude=manual,sky=sky,
+            _frozen_mask_digests=frozen_mask_digests))
         if i:
             annuli.append(measure_native_annulus(
                 frame,geom,radii[i-1],provenance,
