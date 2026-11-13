@@ -18,7 +18,6 @@ from types import MappingProxyType
 import numpy as np
 
 from lsbpipe.photometry.contracts import NativeBandFrame
-from lsbpipe.scene import grid_fingerprint
 
 
 _SCHEMA = "desidera.photometry.native-aperture/1"
@@ -486,7 +485,7 @@ def measure_native_aperture(
         "source":asdict(provenance),
         "geometry":geometry_dict,"native":native_dict,
         "sky":asdict(sky),
-        "grid_fingerprint":grid_fingerprint(wcs,shape),
+        "grid_fingerprint":frame.native_grid_fingerprint,
         "mask_sha256": {
             "effective_source":sha256(source.tobytes()).hexdigest(),
             "manual_exclude":sha256(manual.tobytes()).hexdigest(),
