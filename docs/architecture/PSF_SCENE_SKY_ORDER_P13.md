@@ -459,3 +459,733 @@ Primary sources: Legacy DR11 PSF and CCD-model description at
 https://www.legacysurvey.org/dr11/description/ and Photutils
 `EPSFBuilder` at
 https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html.
+
+
+---
+
+## 2026-11-11 implementation: 03 Background built automatically from 02 Scene
+
+**Corrected operational contract** (supersedes the earlier same-date
+manual-sky-region requirement). Users must **not** draw `sky_train` or
+`sky_holdout` regions to run background modelling. That was an error in
+translating an optional low-level `SceneState` API constraint into the GUI.
+The third UI tab is a *post-Scene residual-sky diagnostic*, not a final
+scientific sky acceptance gate.
+
+Photometry Workspace: `1 · PSF-0`, `2 · Scene & Masks`,
+`3 · Background`. The third tab shares the **currently loaded** native
+per-band Scene image/INVVAR/native validity and the prepared project-local
+catalogue source masks, WCS, draft and target protection. It does not
+fetch another brick, download catalogues, open other FITS, alter masks or
+create a new directory. A project-scoped resume pointer may select
+`stage="sky"`, but only an explicit `Build automatic sky candidate`
+action runs the numerical worker. Changes to project/band/draft/source
+invalidate previous in-memory evidence.
+
+**Automatic selection, current implementation `SCENE_MASKS_FIXED_SPATIAL_TILES_V1`:**
+
+1. Begin with original pixels with positive finite inverse variance and
+   finite image values, excluding the immutable native-hard mask and
+   prepared Stage 02 Tractor/manual source exclusions.
+2. Exclude an expanded target-protection region; also use saved
+   `isophote_candidate` annotations conservatively **as sky vetoes only**,
+   not as adopted science isophotes. The target expansion is the larger
+   of 15 arcsec and 30% of the area-equivalent target radius.
+3. Expand catalogue/manual exclusions by 6 arcsec and, where the
+   *already prepared* Source Registry provides Gaia G photometry,
+   exclude bright-star neighbourhoods using provisional fixed radii
+   from 18 to 60 arcsec for `G ≤ 18`. These heuristics do **not**
+   establish actual PSF halo limits. Without the current source registry,
+   fail closed instead of claiming bright-star cleaning.
+4. Partition the current native Scene crop into a fixed rectangular
+   grid with tile edges from 16 to 96 native pixels. Tiles with
+   insufficient uncontaminated interior (<65% or <40 valid pixels)
+   are rejected *using mask geometry alone*. Choose disjoint spatial
+   training and holdout tiles via the fixed, reproducible rule
+   `(tile_x + 2 * tile_y) % 5 == 0` for holdout; all other
+   eligible tiles train. Use a 2-pixel interior border, and at most
+   384 deterministically spread native pixels per tile to prevent
+   dense coadd sampling from dominating the fit. No selection based
+   on the eventual residual brightness.
+5. Require >=8 training tiles, >=4 holdout tiles, >=100 usable
+   native samples on each side, and at least three full-image
+   quadrants represented on each side. If these are unavailable,
+   **no sky model is fitted**; report
+   `INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY`.
+6. Fit both the existing robust constant and tilted-plane
+   residual sky estimators to the same training samples, then
+   evaluate both on the same heldout spatial tiles. A simple
+   predeclared descriptive preference selects the tilted plane
+   only when its heldout native-pixel RMS is below 75% of the
+   constant model's; otherwise the constant level is preferred.
+   This is **numerical provisional model selection**, not
+   `SCIENCE PASS` or calibrated evidence of preserved galaxy outskirts.
+
+Researcher-drawn `sky_train` and `sky_holdout` draft annotations
+are ignored by this automatic selector without editing or removing
+them; the core `fit_residual_background` API still supports explicit
+training/holdout layers for isolated algorithm tests. Source protection
+and manual exclusions from 02 remain binding. The numerical output is
+`desidera.sky.project-native-residual-diagnostic/2`, containing
+the tile identities, eligibility fractions, chosen pixel counts,
+spatial quadrant coverage, exclusion guard radii, Gaia veto counts,
+both sky models and holdout QA, their disagreement at the galaxy
+anchor, and the provisional automated choice when supported.
+`Copy background QA` exports this complete provenance.
+No model-subtracted FITS or derived image is written.
+
+**Science limitations:** these are patches of **the same DESI
+coadd**, not independent exposures or noise-only calibration.
+The detection of faint diffuse galaxy light outside the
+provisional exclusion is unproven; the wide PSF wings and
+mask completeness remain uncalibrated. A bright-star veto
+radius is an engineering precaution, not a physical wing
+model. No recovered galaxy flux, background systematic
+error or final sky adoption can be inferred. Coadd spatial
+covariance and upstream sky oversubtraction remain unresolved.
+Scientific status remains `HOLD` until injection/recovery,
+spatial and mask/sky-sensitivity QA justify adoption.
+
+Automated selection must be tested on Leo P's **already downloaded
+native brick** before reporting observed values. Synthetic unit/Qt
+tests separately exercise no-manual-region success, protected
+galaxy exclusion, withheld tile selection independent of pixel
+brightness, fixed provenance, no usable tiles, absence of source
+registry, GUI invalidation, and unchanged original arrays.
+
+
+---
+
+## Actual Leo P DR11 r Stage 03 first automatic QA — 2026-11-11
+
+**Observed source:** user-exported complete
+`desidera.sky.project-native-residual-diagnostic/2` at
+`2026-11-11T14:19:25.949366+00:00`,
+project `0876bbc4-7405-481b-88a8-0e3486c7be98`,
+`DR11 south · 1554p180 · r`,
+native image 1324×1466 pixels at 0.262 arcsec/pixel.
+WCS fingerprint
+`5eee1d9581324371fd042bf848b2cffbbcbef081e3edb8302262324906b000e2`
+(prefixed by `wcs-sha256:`); draft
+`2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619`;
+Tractor catalogue
+`8e8e3f75af868f3ef7cf4c4c9d7ca28210cbca87ef27c98351a6ab237010562c`.
+No new bricks, catalogs, branches or image changes.
+
+The automatic sky sampler returned **31 eligible tiles of 210
+geometrically examined**, of which 24 train and 7 are
+spatial holdouts; **9216 training native pixels** and
+**2688 holdout native pixels**. Masks: 265 native-hard pixels,
+393,573 preliminary auto-catalogue-mask pixels and
+164,759 protected pixels. There are 540,925 geometrically
+available sky pixels prior to sparse tile subsampling;
+8 existing bright Gaia sources were vetoed.
+The approximate fixed target guard was 69 native pixels;
+catalogue exclusion extension 23 pixels. The radii
+remain heuristics rather than calibrated extended PSF wings.
+
+**Actual fitted comparisons (nMgy per native pixel):**
+
+| Metric | Constant | Tilted plane |
+|---|---:|---:|
+| Residual sky at Leo P anchor | +0.00014247858 | -0.00005439155 |
+| Training pixel RMS residual | 0.03963203 | 0.03962365 |
+| Holdout pixel RMS residual | 0.007283561 | 0.007272366 |
+| Holdout pixel median residual | +0.000005215 | +0.000175846 |
+| Holdout status | MEASURED_UNCALIBRATED | MEASURED_UNCALIBRATED |
+
+The planar model only reduces the holdout RMS by **0.154%**
+relative to constant, so the predeclared 25%-improvement
+gate provisionally chooses the **constant** model.
+The local difference in their inferred sky at the target
+is -0.00019687012 nMgy/pixel and the maximum model
+disagreement at original image corners is 0.00088015471.
+These differences cannot be interpreted as galaxy flux
+loss or calibration uncertainty.
+
+**Unresolved spatial quality:**
+- The RMS of training pixels is **5.44×** the holdout
+  RMS, compatible with substantial mixture/outlier or
+  spatial-coverage differences but not diagnostic of
+  their cause from summary data.
+- Holdout quadrant median residuals for the constant
+  model are Q0=-0.00051869, Q1=-0.00016206,
+  Q2=+0.00111337, Q3=+0.00019200 nMgy/pixel.
+  Their peak-to-peak span is **0.00163206**,
+  approximately 11.5× the provisional fitted constant.
+  The absolute fitted level is therefore much smaller
+  than the spatial variation of the observed heldout
+  medians. This ratio does NOT establish uncertainty
+  without a calibrated sampling/noise model.
+- Training spatial coverage omits quadrant Q1 while
+  holdout covers all four quadrants. On the clipped
+  final tile row y=13, **12/24 (50%)** of all
+  training tiles and **3/7 (43%)** of holdout
+  tiles are concentrated at the image edge.
+  Most training information is therefore
+  spatially unbalanced despite the 3-quadrant minimum.
+- Only **2.20%** of the 540,925 geometry-eligible
+  pixels are selected as sampled pixels; the
+  dominant concern is representativity, not number
+  of pixels or a conventional standard error.
+
+**Immediate P3 follow-up (implemented, observational results pending):**
+retain `SCENE_MASKS_FIXED_SPATIAL_TILES_V1` unchanged
+and append read-only, method-specific **tile-level residual QA**
+to the same current-band `Copy background QA`.
+For each source-selected training and heldout tile,
+measure the residual median and pixel RMS on exactly
+the previously selected original pixels, and summarize
+the unweighted median and peak-to-peak dispersion of
+tile medians. Add exact row-concentration fractions,
+partial-edge-tile counts, missing quadrants and
+training/holdout pixel RMS ratio. Flag >40% of tiles
+in one native image row or >2× training/heldout RMS,
+without treating these heuristic warnings as
+statistical significance tests. Never reselect or
+trim tiles in response to their residuals: preserve
+the predeclared holdout. A targeted future automatic
+sensitivity study may compare *predeclared alternative*
+tile scales/offsets in the **same project's** existing
+native image, rather than searching additional
+DESI bricks or asking researchers to draw sky samples.
+
+The fitted constant is a **preliminary descriptive
+candidate**, not a validated sky model. The earliest
+safe next step is to run this augmented QA on Leo P
+and then quantify tile-scale/sky-area sensitivity
+and injection–recovery within the same native project
+before allowing any sky subtraction of LSB emission.
+`SCIENCE HOLD` remains binding.
+
+
+---
+
+## 2026-11-11 external literature and logic audit of Stage 03
+
+**Basis: verified primary survey documentation and methodological research**
+(accessed 2026-11-11). Reference-level provenance, with limits:
+
+1. Legacy Surveys DR11 Data Release Description:
+   https://www.legacysurvey.org/dr11/description/
+   DR11 coadds already contain Community Pipeline sky removal and
+   per-CCD 512-pixel-box spline sky model subtraction. DECam
+   bright-star **extended-wing subtraction** is present since DR9.
+   The image stacks were resampled through Lanczos-3 and are
+   expressly not designed for precision work; the Tractor instead
+   fits individual exposures. Do NOT frame coadd residual sky
+   modelling as reconstruction of the raw night sky, recovery of
+   signal already subtracted from source pixels, or a proof of
+   the raw PSF's far wings.
+2. Legacy Surveys DR11 File specification:
+   https://www.legacysurvey.org/dr11/files/
+   Coadd IMAGE is in *nanomaggies/pixel*, INVVAR is the
+   corresponding *inverse variance in nanomaggies squared*.
+   Pixel sampling is 0.262 arcsec/pixel. Any per-pixel surface
+   brightness conversion requires division by 0.262²
+   arcsec²/pixel, and signed/negative residuals cannot be
+   assigned ordinary magnitudes without an explicit convention.
+3. Kelvin, Hasan & Tyson (2023), MNRAS 520, 2484–2516,
+   https://doi.org/10.1093/mnras/stad180 .
+   Faint undetected galaxies and extended stellar/galaxy light
+   leak through masks, creating positively biased sky models
+   and over-subtraction of LSB flux; dilated and modelled
+   source masks can help, but model mismatch is another
+   source of systematic error.
+4. Watkins et al. (2024), MNRAS 528, 4289–4306,
+   https://doi.org/10.1093/mnras/stae236 .
+   PSF-scattered light and undetected sources limit
+   sky models; deeper masks and as-simple-as-possible
+   parametric sky modelling are preferred. Their
+   synthetic experiments do NOT validate fixed 18–60
+   arcsec Gaia exclusion radii or 65% tile occupancy
+   for DR11/Leo P; these are **our heuristics**.
+   Errors of sky-subtracted coadds propagate and
+   cannot be repaired merely by repeated adjustment
+   of the already-subtracted coadd.
+5. Photutils documentation, background methodology and
+   Background2D:
+   https://docs.astropy.org/projects/photutils/en/stable/user_guide/background.html
+   https://docs.astropy.org/projects/photutils/en/stable/api/photutils.background.Background2D.html
+   Even robust clipping/medians remain biased under
+   undetected sources. 2D mesh size must exceed
+   typical sources yet resolve *actual background*
+   structure. Their `mask` for source pixels differs
+   from `coverage_mask` for areas with no observation.
+   Desidera's no-coverage/native-hard and source
+   exclusion masks must remain distinct.
+6. Gnuastro NoiseChisel manual, sky and correlated noise:
+   https://www.gnu.org/software/gnuastro/manual/html_node/Sky-value.html
+   https://www.gnu.org/software/gnuastro/manual/gnuastro.html
+   Tile-based sky maps around diffuse extended galaxies
+   can directly include galaxy flux; resampling introduces
+   spatial pixel correlations. A sky image must be
+   scrutinized for residual emission tracking the target.
+7. Astropy CCD Photometry Guide:
+   https://www.astropy.org/ccd-reduction-and-photometry-guide/v/3.0.0a1/notebooks/photometry/01.01.01-Background-removal-simulated-data.html
+   The best background for *source detection* need
+   not be the best background for *precision photometry*.
+
+**Audit verdicts on our current Stage 03 implementation:**
+
+* CORRECT with stated limits: source-bound same-project
+  pixels and WCS, non-destructive masks, disjoint
+  fixed spatial training/holdout tiles, candidate-only
+  constant/plane models, native coadd status
+  `UNADOPTED`, no external bricks/catalogues.
+* P0 LOGIC DEFECT **remediated in code**: the original
+  `provisional_automatic_model` ranked constant
+  vs tilted plane but omitted the physical
+  `zero_additional_correction_DR11_coadd`
+  baseline. This confused ranking fitted residual
+  candidates with a scientific decision to subtract.
+  The code now evaluates **exactly the same heldout
+  original native pixels without any correction**,
+  publishes per-tile and full-image original RMS
+  and median, and reports descriptive holdout RMS
+  improvement for each fitted candidate vs zero.
+  It explicitly sets
+  `recommended_science_action =
+  NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED`
+  and
+  `automatic_sky_background_correction_authorized =
+  false`, regardless of the numerical ranking.
+  The `provisional_automatic_model` field remains
+  for backwards-compatible engineering provenance:
+  it is **only the choice between the two nonzero
+  fitted models**, and its 25%-improvement heuristic
+  is **not** calibrated by the cited literature.
+* P0 UNKNOWN: preexisting DR11 sky over-subtraction,
+  scattered-light subtraction, missing/hidden LSB flux,
+  unmapped background astrophysical emission, and
+  true noise covariance are **not identifiable** from
+  one already-subtracted, resampled coadd and
+  its original Tractor/Gaia mask, even if a
+  fitted background is spatially flat.
+* P1 OPEN: native 96px sky-tile geometry, 65% source-
+  free fraction, max 384 sampled pixels/tile,
+  15+ arcsec target guard, fixed bright-star
+  radii, and 25% model-choice rule are **engineering
+  heuristics**, not validated scientific thresholds
+  or literature standards for Leo P. They require
+  predeclared multi-grid/mask-radius sensitivity
+  experiments and injection–recovery on copies of
+  the already downloaded project's same native image.
+* P1 OPEN: the same-coadd 7-tile holdout is
+  geographically disjoint but **not an independent
+  exposure/noise realization**; adjacent tiles can
+  share coadd correlations. Pixel RMS cannot estimate
+  uncertainty of a global sky pedestal by
+  `RMS/sqrt(number_of_pixels)`. Require
+  spatial block/tile sampling or empirically calibrated
+  apertures, not a false pixel-count significance.
+* P1 OPEN: the sky estimate in the center of the
+  target is a conditional interpolation/extrapolation
+  of sparsely placed **outer** tiles. A low
+  coefficient covariance/condition number does
+  not certify true galaxy-free training pixels
+  or absence of spatial gradients under Leo P.
+  A low-confidence Scene isophote can be used as
+  a conservative veto, **never** as established
+  outer radius of the galaxy.
+* P1 OPEN: the current pilot uses the coadd
+  `IMAGE` and `INVVAR`; varying exposure depth,
+  source masking, interpolated correlated noise
+  and single-image residual structures can create
+  different train/holdout distributions. Compare
+  spatial tile medians and large aperture
+  fluctuations, rather than pixel RMS alone.
+* P1 OPEN: multi-filter consistency must compare
+  each band using its own native image/PSF/source
+  and science mask, without importing a fitted sky
+  surface from r into g/i/z.
+
+**Actual Leo P DR11 r QA reconsidered with ZERO baseline:**
+
+The user-provided `2026-11-11T14:19:25.949366+00:00`
+QA contains constant holdout RMS `0.007283560776944524`,
+plane RMS `0.0072723658775994925`, constant
+`b0=0.00014247857884609668` nMgy/pixel, and
+its *holdout pixel-weighted mean residual*
+`0.0003411811903179568` nMgy/pixel as reconstructed
+from published quadrant means and counts.
+Using the identity
+`E[I^2]=E[(I-b0)^2]+2*b0*E[I-b0]+b0^2`,
+the **exact no-additional-subtraction holdout RMS**
+can be reconstructed from summary precision as
+`0.007291623945262521` nMgy/pixel.
+The constant reduces holdout RMS by just **0.11058%**,
+plane by **0.26411%**, vs no further correction.
+The difference between constant and plane is only
+**0.15370%** of the constant RMS. None of these
+is a p-value, a true-sky recovery, or enough
+to authorize extra subtraction.
+
+Other live QA warnings: 24 train tiles with 12/24
+(50%) in the final clipped y=13 row; 7 holdout
+tiles with 3/7 (42.9%) in the same partial row.
+Training covers Q0/Q2/Q3 but not Q1. Pixel-level
+training RMS 0.039632 vs holdout 0.007284
+nMgy/pixel (~5.44x). Constant heldout quadrant
+medians vary by ~0.001632 nMgy/pixel,
+11.45 times larger than the fitted constant
+level. This is descriptive evidence of highly
+heterogeneous spatial sampling, not a
+calibrated 11.45-sigma discrepancy or
+a measurement of the true sky error.
+
+**Mandatory pre-adoption gates, all internal to the
+already downloaded Leo P project:**
+
+1. Immutable versioned provenance and visible
+   original mask/source/target protection.
+2. No-correction baseline alongside fitted
+   candidates and full per-spatial-tile residual
+   maps/summary, with no post-hoc holdout replacement.
+3. Predeclared fixed alternative tile grids and
+   protection radii; flag unstable fit at fixed
+   target position, inadequately supported/clustered
+   sky samples and sensitivity to the low-confidence
+   galaxy candidate mask.
+4. Empirical covariance on existing image via
+   multiple **large**, spatially separated
+   source-vetoed apertures; treat these as
+   same-coadd controls, not independent exposures.
+5. Injection/recovery of artificial faint extended
+   sources into **copies** of current images, with
+   the exact same auto-sky selection and masking
+   recipe, to estimate processing-induced flux
+   loss. This measures method bias on that image,
+   not the unknown historic DR11 sky-subtraction
+   bias.
+6. No automatic subtraction for Leo P if
+   thresholds are unmet. For now **SCIENCE HOLD**,
+   keep original FITS untouched. Do not interpret
+   any numeric fit or diagnostic 'preferred method'
+   as a final sky solution.
+
+
+---
+
+## 2026-11-11 same-brick Stage 03 grid and exponential-injection experiments
+
+**Status: implemented as automatically executed research diagnostics; no
+scientific sky correction is adopted.** This extension operates solely
+on the current loaded galaxy project's native DR11 brick, WCS,
+`IMAGE`, `INVVAR`, `native_hard`, provisional Tractor/Gaia
+source registry, original Scene draft and target protection.
+No other brick, independent star field, downloaded source data,
+new directory, changed original FITS or changed adopted mask is
+created or required. The worker remains background-threaded
+in the existing `3 · Background` tab.
+
+**1. Prespecified spatial-support and mask-sensitivity trials.**
+The original algorithm, its 0.262-arcsec/pixel coadd and its
+existing training/holdout tiles are **frozen**, then the same
+automatic mask-driven sampler is rerun from scratch under
+exactly five predeclared perturbations:
+
+- `tile_72_origin`: 72-native-pixel tiles, original origin
+- `tile_96_shift48`: 96px tiles shifted by (48,48) original
+  native pixels (edge-partial tiles excluded at the original
+  75%-coverage gate)
+- `tile_128_origin`: 128px tiles, original origin
+- `expanded_target_1p5`: 1.5× original target-veto dilation
+- `expanded_sources_1p5`: 1.5× original source-veto dilation
+
+All catalogue/target/bright-Gaia exclusions still apply
+and remain **at least** as conservative as the original.
+Each experiment constructs its own **fixed** spatially
+separate training and holdout pixels from predeclared
+geometry without inspecting their brightness or picking
+a better-performing set after fit. If the stricter
+geometry fails the >=8 training/4 holdout tile or
+three-quadrant conditions, record
+`SKIPPED_INSUFFICIENT_FIXED_GEOMETRY` and do **not**
+replace the trial with another mask or grid.
+
+Both constant and tilted-plane candidates are refitted
+to the same current project's ORIGINAL unmodified
+sky-subtracted coadd, with the zero-correction control
+reported on that variant's own original heldout pixels.
+Report each trial's target-centre prediction, its
+difference from the original fixed-grid model,
+number of accepted regions, approximate nearest
+training-tile distance, and whether the target falls
+within the bounding box of the training-tile centres.
+The min/max/peak-to-peak sensitivity envelope
+**includes the original grid**, even if all alternative
+grids are unavailable. It is neither an uncertainty
+interval nor significance because the trial predictions
+are correlated and the model-family bias is unknown.
+Holdout RMS on different variants uses DIFFERENT
+spatial samples, so cross-variant RMS is not a
+controlled paired score. The sensitivity experiments
+cannot alone authorize model subtraction.
+
+**2. Controlled exponential artificial-galaxy injection.**
+On *temporary in-memory copies* of the current native
+`IMAGE` (never written to disk), add three deterministic
+two-dimensional exponential light distributions with
+axis ratio 0.65, central amplitude
+0.005 nMgy/native pixel and scale lengths
+0.5, 1 and 2 times the area-equivalent radius of
+the current *provisional* target-protected region.
+The injection is centred at the same verified native
+project target anchor. Each artificial profile is
+**intentionally NOT a PSF-convolved physical galaxy
+model**; its morphology and luminosity are test
+parameters, not estimates for Leo P.
+
+Hold the EXACT original Source/Scene masks, original
+training/heldout sky pixel identities and an unmasked
+aperture of radius twice the original target-area-
+equivalent radius fixed. Fit the same constant and
+tilted-plane estimators to each injected image. Compare
+the fitted sky field to the pre-injection fitted sky at
+the *same* aperture pixel coordinates and compute
+
+\[
+F_{\rm in,usable}=\sum_{p\in A_{\rm valid}}S(p),\qquad
+\widehat{F}_{\rm rec,usable} =
+F_{\rm in,usable}-\sum_{p\in A_{\rm valid}}
+\left[B_{\rm injected}(p)-B_{\rm original}(p)\right].
+\]
+
+The ratio \(\widehat{F}_{\rm rec,usable}/F_{\rm in,usable}\)
+is explicitly a **fixed-unmasked-aperture estimate of
+the sky-estimator's response**, not a full image
+reduction, detection, segmentation, PSF/model subtraction,
+uncertainty or unbiased real-galaxy flux recovery.
+Pixels excluded by original neighbour/hard masks are
+reported as missing from the synthetic aperture rather
+than silently assigned interpolated galaxy flux.
+The **zero-additional-sky-correction** control always
+recovers exactly 1 by linearity, which is a definition
+of this controlled experiment, not evidence that the
+already sky-subtracted DR11 input is unbiased.
+No upstream lost galaxy light can be reconstructed.
+
+**3. Scientific acceptance barrier.** New
+`sky_grid_sensitivity_qa` and
+`sky_injection_recovery_qa` fields are nested in
+the existing current-band `Copy background QA`,
+with full fixed recipes, per-trial skipped statuses,
+source/mask provenance and non-adoption flags.
+Neither exercise supplies a reliable **absolute sky
+accuracy**, true galaxy morphology or native-coadd
+noise covariance. The automatic numerical preferred
+constant/plane estimator remains an **engineering
+candidate only**. The science recommendation stays
+`NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED`,
+with `automatic_sky_background_correction_authorized=false`
+and `SCIENCE HOLD`.
+
+**4. The next possible methodological step** requires
+a comprehensive, predeclared error budget over spatially
+separated sky blocks (effective large-aperture
+fluctuations), signal-to-noise and flux biases under
+more realistic PSF-convolved dwarf galaxy injections,
+and g/r/i/z-specific independent PSF and mask
+dependencies. Do not expand project bricks to perform
+these checks; where existing data cannot identify true
+far wings or galaxy-free sky, continue HOLD.
+
+
+---
+
+## 2026-11-11 Leo P r observed fixed-grid and exponential recovery
+
+**Researcher-provided GUI readout, not a new independent FITS run:**
+`DR11 south · 1554p180 · r`, project
+`0876bbc4-7405-481b-88a8-0e3486c7be98`;
+draft fingerprint
+`2727f8959a9bcd15338f5a3c6abbf12eafe569e34450a14c4c59643cfd502619`.
+Source has 24 training/7 holdout tiles (9216/2688
+original native pixels). No manual sky annotation was required.
+The complete machine-readable `Copy background QA` (as opposed to
+this GUI readout) is still needed to verify all source-mask,
+trial-sample and injection provenance in a single object.
+
+**Actual conditional sensitivity:**
+`tile_72_origin`: 41/13 train/holdout tiles, both models
+measured; `tile_96_shift48`: 18/4, both measured;
+`tile_128_origin`: only 7/2, appropriately
+`SKIPPED_INSUFFICIENT_FIXED_GEOMETRY`;
+`expanded_target_1p5`: 24/7, both measured;
+`expanded_sources_1p5`: 13/6, both measured.
+Over the original grid plus four measurable perturbations,
+constant target-sky predictions span
+`+0.00002335535..+0.00041074240` nMgy/pixel,
+a full range of `0.00038738704` nMgy/pixel;
+tilted plane spans
+`-0.00007173299..+0.00054140047`,
+range `0.00061313346`. These are **not** statistically
+calibrated confidence limits. The first constant estimate,
+`+0.00014247858`, lies inside a perturbation range
+almost 2.72 times its amplitude. The original 96px
+sky training footprint has 12/24 clipped bottom-row
+tiles, and the holdout has 3/7 clipped bottom-row
+tiles; Q1 has no training region.
+The model-free DR11 coadd remains the safer operational
+default while these structural weaknesses remain.
+
+**Actual frozen-mask artificial-source stress:**
+The user reports unmasked-aperture recovered fractions
+for injected deterministic exponential profiles:
+
+| Injected scale length \(h/R_{\rm protect}\) | Constant fitted sky | Tilted fitted sky |
+|---|---:|---:|
+| 0.5 | 0.96615471 | 0.94854787 |
+| 1.0 | 0.83932383 | 0.78059261 |
+| 2.0 | 0.61203313 | 0.53651548 |
+
+Equivalently, sky-fit-induced *conditional*
+unmasked-aperture losses are 3.38/5.15%,
+16.07/21.94%, and 38.80/46.35%. The source
+protected-mask area in the earlier current-draft
+Leo P QA was 164,759 native pixels, corresponding
+to area-equivalent `R = 229.0` native pixels
+(`≈60 arcsec` at 0.262 arcsec/pixel). Provided
+this same protected mask is unchanged, the three
+injection h are approximately **30, 60 and 120
+arcsec**, and the fixed test-aperture radius is
+approximately **120 arcsec**. These are **not**
+Leo P structural parameters. The 120-arcsec
+profile is intentionally broad enough that a
+nonzero synthetic flux can extend far into
+the nominal sky controls.
+
+**Critical limits:** the experiment injects light
+*after* Legacy's original sky subtraction; it tests
+only additional local residual-sky-fitting bias.
+The fixed scene/training masks, unconvolved
+profile (q=0.65) and unmasked aperture omit
+PSF effects, full source detection, galaxy
+segmentation, neighbour flux filling, photometric
+aperture uncertainty, native coadd covariance
+and historic DR11 source over-subtraction.
+The reported recovered fractions must **never**
+be described as measured Leo P total-galaxy
+flux loss or inverted as a photometric correction.
+The 4/4 apparently measurable variants share one
+original correlated coadd and have unequal sky
+sample geometry. Large differences at the
+target centre are a robust *sensitivity
+warning*, not four independent measurements.
+
+**Follow-up implementation after this QA:**
+the frozen-mask injection now reports
+`injected_signal_on_frozen_sky_samples` with
+original training and holdout sample counts
+and explicit injected-signal medians, maxima,
+and training 90th percentile, computed from
+the *same fixed native Scene masks used by the
+robust fitted sky*. This directly tests the
+source-to-background-sample leakage driving
+the synthetic biases, rather than only the
+end recovery fractions. For float32 input FITS,
+the additive test image is held in float64,
+not quantized back to native float32; original
+image, native mask and inventory remain
+unchanged. No external brick is used. These
+leakage values still need a new Leo P
+`Copy background QA` export; they cannot
+be reconstructed from the current text-only
+readout without the original native pixels.
+
+**Scientific decision:** maintain
+`recommended_science_action =
+NO_ADDITIONAL_SKY_SUBTRACTION_UNTIL_VALIDATED`,
+`automatic_sky_background_correction_authorized=false`,
+and `SCIENCE HOLD`. Further development should
+use predeclared large-aperture spatial covariance
+and several PSF-aware artificial dwarf profiles
+on copies of *the same already attached project*.
+
+
+### PSF-0: explicit internal-holdout selection leakage and spatial coverage QA (2026-11-13)
+
+The empirical ePSF fitting cohort and its fixed held-out
+stars are disjoint, but in catalogue-vetted modes the image
+core-width reference used to screen stars is learned from a
+population of Gaia-confirmed candidates **before** the final
+training/holdout split. Thus the holdout is independent of
+the *kernel fit*, not a completely blinded population with
+quality thresholds learned exclusively from training stars.
+Spatially distant stars and a narrow magnitude range may also
+prevent reliable transfer of one finite kernel to a galaxy.
+
+PSF-0 now records explicit `stellar_spatial_and_brightness_coverage_qa`
+with per-cohort native-quadrant counts, spatial bounding boxes,
+Gaia-G magnitude ranges and unambiguous flags distinguishing
+fit independence from preselection independence. The existing
+star selection, ePSF kernel, heldout numerical residuals and
+all non-adoption gates are unchanged. Synthetic fixture
+regressions verify exact cohort/quadrant accounting and
+that no fictitious external-validation or PSF-wing claim appears.
+This supports designing a future genuinely independent stellar
+validation cohort and does not itself cure PSF wing/sky degeneracy.
+
+
+### PSF-0 held-out core amplitude must not be fitted using unverified wings (2026-11-13)
+
+The independent held-out residual in `_holdout_diagnostic` is measured
+in a declared core aperture of radius at most nine native pixels, but
+the formerly reported stellar amplitude was fit over the **entire**
+31-pixel cutout. Broad PSF-wing mismodelling, neighbour residuals or
+a local-sky error outside the core therefore altered the amplitude
+used to judge the **core** itself. This is a confirmed mismatch
+between the metric's evaluation domain and its nuisance-parameter
+fit, not proof that the ePSF is astrophysically wrong.
+
+The conditional held-out amplitude is now inverse-variance fitted
+using precisely the declared valid **core** pixels. The previous
+whole-stamp amplitude is retained with a separate name and
+core-versus-whole difference as a descriptive wing/sky sensitivity
+test; neither result validates external PSF transfer or permits
+subtraction of stars. A synthetic fixed-PSF regression injects a
+large outer-halo disturbance outside the fitting radius and proves
+that the fitted core amplitude and core residual are invariant,
+while the old whole-stamp fit remains sensitive. This matches the
+limited fitting-radius principle of Photutils PSF photometry and
+classical DAOPHOT but is not a calibrated far-wing measurement.
+
+
+The optional whole-stamp comparison also now explicitly reports an
+undefined/non-positive result instead of failing a valid core
+measurement when strong negative residual wings dominate the
+whole-stamp LS normalization. This behavior is covered by an
+independent negative-outer-halo regression.
+
+
+### PSF-0 star-local sky: measure sensitivity to heterogeneous coadd IVAR (2026-11-13)
+
+PSF-0 currently selects/iteratively clips pixels in an individual
+stellar sky annulus and fits an **unweighted** local constant-plus-plane.
+Yet original native inverse variance can change significantly
+across exposures/coadd boundaries. When one side of an annulus
+has higher uncertainty and a nonrepresentative positive
+residual, the unweighted fit can bias the fitted stellar sky
+intercept. Correcting it by automatically switching the live
+PSF fit to IVAR weighting would be premature while the weights
+themselves are only diagonal and the wings/sky degeneracy is
+unresolved.
+
+The running `_star_cutout` now additionally fits a **read-only,
+inverse-variance-weighted alternative** on precisely the same
+final sigma-clipped annulus pixels, without changing the PSF
+training cutouts, source selection, threshold, or main sky
+plane. The PSF0 QA records IVAR dynamic range, weighted-minus-
+unweighted intercept and gradient differences, and an explicit
+underconstrained status when the alternative is not stable.
+A deterministic synthetic test uses a high-variance contaminated
+half-annulus to show a measurable shift towards the known clean
+background, with no star-data edits. It is a *sensitivity*
+result, not proof that the weighted fit is always unbiased or
+that PSF far wings are modelled.
+
+Photutils' current ePSF documentation explicitly supports
+per-star uncertainty weights in fitting, but the local sky
+annulus still requires independent source/wing contamination
+tests. Reference: https://docs.astropy.org/projects/photutils/en/stable/user_guide/epsf_building.html .

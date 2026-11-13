@@ -383,6 +383,57 @@ def _star_cutout(frame, x, y, cfg, protected):
     # Refit after the last rejection; the previous iteration's
     # coefficients otherwise describe a *different* pixel subset.
     coeff = np.linalg.lstsq(design[include], observed[include], rcond=None)[0]
+    # An unweighted local-sky plane is the frozen PSF-0 baseline.
+    # However the original inverse variance can be strongly
+    # heteroscedastic across a coadd. Compare it with a weighted LS
+    # fit on EXACTLY the same clipped annulus pixels, so this is a
+    # noise-model sensitivity test, never a re-selected star sample.
+    weighted_sky_qa = {
+        "schema": "desidera.psf0-annular-sky-weight-sensitivity/1",
+        "reference_fit": "UNCHANGED_SIGMA_CLIPPED_UNWEIGHTED_PLANE",
+        "alternative_fit": "INVVAR_WEIGHTED_PLANE_SAME_CLIPPED_PIXELS",
+        "n_fixed_clipped_annulus_pixels": int(np.count_nonzero(include)),
+        "original_sky_plane_and_selection_unchanged": True,
+        "alternative_is_diagnostic_only": True,
+        "sky_and_psf_wings_separable": False,
+        "weighted_fit_status": "UNAVAILABLE",
+        "inverse_variance_max_to_min_ratio": None,
+        "weighted_minus_unweighted_b0_nMgy_per_pixel": None,
+        "weighted_minus_unweighted_bx_nMgy_per_pixel2": None,
+        "weighted_minus_unweighted_by_nMgy_per_pixel2": None,
+    }
+    original_weights = np.asarray(ivar[annulus][include], dtype=float)
+    if (len(original_weights) >= 25 and
+            np.isfinite(original_weights).all() and
+            np.all(original_weights > 0.)):
+        ratio = float(original_weights.max()/original_weights.min())
+        weighted_sky_qa["inverse_variance_max_to_min_ratio"] = (
+            ratio if np.isfinite(ratio) else None)
+        # Divide out a common weight scale so a large nominal IVAR
+        # does not by itself destabilize the comparison.
+        normalized_weights = original_weights/np.median(original_weights)
+        sw = np.sqrt(normalized_weights)
+        weighted_design = design[include]*sw[:, None]
+        weighted_values = observed[include]*sw
+        try:
+            if (np.isfinite(weighted_design).all() and
+                    np.isfinite(weighted_values).all() and
+                    np.linalg.cond(weighted_design) < 1.e8):
+                alternate, _, rank, _ = np.linalg.lstsq(
+                    weighted_design, weighted_values, rcond=None)
+                if rank == 3 and np.isfinite(alternate).all():
+                    weighted_sky_qa.update({
+                        "weighted_fit_status": "MEASURED_DESCRIPTIVE_ONLY",
+                        "weighted_minus_unweighted_b0_nMgy_per_pixel":
+                            float(alternate[0]-coeff[0]),
+                        "weighted_minus_unweighted_bx_nMgy_per_pixel2":
+                            float(alternate[1]-coeff[1]),
+                        "weighted_minus_unweighted_by_nMgy_per_pixel2":
+                            float(alternate[2]-coeff[2]),
+                    })
+        except (np.linalg.LinAlgError, ValueError, FloatingPointError,
+                OverflowError):
+            pass
     full_sky = coeff[0] + coeff[1]*dx + coeff[2]*dy
     residual = src - full_sky
     core = (rr <= max(2.5, cfg.guessed_fwhm_pix))
@@ -427,6 +478,7 @@ def _star_cutout(frame, x, y, cfg, protected):
         "octant_median_spread_over_noise":sector_scatter_sigma,
         "sky_uncertainty_covariance_calibrated":False,
         "sky_versus_psf_wings_separable_from_this_cutout":False,
+        "annulus_inverse_variance_sensitivity": weighted_sky_qa,
     }
     # Independent observational sensitivity: re-fit *original* native
     # pixels in predeclared interior annuli. This never changes the chosen
@@ -466,32 +518,54 @@ def _holdout_diagnostic(star, cutout, kernel):
     model = shift(kernel, (local_y-cy, local_x-cx),
                   order=3, mode="constant", cval=0., prefilter=True)
     usable = cutout["weights"] > 0
-    # Exclude any interpolation ringing: tiny signed numerical artifacts
-    # outside the model support are *not* interpreted as stellar flux.
+    # Exclude interpolation ringing and make the amplitude-fit domain
+    # identical to the declared *core* validation domain. The former
+    # whole-stamp LS fit let uncalibrated wings/annular sky leakage change
+    # the normalization against which CORE residuals were judged.
     model = np.maximum(model, 0.)
-    numerator = float(np.sum(cutout["weights"][usable]**2 *
-                             model[usable] * cutout["image"][usable]))
-    denominator = float(np.sum(cutout["weights"][usable]**2 * model[usable]**2))
-    if denominator <= 0 or not math.isfinite(denominator):
-        raise ValueError("Holdout PSF normalization is undefined")
-    flux = numerator/denominator
-    if flux <= 0 or not math.isfinite(flux):
-        raise ValueError("Holdout star fitted flux is invalid")
-    err = cutout["image"]-flux*model
     inner = np.indices(kernel.shape)
-    # The model was shifted to this native subpixel location; the
-    # validation aperture MUST use the same stellar center, not the
-    # unshifted central pixel of the kernel array.
     r = np.hypot(inner[1]-local_x, inner[0]-local_y)
     core_radius = min(cx, cy, 9.)
     local = usable & (r <= core_radius)
     if not np.any(local):
         raise ValueError("Empty PSF holdout aperture")
+    def fit_amplitude(selection):
+        wt = cutout["weights"][selection]**2
+        denominator = float(np.sum(wt*model[selection]**2))
+        if denominator <= 0 or not math.isfinite(denominator):
+            raise ValueError("Holdout PSF normalization is undefined")
+        result = float(np.sum(wt*model[selection]*cutout["image"][selection])
+                       / denominator)
+        if result <= 0 or not math.isfinite(result):
+            raise ValueError("Holdout star fitted flux is invalid")
+        return result
+    flux = fit_amplitude(local)
+    # Preserve the former all-stamp answer as a *separate diagnostic*
+    # of the sensitivity to wings and local sky. It never determines
+    # the core-fit validation residual or any PSF science adoption.
+    try:
+        full_stamp_flux = fit_amplitude(usable)
+    except ValueError:
+        # This is deliberately SECONDARY: badly contaminated wings can
+        # yield a negative whole-stamp LS amplitude without invalidating
+        # the separate, still well-constrained held-out core diagnostic.
+        full_stamp_flux = None
+    err = cutout["image"]-flux*model
     return {
         "source_id": star.star_id,
         "relative_core_abs_residual": float(np.median(np.abs(err[local])) /
                                             max(cutout["peak_nMgy"], 1e-12)),
         "flux_nMgy_diagnostic": float(flux),
+        "amplitude_fit_domain": "VALID_CORE_PIXELS_WITHIN_REPORTED_RADIUS",
+        "whole_stamp_amplitude_nMgy_comparison": (
+            float(full_stamp_flux) if full_stamp_flux is not None else None),
+        "core_minus_whole_stamp_amplitude_nMgy": (
+            float(flux-full_stamp_flux)
+            if full_stamp_flux is not None else None),
+        "whole_stamp_amplitude_comparison_status": (
+            "MEASURED_DESCRIPTIVE_ONLY" if full_stamp_flux is not None
+            else "UNDEFINED_OR_NONPOSITIVE_ALL_STAMP_FIT"),
+        "amplitude_comparison_is_wing_sky_sensitivity_not_psf_validation": True,
         "background_rms_nMgy": cutout["rms_nMgy"],
         "core_aperture_center_native_xy": [float(local_x), float(local_y)],
         "core_aperture_radius_pix": float(core_radius),
@@ -776,6 +850,27 @@ def build_empirical_coadd_psf(
                     cfg.max_training_stars//(cfg.holdout_every-1))):
             break
     accepted_before_width_screen = len(accepted)
+    # Freeze disjoint validation membership BEFORE learning any field-level
+    # width reference. Otherwise future holdouts help define the width
+    # distribution against which they themselves are screened.
+    # Predefined per-star DAO/Gaia/morphology/sky gates still apply to
+    # everyone and do not make this an untouched external star sample.
+    accepted.sort(key=lambda t: (int(t[2]//(cfg.cutout_size_pix*2)),
+                                 int(t[1]//(cfg.cutout_size_pix*2)), t[1], t[0]))
+    if cfg.star_catalog_policy == "tractor_psf_validated":
+        holdout_eligible_indices = [
+            i for i, entry in enumerate(accepted)
+            if (entry[-1].get("star_identity") or {}).get(
+                "gaia_source_id") is not None]
+    else:
+        holdout_eligible_indices = list(range(len(accepted)))
+    frozen_holdout_indices = set(
+        holdout_eligible_indices[::cfg.holdout_every])
+    if len(frozen_holdout_indices) < cfg.min_holdout_stars:
+        frozen_holdout_indices.update(
+            holdout_eligible_indices[:cfg.min_holdout_stars])
+    frozen_holdout_ids = {
+        accepted[i][0] for i in frozen_holdout_indices}
     width_qa = None
     if catalog_matcher is not None:
         # Define the field width reference ONLY from Gaia-confirmed cores,
@@ -784,17 +879,26 @@ def build_empirical_coadd_psf(
         # the star-size gate used to validate its own membership.
         reference_entries = [
             entry for entry in accepted
-            if (entry[-1].get("star_identity") or {}).get(
+            if entry[0] not in frozen_holdout_ids
+            and (entry[-1].get("star_identity") or {}).get(
                 "gaia_source_id") is not None]
         width_qa = assess_sample_widths([
             (entry[0], entry[-1]["shape_qa"])
             for entry in reference_entries])
         if width_qa is not None:
-            width_qa["reference_population"] = "GAIA_DR3_CORES_ONLY"
+            width_qa["reference_population"] = "GAIA_DR3_NONHOLDOUT_CANDIDATE_CORES"
             width_qa["n_reference_gaia_candidates"] = len(reference_entries)
+            width_qa["holdout_ids_excluded_before_reference_learning"] = True
+            width_qa["n_frozen_holdout_stars_excluded"] = len(frozen_holdout_ids)
 
             compact = []
             for entry in accepted:
+                # Validation stars are not selected/rejected using a
+                # population statistic learned from the training sample.
+                # Retain genuinely unusual PSFs as informative holdouts.
+                if entry[0] in frozen_holdout_ids:
+                    compact.append(entry)
+                    continue
                 sigma = entry[-1]["shape_qa"]["sigma_eff_pix"]
                 ratio = sigma / width_qa["reference_core_sigma_pix"]
                 if not (width_qa["min_relative_core_sigma"] <= ratio <=
@@ -808,9 +912,8 @@ def build_empirical_coadd_psf(
         evidence = screening_by_id[entry[0]]
         evidence["outcome"] = "ACCEPTED_FOR_SPLIT"
         evidence["checks_passed"].append("field_relative_core_width")
-    # Prevent the brightest section of one brick monopolizing the holdout.
-    accepted.sort(key=lambda t: (int(t[2]//(cfg.cutout_size_pix*2)),
-                                 int(t[1]//(cfg.cutout_size_pix*2)), t[1], t[0]))
+    # The original spatial ordering and frozen holdout IDs survive
+    # train-only width screening and any later manual training exclusions.
     minimum_stars = cfg.min_train_stars + cfg.min_holdout_stars
     n_gaia_eligible = sum(
         (entry[-1].get("star_identity") or {}).get("gaia_source_id")
@@ -880,6 +983,16 @@ def build_empirical_coadd_psf(
             f"Insufficient isolated, unsaturated, sky-screened stars: "
             f"{len(accepted)} (minimum {minimum_stars})",
             "stellar_sample_underflow")
+    # Distinguish genuinely insufficient Gaia validation stars from a
+    # separate shortage of nonholdout Gaia stars to learn the width prior.
+    # Checking the latter first would obscure the actual failed contract.
+    if (cfg.star_catalog_policy == "tractor_psf_validated" and
+            n_gaia_eligible < cfg.min_holdout_stars):
+        selection_rejection(
+            f"Insufficient Gaia DR3 holdout candidates: "
+            f"{n_gaia_eligible} (minimum {cfg.min_holdout_stars}); "
+            "Tractor-only sources cannot substitute for Gaia validation",
+            "gaia_holdout_underflow")
     if (cfg.star_catalog_policy == "tractor_psf_validated"
             and width_qa is None):
         selection_rejection(
@@ -887,28 +1000,16 @@ def build_empirical_coadd_psf(
             "fewer than 5 individually accepted Gaia DR3 reference cores. "
             "Do not use non-Gaia candidates to define their own width prior.",
             "gaia_width_reference_underflow")
-    # Gaia-only validation is reserved BEFORE fitting and BEFORE any
-    # train-only iterative outlier removal. This heldout set cannot include
-    # a Tractor-only training source, preventing identity leakage.
-    if cfg.star_catalog_policy == "tractor_psf_validated":
-        gaia_indices = [
-            i for i, entry in enumerate(accepted)
-            if (entry[-1].get("star_identity") or {}).get(
-                "gaia_source_id") is not None]
-        if len(gaia_indices) < cfg.min_holdout_stars:
-            selection_rejection(
-                f"Insufficient independent Gaia DR3 holdout stars: "
-                f"{len(gaia_indices)} (minimum {cfg.min_holdout_stars}); "
-                "Tractor-only sources cannot substitute for Gaia validation",
-                "gaia_holdout_underflow")
-        holdout_idx = set(gaia_indices[::cfg.holdout_every])
-        if len(holdout_idx) < cfg.min_holdout_stars:
-            holdout_idx.update(gaia_indices[:cfg.min_holdout_stars])
-    else:
-        holdout_idx = {
-            i for i in range(len(accepted)) if i % cfg.holdout_every == 0}
-        if len(holdout_idx) < cfg.min_holdout_stars:
-            holdout_idx.update(range(cfg.min_holdout_stars))
+    # Holdout membership was frozen before training-only width statistics.
+    # In the Tractor-assisted mode the holdout is Gaia-identified only.
+    holdout_idx = {
+        i for i, entry in enumerate(accepted)
+        if entry[0] in frozen_holdout_ids}
+    if len(holdout_idx) < cfg.min_holdout_stars:
+        selection_rejection(
+            f"Insufficient independent Gaia/DAO holdout stars: "
+            f"{len(holdout_idx)} (minimum {cfg.min_holdout_stars})",
+            "fixed_holdout_underflow")
     for i, entry in enumerate(accepted):
         screening_by_id[entry[0]]["selection_role"] = (
             "HOLDOUT_GAIA_DR3" if i in holdout_idx
@@ -1219,6 +1320,55 @@ def build_empirical_coadd_psf(
         "coadd_sky_and_psf_wings_jointly_fitted":False,
         "sky_correlation_uncertainty_calibrated":False,
     }
+    # An independent ePSF *fit* holdout is not an untouched
+    # independent source-population validation: shared detection and
+    # per-star quality gates still determine eligibility. But the
+    # field-relative Gaia width reference now excludes frozen holdouts.
+    # Record that distinction together with actual sky coverage and
+    # stellar brightness spans, instead of relying on star count alone.
+    ny, nx = frame.shape
+    def cohort_coverage(stars):
+        counts = [0, 0, 0, 0]
+        magnitudes = []
+        coords = []
+        for star in stars:
+            x, y = float(star.x_pix), float(star.y_pix)
+            if not (np.isfinite(x) and np.isfinite(y)):
+                raise ValueError("Nonfinite PSF training/holdout location")
+            counts[int(x >= nx/2.) + 2*int(y >= ny/2.)] += 1
+            coords.append((x, y))
+            mag = star.gaia_g_mag
+            if mag is not None and np.isfinite(float(mag)):
+                magnitudes.append(float(mag))
+        return {
+            "n_stars": len(stars),
+            "n_populated_native_quadrants": sum(v > 0 for v in counts),
+            "counts_by_native_quadrant": counts,
+            "bounding_box_native_xyxy": (
+                [float(min(x for x, y in coords)),
+                 float(min(y for x, y in coords)),
+                 float(max(x for x, y in coords)),
+                 float(max(y for x, y in coords))]
+                if coords else None),
+            "n_stars_with_finite_gaia_g_mag": len(magnitudes),
+            "gaia_g_mag_min": min(magnitudes) if magnitudes else None,
+            "gaia_g_mag_max": max(magnitudes) if magnitudes else None,
+        }
+    stellar_coverage_qa = {
+        "schema": "desidera.psf0-stellar-coverage-and-screening/1",
+        "train": cohort_coverage(train),
+        "holdout": cohort_coverage(holdout),
+        "holdout_is_disjoint_from_epsf_fitting": True,
+        "holdout_is_not_an_untouched_preselection_population": True,
+        "gaia_core_width_reference_includes_pre_split_holdout": False,
+        "holdout_selection_frozen_before_train_width_reference": True,
+        "width_reference_nonholdout_candidates_only": True,
+        "heldout_stars_not_screened_against_train_width_distribution": True,
+        "external_independent_stellar_validation_performed": False,
+        "spatial_transfer_to_galaxy_calibrated": False,
+        "brightness_dependent_psf_wings_calibrated": False,
+        "no_global_psf_science_adoption": True,
+    }
     selection_catalog_qa = {
         "policy": cfg.star_catalog_policy,
         "gaia_strict": cfg.star_catalog_policy == "gaia_strict",
@@ -1269,6 +1419,8 @@ def build_empirical_coadd_psf(
             if cfg.star_catalog_policy == "dao_diagnostic"
             else "GAIA_DR3_IDENTIFIED_IN_NATIVE_TRACTOR"),
         "holdout_independent_of_epsf_fit": True,
+        "stellar_spatial_and_brightness_coverage_qa":
+            stellar_coverage_qa,
         "psf_star_cleanliness_certified": False,
     }
     # Even when the signed kernel fails the negative-mass gate, preserve

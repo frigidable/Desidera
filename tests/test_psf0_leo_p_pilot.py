@@ -124,6 +124,34 @@ def test_synthetic_native_legacy_fits_runs_leo_p_pilot_without_false_science(
     assert (p.root/"lsbpipe-object.json").is_file()
 
 
+def test_gui_psf_protection_uses_saved_project_icrs_not_canonical_leo_p(
+        tmp_path, monkeypatch):
+    """Every stage must share the same saved target anchor within Leo P."""
+    import lsbpipe.photometry.psf_gui_backend as backend
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    dec = 18.088025 + 20./3600.
+    project = _project(tmp_path, dec=dec)
+    _synthetic_legacy_files(project)
+    seen = []
+    def intercept_psf_build(frame, *, target_icrs_deg, **kwargs):
+        seen.append((tuple(target_icrs_deg),
+                     float(kwargs["target_protection_arcsec"])))
+        raise RuntimeError("SYNTHETIC_STOP_AFTER_TARGET_PROVENANCE")
+    monkeypatch.setattr(backend, "build_empirical_coadd_psf",
+                        intercept_psf_build)
+    with pytest.raises(RuntimeError, match="SYNTHETIC_STOP"):
+        backend.run_gui_psf0(
+            project.root, band="r",
+            config=PSF0Config(
+                star_catalog_policy="dao_diagnostic",
+                max_training_stars=30,
+                min_train_stars=6, min_holdout_stars=2),
+            protection_arcsec=90.)
+    assert seen == [((155.438012, dec), 90.)]
+    assert not (project.root / "analyses").exists()
+
+
 def test_gui_preview_refuses_export_after_original_fits_changed(tmp_path, monkeypatch):
     from lsbpipe.photometry.psf_gui_backend import run_gui_psf0, save_gui_psf0
 
@@ -144,6 +172,46 @@ def test_gui_preview_refuses_export_after_original_fits_changed(tmp_path, monkey
     with pytest.raises(ValueError, match="changed since PSF build"):
         save_gui_psf0(preview)
     assert not (project.root/"analyses"/"psf-pilots").exists()
+
+
+def test_saved_psf_cannot_survive_changed_project_target_anchor(
+        tmp_path, monkeypatch):
+    """Same original FITS and brick do not excuse a moved PSF target mask."""
+    from lsbpipe.photometry.psf_gui_backend import (
+        run_gui_psf0, save_gui_psf0, read_saved_psf0_bands,
+        _same_target_anchor)
+
+    assert _same_target_anchor((155.438012, 18.088025),
+                               (155.438012, 18.088025))
+    assert not _same_target_anchor((155.438012, 18.088025),
+                                   (155.438012, 18.088025 + 10./3600.))
+    assert _same_target_anchor((359.9999999, 18.), (-.0000001, 18.))
+    assert not _same_target_anchor((155.438012, 18.088025), None)
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = _project(tmp_path)
+    paths = _synthetic_legacy_files(project)
+    original_hashes = {name: data.read_bytes() for name,data in paths.items()}
+    preview = run_gui_psf0(
+        project.root, band="r",
+        config=PSF0Config(max_training_stars=30,
+                          min_train_stars=6, min_holdout_stars=2),
+        protection_arcsec=12.)
+    assert preview["status"] == "EXPERIMENTAL_PSF_NOT_ADOPTED"
+    saved = save_gui_psf0(preview)
+    assert Path(saved).is_dir()
+    assert "r" in read_saved_psf0_bands(project.root)["restored"]
+    project.field = SkyField(
+        155.438012, 18.088025 + 10./3600., 6.)
+    save_object_project(project)
+    result = read_saved_psf0_bands(project.root)
+    assert not result["restored"]
+    assert any("target ICRS anchor differs" in message
+               for message in result["warnings"].values())
+    with pytest.raises(ValueError, match="target ICRS anchor changed"):
+        save_gui_psf0(preview)
+    assert all(path.read_bytes() == original_hashes[name]
+               for name,path in paths.items())
 
 
 def test_explicit_manual_psf_star_exclusions_persist_without_modifying_fits(
@@ -296,7 +364,8 @@ def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fi
     for j, (cy, cx) in enumerate(
             (cy, cx) for cy in (35, 78, 122, 166, 209, 248)
             for cx in (35, 78, 122, 166, 209, 248)):
-        gaia = j % 6 == 0
+        # Keep >=5 Gaia reference stars after reserving fixed holdouts.
+        gaia = j % 4 == 0
         positions.append((cx + .12, cy - .29))
         rows.append({
             "ref_cat": "G3" if gaia else "",
@@ -355,12 +424,12 @@ def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fi
         build_empirical_coadd_psf(
             frame, target_icrs_deg=LEO_P_WORKING_ICRS,
             target_protection_arcsec=12.,
-            config=replace(config, min_holdout_stars=7),
+            config=replace(config, min_holdout_stars=10),
             catalog_matcher=matcher)
     diagnostic = failure.value.diagnostics
     assert diagnostic["stage"] == "gaia_holdout_underflow"
     assert diagnostic["n_accepted_stars"] >= 13
-    assert diagnostic["n_gaia_holdout_eligible"] < 7
+    assert diagnostic["n_gaia_holdout_eligible"] < 10
     assert diagnostic["n_screened_candidates"] == diagnostic["n_detected_candidates"]
     assert diagnostic["catalog_selection_qa"][
         "accepted_identity_population_qa"]["populations"][
@@ -390,3 +459,22 @@ def test_leo_p_cli_qa_profile_requires_explicit_full_opt_in(tmp_path, monkeypatc
     with pytest.raises(TypeError, match="extended_research_qa"):
         run_leo_p_pilot(p.root, extended_research_qa="true")
     assert not (p.root / "analyses").exists()
+
+
+def test_psf_restore_ignores_broken_symlink_before_checkpoint_sort(
+        tmp_path, monkeypatch):
+    """Unsafe historic checkpoint entries must not abort PSF restoration."""
+    from lsbpipe.photometry.psf_gui_backend import read_saved_psf0_bands
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = _project(tmp_path)
+    folder = project.root / "analyses" / "psf-pilots"
+    folder.mkdir(parents=True)
+    unsafe = folder / ("psf0-" + "a"*24)
+    try:
+        unsafe.symlink_to(folder / "nonexistent", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Creating directory symlinks is not permitted on this runner")
+    assert unsafe.is_symlink() and not unsafe.exists()
+    restored = read_saved_psf0_bands(project.root)
+    assert restored["restored"] == {}
+    assert restored["warnings"]["storage"] == "Unsafe stored PSF entry"

@@ -4,12 +4,15 @@
 
 **Scientific status:** research prototype. A feature being implemented, a successful test or a saved diagnostic does **not** certify a calibrated astronomical measurement. No PSF-based or SBF distance measurement, background estimate, reconstructed total flux or catalogue association is adopted automatically.
 
+**Current infrastructure development candidate:** `v0.2.1.dev4` is in existing Draft PR #84 (not tagged or merged). It preserves the earlier `v0.2.1.dev3` [performance revisions](docs/architecture/PERFORMANCE_AUDIT_20261113.md), and tightens **architecture and reproducibility**: scientific/GUI CI coverage, per-PR GUI concurrency, SHA-pinned GitHub Actions, installed-wheel smoke tests, declared `test-gui` extras, explicit manual-only remote CCD acceptance, safer portable object-project paths and an enforced headless scientific-core import boundary. Read the [architecture and infrastructure audit](docs/architecture/INFRASTRUCTURE_ARCHITECTURE_AUDIT_20261113.md) for confirmed fixes, remaining cross-process write races, packaging restrictions, and acceptance criteria. A green CI does not certify a photometric science release; **SCIENCE HOLD remains**.
+
 ## Quick start
 
-Requires Python 3.10+ and an editable checkout:
+For local development, use Python 3.10+ and an editable checkout:
 
 ```powershell
-python -m pip install -e ".[exact,gui,knowledge,test]" pytest-qt
+python -m pip install -e ".[exact,gui,knowledge,test,test-gui]"
+python -m pip check
 python -m desidera.gui
 ```
 
@@ -64,12 +67,13 @@ The `--background` input is **caller-supplied residual sky in nMgy/pixel**, not 
 ## Testing and contribution
 
 ```powershell
-python -m pip install -e ".[exact,gui,knowledge,test]" pytest-qt
+python -m pip install -e ".[exact,gui,knowledge,test,test-gui]"
+python -m pip check
 python -m pytest -q tests --ignore=tests/gui
 python -m pytest -q tests/gui
 ```
 
-These are local commands, not a claim that they were executed on a given machine. Consult [GitHub Actions](https://github.com/frigidable/Desidera/actions) for exact-commit CI results. Offscreen Windows Qt captures do not replace manual Windows/Legacy Viewer/FITS inspection, and successful tests do not imply scientific acceptance.
+These are local commands, not a claim that they were executed on a given machine. The CI matrix separately builds and installs the **non-editable distribution wheel** to verify the `desidera`/`lsbpipe` imports and all five advertised console-script entry points; PR real-archive acceptance runs offline, while explicit `workflow_dispatch` is required to fetch official CCD FITS. Consult [GitHub Actions](https://github.com/frigidable/Desidera/actions) for exact-commit CI results. Offscreen Windows Qt captures do not replace manual Windows/Legacy Viewer/FITS inspection, and successful tests do not imply scientific acceptance.
 
 See [contribution and scientific-safety rules](AGENTS.md), the [documentation and evidence index](docs/README.md), and the [current roadmap](https://github.com/frigidable/Desidera/issues/44). Historical phase reports remain accessible under `docs/`, but they describe their dated branch/commit, not necessarily the present `main`.
 

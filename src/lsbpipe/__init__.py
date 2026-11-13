@@ -3,7 +3,7 @@ from .geometry import ReferenceGeometry, fractional_aperture_weights
 from .profiles import MeasurementFrame, ProfileResult, measure_profiles, half_flux_radius
 from .simulation import SersicTruth, sersic_image, analytic_sersic_flux
 
-__version__ = "0.2.0"
+__version__ = "0.2.1.dev4"
 __all__ = [
     "ReferenceGeometry", "fractional_aperture_weights", "MeasurementFrame",
     "ProfileResult", "measure_profiles", "half_flux_radius", "SersicTruth",

@@ -146,3 +146,111 @@ def test_icrs_ellipse_area_mirror_symmetry_and_chunk_invariance():
     assert first.sum() == pytest.approx(mirrored.sum(), rel=.02)
     assert first[25, 25] == pytest.approx(1.)
     assert mirrored[25, 25] == pytest.approx(1.)
+
+
+
+def test_isophote_candidate_and_legacy_auto_protect_are_annotation_only():
+    """Saving a contour MUST NOT change protection, masking or sky training."""
+    from lsbpipe.photometry.sky_masks import (
+        is_legacy_isophote_protection,
+    )
+    wcs = _wcs(ra=155.)
+    contour = SkyMaskShape("circle", (155., .1), radius_arcsec=9.)
+    actual_target = SkyMaskShape("circle", (155., .1),
+                                 radius_arcsec=2.)
+    candidate = SkyMaskEdit("sc1_new_candidate", "isophote_candidate",
+                            contour, band="g")
+    legacy = SkyMaskEdit(
+        "sc1_iso_old_legacy", "protect_target", contour, band="g",
+        comment="AUTO_ISOPHOTE_PRELIMINARY source=DR11")
+    manual = SkyMaskEdit("researcher_core", "protect_target",
+                         actual_target, band="g")
+    exclude = SkyMaskEdit("manual_foreground", "exclude", actual_target,
+                          band="g")
+    draft = _draft()
+    for edit in (candidate, legacy, manual, exclude):
+        draft = draft.with_edit(edit)
+    stored = SkyMaskDraft.from_dict(draft.to_dict())
+    assert stored == draft and stored.digest == draft.digest
+    assert is_legacy_isophote_protection(legacy)
+    assert not is_legacy_isophote_protection(manual)
+    hard = np.zeros((51, 51), dtype=bool)
+    evaluated = evaluate_mask_draft(
+        stored, wcs, hard.shape, "g", native_hard=hard)
+    assert evaluated["legacy_isophote_count"] == 1
+    assert evaluated["isophote_candidate"].sum() > (
+        evaluated["target_protect"].sum() * 4)
+    assert evaluated["target_protect"][25,25]
+    assert not evaluated["target_protect"][25,32]
+    assert evaluated["isophote_candidate"][25,32]
+    assert evaluated["excluded"][25,25]  # explicitly excluded star
+    assert not evaluated["excluded"][25,32]
+    assert not evaluated["sky_train"].any()
+    assert not evaluated["sky_holdout"].any()
+    # Other native bands never inherit band-local proposals.
+    other = evaluate_mask_draft(
+        stored, wcs, hard.shape, "r", native_hard=hard)
+    assert not other["isophote_candidate"].any()
+    assert not other["target_protect"].any()
+    assert not other["excluded"].any()
+
+
+def test_isophote_provenance_markers_ignored_without_mask_change():
+    """Old SC1 SGA-seed provenance is recognizable after reopening drafts."""
+    from lsbpipe.photometry.sky_masks import (
+        is_legacy_isophote_protection,
+    )
+    ellipse = SkyMaskShape("ellipse", (155., .1),
+                           a_arcsec=15., q=.6, pa_deg=30.)
+    old_seed = SkyMaskEdit(
+        "sc1_iso_old_sga", "protect_target", ellipse,
+        comment="SGA_INITIAL_GEOMETRY_DRAFT kind=sga_seed")
+    assert is_legacy_isophote_protection(old_seed)
+    assert is_legacy_isophote_protection(
+        SkyMaskEdit("sc1_iso_truncated", "protect_target", ellipse,
+                    comment="x"*512))
+    assert not is_legacy_isophote_protection(
+        SkyMaskEdit("custom", "protect_target", ellipse))
+
+
+def test_mask_shape_numeric_types_are_canonical_and_not_strings():
+    """Frozen, serializable angular parameters must match calculation types."""
+    circle = SkyMaskShape("circle", center=(155, np.float64(.1)),
+                          radius_arcsec=np.float32(4.))
+    ellipse = SkyMaskShape("ellipse", center=(155., .1),
+                           a_arcsec=np.float32(10.),
+                           q=np.float64(.6), pa_deg=np.float64(225.))
+    assert type(circle.radius_arcsec) is float
+    assert type(ellipse.a_arcsec) is float
+    assert type(ellipse.q) is float
+    assert ellipse.pa_deg == pytest.approx(45.)
+    assert rasterize_sky_shape(circle, _wcs(ra=155.), (51,51)).sum() > 0.
+    assert rasterize_sky_shape(ellipse, _wcs(ra=155.), (51,51)).sum() > 0.
+    for bad in ("4.0", True, np.bool_(True)):
+        with pytest.raises(ValueError, match="invalid geometric"):
+            SkyMaskShape("circle", center=(155., .1), radius_arcsec=bad)
+        with pytest.raises(ValueError, match="invalid geometric"):
+            SkyMaskShape("ellipse", center=(155., .1),
+                         a_arcsec=10., q=bad, pa_deg=0.)
+    with pytest.raises(ValueError, match="invalid geometric"):
+        SkyMaskShape("circle", center=("155", .1), radius_arcsec=4.)
+
+
+def test_nonzero_area_self_crossed_polygon_must_not_be_rasterized():
+    # A five-vertex crossed polygon has nonzero signed shoelace area;
+    # rejecting zero-area polygons alone was insufficient.
+    offsets = ((0., 0.), (6., 6.), (0., 7.), (7., 0.), (3., -2.))
+    vertices = tuple((155. + x / 3600., .1 + y / 3600.)
+                     for x, y in offsets)
+    crossed = SkyMaskShape("polygon", vertices=vertices)
+    twice_area = sum(
+        offsets[i][0]*offsets[(i+1)%5][1] -
+        offsets[i][1]*offsets[(i+1)%5][0]
+        for i in range(5))
+    assert abs(twice_area) > 0.
+    with pytest.raises(ValueError, match="Self-intersecting"):
+        rasterize_sky_shape(crossed, _wcs(ra=155.), (51,51))
+    # The new geometry gate must preserve valid cross-meridian polygons.
+    normal = SkyMaskShape("polygon", vertices=(
+        (359.999, .100), (.001, .100), (.001, .101), (359.999, .101)))
+    assert rasterize_sky_shape(normal, _wcs(), (51,51)).sum() > 0

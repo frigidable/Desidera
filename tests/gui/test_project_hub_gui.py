@@ -575,3 +575,42 @@ def test_project_root_data_directory_allows_background_job_journaling(
     assert "Cannot journal operation" not in w.project_status.text()
     assert (project.root / "operations").is_dir()
     w._go_back_to_projects()
+
+
+def test_opt_in_startup_resumes_recent_galaxy_at_saved_scene(
+        qtbot, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    import lsbpipe.gui.project_hub as hub_module
+    from lsbpipe.photometry.project_resume import save_project_resume
+
+    # Do not write the real OS application preferences in CI.
+    settings_path = str(tmp_path / "test-galaxy-startup.ini")
+    monkeypatch.setattr(
+        hub_module, "QSettings",
+        lambda *_: QSettings(settings_path, QSettings.IniFormat))
+    project = create_object_project(
+        "Leo P", tmp_path / "startup_leo",
+        field=SkyField(155.438012, 18.088025, 5.))
+    save_project_resume(
+        project.root, stage="scene", band="r", location="photometry")
+    with offline_legacy_viewer():
+        h = ProjectHub()
+    qtbot.addWidget(h)
+    h.show()
+    assert not h.auto_resume.isChecked()
+    h._auto_resume_last_project()
+    assert h.workspace is None  # preference explicitly opt-in
+    h.auto_resume.setChecked(True)
+    assert QSettings(settings_path, QSettings.IniFormat).value(
+        "startup/auto_resume_last", False, type=bool) is True
+    with offline_legacy_viewer():
+        h._auto_resume_last_project()
+    w = h.workspace
+    assert w is not None
+    assert w._object_project.project_id == project.project_id
+    assert w.preview_tabs.currentWidget() is w.photometry_workspace
+    assert w.photometry_workspace.current_navigation() == ("scene", "r")
+    w._go_back_to_projects()
+    assert h.workspace is None
+    assert h.isVisible()
+    h.auto_resume.setChecked(False)

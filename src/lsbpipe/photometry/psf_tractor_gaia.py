@@ -293,6 +293,10 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
             world.append((ra,dec))
             ref_id = int(row[names["REF_ID"]])
             catalog_rows.append({
+                # Exact catalogued coordinates and optional DR11 context.
+                # These are observations/model metadata, NOT physical
+                # classifications or an independent Gaia re-query.
+                "ra_deg": ra, "dec_deg": dec,
                 "ref_cat": _value(row[names["REF_CAT"]]).upper(),
                 "ref_id": ref_id,
                 "objid": int(row[names["OBJID"]]),
@@ -306,6 +310,39 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
                 "gaia_g_mag": (
                     _number(row[names["GAIA_PHOT_G_MEAN_MAG"]])
                     if "GAIA_PHOT_G_MEAN_MAG" in names else None),
+                "ref_epoch": (
+                    _number(row[names["REF_EPOCH"]])
+                    if "REF_EPOCH" in names else None),
+                "parallax_mas": (
+                    _number(row[names["PARALLAX"]])
+                    if "PARALLAX" in names else None),
+                "parallax_ivar": (
+                    _number(row[names["PARALLAX_IVAR"]])
+                    if "PARALLAX_IVAR" in names else None),
+                "pmra_masyr": (
+                    _number(row[names["PMRA"]])
+                    if "PMRA" in names else None),
+                "pmra_ivar": (
+                    _number(row[names["PMRA_IVAR"]])
+                    if "PMRA_IVAR" in names else None),
+                "pmdec_masyr": (
+                    _number(row[names["PMDEC"]])
+                    if "PMDEC" in names else None),
+                "pmdec_ivar": (
+                    _number(row[names["PMDEC_IVAR"]])
+                    if "PMDEC_IVAR" in names else None),
+                # Multi-band Tractor model fluxes are NOT PSF-homogenized
+                # colors, direct flux measurements, or proof of origin.
+                "model_fluxes_nMgy": {
+                    b: _number(row[names["FLUX_" + b.upper()]])
+                    if "FLUX_" + b.upper() in names else None
+                    for b in ("g", "r", "i", "z")
+                },
+                "model_flux_ivars": {
+                    b: _number(row[names["FLUX_IVAR_" + b.upper()]])
+                    if "FLUX_IVAR_" + b.upper() in names else None
+                    for b in ("g", "r", "i", "z")
+                },
                 # P15: retain DR11 physical/shape metadata only when
                 # actually present in the original SAME brick FITS.
                 # SHAPE_R is in arcsec; e1/e2 are Tractor's reduced

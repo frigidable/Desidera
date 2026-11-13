@@ -143,6 +143,21 @@ def test_returns_normalized_native_grid_epsf_with_disjoint_holdouts(built):
     assert population["n_holdout_unverified_dao"] == len(result.holdout)
     assert population["holdout_identity_validation"] == "NONE_DAO_CANDIDATES_ONLY"
     assert population["holdout_independent_of_epsf_fit"] is True
+    coverage = population["stellar_spatial_and_brightness_coverage_qa"]
+    assert coverage["schema"] == (
+        "desidera.psf0-stellar-coverage-and-screening/1")
+    assert coverage["train"]["n_stars"] == len(result.training)
+    assert coverage["holdout"]["n_stars"] == len(result.holdout)
+    assert sum(coverage["train"]["counts_by_native_quadrant"]) == len(
+        result.training)
+    assert sum(coverage["holdout"]["counts_by_native_quadrant"]) == len(
+        result.holdout)
+    assert coverage["holdout_is_disjoint_from_epsf_fitting"] is True
+    assert coverage["holdout_is_not_an_untouched_preselection_population"] is True
+    assert coverage["gaia_core_width_reference_includes_pre_split_holdout"] is False
+    assert coverage["external_independent_stellar_validation_performed"] is False
+    assert coverage["spatial_transfer_to_galaxy_calibrated"] is False
+    assert coverage["brightness_dependent_psf_wings_calibrated"] is False
     candidates = population["candidate_screening_audit"]
     assert len([row for row in candidates
                 if row.get("final_selection_role") == "DAO_UNVERIFIED_HOLDOUT"
@@ -389,7 +404,8 @@ def test_manual_exclusion_recipe_rejects_malformed_or_duplicated_ids():
         PSF0Config(excluded_training_star_ids=("star-0003", "star-0002"))
 
 
-def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(built):
+def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(
+        built, monkeypatch):
     from dataclasses import replace
     from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
     from lsbpipe.photometry.psf_empirical import PSF0QualityError
@@ -415,6 +431,17 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
     matcher=TractorGaiaMatcher(
         "synthetic-tractor.fits","c"*64,frame.dataset_id,rows,positions)
 
+    # An apparently disjoint ePSF holdout previously still entered the
+    # shared Gaia width reference before the role split. Trace the actual
+    # reference-star IDs, not just the final kernel training inventory.
+    from lsbpipe.photometry import psf_empirical as epsf_module
+    original_width = epsf_module.assess_sample_widths
+    reference_cohorts = []
+    def audited_width(entries):
+        reference_cohorts.append({star_id for star_id, _ in entries})
+        return original_width(entries)
+    monkeypatch.setattr(epsf_module, "assess_sample_widths", audited_width)
+
     def run(recipe):
         try:
             result=build_empirical_coadd_psf(
@@ -431,6 +458,9 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
     assert len(train)>=base.min_train_stars
     assert len(holdout)>=base.min_holdout_stars
     assert all(s.gaia_source_id is not None for s in train+holdout)
+    frozen_holdout_ids = {s.star_id for s in holdout}
+    assert reference_cohorts
+    assert reference_cohorts[0].isdisjoint(frozen_holdout_ids)
     assert snapshot["catalog_sha256"]=="c"*64
     assert snapshot["catalog_policy"]=="gaia_strict"
     assert all(item["gaia"]["gaia_source_id"]>0 for item in snapshot["stars"])
@@ -440,6 +470,9 @@ def test_gaia_strict_requires_catalog_and_preserves_holdout_when_retraining(buil
     assert selected not in {s.star_id for s in reduced}
     assert {s.star_id for s in holdout}=={
         s.star_id for s in holdout_again}
+    assert len(reference_cohorts) >= 2
+    assert reference_cohorts[1].isdisjoint(frozen_holdout_ids)
+    assert reference_cohorts[0] == reference_cohorts[1]
     assert len(reduced)==len(train)-1
     assert next(item for item in review_again["stars"]
                 if item["star_id"]==selected)["role"]=="excluded"
@@ -851,3 +884,97 @@ def test_psf_qa_depth_requires_exact_boolean_and_cannot_enable_adoption():
         build_empirical_coadd_psf(
             fake_frame(), target_icrs_deg=LEO_P,
             target_protection_arcsec=13., extended_research_qa="yes")
+
+
+def test_core_holdout_psf_amplitude_is_invariant_to_contaminated_outer_wings():
+    """Unvalidated far-wing pixels must not set a reported core residual scale."""
+    from types import SimpleNamespace
+    from scipy.ndimage import shift
+    from lsbpipe.photometry.psf_empirical import _holdout_diagnostic
+    yy, xx = np.indices((31, 31), dtype=float)
+    kernel = np.exp(-.5*((xx-15.)**2+(yy-15.)**2)/4.**2)
+    kernel /= kernel.sum()
+    x, y = 15.22, 14.83
+    shifted = np.maximum(shift(kernel, (y-15., x-15.),
+                                order=3, mode="constant", cval=0.), 0.)
+    cutout = {
+        "center_in_cutout": (x, y),
+        "weights": np.ones((31, 31), dtype=float),
+        "image": 175.*shifted,
+        "peak_nMgy": float((175.*shifted).max()),
+        "rms_nMgy": .02,
+    }
+    star = SimpleNamespace(star_id="test-star")
+    clean = _holdout_diagnostic(star, cutout, kernel)
+    # Inject diffuse outer light only outside the declared validation
+    # radius, where the current 31-pixel ePSF is not independently
+    # wing-calibrated. The fitted core amplitude must remain unchanged.
+    outer = np.hypot(xx-x, yy-y) > clean["core_aperture_radius_pix"]
+    altered = dict(cutout)
+    altered["image"] = cutout["image"] + outer*3.5
+    contaminated = _holdout_diagnostic(star, altered, kernel)
+    assert clean["amplitude_fit_domain"] == (
+        "VALID_CORE_PIXELS_WITHIN_REPORTED_RADIUS")
+    assert contaminated["flux_nMgy_diagnostic"] == pytest.approx(
+        clean["flux_nMgy_diagnostic"], abs=1.e-10)
+    assert contaminated["relative_core_abs_residual"] == pytest.approx(
+        clean["relative_core_abs_residual"], abs=1.e-13)
+    assert contaminated["whole_stamp_amplitude_nMgy_comparison"] > (
+        clean["whole_stamp_amplitude_nMgy_comparison"])
+    assert contaminated["amplitude_comparison_is_wing_sky_sensitivity_not_psf_validation"]
+    # A sufficiently strong negative halo can make the whole-stamp
+    # amplitude negative; that must not erase a valid held-out core.
+    negative_halo = dict(cutout)
+    negative_halo["image"] = cutout["image"] - outer*100.
+    negative = _holdout_diagnostic(star, negative_halo, kernel)
+    assert negative["flux_nMgy_diagnostic"] == pytest.approx(
+        clean["flux_nMgy_diagnostic"], abs=1.e-10)
+    assert negative["whole_stamp_amplitude_nMgy_comparison"] is None
+    assert negative["whole_stamp_amplitude_comparison_status"] == (
+        "UNDEFINED_OR_NONPOSITIVE_ALL_STAMP_FIT")
+
+
+def test_psf_local_sky_weights_diagnostic_reveals_heteroscedastic_annulus_bias():
+    """Heteroscedastic sky pixels change the fit, not source selection."""
+    from lsbpipe.photometry.psf_empirical import _star_cutout
+    shape = (121, 121)
+    yy, xx = np.indices(shape, dtype=float)
+    x, y = 60.18, 59.82
+    radius = np.hypot(xx-x, yy-y)
+    true_sky = .8 + .001*(xx-x) - .0015*(yy-y)
+    star = 75.*np.exp(-.5*(radius/2.0)**2)
+    # Bright-contaminated half of the annulus has lower INVVAR, not
+    # a legitimately better estimate of the background at the star.
+    contaminated = (yy > y) & (radius >= 10.) & (radius < 15.)
+    image = true_sky + star + .25*contaminated
+    ivar = np.ones(shape, dtype=float)*10000.
+    ivar[contaminated] = 1.
+    frame = NativeBandFrame(
+        image_nMgy=image, invvar_nMgy2=ivar,
+        nexp=np.ones(shape, dtype=float)*2.,
+        maskbits=np.zeros(shape, dtype=np.int32),
+        native_wcs=pilot_wcs(shape),
+        release="dr11", region="south",
+        brick="1554p180", band="r",
+        source_evidence={"synthetic": True})
+    config = PSF0Config(
+        cutout_size_pix=31, sky_annulus_inner_pix=10.,
+        sky_annulus_outer_pix=15., max_star_gradient_sigma=100.)
+    cutout, error = _star_cutout(
+        frame, x, y, config, np.zeros(shape, dtype=bool))
+    assert error is None
+    assert cutout is not None
+    qa = cutout["sky_qa"]["annulus_inverse_variance_sensitivity"]
+    assert qa["schema"] == (
+        "desidera.psf0-annular-sky-weight-sensitivity/1")
+    assert qa["weighted_fit_status"] == "MEASURED_DESCRIPTIVE_ONLY"
+    assert qa["inverse_variance_max_to_min_ratio"] == pytest.approx(10000.)
+    assert qa["n_fixed_clipped_annulus_pixels"] >= 25
+    assert qa["original_sky_plane_and_selection_unchanged"]
+    assert qa["alternative_is_diagnostic_only"]
+    assert qa["sky_and_psf_wings_separable"] is False
+    assert qa["weighted_minus_unweighted_b0_nMgy_per_pixel"] < -.05
+    assert abs(cutout["sky_nMgy"]-.8) > .05
+    assert abs(cutout["sky_nMgy"]+
+               qa["weighted_minus_unweighted_b0_nMgy_per_pixel"]-.8) < .02
+    json.dumps(qa, allow_nan=False)

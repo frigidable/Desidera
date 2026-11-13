@@ -34,6 +34,25 @@ MASK_PRODUCT = re.compile(
 MAX_DATASETS = 64
 MAX_GRID_CELLS = 160_000
 
+# P0.2 and P0.5 share exactly one accepted optical-unit contract.
+# Lexical aliases do not authorize any numerical flux rescaling.
+IMAGE_BUNIT_ALIASES = frozenset((
+    "nanomaggy", "nanomaggies", "nmgy",
+    "nanomaggy/pixel", "nanomaggies/pixel", "nmgy/pixel",
+    "nanomaggy/pix", "nanomaggies/pix", "nmgy/pix",
+))
+IVAR_BUNIT_ALIASES = frozenset((
+    "1/nanomaggies^2", "1/nanomaggy^2", "1/nmgy^2",
+    "nanomaggies^-2", "nanomaggy^-2", "nmgy^-2",
+    "1/(nanomaggies)^2", "1/(nanomaggy)^2", "1/(nmgy)^2",
+))
+
+
+def normalize_legacy_bunit(value) -> str:
+    """Normalize written BUNIT spelling, never the underlying data."""
+    return str(value).lower().replace(" ", "").replace("**", "^")
+
+
 
 def _expected_paths(data_root: Path, key: tuple[str, str, str, str]) -> dict:
     release, region, brick, band = key
@@ -43,6 +62,35 @@ def _expected_paths(data_root: Path, key: tuple[str, str, str, str]) -> dict:
             hit, kind, None if kind == "maskbits" else band).relative_path
         for kind in KINDS
     }
+
+
+def _assert_safe_original_paths(data_root: Path, paths: dict) -> None:
+    """Check every path component below a resolved native-data root.
+
+    An original FITS may itself be a regular file while its coadd,
+    chunk or brick directory is a symlink to unrelated data. Path.is_symlink
+    on the file alone cannot see this. Check all intermediate components
+    before any FITS reopening, never follow the redirected subtree.
+    """
+    root = Path(data_root).expanduser().resolve()
+    for kind, path in paths.items():
+        path = Path(path)
+        try:
+            parts = path.relative_to(root).parts
+        except ValueError as exc:
+            raise ValueError(
+                f"Original {kind.upper()} FITS lies outside declared data root") from exc
+        if not parts:
+            raise ValueError("Original FITS path must be beneath data root")
+        current = root
+        for part in parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError(
+                    f"Missing or unsafe symlink original {kind.upper()} FITS: {current}")
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Missing original {kind.upper()} FITS: {path}")
 
 
 def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
@@ -60,11 +108,12 @@ def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
     for release in ("dr9", "dr10", "dr11"):
         for region in regions_for_release(release):
             coadd = root / release / region / "coadd"
-            if not coadd.is_dir():
+            if not coadd.is_dir() or coadd.is_symlink():
                 continue
             for file in coadd.glob("*/*/legacysurvey-*.fits.fz"):
-                if file.is_symlink():
-                    continue  # Never follow an untrusted external symlink.
+                if (file.is_symlink() or file.parent.is_symlink() or
+                        file.parent.parent.is_symlink()):
+                    continue  # Never inventory through linked native directories.
                 name = file.name
                 match = BAND_PRODUCT.fullmatch(name)
                 mask = MASK_PRODUCT.fullmatch(name)
@@ -123,8 +172,13 @@ def discover_dataset_inventory(data_root: str | Path) -> list[dict]:
     return rows
 
 
-def _sha256_file(path: Path, *, cancel_check=None) -> dict:
+def _sha256_file(path: Path, *, cancel_check=None,
+                 data_root: Path | None = None) -> dict:
     checkpoint(cancel_check)
+    if data_root is not None:
+        _assert_safe_original_paths(data_root, {"input": path})
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"Unsafe or missing original file for SHA-256: {path}")
     before = path.stat()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -132,6 +186,10 @@ def _sha256_file(path: Path, *, cancel_check=None) -> dict:
             checkpoint(cancel_check)
             digest.update(block)
     checkpoint(cancel_check)
+    if data_root is not None:
+        _assert_safe_original_paths(data_root, {"input": path})
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"Original source replaced by unsafe path: {path}")
     after = path.stat()
     if (before.st_size, before.st_mtime_ns) != (
             after.st_size, after.st_mtime_ns):
@@ -170,11 +228,15 @@ def _validate_open_hdus(hdus: dict, band: str):
         if arrays[kind].shape != shape:
             raise ValueError(f"{kind}: raster shape mismatch")
         _check_wcs_compatible(systems["image"], systems[kind], shape, kind)
-    img_unit = str(units["image"] or "").lower().replace(" ", "")
-    if img_unit and img_unit not in (
-            "nanomaggy", "nanomaggies", "nanomaggies/pixel",
-            "nanomaggy/pixel", "nanomaggy/pix", "nanomaggies/pix"):
-        raise ValueError(f"IMAGE BUNIT is not expected nanomaggies: {units['image']}")
+    img_unit = normalize_legacy_bunit(units["image"] or "")
+    ivar_unit = normalize_legacy_bunit(units["invvar"] or "")
+    if img_unit and img_unit not in IMAGE_BUNIT_ALIASES:
+        raise ValueError(
+            f"IMAGE BUNIT is not expected nanomaggies: {units['image']}")
+    if ivar_unit and ivar_unit not in IVAR_BUNIT_ALIASES:
+        raise ValueError(
+            "INVVAR BUNIT must represent inverse squared nanomaggies, "
+            f"not {units['invvar']!r}")
     return arrays, systems["image"], indices, units
 
 
@@ -196,6 +258,9 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
     key = (entry["release"], entry["region"], entry["brick"], entry["band"])
     paths = _expected_paths(root, key)
     try:
+        # Inventory metadata is merely a point-in-time observation. Files
+        # can be replaced with symlinks between inventory and deep audit.
+        _assert_safe_original_paths(root, paths)
         with ExitStack() as stack:
             hdus = {kind: stack.enter_context(
                 fits.open(file, memmap=True, do_not_scale_image_data=False))
@@ -223,17 +288,28 @@ def verify_dataset(data_root: str | Path, entry: dict, *,
                 numerically_valid += int(np.count_nonzero(
                     finite & ivgood & ngood & ~flagged))
             product_info = {}
+            _assert_safe_original_paths(root, paths)
             for kind, file in paths.items():
                 info = dict(entry["products"][kind])
                 info["hdu_index"] = int(indices[kind])
                 info["bunit"] = units[kind]
                 if hash_inputs:
-                    info.update(_sha256_file(file, cancel_check=cancel_check))
+                    info.update(_sha256_file(
+                        file, cancel_check=cancel_check, data_root=root))
                 product_info[kind] = info
             result.update({
                 "status": "FITS_WCS_VALIDATED_DIAGNOSTIC",
                 "products": product_info,
                 "shape": list(image.shape),
+                "unit_evidence": {
+                    "image": ("EXPLICIT_NANOMAGGIES_BUNIT"
+                              if units["image"] and str(units["image"]).strip()
+                              else "BUNIT_MISSING_SURVEY_DOCUMENTATION_ASSUMPTION"),
+                    "invvar": ("EXPLICIT_INVERSE_SQUARED_NANOMAGGIES_BUNIT"
+                               if units["invvar"] and str(units["invvar"]).strip()
+                               else "BUNIT_MISSING_SURVEY_DOCUMENTATION_ASSUMPTION"),
+                    "no_numerical_unit_conversion_performed": True,
+                },
                 "fractions": {
                     "finite_image": finite_image / total,
                     "positive_invvar": positive_ivar / total,
@@ -299,6 +375,15 @@ def _sampled_footprint(data_root: Path, verified: list[dict], field: SkyField,
             checkpoint(cancel_check)
             key = (release, region, entry["brick"], band)
             paths = _expected_paths(data_root, key)
+            # Verification and sampled-footprint extraction are separate
+            # file opens. A path can be substituted after the earlier
+            # quartet check; refuse symlinks before opening it again.
+            try:
+                _assert_safe_original_paths(data_root, paths)
+            except (OSError, ValueError) as exc:
+                raise RuntimeError(
+                    "Unsafe original FITS during coverage sampling: "
+                    + str(exc)) from exc
             with ExitStack() as stack:
                 hdus = {k: stack.enter_context(
                     fits.open(p, memmap=True)) for k, p in paths.items()}
@@ -375,7 +460,8 @@ def assert_audited_inputs_unchanged(data_root: str | Path,
             checkpoint(cancel_check)
             file = root / product["relative_path"]
             try:
-                info = _sha256_file(file, cancel_check=cancel_check)
+                info = _sha256_file(
+                    file, cancel_check=cancel_check, data_root=root)
             except OSError as exc:
                 raise RuntimeError(
                     f"Verified source disappeared before audit completion: {file}") from exc

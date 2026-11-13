@@ -200,3 +200,23 @@ def test_scoped_census_is_published_as_immutable_original_fits_qa(tmp_path, monk
     # Source files remain unchanged: they were never parsed/written by
     # the mocked pure numerical step, and both receipts identify them.
     assert first["provenance"] == ("dr9", "south", "0401p012", "r")
+
+
+def test_science_data_root_refuses_symlinked_native_brick_directory(tmp_path):
+    """A complete quartet under a linked brick folder is not local evidence."""
+    data = create_quartet(tmp_path, SOUTH)
+    paths = [data / product_for(
+        SOUTH, kind, None if kind == "maskbits" else "r").relative_path
+        for kind in ("image", "invvar", "nexp", "maskbits")]
+    brick_dir = paths[0].parent
+    external = tmp_path / "external-native-brick"
+    brick_dir.rename(external)
+    try:
+        brick_dir.symlink_to(external, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Cannot create directory symlinks on this runner")
+    assert all(path.is_file() and not path.is_symlink() for path in paths)
+    with pytest.raises(FileNotFoundError, match="complete"):
+        science_data_root(tmp_path, hit=SOUTH, band="r")
+    with pytest.raises(FileNotFoundError, match="complete"):
+        science_data_root(data, hit=SOUTH, band="r")

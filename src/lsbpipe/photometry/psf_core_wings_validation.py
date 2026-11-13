@@ -39,6 +39,16 @@ def _half_max_crossing(profile, peak_index):
 
 def measure_finite_native_psf_core(kernel, *, guessed_fwhm_pix):
     """Measure core-axis half maxima and finite-kernel EEF without fit priors."""
+    # The FWHM finder prior must be finite/positive and not a Boolean.
+    # No invalid prior is allowed in a completed PSF QA receipt.
+    guess = None
+    if not isinstance(guessed_fwhm_pix, (bool, np.bool_, str)):
+        try:
+            candidate = float(guessed_fwhm_pix)
+            if math.isfinite(candidate) and candidate > 0:
+                guess = candidate
+        except (TypeError, ValueError, OverflowError):
+            pass
     result = {
         "schema": "desidera.psf0-native-core-geometry/1",
         "status": "UNMEASURED",
@@ -49,9 +59,10 @@ def measure_finite_native_psf_core(kernel, *, guessed_fwhm_pix):
         "uncertainty_not_calibrated": True,
         "finite_kernel_encircled_fraction_not_true_infinite_total": True,
         "no_psf_model_change_or_science_adoption": True,
-        "guessed_detection_fwhm_pix_not_a_measurement": float(
-            guessed_fwhm_pix),
+        "guessed_detection_fwhm_pix_not_a_measurement": guess,
     }
+    if guess is None:
+        return dict(result, status="INVALID_DETECTION_FWHM_PRIOR")
     image = np.asarray(kernel, dtype=float)
     if (image.ndim != 2 or any(v < 15 or v % 2 == 0 for v in image.shape)
             or not np.all(np.isfinite(image)) or np.any(image < 0)
@@ -118,10 +129,7 @@ def measure_finite_native_psf_core(kernel, *, guessed_fwhm_pix):
         fwhm_x_native_pix=width_x,
         fwhm_y_native_pix=width_y,
         measured_core_fwhm_axis_geometric_mean_native_pix=measured,
-        measured_over_guessed_fwhm_ratio=(
-            measured / float(guessed_fwhm_pix)
-            if math.isfinite(guessed_fwhm_pix)
-            and guessed_fwhm_pix>0 else None),
+        measured_over_guessed_fwhm_ratio=float(measured / guess),
         fwhm_axis_ratio_max_over_min=float(
             max(width_x,width_y)/min(width_x,width_y)),
         fully_contained_radial_radius_limit_native_pix=full_radius,

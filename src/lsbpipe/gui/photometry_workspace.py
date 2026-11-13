@@ -1,6 +1,7 @@
-"""Project-bound Photometry Workspace: preparation and provenance only.
+"""Project-bound Photometry Workspace: experimental science stages.
 
-No photometric algorithms are exposed before their validation gates exist.
+Stage 04 exposes only finite-aperture observed-area diagnostics; no
+scientific sky, PSF, total luminosity, or color is adopted.
 """
 from __future__ import annotations
 
@@ -22,6 +23,10 @@ from PySide6.QtWidgets import (
 from lsbpipe.photometry.readiness import inspect_photometry_inputs
 from lsbpipe.gui.psf0_panel import PSF0Panel
 from lsbpipe.gui.psf0_full_qa import detailed_band_report
+from lsbpipe.gui.scene_editor import SceneEditor
+from lsbpipe.gui.sky_workspace import SkyWorkspace
+from lsbpipe.gui.aperture_workspace import ApertureWorkspace
+from lsbpipe.gui.project_qa_bundle import serialize_project_diagnostic_bundle
 
 
 
@@ -35,6 +40,7 @@ class PhotometryWorkspace(QWidget):
     psf0AutoFwhmRequested = Signal(object)
     psf0TractorRequested = Signal(object)
     psf0BatchRequested = Signal(object)
+    navigationChanged = Signal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -42,6 +48,7 @@ class PhotometryWorkspace(QWidget):
         self._project_root = None
         self._bound_project_id = None
         self._bound_source_identity = None
+        self._suppress_navigation = False
         self._tab_source_identity = None
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 14, 18, 14)
@@ -64,18 +71,47 @@ class PhotometryWorkspace(QWidget):
             "opening FITS, connecting to the archive or running analysis.")
         self.refresh_btn.clicked.connect(lambda _checked=False: self.refresh(force=True))
         header.addWidget(self.refresh_btn)
+        self.copy_project_qa_btn = QPushButton("Copy QA")
+        self.copy_project_qa_btn.setObjectName("photometry_copy_project_qa")
+        self.copy_project_qa_btn.setToolTip(
+            "Copy a single current-project JSON report: PSF-0 griz, Scene & "
+            "Masks, residual background, aperture curves/systematics, stale "
+            "evidence, blockers and environment. Missing analyses are marked "
+            "NOT_RUN; this never opens FITS or starts workers.")
+        self.copy_project_qa_btn.clicked.connect(self.copy_project_qa)
         root.addLayout(header)
 
         self.title = QLabel("Photometry")
         self.title.setObjectName("photometry_heading")
         self.title.setStyleSheet("font-size: 21px; font-weight: 600;")
-        root.addWidget(self.title)
+        title_row = QHBoxLayout()
+        title_row.addWidget(self.title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.copy_project_qa_btn)
+        root.addLayout(title_row)
         self.subtitle = QLabel(
-            "PSF-0 diagnostics are experimental · no adopted PSF, sky or galaxy photometry")
+            "PSF, residual sky and aperture fluxes are diagnostic only · "
+            "no adopted galaxy photometry")
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
+        self.project_qa_status = QLabel(
+            "One-click project QA is read-only. Run each stage as needed; "
+            "not-run or stale stages are reported explicitly.")
+        self.project_qa_status.setObjectName("photometry_project_qa_status")
+        self.project_qa_status.setWordWrap(True)
+        root.addWidget(self.project_qa_status)
 
+        # These are two real user workflows in ONE object-bound
+        # Photometry Workspace, not eight non-executable roadmap cards.
+        self.stage_tabs = QTabWidget(self)
+        self.stage_tabs.setObjectName("photometry_science_stage_tabs")
+        psf_stage = QWidget(self.stage_tabs)
+        psf_stage.setObjectName("photometry_psf_stage")
+        psf_stage_layout = QVBoxLayout(psf_stage)
+        psf_stage_layout.setContentsMargins(0, 0, 0, 0)
+        psf_stage_layout.setSpacing(7)
+        self.stage_tabs.addTab(psf_stage, "1 · PSF-0")
         # One persistent selector, not a tab strip that disappears behind
         # the scroll area when the user examines PSF settings or QA.
         self.band_selector = QTabBar(self)
@@ -85,7 +121,7 @@ class PhotometryWorkspace(QWidget):
         self.band_selector.setToolTip(
             "Select g/r/i/z to inspect its independent PSF model, "
             "radial comparison and scientific rejection status.")
-        root.addWidget(self.band_selector)
+        psf_stage_layout.addWidget(self.band_selector)
 
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
@@ -255,10 +291,101 @@ class PhotometryWorkspace(QWidget):
         self.blocker.setVisible(False)
         body.addWidget(self.blocker)
         center_scroll.setWidget(central)
-        root.addWidget(center_scroll, 1)
+        psf_stage_layout.addWidget(center_scroll, 1)
+        self.scene_editor = SceneEditor(self.stage_tabs)
+        self.stage_tabs.addTab(self.scene_editor, "2 · Scene & Masks")
+        self.stage_tabs.setTabToolTip(
+            1, "Original FITS/WCS editor; editable ICRS mask drafts. "
+               "No final galaxy segmentation or adopted photometry.")
+        self.sky_stage = SkyWorkspace(self.scene_editor, self.stage_tabs)
+        self.stage_tabs.addTab(self.sky_stage, "3 · Background")
+        self.stage_tabs.setTabToolTip(
+            2, "Automatically selected same-project residual-sky controls; "
+               "only diagnostic models, no scientific sky adoption.")
+        self.aperture_stage = ApertureWorkspace(
+            self.scene_editor, self.sky_stage, self.stage_tabs)
+        self.stage_tabs.addTab(
+            self.aperture_stage, "4 · Aperture Photometry")
+        self.stage_tabs.setTabToolTip(
+            3, "Exact observed finite-aperture fluxes, independent elliptical "
+               "annuli and curve-of-growth diagnostics. No adopted total.")
+        root.addWidget(self.stage_tabs, 1)
+        self._last_stage_widget = psf_stage
+        self.stage_tabs.currentChanged.connect(self._stage_changed)
+        self.stage_tabs.currentChanged.connect(self._emit_navigation)
+        self.band_tabs.currentChanged.connect(self._emit_navigation)
+        self.scene_editor.band.currentIndexChanged.connect(self._emit_navigation)
         self._set_view_mode()
         self._update_band_tab_statuses()
         self._apply_science_reflow()
+
+    def current_navigation(self):
+        current = self.stage_tabs.currentWidget()
+        stage = ("scene" if current is self.scene_editor
+                 else "sky" if current is self.sky_stage
+                 else "aperture" if current is self.aperture_stage else "psf0")
+        if stage in ("scene", "sky", "aperture"):
+            band = self.scene_editor.band.currentData()
+        else:
+            panel = self.band_tabs.currentWidget()
+            band = panel.band.currentData() if panel is not None else None
+        return stage, band if band in ("g", "r", "i", "z") else "g"
+
+    def _emit_navigation(self, *_):
+        if self._suppress_navigation or self._project_root is None:
+            return
+        stage, band = self.current_navigation()
+        self.navigationChanged.emit(stage, band)
+
+    def restore_navigation(self, *, stage, band):
+        """Restore user location only; never run PSF/scene FITS workers."""
+        if stage not in ("psf0", "scene", "sky", "aperture") or band not in ("g", "r", "i", "z"):
+            raise ValueError("Unknown photometry resume location")
+        self._suppress_navigation = True
+        try:
+            panel = self.psf0_panels.get(band)
+            if panel is not None:
+                index = self.band_tabs.indexOf(panel)
+                if index >= 0:
+                    self.band_tabs.setCurrentIndex(index)
+            self.scene_editor.set_band(band)
+            self.stage_tabs.setCurrentWidget(
+                self.scene_editor if stage == "scene"
+                else self.sky_stage if stage == "sky"
+                else self.aperture_stage if stage == "aperture"
+                else self.stage_tabs.widget(0))
+            if stage == "sky":
+                self.sky_stage.refresh_context()
+            if stage == "aperture":
+                self.aperture_stage.refresh_context()
+        finally:
+            self._suppress_navigation = False
+
+    def _stage_changed(self, index):
+        current = self.stage_tabs.widget(index)
+        previous = self._last_stage_widget
+        self._last_stage_widget = current
+        psf = self.stage_tabs.widget(0)
+        # Synchronize from PSF only when LEAVING the PSF tab. Returning
+        # from 03 Background to 02 Scene must preserve the loaded native
+        # band, annotations and prepared masks, regardless of PSF tab.
+        if previous is psf and current in (
+                self.scene_editor, self.sky_stage, self.aperture_stage):
+            # Do not invalidate an already loaded scene, its masks, and
+            # completed sky/photometry merely because the researcher
+            # inspected a different PSF-0 band. An intentional change of
+            # the native Scene band uses its own explicit band selector.
+            if self.scene_editor._loaded is None:
+                band = self.band_tabs.currentWidget().band.currentData()
+                if band in ("g", "r", "i", "z"):
+                    self.scene_editor.set_band(band)
+        if current is self.sky_stage:
+            self.sky_stage.refresh_context()
+        if current is self.aperture_stage:
+            self.aperture_stage.refresh_context()
+        # Opening Scene is deliberately read-only: local FITS load needs
+        # the explicit Load original FITS button. Mask revision saving
+        # also requires a separate explicit researcher action.
 
     def _apply_science_reflow(self):
         if hasattr(self, "psf0_panels"):
@@ -339,6 +466,26 @@ class PhotometryWorkspace(QWidget):
             "requests":requests,
             "skipped_bands":skipped,
         })
+
+    def copy_project_qa(self):
+        """One-click current evidence bundle; never alter stage state."""
+        if self._project_root is None or self._bound_project_id is None:
+            self.project_qa_status.setText(
+                "Open a saved galaxy project before copying project QA.")
+            return
+        try:
+            content = serialize_project_diagnostic_bundle(self)
+        except (TypeError, ValueError, OverflowError, RuntimeError,
+                OSError) as exc:
+            self.project_qa_status.setText(
+                f"Project QA collection failed ({type(exc).__name__}): "
+                f"{exc}. Clipboard not changed.")
+            return
+        QApplication.clipboard().setText(content)
+        self.project_qa_status.setText(
+            f"Copied all-stage project QA: {len(content):,} JSON characters. "
+            "Paste into ChatGPT or save the clipboard as UTF-8 .json. "
+            "No worker, FITS or draft changed. NOT_RUN is not a pass.")
 
     def full_qa_report(self):
         from lsbpipe.photometry.psf_gui_backend import (
@@ -448,17 +595,25 @@ class PhotometryWorkspace(QWidget):
             and Path(saved.root) == self._project_root
             and saved.project_id == self._bound_project_id
             and identity == self._bound_source_identity)
+        self._suppress_navigation = True
         self._project_root = Path(saved.root)
+        self.scene_editor.bind_project(self._project_root)
         self._bound_project_id = saved.project_id
         self._bound_source_identity = identity
         # A new UUID, release/region/brick or data root invalidates PSFs.
         # Changing only the saved default band does NOT change the four
         # native per-band input datasets, so existing PSF evidence survives.
-        self.refresh(force=not same_project)
+        try:
+            self.refresh(force=not same_project)
+        finally:
+            self._suppress_navigation = False
 
     def refresh(self, *, force=False):
         # Only a new project or explicit Refresh can discard a preview.
         # Re-entering the same project/photometry view is non-destructive.
+        self.scene_editor.bind_project(self._project_root)
+        self.sky_stage.refresh_context()
+        self.aperture_stage.refresh_context()
         for panel in self.psf0_panels.values():
             if force and panel._project_root is not None:
                 panel._project_root = self._project_root

@@ -28,6 +28,9 @@ These explain constraints and intended behavior; re-check details against curren
 - [Dataset Manager](architecture/DATASET_MANAGER_P050.md), [integrity](architecture/DATASET_INTEGRITY_P02.md) and [project consistency](architecture/PROJECT_CONSISTENCY_P01.md)
 - [Science run engine](architecture/SCIENCE_RUN_ENGINE_P03.md) and [immutable configurations](architecture/IMMUTABLE_ANALYSIS_CONFIGURATIONS_P08A.md)
 - [GUI worker lifecycle](architecture/GUI_WORKER_LIFECYCLE_P04.md)
+- [Infrastructure and architecture audit, 2026-11-13](architecture/INFRASTRUCTURE_ARCHITECTURE_AUDIT_20261113.md): dependency boundaries, CI/wheel verification, original-FITS download opt-in, project manifest safety and remaining interprocess write risks (Draft PR #84)
+- [Performance audit, 2026-11-13](architecture/PERFORMANCE_AUDIT_20261113.md): source-proven computational optimizations, synthetic benchmarks and unresolved full-system performance limits
+- [Scientific methodology audit, 2026-11-13](architecture/SCIENTIFIC_METHODOLOGY_MECHANICS_AUDIT_20261113.md): scientific gate defects, regressions and unresolved calibration limits
 - [SIMBAD](architecture/GALAXY_KNOWLEDGE_SIMBAD_P07A.md), [NED](architecture/NED_OBJECTLOOKUP_P10B.md) and [catalogue read model](architecture/GALAXY_KNOWLEDGE_READ_MODEL_P10A.md)
 
 Other `docs/architecture/` files contain feature-specific engineering records. They should not be read as proof that a feature is accepted science.

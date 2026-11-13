@@ -75,3 +75,46 @@ of *unfinished* downloads and automatic data-integrity revalidation
 are separate later milestones. Currently the saved project restores the
 known inputs and last completed QA report, not an interrupted in-memory
 calculation or a certified ready-to-publish photometric reduction.
+
+
+## Object-bound Photometry Workspace recovery (SC1 / WP06, 2026-11-09)
+
+The newer **Galaxy Projects** hub opens each galaxy using its immutable
+object-project UUID. Opening a previously saved object project restores
+the last **Photometry → PSF-0 / Scene & Masks** tab and active native
+`g/r/i/z` band when the remembered release/region/brick still matches.
+This pointer is an atomic, project-local
+`photometry-workspace-state.json`, not an adopted scientific result.
+Explicitly returning to Survey Explorer records that location instead.
+
+Completed, *experimental* PSF-0 models are checkpointed in the existing
+immutable `analyses/psf-pilots` archive after both single-band and batch
+builds. On Photometry entry a background worker calls
+`read_saved_psf0_bands`: it checks matching original IMAGE/INVVAR/NEXP/
+MASKBITS SHA-256, saved Gaia/Tractor catalogue hash where applicable,
+the actual PSF recipe, saved kernel integrity and the dataset identity.
+Verified models and QA are restored in their original bands without
+reconstructing stellar cutouts, rerunning ePSF fitting or downloading FITS.
+Bad or stale checkpoints remain unusable and produce visible warnings.
+A failed checkpoint write leaves its preview accessible in the current
+session, but does not claim persistence. No original FITS is changed.
+
+`Scene & Masks` restores the revisioned ICRS mask draft from its
+existing store and only loads the original image cutout after a deliberate
+user action. PSF/scene restoration does not imply scientific adoption,
+accepted segmentation or final photometry. Previously computed kernels
+and independent bands do not become invalid simply because the GUI's
+default viewing band changes.
+
+The Project Hub offers an **opt-in** `Open last galaxy on startup`
+preference stored by Qt's standard user-local `QSettings`. With the
+option disabled (default), launch shows Galaxy Projects. With it enabled,
+launch enters the most recent accessible object project and follows its
+saved workspace position, without remote access or automatic calculations.
+The `Galaxy Projects` navigation remains available at all times.
+
+This implements recovery of completed, verified *experimental products*
+and scene drafts. Full crash-resumable numerical jobs, cache DAG
+invalidation and recovery of in-progress photometry remain WP06 follow-up
+work. The legacy standalone last-FITS-project pointer described above is
+separate from this object-bound startup preference.

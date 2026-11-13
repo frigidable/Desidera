@@ -135,6 +135,11 @@ def save_object_project(project: ObjectProject) -> Path:
     if not project.root.is_dir():
         raise FileNotFoundError(f"Project directory missing: {project.root}")
     path = project_path(project.root)
+    # os.replace() would replace the link itself, but first reading its
+    # target can import untrusted project metadata from outside this
+    # project. Match the stricter dataset/resume sidecar policies.
+    if path.is_symlink():
+        raise ValueError("Unsafe symlinked object project manifest")
     if path.exists():
         current = _read_json(path)
         if current.get("schema") != SCHEMA or _project_id(
@@ -177,6 +182,8 @@ def save_object_project(project: ObjectProject) -> Path:
 def read_object_project(root: str | Path) -> ObjectProject:
     folder = Path(root).expanduser().resolve()
     path = project_path(folder)
+    if path.is_symlink():
+        raise ValueError("Unsafe symlinked object project manifest")
     info = _read_json(path)
     if info.get("schema") != SCHEMA:
         raise ValueError(f"Unsupported project schema in {path}")
@@ -194,6 +201,18 @@ def read_object_project(root: str | Path) -> ObjectProject:
                 or (not value.parts and raw_relative != ".")):
             raise ValueError("Unsafe relative data directory in project manifest")
         data_root = folder / value
+        # A lexical relative path may traverse via a symlink/junction
+        # even without '..'. This format is for *portable in-project*
+        # data only. External data remains supported by the existing
+        # explicit absolute path field; never silently change provenance.
+        try:
+            inside = data_root.resolve().is_relative_to(folder)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(
+                "Unsafe relative data directory in project manifest") from exc
+        if not inside:
+            raise ValueError(
+                "Unsafe relative data directory escapes project root")
     elif isinstance(link, dict) and isinstance(link.get("absolute"), str):
         data_root = Path(link["absolute"])
         if not data_root.is_absolute():
@@ -223,6 +242,8 @@ def read_object_project(root: str | Path) -> ObjectProject:
 def _registry_payload() -> dict:
     """Read optional dismissal state without changing the existing schema."""
     path = library_index_path()
+    if path.is_symlink():
+        raise ValueError("Unsafe symlinked project library index")
     if not path.is_file():
         return {"schema": REGISTRY_SCHEMA, "projects": [],
                 "dismissed_legacy_roots": []}
@@ -324,7 +345,13 @@ def recent_projects() -> list[dict]:
 
 def register_object_project(project: ObjectProject) -> None:
     _validate(project)
-    rows = _registry_rows()
+    # Use ONE consistent registry snapshot for the whole update.
+    # The previous double read could combine a stale 'projects' list
+    # with newer dismissal metadata, silently discarding entries
+    # registered between those reads. Multi-process concurrent writes
+    # still require a separate cross-platform lock/transaction design.
+    payload = _registry_payload()
+    rows = payload["projects"]
     canonical = str(project.root.resolve())
     updated = [x for x in rows if x.get("project_id") != project.project_id and
                Path(x.get("root", "")).resolve() != project.root.resolve()]
@@ -332,7 +359,6 @@ def register_object_project(project: ObjectProject) -> None:
         "project_id": project.project_id, "display_name": project.display_name,
         "root": canonical, "last_opened_at": project.last_opened_at})
     # Preserve legacy dismissals when later imports/touches rewrite the index.
-    payload = _registry_payload()
     _atomic_json(library_index_path(), {
         **payload, "projects": updated})
 

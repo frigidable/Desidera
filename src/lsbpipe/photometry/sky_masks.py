@@ -16,14 +16,38 @@ import numpy as np
 
 SCHEMA = "desidera.sky-mask-draft/1"
 DRAFT_STATUS = "MASK_DRAFT_NOT_ADOPTED"
-PURPOSES = frozenset(("exclude", "restore_auto", "protect_target", "sky_train", "sky_holdout"))
+# Isophotal proposals are annotation-only. They MUST NOT become
+# target-protection source policy without a separate deliberate decision.
+PURPOSES = frozenset(("exclude", "restore_auto", "protect_target",
+                      "sky_train", "sky_holdout", "isophote_candidate"))
 BANDS = frozenset(("g", "r", "i", "z"))
 
 
+def native_boolean_mask_sha256(mask) -> str:
+    """Hash exact native-grid Boolean mask geometry, including array shape.
+
+    A catalogue SHA and a draft edit SHA identify the inputs, not the
+    evaluated pixels: different rasterizers or accidental array edits
+    may produce different exclusions from otherwise identical labels.
+    Canonical C-order bytes are independent of view strides.
+    """
+    arr = np.asarray(mask)
+    if arr.ndim != 2 or arr.dtype.kind != "b":
+        raise ValueError("Mask fingerprint requires a 2D Boolean native grid")
+    digest = sha256()
+    digest.update(f"desidera-native-bool-v1:{arr.shape[0]}x{arr.shape[1]}:".encode())
+    digest.update(np.ascontiguousarray(arr).tobytes(order="C"))
+    return digest.hexdigest()
+
+
 def _angle(value: float) -> float:
+    # Numeric-looking strings and Booleans must not survive validation
+    # unchanged into frozen sky-mask drafts and later native rasterizers.
+    if isinstance(value, (bool, np.bool_, str)):
+        raise ValueError("Missing or invalid geometric parameter")
     try:
         number = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("Missing or invalid geometric parameter") from exc
     if not math.isfinite(number):
         raise ValueError("Non-finite sky coordinate")
@@ -79,10 +103,13 @@ class SkyMaskShape:
                     raise ValueError("Circle radius must be (0,1800] arcsec")
                 if any(v is not None for v in (self.a_arcsec, self.q, self.pa_deg)):
                     raise ValueError("Circle may only specify radius")
+                object.__setattr__(self, "radius_arcsec", radius)
             else:
                 a, q, pa = _angle(self.a_arcsec), _angle(self.q), _angle(self.pa_deg)
                 if not 0 < a <= 1800 or not 0 < q <= 1:
                     raise ValueError("Ellipse semimajor/q outside allowed range")
+                object.__setattr__(self, "a_arcsec", a)
+                object.__setattr__(self, "q", q)
                 object.__setattr__(self, "pa_deg", pa % 180.0)
                 if self.radius_arcsec is not None:
                     raise ValueError("Ellipse may not specify circle radius")
@@ -139,6 +166,23 @@ class SkyMaskEdit:
                    band=info.get("band"), comment=info.get("comment", ""))
 
 
+
+def is_legacy_isophote_protection(edit: SkyMaskEdit) -> bool:
+    """Recognize previously saved SC1 auto-isophote masks safely.
+
+    The historical GUI serialized a preliminary isophote or SGA seed as
+    protect_target. Treat ONLY those provenance-labelled edits as inactive
+    proposals, without rewriting project history or blocking deliberate
+    user-authored protect_target regions.
+    """
+    return (edit.purpose == "protect_target" and (
+        edit.edit_id.startswith("sc1_iso_") or
+        "AUTO_ISOPHOTE_PRELIMINARY" in edit.comment or
+        "SGA_INITIAL_GEOMETRY_DRAFT" in edit.comment))
+
+
+
+
 @dataclass(frozen=True)
 class SkyMaskDraft:
     project_id: str
@@ -186,6 +230,49 @@ class SkyMaskDraft:
         payload = json.dumps(self.to_dict(), sort_keys=True, allow_nan=False,
                              separators=(",", ":")).encode("utf-8")
         return sha256(payload).hexdigest()
+
+
+def _validate_simple_local_polygon(vx: np.ndarray, vy: np.ndarray) -> None:
+    """Reject crossed/touching local-sky polygon edges before rasterization.
+
+    Signed shoelace area alone does not detect a self-intersecting polygon
+    with nonzero net area. Edges may meet only at their shared endpoints.
+    """
+    points = np.column_stack((vx, vy))
+    n = len(points)
+    if not np.isfinite(points).all():
+        raise ValueError("Nonfinite local polygon vertex")
+    edges = np.roll(points, -1, axis=0) - points
+    if np.any(np.linalg.norm(edges, axis=1) <= 1e-9):
+        raise ValueError("Polygon has a repeated or zero-length edge")
+    scale = max(1., float(np.max(np.abs(points))))
+    tolerance = 1e-12 * scale * scale
+
+    def cross(u, v):
+        return float(u[0]*v[1] - u[1]*v[0])
+
+    for i in range(n):
+        a, r = points[i], edges[i]
+        rr = float(r @ r)
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue  # neighbouring first/last edges share a vertex
+            c, s = points[j], edges[j]
+            qp = c - a
+            denominator = cross(r, s)
+            if abs(denominator) <= tolerance:
+                if abs(cross(qp, r)) > tolerance:
+                    continue
+                t0 = float(qp @ r) / rr
+                t1 = float((qp + s) @ r) / rr
+                if max(0., min(t0, t1)) <= min(1., max(t0, t1)) + 1e-12:
+                    raise ValueError("Self-intersecting or touching sky polygon")
+            else:
+                t = cross(qp, s) / denominator
+                u = cross(qp, r) / denominator
+                if (-1e-12 <= t <= 1. + 1e-12 and
+                        -1e-12 <= u <= 1. + 1e-12):
+                    raise ValueError("Self-intersecting or touching sky polygon")
 
 
 def _polygon_contains(x: np.ndarray, y: np.ndarray, vx: np.ndarray, vy: np.ndarray) -> np.ndarray:
@@ -239,6 +326,7 @@ def rasterize_sky_shape(shape: SkyMaskShape, wcs, pixel_shape: tuple[int, int],
         if abs(float(np.dot(vx, np.roll(vy, -1)) -
                      np.dot(vy, np.roll(vx, -1)))) < 1e-8:
             raise ValueError("Degenerate polygon")
+        _validate_simple_local_polygon(vx, vy)
     else:
         center = SkyCoord(shape.center[0]*u.deg, shape.center[1]*u.deg, frame="icrs")
     out = np.zeros((ny, nx), dtype=np.float64)
@@ -303,7 +391,10 @@ def evaluate_mask_draft(draft: SkyMaskDraft, wcs, pixel_shape: tuple[int, int],
             continue
         covered = rasterize_sky_shape(
             edit.shape, wcs, pixel_shape, subpixels=subpixels) > 0
-        layers[edit.purpose] |= covered
+        effective_purpose = (
+            "isophote_candidate" if is_legacy_isophote_protection(edit)
+            else edit.purpose)
+        layers[effective_purpose] |= covered
     if np.any(layers["sky_train"] & layers["sky_holdout"]):
         raise ValueError("Sky training and validation regions must not overlap")
     editable_auto = auto & ~layers["restore_auto"]
@@ -320,6 +411,10 @@ def evaluate_mask_draft(draft: SkyMaskDraft, wcs, pixel_shape: tuple[int, int],
         "manual_exclude": layers["exclude"],
         "manual_restore_auto": layers["restore_auto"],
         "target_protect": layers["protect_target"],
+        "isophote_candidate": layers["isophote_candidate"],
+        "legacy_isophote_count": sum(
+            is_legacy_isophote_protection(e) and e.applies_to(band)
+            for e in draft.edits),
         "sky_train": layers["sky_train"] & ~excluded & ~layers["protect_target"],
         "sky_holdout": layers["sky_holdout"] & ~excluded & ~layers["protect_target"],
         "excluded": excluded,

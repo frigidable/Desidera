@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 import uuid
 
@@ -99,6 +100,8 @@ def read_dataset_index(project_root: str | Path) -> dict:
     """Read without creating files; a legacy project with no index is valid."""
     project = _project(project_root)
     path = registry_path(project.root)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise ValueError("Unsafe symlinked dataset registry path")
     if not path.is_file():
         return _empty(project.project_id)
     try:
@@ -129,6 +132,8 @@ def _save(project_root: str | Path, index: dict) -> Path:
     if index.get("schema") != SCHEMA or index.get("project_id") != project.project_id:
         raise ValueError("Cannot write data assets to another galaxy project")
     path = registry_path(project.root)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise ValueError("Unsafe symlinked dataset registry path")
     if path.exists():
         current = read_dataset_index(project.root)
         if current["project_id"] != index["project_id"]:
@@ -313,6 +318,8 @@ def verify_asset_checksum(project_root: str | Path, asset_id: str) -> dict:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError("Indexed FITS became unsafe during SHA256 verification")
     after = path.stat()
     if (before.st_size != after.st_size or
             before.st_mtime_ns != after.st_mtime_ns):
@@ -342,17 +349,30 @@ def science_cache_key(
     The caller must bind every stage-relevant processing parameter explicitly.
     This is *not* a pipeline scheduler or a scientific validity certificate.
     """
-    if not stage or not algorithm_version or not isinstance(parameters, dict):
+    if (not isinstance(stage, str) or not stage.strip() or
+            not isinstance(algorithm_version, str) or
+            not algorithm_version.strip() or
+            not isinstance(parameters, dict)):
         raise ValueError("Stage, algorithm version and parameter map are required")
-    if not selected_assets:
+    if not isinstance(selected_assets, (tuple, list)) or not selected_assets:
         raise ValueError("Cannot cache a science result with no data assets")
+    if dependency_keys is not None and (
+            not isinstance(dependency_keys, (tuple, list)) or
+            any(not isinstance(key, str) or not key.strip()
+                for key in dependency_keys) or
+            len(set(dependency_keys)) != len(dependency_keys)):
+        raise ValueError("Cache dependency keys must be unique named hashes")
     signatures = []
     for asset in selected_assets:
         sha = asset.get("sha256")
         if (asset.get("checksum_status") != CHECKSUM_VERIFIED or
-                not isinstance(sha, str) or len(sha) != 64):
+                not isinstance(sha, str) or
+                re.fullmatch(r"[0-9a-f]{64}", sha) is None):
             raise ValueError("Unverified FITS fingerprint; refuse cache reuse")
-        signatures.append((asset["asset_id"], sha))
+        asset_id = asset.get("asset_id")
+        if not isinstance(asset_id, str) or not asset_id.strip():
+            raise ValueError("Cache asset requires stable nonempty asset_id")
+        signatures.append((asset_id, sha))
     if len(signatures) != len(set(x[0] for x in signatures)):
         raise ValueError("Duplicate asset in cache dependencies")
     payload = {

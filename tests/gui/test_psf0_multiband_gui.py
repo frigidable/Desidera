@@ -382,3 +382,62 @@ def test_psf_full_export_never_pairs_stale_recipe_with_new_policy(
     assert panel._last_reported_payload is None
     window._returning_to_hub = True
     window.close()
+
+
+def test_project_reopen_restores_saved_stage_and_per_band_psf_without_fitting(
+        qtbot, tmp_path, monkeypatch):
+    """Real project entry, fake saved model payload: worker must not refit."""
+    from threading import get_ident
+    from lsbpipe.photometry.project_resume import save_project_resume
+    from lsbpipe.gui.psf0_panel import PSF0Panel
+    from lsbpipe.surveys.object_projects import read_object_project
+    import lsbpipe.photometry.psf_gui_backend as backend
+
+    project = create_object_project(
+        "Leo P", tmp_path / "resume_Leo_P",
+        field=SkyField(155.438012, 18.088025, 6.))
+    project.selected_dataset = ("dr11", "south", "1554p180", "g")
+    project.data_root = project.root / "data"
+    project.data_root.mkdir()
+    save_object_project(project)
+    save_project_resume(project.root, stage="scene", band="r",
+                        location="photometry")
+    (project.root / "analyses" / "psf-pilots").mkdir(parents=True)
+
+    calls = []
+    gui_thread = get_ident()
+    original_reader = backend.read_saved_psf0_bands
+
+    def fake_reader(root):
+        assert root == str(project.root)
+        calls.append(("read-worker", get_ident()))
+        return {"restored": {
+            "g": {"checkpoint": "saved-g"},
+            "r": {"checkpoint": "saved-r"}}, "warnings": {}}
+
+    def fake_show(self, preview):
+        calls.append((self.band.currentData(), preview["checkpoint"]))
+    monkeypatch.setattr(backend, "read_saved_psf0_bands", fake_reader)
+    monkeypatch.setattr(PSF0Panel, "show_restored_result", fake_show)
+    monkeypatch.setattr(
+        backend, "run_gui_psf0",
+        lambda *args, **kwargs: pytest.fail("PSF reconstruction on reopen"))
+    with offline_legacy_viewer():
+        w = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(w)
+    w.attach_object_project(read_object_project(project.root))
+    qtbot.waitUntil(
+        lambda: w.thread is None and ("g", "saved-g") in calls
+        and ("r", "saved-r") in calls, timeout=15000)
+
+    ws = w.photometry_workspace
+    assert w.preview_tabs.currentWidget() is ws
+    assert ws.current_navigation() == ("scene", "r")
+    assert calls.count(("g", "saved-g")) == 1
+    assert calls.count(("r", "saved-r")) == 1
+    assert ("read-worker", gui_thread) not in calls
+    ws.stage_tabs.setCurrentIndex(0)
+    ws.band_selector.setCurrentIndex(0)
+    assert ws.current_navigation() == ("psf0", "g")
+    assert backend.read_saved_psf0_bands is fake_reader
+    monkeypatch.setattr(backend, "read_saved_psf0_bands", original_reader)

@@ -229,3 +229,116 @@ def test_cooperative_cancel_during_original_sha256_hash(tmp_path):
     with pytest.raises(OperationCancelled):
         _sha256_file(file, cancel_check=cancel)
     assert file.stat().st_size == 3 * 1024 * 1024
+
+
+def test_p02_and_p05_agree_on_explicit_native_optical_units(tmp_path):
+    """IVAR in foreign units must fail P0.2, not only later photometry."""
+    from lsbpipe.photometry.native_fits import load_native_legacy_quartet
+    root = tmp_path / "coadds"
+    paths = _make_brick(root, "0401p012")
+    with fits.open(paths["image"], mode="update") as hdus:
+        hdus[0].header["BUNIT"] = "nmgy/pix"
+    with fits.open(paths["invvar"], mode="update") as hdus:
+        hdus[0].header["BUNIT"] = "1 / nmgy**2"
+    valid = verify_dataset(
+        root, discover_dataset_inventory(root)[0], hash_inputs=False)
+    assert valid["status"] == "FITS_WCS_VALIDATED_DIAGNOSTIC"
+    assert valid["unit_evidence"]["image"] == "EXPLICIT_NANOMAGGIES_BUNIT"
+    assert valid["unit_evidence"]["invvar"] == (
+        "EXPLICIT_INVERSE_SQUARED_NANOMAGGIES_BUNIT")
+    kwargs = dict(release="dr9", region="south",
+                  brick="0401p012", band="r", hash_inputs=False)
+    native = load_native_legacy_quartet(root, **kwargs)
+    assert native.source_evidence["image_unit_evidence"] == (
+        "IMAGE_FITS_BUNIT_CONFIRMED")
+    assert native.source_evidence["invvar_unit_evidence"] == (
+        "INVVAR_FITS_BUNIT_CONFIRMED")
+    with fits.open(paths["invvar"], mode="update") as hdus:
+        hdus[0].header["BUNIT"] = "Jy^-2"
+    invalid = verify_dataset(
+        root, discover_dataset_inventory(root)[0], hash_inputs=False)
+    assert invalid["status"] == "INVALID_FITS"
+    assert "INVVAR BUNIT" in invalid["error"]
+    with pytest.raises(ValueError, match="INVVAR BUNIT"):
+        load_native_legacy_quartet(root, **kwargs)
+
+
+def test_native_dataset_audit_rejects_symlink_substitution_after_inventory(
+        tmp_path):
+    """Inventory alone cannot authorize opening an externally linked FITS."""
+    data = tmp_path / "coadds"
+    files = _make_brick(data, "0401p012")
+    saved_entry = discover_dataset_inventory(data)[0]
+    assert saved_entry["status"] == "PRESENT_UNVERIFIED"
+    original_image = files["image"]
+    external = tmp_path / "external-native-image.fits.fz"
+    original_image.rename(external)
+    try:
+        original_image.symlink_to(external)
+    except (OSError, NotImplementedError):
+        pytest.skip("Native symlink creation unavailable on this system")
+    assert original_image.is_symlink()
+    denied = verify_dataset(data, saved_entry, hash_inputs=False)
+    assert denied["status"] == "INVALID_FITS"
+    assert "unsafe symlink" in denied["error"]
+    from lsbpipe.surveys.dataset_integrity import _sha256_file
+    with pytest.raises(ValueError, match="Unsafe"):
+        _sha256_file(original_image)
+
+
+def test_sampled_coverage_refuses_symlink_substitution_after_validated_input(
+        tmp_path):
+    """Second opening of a P0.2 quartet cannot follow a substituted source."""
+    from lsbpipe.surveys import dataset_integrity as audit
+    root = tmp_path / "original"
+    files = _make_brick(root, "0401p012")
+    source = audit.discover_dataset_inventory(root)[0]
+    verified = audit.verify_dataset(root, source)
+    assert verified["status"] == "FITS_WCS_VALIDATED_DIAGNOSTIC"
+    old = files["image"]
+    external = tmp_path / "outside-original-image.fits.fz"
+    old.rename(external)
+    try:
+        old.symlink_to(external)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem disallows symlink construction")
+    with pytest.raises(RuntimeError, match="unsafe symlink original IMAGE FITS"):
+        audit._sampled_footprint(
+            root, [verified], FIELD, pitch_arcsec=2.)
+    assert old.is_symlink()
+    assert external.is_file()
+
+
+def test_original_brick_directory_symlink_is_rejected_at_every_read_stage(
+        tmp_path):
+    """A regular FITS behind a linked brick folder is not native local data."""
+    from lsbpipe.surveys import dataset_integrity as audit
+    from lsbpipe.photometry.native_fits import load_native_legacy_quartet
+    root = tmp_path / "original-quartets"
+    paths = _make_brick(root, "0401p012")
+    inventoried = discover_dataset_inventory(root)[0]
+    verified = verify_dataset(root, inventoried)
+    assert verified["status"] == "FITS_WCS_VALIDATED_DIAGNOSTIC"
+    folder = paths["image"].parent
+    external = tmp_path / "external-brick"
+    folder.rename(external)
+    try:
+        folder.symlink_to(external, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Directory symlinks unavailable on this runner")
+    assert not paths["image"].is_symlink()
+    assert paths["image"].is_file()
+    # Inventory must not silently include a linked original brick folder.
+    assert discover_dataset_inventory(root) == []
+    denied = verify_dataset(root, inventoried)
+    assert denied["status"] == "INVALID_FITS"
+    assert "unsafe symlink original IMAGE FITS" in denied["error"]
+    with pytest.raises(ValueError, match="unsafe symlink original INPUT FITS"):
+        audit._sha256_file(paths["image"], data_root=root)
+    with pytest.raises(RuntimeError, match="unsafe symlink original IMAGE FITS"):
+        audit._sampled_footprint(
+            root, [verified], FIELD, pitch_arcsec=2.)
+    with pytest.raises(ValueError, match="unsafe symlink original IMAGE FITS"):
+        load_native_legacy_quartet(
+            root, release="dr9", region="south",
+            brick="0401p012", band="r", hash_inputs=False)

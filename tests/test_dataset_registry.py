@@ -203,3 +203,68 @@ def test_mosaic_geometry_plan_does_not_mean_coaddition_allowed(project):
     assert decision["allowed"] is True
     assert "Geometry plan only" in decision["reason"]
     assert compatibility_policy([source], images, mode="joint")["allowed"] is False
+
+
+def test_science_cache_refuses_synthetic_unverifiable_asset_hash_labels():
+    """A 64-character placeholder is not a canonical SHA-256 receipt."""
+    import hashlib
+    from lsbpipe.surveys.dataset_registry import science_cache_key
+    actual = hashlib.sha256(b"immutable-source").hexdigest()
+    asset = {"asset_id":"dataset-A","sha256":actual,
+             "checksum_status":CHECKSUM_VERIFIED}
+    kwargs = dict(stage="sky",algorithm_version="v1",
+                  parameters={"plane":False},selected_assets=[asset])
+    assert len(science_cache_key(**kwargs)) == 64
+    for invalid in ("z"*64, actual.upper(), actual[:-1], "a"*65):
+        with pytest.raises(ValueError, match="Unverified FITS fingerprint"):
+            science_cache_key(
+                **dict(kwargs,selected_assets=[dict(asset,sha256=invalid)]))
+    with pytest.raises(ValueError, match="nonempty asset_id"):
+        science_cache_key(
+            **dict(kwargs,selected_assets=[dict(asset,asset_id="")]))
+    with pytest.raises(ValueError, match="Stage, algorithm"):
+        science_cache_key(**dict(kwargs,stage=42))
+    with pytest.raises(ValueError, match="Stage, algorithm"):
+        science_cache_key(**dict(kwargs,algorithm_version=False))
+    with pytest.raises(ValueError, match="unique named"):
+        science_cache_key(**kwargs, dependency_keys=["mask-v2","mask-v2"])
+
+
+def test_registry_never_reads_external_symlinked_index_or_directory(
+        project, tmp_path):
+    """Project data lineage cannot be sourced from symlinked index metadata."""
+    add_legacy_assets(project.root / "data")
+    import_legacy_fits(project.root, project.root / "data")
+    index = registry_path(project.root)
+    external = tmp_path / "outside-dataset-index.json"
+    index.rename(external)
+    try:
+        index.symlink_to(external)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not allow creating symlinks")
+    assert index.is_symlink()
+    with pytest.raises(ValueError, match="Unsafe symlinked dataset registry"):
+        read_dataset_index(project.root)
+    # Restoring the normal index must not rewrite the external record.
+    index.unlink()
+    external.replace(index)
+    original = index.read_bytes()
+    holder = tmp_path / "external-dataset-registry"
+    holder.mkdir()
+    moved = holder / "index.json"
+    index.rename(moved)
+    folder = index.parent
+    folder.rmdir()
+    try:
+        folder.symlink_to(holder, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not allow directory symlinks")
+    assert folder.is_symlink()
+    with pytest.raises(ValueError, match="Unsafe symlinked dataset registry"):
+        read_dataset_index(project.root)
+    from lsbpipe.surveys import dataset_registry
+    with pytest.raises(ValueError, match="Unsafe symlinked dataset registry"):
+        dataset_registry._save(
+            project.root,
+            {"schema":SCHEMA,"project_id":project.project_id})
+    assert moved.read_bytes() == original

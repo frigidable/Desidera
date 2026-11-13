@@ -183,3 +183,12 @@ def test_psf_core_wings_gui_renders_measured_fwhm_and_closed_science_gates():
     assert "galaxy_injection_recovery: HOLD" in summary
     assert "PASS is diagnostic completeness only" in summary
     assert "LSB injection-recovery are unvalidated" in summary
+
+
+@pytest.mark.parametrize("guess", (0., -1., np.nan, np.inf, True, "4.8", None))
+def test_invalid_finder_fwhm_prior_cannot_produce_measured_psf_core(guess):
+    result = measure_finite_native_psf_core(
+        gaussian_kernel(), guessed_fwhm_pix=guess)
+    assert result["status"] == "INVALID_DETECTION_FWHM_PRIOR"
+    assert result["guessed_detection_fwhm_pix_not_a_measurement"] is None
+    assert result["no_psf_model_change_or_science_adoption"] is True

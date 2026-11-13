@@ -58,3 +58,40 @@ __all__ += [
     "PSF0Config", "PSF0Star", "PSF0Result",
     "build_empirical_coadd_psf", "export_psf0_diagnostic",
 ]
+
+
+# Stage 04.0–04.1 read-only finite signed native-aperture measurements.
+# photutils/astropy remain lazy numerical requirements: GUI imports do not
+# acquire a global FITS/photometry dependency or execute measurements.
+from .aperture_flux import (
+    ApertureGeometryICRS, ApertureSkyScenario, ApertureProvenance,
+    ApertureFluxRecord, PixelEllipse,
+    project_icrs_ellipse_to_native, measure_native_aperture,
+)
+__all__ += [
+    "ApertureGeometryICRS", "ApertureSkyScenario", "ApertureProvenance",
+    "ApertureFluxRecord", "PixelEllipse",
+    "project_icrs_ellipse_to_native", "measure_native_aperture",
+]
+
+
+# Stage 04.2 fixed-ellipse curves of growth and exact annular diagnostics.
+from .aperture_growth import (
+    GrowthHypothesis, AnnulusFluxRecord,
+    geometry_hypotheses, predeclared_growth_radii,
+    measure_native_annulus, measure_growth_diagnostic,
+)
+__all__ += [
+    "GrowthHypothesis", "AnnulusFluxRecord",
+    "geometry_hypotheses", "predeclared_growth_radii",
+    "measure_native_annulus", "measure_growth_diagnostic",
+]
+
+# Stage 04.3: exploratory sky/mask/geometry sensitivity and native-coadd
+# blank-aperture covariance. No science error-bar adoption.
+from .aperture_systematics import (
+    estimate_blank_annulus_covariance, diagnose_aperture_systematics,
+)
+__all__ += [
+    "estimate_blank_annulus_covariance", "diagnose_aperture_systematics",
+]

@@ -13,13 +13,14 @@ from dataclasses import replace, asdict
 import json
 import math
 import os
+import numpy as np
 import tempfile
 from pathlib import Path
 from typing import Callable
 
 from lsbpipe.photometry.native_fits import load_native_legacy_quartet
 from lsbpipe.photometry.psf_empirical import (
-    PSF0Config, PSF0Result, PSF0QualityError, build_empirical_coadd_psf,
+    PSF0Config, PSF0Result, PSF0Star, PSF0QualityError, build_empirical_coadd_psf,
 )
 from lsbpipe.photometry.psf_export import export_psf0_diagnostic
 from lsbpipe.photometry.psf_tractor_gaia import (
@@ -32,6 +33,27 @@ from lsbpipe.surveys.object_projects import read_object_project
 LEO_P_CENTER = (155.438012, 18.088025)
 BANDS = ("g", "r", "i", "z")
 KINDS = ("image", "invvar", "nexp", "maskbits")
+
+def _same_target_anchor(current, recorded) -> bool:
+    """Fail closed if a saved PSF was protected around another ICRS centre.
+
+    The target centre is part of the scientific input identity, even if
+    the FITS quartet and the selected brick are unchanged.
+    """
+    try:
+        if len(current) != 2 or len(recorded) != 2:
+            return False
+        ra0, dec0 = map(float, current)
+        ra1, dec1 = map(float, recorded)
+        if not all(math.isfinite(v) for v in (ra0, dec0, ra1, dec1)):
+            return False
+        if not (-90. <= dec0 <= 90. and -90. <= dec1 <= 90.):
+            return False
+        wrapped_ra_difference = (ra0-ra1+180.) % 360. - 180.
+        return abs(wrapped_ra_difference) <= 1e-9 and abs(dec0-dec1) <= 1e-9
+    except (TypeError, ValueError, OverflowError):
+        return False
+
 
 def _same_observation_source(current, recorded) -> bool:
     """Saved default band is navigation state, not PSF source identity.
@@ -284,8 +306,13 @@ def run_gui_psf0(
     depth = "full research QA" if extended_research_qa else "core and holdout QA"
     _progress(progress, f"Building provisional {band} PSF · {depth}")
     try:
+        # The fixed Leo P coordinate is only an IDENTITY GUARD in
+        # _leo_p_project. All downstream stages use the saved project's
+        # actual target ICRS anchor. PSF source protection must agree.
+        project_anchor = (float(project.field.ra_deg),
+                          float(project.field.dec_deg))
         result = build_empirical_coadd_psf(
-            frame, target_icrs_deg=LEO_P_CENTER,
+            frame, target_icrs_deg=project_anchor,
             target_protection_arcsec=float(protection_arcsec), config=config,
             catalog_matcher=catalogue,
             extended_research_qa=extended_research_qa)
@@ -504,6 +531,11 @@ def save_gui_psf0(preview: dict, progress: Callable | None = None) -> str:
     if (project.project_id != preview["project_id"]
             or not _same_observation_source(project.selected_dataset, preview.get("dataset"))):
         raise ValueError("Galaxy project or selected dataset changed; rerun the diagnostic")
+    if (project.field is None or not _same_target_anchor(
+            (project.field.ra_deg, project.field.dec_deg),
+            result.center_target_icrs)):
+        raise ValueError(
+            "Galaxy project target ICRS anchor changed since PSF build; rerun")
     release, region, brick, _ = project.selected_dataset
     if result.dataset_id != f"{release}/{region}/{brick}/{result.dataset_id.split('/')[-1]}":
         raise ValueError("PSF result does not match the Galaxy Workspace source")
@@ -530,3 +562,182 @@ def save_gui_psf0(preview: dict, progress: Callable | None = None) -> str:
     output = export_psf0_diagnostic(
         result, project.root / "analyses" / "psf-pilots", explicitly_requested=True)
     return str(output)
+
+
+def read_saved_psf0_bands(project_root: str | Path) -> dict:
+    """Restore immutable experimental PSFs after verifying original bytes.
+
+    This is a read-only, potentially I/O-intensive operation. Invoke it
+    from a background worker, NEVER synchronously from the Qt event loop.
+    It does not reconstruct native stellar cutouts absent from the exported
+    report; the science/ePSF kernel and QA can be inspected without refitting.
+    Corrupt/foreign/stale models are refused, not silently promoted.
+    """
+    from astropy.io import fits
+    import re
+
+    project = read_object_project(project_root)
+    outputs = {"restored": {}, "warnings": {}}
+    if (project.selected_dataset is None or project.data_root is None
+            or project.field is None):
+        outputs["warnings"]["project"] = (
+            "Missing source or target ICRS anchor; stored PSFs are not current")
+        return outputs
+    release, region, brick, _selected_band = project.selected_dataset
+    root = project.root / "analyses" / "psf-pilots"
+    if not root.exists() and not root.is_symlink():
+        return outputs
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Unsafe stored PSF directory")
+    folders = sorted(
+        (x for x in root.iterdir()
+         if re.fullmatch(r"psf0-[0-9a-f]{24}", x.name)),
+        # stat() follows a symlink before the loop can reject it, and
+        # raises on broken links, blocking all legitimate checkpoints.
+        # lstat() inspects this directory entry alone, including links.
+        key=lambda x: x.lstat().st_mtime_ns, reverse=True)
+    if len(folders) > 128:
+        raise ValueError("More than 128 historical PSF checkpoints; manual audit needed")
+    # Source hashes are independently verified against CURRENT original
+    # data; do not trust a matching filename or obsolete output report.
+    original_hashes = {}
+    catalog_hash = None
+    for folder in folders:
+        if folder.is_symlink() or not folder.is_dir():
+            outputs["warnings"]["storage"] = "Unsafe stored PSF entry"
+            continue
+        receipt = folder / "psf0_report.json"
+        kernel_file = folder / "empirical_psf.fits"
+        if any(p.is_symlink() or not p.is_file() for p in (receipt, kernel_file)):
+            outputs["warnings"]["storage"] = "Incomplete stored PSF entry"
+            continue
+        try:
+            if receipt.stat().st_size > 128 * 1024 * 1024:
+                raise ValueError("Oversized stored QA report")
+            report = json.loads(receipt.read_text(encoding="utf8"))
+            if (report.get("schema") != "desidera.psf0-experimental/1" or
+                    report.get("status") != "EXPERIMENTAL_PSF_NOT_ADOPTED" or
+                    report.get("science_adopted") is not False):
+                raise ValueError("Unrecognized or non-diagnostic PSF report")
+            if not _same_target_anchor(
+                    (project.field.ra_deg, project.field.dec_deg),
+                    report.get("target_icrs_deg")):
+                raise ValueError(
+                    "Saved PSF target ICRS anchor differs from current project")
+            identity = str(report["dataset_id"]).split("/")
+            if len(identity) != 4 or tuple(identity[:3]) != (release, region, brick):
+                raise ValueError("Stored PSF belongs to a different brick")
+            band = identity[3]
+            if (band not in BANDS or (region == "north" and band == "i") or
+                    band in outputs["restored"]):
+                continue
+            hashes = report["source_hashes"]
+            if (not isinstance(hashes, dict) or set(hashes) != set(KINDS)
+                    or any(not isinstance(v, str) or
+                           re.fullmatch("[0-9a-f]{64}", v) is None
+                           for v in hashes.values())):
+                raise ValueError("Missing or invalid source FITS hashes")
+            if band not in original_hashes:
+                paths = _expected_paths(project.data_root,
+                                        (release, region, brick, band))
+                if any(not p.is_file() or p.is_symlink()
+                       for p in paths.values()):
+                    raise ValueError("Native source quartet missing or unsafe")
+                original_hashes[band] = {
+                    kind: _hash_original_file(path)
+                    for kind, path in paths.items()}
+            if hashes != original_hashes[band]:
+                raise ValueError("Original FITS SHA changed; PSF must be rerun")
+            required_catalog_hash = report.get(
+                "diagnostic_metrics", {}).get(
+                "catalog_selection_qa", {}).get("catalog_source_sha256")
+            if required_catalog_hash:
+                if catalog_hash is None:
+                    catalog_path, _ = tractor_catalog_location(
+                        project.data_root, release=release,
+                        region=region, brick=brick)
+                    if not catalog_path.is_file() or catalog_path.is_symlink():
+                        raise ValueError("Original Gaia/Tractor catalog unavailable")
+                    catalog_hash = _hash_original_file(catalog_path)
+                if catalog_hash != required_catalog_hash:
+                    raise ValueError("Gaia/Tractor catalog SHA changed")
+            if _hash_original_file(kernel_file) != report.get("fits_kernel_sha256"):
+                raise ValueError("Saved PSF FITS checksum differs from receipt")
+            with fits.open(kernel_file, checksum=True) as hdus:
+                if (len(hdus) != 1 or hdus[0].header.get("PSFVALID") is not False
+                        or hdus[0].header.get("BAND") != band):
+                    raise ValueError("Invalid experimental PSF FITS metadata")
+                kernel = np.asarray(hdus[0].data, dtype=np.float64).copy()
+            cfg_values = dict(report["recipe"])
+            cfg_values["excluded_training_star_ids"] = tuple(
+                cfg_values.get("excluded_training_star_ids", ()))
+            cfg = PSF0Config(**cfg_values)
+            if report["recipe_digest"] != cfg.digest:
+                raise ValueError("PSF configuration checksum mismatch")
+            result = PSF0Result(
+                dataset_id=report["dataset_id"],
+                instrument=report["instrument"],
+                kernel=kernel,
+                training=tuple(PSF0Star(**item)
+                               for item in report["training"]),
+                holdout=tuple(PSF0Star(**item)
+                              for item in report["holdout"]),
+                rejected_reasons=report["rejections"],
+                detection_count=report["n_detected"],
+                metrics=report["diagnostic_metrics"],
+                flags=tuple(report["flags"]),
+                recipe=cfg, source_hashes=hashes,
+                lineage_id=report["lineage_id"],
+                center_target_icrs=tuple(report["target_icrs_deg"]),
+                target_protection_arcsec=report["target_protection_arcsec"],
+                algorithm_versions=report["algorithm_versions"])
+            if (result.report()["kernel_sha256"] != report["kernel_sha256"]
+                    or result.lineage_id[:24] != folder.name[5:]
+                    or report["kernel_shape"] != list(result.kernel.shape)):
+                raise ValueError("Restored kernel identity does not match report")
+            outputs["restored"][band] = {
+                "project_root": str(project.root),
+                "project_id": project.project_id,
+                "dataset": (release, region, brick, band),
+                "review_band": band,
+                "status": result.status,
+                "result": result,
+                "source_hashes": hashes,
+                "recipe_sha256": cfg.digest,
+                "effective_recipe": asdict(cfg),
+                "target_protection_arcsec": result.target_protection_arcsec,
+                "postfit_qa_scope_requested": result.metrics.get(
+                    "postfit_qa_execution", {}).get("mode", "unknown_legacy"),
+                "auto_saved_path": str(folder),
+                "restored_from_disk": True,
+            }
+        except (OSError, ValueError, KeyError, TypeError, IndexError,
+                AttributeError) as exc:
+            outputs["warnings"][folder.name] = str(exc)
+    return outputs
+
+
+def checkpoint_gui_psf0(preview: dict, progress: Callable | None = None) -> str:
+    """Autosave successful PSF into the SAME immutable diagnostic archive.
+
+    This is authorized researcher session recovery, *never* science
+    acceptance or an overwritten prior result. Duplicate lineages are
+    reused only after verifying their exact saved kernel and provenance.
+    """
+    if not isinstance(preview, dict) or not isinstance(
+            preview.get("result"), PSF0Result):
+        raise TypeError("Only completed PSF0 models can be checkpointed")
+    try:
+        return save_gui_psf0(preview, progress=progress)
+    except FileExistsError:
+        loaded = read_saved_psf0_bands(preview["project_root"])
+        band = preview["result"].dataset_id.split("/")[-1]
+        item = loaded["restored"].get(band)
+        if (item is None or
+                item["result"].lineage_id != preview["result"].lineage_id or
+                item["result"].report()["kernel_sha256"] !=
+                preview["result"].report()["kernel_sha256"]):
+            raise ValueError(
+                "Existing saved PSF lineage collision or invalid archive; "
+                "no overwrite permitted")
+        return item["auto_saved_path"]

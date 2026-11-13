@@ -449,3 +449,281 @@ def test_distant_catalog_psf_can_change_core_rss_only_through_global_sky_star_re
         - inner["weighted_squared_residual_full"], abs=1e-9)
     assert inner["gain_partition_is_algebraic_noncausal_with_symmetric_cross_terms"]
     assert result["science_adopted"] is False
+
+
+
+def test_scene_foreground_finite_psf0_is_heldout_and_does_not_extrapolate():
+    from lsbpipe.photometry.psf_joint_scene import (
+        _shifted_native_kernel, audit_finite_psf0_foreground)
+    ny = nx = 201
+    yy, xx = np.indices((ny,nx),dtype=float)
+    k_y,k_x=np.indices((81,81),dtype=float)
+    kernel = np.exp(-.5*((k_x-40)**2+(k_y-40)**2)/2.2**2)
+    kernel /= kernel.sum()
+    kernel.setflags(write=False)
+    star=(95.27,98.38)
+    galaxy=(148.,145.)
+    true_amplitude=820.
+    image = (.035+.0009*(xx-star[0])-.0004*(yy-star[1])+
+             true_amplitude*_shifted_native_kernel(
+                 kernel,xx,yy,*star))
+    original=image.copy()
+    invvar=np.full(image.shape,1e6)
+    hard=np.zeros(image.shape,bool)
+    hard[int(round(star[1])),int(round(star[0]))]=True
+    component=np.array([98*nx+95, 102*nx+101, 151*nx+149],
+                       dtype=np.int64)
+    output=audit_finite_psf0_foreground(
+        image,invvar,hard,kernel=kernel,
+        source_xy=star,target_xy=galaxy,
+        measured_fwhm_pix=2.355*2.2,
+        source_id="dr11/south/1554p180/OBJID=2035",
+        catalog_flux_nMgy=810.,
+        other_catalog_centres=((2010,125.,98.),),
+        component_indices=component)
+    assert output["status"]=="FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED"
+    assert output["galaxy_centre_outside_finite_kernel_square"]
+    assert output["galaxy_centre_stellar_wing_flux_nMgy_pixel"] is None
+    assert output["model_support_beyond_stored_psf"]=="UNKNOWN_NOT_EXTRAPOLATED"
+    assert output["sky_fit_comparison"]["planar"][
+        "frozen_finite_psf_amplitude_nMgy"]==pytest.approx(
+            true_amplitude,rel=.025)
+    assert len(output["sky_fit_comparison"]["constant"][
+        "heldout_median_residual_nMgy_pixel_by_octant"])==8
+    assert output["native_heldout_pixels"]>80
+    assert output["candidate_component_finite_psf0_probe"][
+        "missing_flux_and_true_physical_star_wings_unconstrained"]
+    assert output["science_adopted"] is False
+    assert output["source_light_subtracted"] is False
+    assert output["original_pixels_modified"] is False
+    assert np.array_equal(image,original)
+    assert not kernel.flags.writeable
+
+
+def test_scene_foreground_probe_fails_closed_for_small_kernel_and_close_neighbor():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_finite_psf0_foreground)
+    image=np.ones((151,151),dtype=float)
+    ivar=np.ones_like(image)
+    hard=np.zeros(image.shape,bool)
+    yy,xx=np.indices((31,31))
+    short=np.exp(-.5*((xx-15)**2+(yy-15)**2)/2.**2)
+    short/=short.sum()
+    args=dict(source_xy=(75.,75.),target_xy=(110.,105.),
+              measured_fwhm_pix=5.,source_id="OBJID=2035")
+    out=audit_finite_psf0_foreground(
+        image,ivar,hard,kernel=short,**args)
+    assert out["status"]=="FINITE_KERNEL_TOO_SMALL_FOR_HELDOUT_TEST"
+    wide=np.zeros((81,81),dtype=float)
+    wide[40,40]=1.
+    out=audit_finite_psf0_foreground(
+        image,ivar,hard,kernel=wide,
+        other_catalog_centres=((2010,78.,77.),),**args)
+    assert out["status"]=="CLOSE_CATALOG_NEIGHBOR_PREVENTS_ISOLATED_FIT"
+    assert out["science_adopted"] is False
+    assert out["galaxy_centre_stellar_wing_flux_nMgy_pixel"] is None
+
+
+
+def test_p21_same_project_directional_profile_fixed_controls_and_read_only():
+    """Facing an injected LOCAL signal is descriptive, never a stellar halo."""
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+
+    h = w = 512
+    y, x = np.indices((h,w), dtype=float)
+    sx, sy = 256., 256.
+    tx, ty = 256., 294.
+    fwhm = 2.
+    image = 0.01 + 1.e-4*y + 3.e-5*x
+    radial = np.hypot(x-sx,y-sy)/fwhm
+    facing = (y-sy)/np.maximum(np.hypot(x-sx,y-sy),1.e-9)
+    image[(radial >= 16.) & (radial < 20.) &
+          (facing >= np.cos(np.pi/4.))] += .1
+    ivar = np.ones_like(image)*100.
+    hard = np.zeros_like(image, dtype=bool)
+    original = image.copy()
+    kwargs = dict(source_xy=(sx,sy),target_xy=(tx,ty),
+                  measured_fwhm_pix=fwhm,other_catalog_centres=())
+    report = audit_same_project_foreground_sector_profile(
+        image,ivar,hard,**kwargs)
+    assert report["status"] == "SAME_PROJECT_DIRECTIONAL_SKY_SENSITIVITY_ONLY"
+    assert report["n_fixed_control_tiles"] == 16
+    assert report["n_controls_with_at_least_one_measured_ring"] >= 8
+    assert report["source"]["n_rings_measured_with_both_cones"] == 5
+    assert report["schema"] == "desidera.scene.project-only-foreground-sector/3"
+    assert report["conditional_isophote_component_status"] == (
+        "NOT_MEASURED_NO_CURRENT_ISOPHOTE_PROPOSAL")
+    assert report["n_source_rings_with_mask_geometry_comparable"] == 5
+    assert report["n_source_rings_with_antipodal_matched_pixels"] == 5
+    assert report["source"]["per_ring"][3][
+        "antipodal_paired_difference_median_nMgy_per_pixel"] > .09
+    assert report["comparison_by_ring"][3][
+        "median_abs_paired_control_difference_nMgy_per_pixel"] is not None
+    assert report["comparison_by_ring"][3][
+        "source_toward_minus_away_nMgy_per_pixel"] > .09
+    assert report["comparison_by_ring"][3][
+        "median_abs_control_asymmetry_nMgy_per_pixel"] is not None
+    assert report["additional_bricks_or_catalogues_used"] is False
+    assert report["absolute_stellar_wings_identified"] is False
+    assert report["galaxy_light_loss_measured"] is False
+    assert report["science_adopted"] is False
+    assert np.array_equal(image,original)
+    assert np.array_equal(ivar,np.ones_like(ivar)*100.)
+    assert not np.any(hard)
+    assert report == audit_same_project_foreground_sector_profile(
+        image,ivar,hard,**kwargs)
+
+
+def test_p21_same_project_directional_profile_fails_closed_at_native_edge():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.zeros((100,100))
+    ivar = np.ones_like(image)
+    hard = np.zeros(image.shape,dtype=bool)
+    report = audit_same_project_foreground_sector_profile(
+        image,ivar,hard,source_xy=(10.,10.),target_xy=(35.,35.),
+        measured_fwhm_pix=2.)
+    assert report["status"] == "OUTER_30_FWHM_PATCH_CROSSES_NATIVE_IMAGE_EDGE"
+    assert report["absolute_stellar_wings_identified"] is False
+    assert report["science_adopted"] is False
+
+
+def test_p21_same_project_control_masks_catalogue_neighbors_without_backfill():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.ones((512,512))
+    ivar = np.ones_like(image)
+    hard = np.zeros(image.shape,dtype=bool)
+    # Tile (0,0) has fixed center (64,64) and must be left unmeasured,
+    # not silently replaced by a more favorable image location.
+    out = audit_same_project_foreground_sector_profile(
+        image,ivar,hard,source_xy=(256.,256.),target_xy=(256.,294.),
+        measured_fwhm_pix=2.,
+        other_catalog_centres=((999,64.,64.),))
+    entry = next(c for c in out["controls"] if c["tile"] == [0,0])
+    assert entry["center_native_xy_pix"] == [64,64]
+    assert entry["status"] == "CATALOG_CENTRE_AT_CONTROL_ORIGIN"
+    assert len(out["controls"]) == 16
+    assert out["fixed_control_geometry_not_selected_on_residuals"] is True
+    assert out["coadd_controls_share_sky_and_pixel_correlations"] is True
+
+
+
+def test_p21_native_sector_coverage_guard_catches_one_sided_catalog_mask():
+    """A geometric incompleteness cannot be called a validated contrast."""
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.zeros((512,512),dtype=float)
+    invvar = np.ones_like(image)
+    hard = np.zeros_like(image,dtype=bool)
+    sy,sx = 256.,256.
+    yy,xx = np.indices(image.shape)
+    rad = np.hypot(xx-sx,yy-sy)/2.
+    facing = ((yy-sy)/np.maximum(np.hypot(xx-sx,yy-sy),1e-12)
+              >= np.cos(np.pi/4))
+    # Uneven hard-mask coverage on the facing side leaves the original
+    # unpaired sector estimator vulnerable to spatial selection.
+    hard[facing & (rad>=16.) & (rad<20.) & ((xx % 4)!=0)] = True
+    out = audit_same_project_foreground_sector_profile(
+        image,invvar,hard,
+        source_xy=(sx,sy),target_xy=(sx,sy+40.),
+        measured_fwhm_pix=2.)
+    row = out["source"]["per_ring"][3]
+    assert row["mask_coverage_interpretation"] == (
+        "SPARSE_OR_ASYMMETRIC_RAW_SECTOR_MEDIANS_NOT_COMPARABLE")
+    assert row["facing_cone_valid_geometric_fraction"] < .4
+    assert row["opposite_cone_valid_geometric_fraction"] > .99
+    assert (row["n_valid_antipodal_facing_to_opposite_pixel_pairs"]
+            <= row["n_original_valid_facing_pixels"])
+    assert out["n_source_rings_with_mask_geometry_comparable"] < 5
+    assert out["absolute_stellar_wings_identified"] is False
+    assert out["science_adopted"] is False
+
+
+def test_p21_coverage_handles_subpixel_antipodal_reflection():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.full((512,512),.002)
+    invvar = np.ones_like(image)
+    hard = np.zeros(image.shape,dtype=bool)
+    out = audit_same_project_foreground_sector_profile(
+        image,invvar,hard,source_xy=(256.26,255.81),
+        target_xy=(241.1,301.5),measured_fwhm_pix=2.05)
+    assert out["n_source_rings_with_antipodal_matched_pixels"] == 5
+    assert out["n_source_rings_with_mask_geometry_comparable"] == 5
+    for ring in out["source"]["per_ring"]:
+        assert ring["antipodal_paired_difference_median_nMgy_per_pixel"] == 0.
+        assert ring["n_valid_antipodal_facing_to_opposite_pixel_pairs"] >= 30
+    assert out["galaxy_light_loss_measured"] is False
+
+
+
+def test_p21_current_project_draft_component_overlap_conditions_paired_result():
+    """Candidate overlap must be conditional and pixel-exact, not adopted."""
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    y, x = np.indices((512,512))
+    sx, sy = 256., 256.
+    fwhm = 2.
+    r = np.hypot(x-sx, y-sy)/fwhm
+    facing = (y-sy)/np.maximum(np.hypot(x-sx, y-sy),1.e-9)
+    draft_component = ((r >= 16.) & (r < 20.) &
+                       (facing >= np.cos(np.pi/4.)))
+    image = np.zeros((512,512), dtype=float)
+    image[draft_component] = .05
+    raw_image = image.copy()
+    ids = np.flatnonzero(draft_component).astype(np.int64)
+    ids.setflags(write=False)
+    out = audit_same_project_foreground_sector_profile(
+        image, np.ones_like(image), np.zeros_like(image,dtype=bool),
+        source_xy=(sx,sy),target_xy=(sx,sy+38.),
+        measured_fwhm_pix=fwhm,
+        candidate_component_indices=ids)
+    assert out["schema"] == "desidera.scene.project-only-foreground-sector/3"
+    assert out["conditional_isophote_component_status"] == (
+        "DRAFT_LOCAL_DETECTED_COMPONENT_NOT_PHYSICAL_GALAXY")
+    assert out["candidate_component_pixel_count"] == int(draft_component.sum())
+    row = out["source"]["per_ring"][3]
+    assert row["n_toward_geometric_pixels_in_draft_component"] == (
+        row["n_geometrically_available_facing_pixels"])
+    assert row["n_toward_valid_pixels_in_draft_component"] == (
+        row["n_original_valid_facing_pixels"])
+    assert row["n_matched_pairs_touching_draft_component"] == (
+        row["n_valid_antipodal_facing_to_opposite_pixel_pairs"])
+    assert row["n_matched_pairs_outside_draft_component"] == 0
+    assert row["paired_median_touching_draft_component_nMgy_pixel"] == .05
+    assert row["paired_median_outside_draft_component_nMgy_pixel"] is None
+    other_ring = out["source"]["per_ring"][2]
+    assert other_ring["n_matched_pairs_touching_draft_component"] == 0
+    assert other_ring["n_matched_pairs_outside_draft_component"] > 30
+    assert other_ring["paired_median_outside_draft_component_nMgy_pixel"] == 0.
+    assert out["draft_isophote_is_not_true_galaxy_boundary"] is True
+    assert out["science_adopted"] is False
+    assert out["galaxy_light_loss_measured"] is False
+    assert np.array_equal(image,raw_image)
+    assert not ids.flags.writeable
+
+
+def test_p21_rejects_invalid_candidate_indices_without_casting():
+    from lsbpipe.photometry.psf_joint_scene import (
+        audit_same_project_foreground_sector_profile,
+    )
+    image = np.zeros((512,512),dtype=float)
+    valid = np.ones_like(image)
+    hard = np.zeros_like(image,dtype=bool)
+    import pytest
+    for ids in (np.array([-1]), np.array([image.size]),
+                np.array([12.1]), np.ones((2,2),dtype=np.int64)):
+        with pytest.raises(ValueError,match="isophote pixel indices"):
+            audit_same_project_foreground_sector_profile(
+                image, valid, hard,
+                source_xy=(256.,256.),target_xy=(256.,300.),
+                measured_fwhm_pix=2.,
+                candidate_component_indices=ids)

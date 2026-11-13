@@ -11,6 +11,7 @@ from pathlib import Path
 import json
 
 from lsbpipe.surveys.legacy import SkyField, BrickHit, product_for
+from lsbpipe.surveys.dataset_integrity import _assert_safe_original_paths
 from .qa_records import (ScienceContext, original_quartet, snapshot_inputs,
                          new_qa_run)
 
@@ -32,9 +33,17 @@ def science_data_root(directory: str | Path, *, hit: BrickHit, band: str) -> Pat
         for kind in ("image", "invvar", "nexp", "maskbits")
     }
     for candidate in (root, root / "data"):
-        if all((candidate / item.relative_path).is_file()
-               for item in wanted.values()):
-            return candidate
+        # Explicit root aliases may resolve to the intended data folder,
+        # but symbolic links anywhere *below* that root must never
+        # silently import another original quartet into science QA.
+        candidate = candidate.resolve()
+        paths = {kind: candidate / item.relative_path
+                 for kind, item in wanted.items()}
+        try:
+            _assert_safe_original_paths(candidate, paths)
+        except (OSError, ValueError):
+            continue
+        return candidate
     missing = [item.relative_path for item in wanted.values()]
     raise FileNotFoundError(
         "The selected folder does not contain the complete "

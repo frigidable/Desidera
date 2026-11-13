@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desidera"
-version = "0.2.0"
+version = "0.2.1.dev4"
 description = "DESIDERA: experimental galaxy workbench for Legacy FITS/WCS and research QA"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "scipy>=1.10"]
@@ -16,6 +16,7 @@ demo = ["matplotlib"]
 gui = ["PySide6>=6.6", "astropy>=6.0"]
 knowledge = ["astropy>=6.0", "astroquery>=0.4.8"]
 test = ["pytest"]
+test-gui = ["pytest-qt>=4.4"]
 
 [project.scripts]
 desidera = "desidera.cli:main"

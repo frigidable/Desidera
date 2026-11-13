@@ -397,3 +397,89 @@ def test_relative_data_root_still_rejects_empty_and_traversal(tmp_path, unsafe):
     manifest.write_text(json.dumps(state), encoding="utf-8")
     with pytest.raises(ValueError, match="Unsafe relative data directory"):
         read_object_project(project.root)
+
+
+
+def test_object_project_refuses_symlinked_manifest_on_read_and_save(
+        tmp_path):
+    """A symlinked project passport must not import foreign JSON evidence."""
+    project = create_object_project("Protected", tmp_path / "Protected")
+    manifest = project.root / PROJECT_FILENAME
+    original = manifest.read_bytes()
+    outside = tmp_path / "external-object-manifest.json"
+    outside.write_bytes(original)
+    manifest.unlink()
+    try:
+        manifest.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not support file symlinks")
+    assert manifest.is_symlink()
+    with pytest.raises(ValueError, match="Unsafe symlinked object project"):
+        read_object_project(project.root)
+    with pytest.raises(ValueError, match="Unsafe symlinked object project"):
+        save_object_project(project)
+    assert outside.read_bytes() == original
+    assert manifest.is_symlink()
+
+
+def test_portable_relative_data_root_refuses_symlink_escape(
+        tmp_path):
+    """An unchanged lexical path can escape through a junction/symlink."""
+    project = create_object_project("Target", tmp_path / "Target")
+    outside = tmp_path / "external-original-fits"
+    outside.mkdir()
+    (outside / "ORIGINAL.fits.fz").write_bytes(b"original unchanged")
+    alias = project.root / "data-alias"
+    try:
+        alias.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not support directory symlinks")
+    passport = project.root / PROJECT_FILENAME
+    record = json.loads(passport.read_text("utf-8"))
+    record["data_root"] = {"relative": "data-alias"}
+    passport.write_text(json.dumps(record), encoding="utf-8")
+    with pytest.raises(ValueError, match="Unsafe relative data directory"):
+        read_object_project(project.root)
+    assert (outside / "ORIGINAL.fits.fz").read_bytes() == b"original unchanged"
+
+    # Explicitly external ABSOLUTE paths remain valid for normal
+    # researcher-managed original FITS directories.
+    record["data_root"] = {"absolute": str(outside.resolve())}
+    passport.write_text(json.dumps(record), encoding="utf-8")
+    assert read_object_project(project.root).data_root == outside.resolve()
+
+
+def test_library_registry_refuses_symlinked_external_index(
+        tmp_path):
+    project = create_object_project("One", tmp_path / "One")
+    idx = library_index_path()
+    original = idx.read_bytes()
+    outside = tmp_path / "untrusted-projects.json"
+    outside.write_bytes(original)
+    idx.unlink()
+    try:
+        idx.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not support file symlinks")
+    with pytest.raises(ValueError, match="Unsafe symlinked project library"):
+        recent_projects()
+    with pytest.raises(ValueError, match="Unsafe symlinked project library"):
+        register_object_project(project)
+    assert outside.read_bytes() == original
+
+
+def test_registry_registration_uses_single_consistent_index_snapshot(
+        tmp_path, monkeypatch):
+    """A second read could mix old projects with newer dismissed entries."""
+    import lsbpipe.surveys.object_projects as module
+
+    project = create_object_project("Single snapshot", tmp_path / "Single")
+    original = module._registry_payload
+    reads = []
+    def observed_read():
+        reads.append(True)
+        return original()
+    monkeypatch.setattr(module, "_registry_payload", observed_read)
+    module.register_object_project(project)
+    assert len(reads) == 1
+    assert recent_projects()[0]["project_id"] == project.project_id
