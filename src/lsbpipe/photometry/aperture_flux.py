@@ -311,6 +311,32 @@ def _sector_ids_from_broadcast_native_centres(
     return np.floor(angles/(np.pi/4)).astype(int) % 8
 
 
+
+def _aggregate_native_pa_sector_areas(sector_ids, weights, usable):
+    """Sum the SAME exact overlap weights in eight pixel-centre PA bins.
+
+    Histogram weights have O(N) rather than eight whole-aperture Boolean
+    selections and repeated reductions. This changes ONLY descriptive
+    sector QA, never fluxes or the source/sky pixel operator.
+    """
+    sec = np.asarray(sector_ids)
+    wt = np.asarray(weights)
+    good = np.asarray(usable)
+    if (sec.shape != wt.shape or good.shape != wt.shape or
+            sec.ndim != 2 or sec.dtype.kind not in "iu" or
+            good.dtype.kind != "b"):
+        raise ValueError("Native sector QA requires aligned grids")
+    if np.any(sec > 7) or np.any(sec < 0) or not np.isfinite(wt).all():
+        raise ValueError("Invalid native PA sector labels or weights")
+    # Include the zero-width pixels exactly as in historical per-sector
+    # np.sum, and use the same 'usable' exclusion policy.
+    inside = np.bincount(
+        sec.ravel(), weights=wt.ravel(), minlength=8)
+    valid = np.bincount(
+        sec.ravel(), weights=np.where(good, wt, 0.).ravel(), minlength=8)
+    return inside, valid
+
+
 def measure_native_aperture(
         frame: NativeBandFrame, geometry: ApertureGeometryICRS,
         provenance: ApertureProvenance, *,
@@ -471,10 +497,11 @@ def measure_native_aperture(
             large[1].start-ellipse.x_center,
             large[0].start-ellipse.y_center,
             np.linalg.inv(matrix))
+        sector_inside, sector_usable = _aggregate_native_pa_sector_areas(
+            sec, weights, usable)
         for k in range(8):
-            selection = sec == k
-            sector_in = float(np.sum(weights[selection]))
-            sector_valid = float(np.sum(weights[selection & usable]))
+            sector_in = float(sector_inside[k])
+            sector_valid = float(sector_usable[k])
             sectors.append({
                 "sector_id_pa_45deg": k,
                 "inframe_area_pixel2_by_centre_sector": sector_in,
