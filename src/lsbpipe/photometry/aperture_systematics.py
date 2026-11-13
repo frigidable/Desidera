@@ -129,6 +129,28 @@ def _bounded_quadrant_blank_candidates(shape, margin, step, *, seed=20261112):
     return totals, iterator()
 
 
+
+def _translated_exact_aperture_overlap_slices(mask, shape, dx, dy):
+    """Reindex an already exact Photutils mask by INTEGER native pixels.
+
+    Fractional pixel overlap is translation invariant on a rectangular
+    native pixel lattice. Shifting the *mask bbox* (not its data, WCS,
+    science image or fractional weights) exactly preserves that operator.
+    Mirrors BoundingBox.get_overlap_slices, including cutout edges.
+    """
+    if type(dx) is not int or type(dy) is not int:
+        raise TypeError("Exact aperture template shifts must be integer pixels")
+    ny, nx = shape
+    x0, x1 = mask.bbox.ixmin + dx, mask.bbox.ixmax + dx
+    y0, y1 = mask.bbox.iymin + dy, mask.bbox.iymax + dy
+    if x0 >= nx or x1 <= 0 or y0 >= ny or y1 <= 0:
+        return None, None
+    xa, xb = max(0, x0), min(nx, x1)
+    ya, yb = max(0, y0), min(ny, y1)
+    return ((slice(ya, yb), slice(xa, xb)),
+            (slice(ya-y0, yb-y0), slice(xa-x0, xb-x0)))
+
+
 def estimate_blank_annulus_covariance(
         frame: NativeBandFrame, outer: ApertureGeometryICRS,
         radii_arcsec, *, effective_source_mask, manual_exclude,
@@ -213,10 +235,18 @@ def estimate_blank_annulus_covariance(
     # from the unknown correlated noise of the resampled survey coadd.
     target_ring_pixel_indices = []
     target_ring_whitened_weights = []
+    # The same fractional-pixel operator is used at EVERY blank location,
+    # translated by an integer lattice step after M23's phase matching.
+    # Keep the full exact Photutils masks, including their bbox, once:
+    # recomputing n_rings × n_candidates expensive exact ellipse-pixel
+    # intersections has no scientific benefit and can subtly change
+    # boundary rounding from one absolute image position to another.
+    exact_ring_templates = []
     for i in range(len(radii)):
         target_mask = _ring_aperture(
             projected.x_center, projected.y_center,
             projected, radii, i).to_mask(method="exact")
+        exact_ring_templates.append(target_mask)
         tlarge, tsmall = target_mask.get_overlap_slices(frame.shape)
         if tlarge is None:
             target_ring_formal_variances.append(None)
@@ -326,6 +356,9 @@ def estimate_blank_annulus_covariance(
     available_by_quadrant, candidate_positions = (
         _bounded_quadrant_blank_candidates(frame.shape, margin, step))
     accepted_by_quadrant = [0, 0, 0, 0]
+    translated_ring_evaluations = 0
+    target_integer_x = math.floor(projected.x_center)
+    target_integer_y = math.floor(projected.y_center)
     for quadrant, lattice_x, lattice_y in candidate_positions:
         if len(centres) >= max_placements or examined >= candidate_budget:
             break
@@ -341,13 +374,18 @@ def estimate_blank_annulus_covariance(
             continue
         vector = []
         formal_vector = []
-        for i in range(len(radii)):
-            mask = _ring_aperture(x, y, projected, radii, i).to_mask(
-                method="exact")
-            large, small = mask.get_overlap_slices(frame.shape)
+        # x - projected.x_center and y - projected.y_center are exact
+        # integer translations by CONSTRUCTION; never round a measured
+        # floating-point WCS displacement to decide how to shift.
+        shift_x = int(lattice_x - target_integer_x)
+        shift_y = int(lattice_y - target_integer_y)
+        for i, mask in enumerate(exact_ring_templates):
+            large, small = _translated_exact_aperture_overlap_slices(
+                mask, frame.shape, shift_x, shift_y)
             if large is None:
                 vector = []
                 break
+            translated_ring_evaluations += 1
             weights = np.asarray(mask.data[small], dtype=float)
             if (not np.isfinite(weights).all() or
                     np.any((weights < -1e-10) | (weights > 1 + 1e-10))):
@@ -436,6 +474,11 @@ def estimate_blank_annulus_covariance(
         "blank_centre_phase_matches_target_native_xy": True,
         "target_native_subpixel_phase_xy": [phase_x, phase_y],
         "blank_lattice_translation_is_integer_pixels_after_phase_match": True,
+        "blank_ring_operator_reuse_policy":
+            "ONE_EXACT_NATIVE_RING_TEMPLATE_PER_RADIUS_INTEGER_BBOX_TRANSLATION_V1",
+        "n_exact_ring_templates_rasterized": len(exact_ring_templates),
+        "n_integer_translated_ring_evaluations": translated_ring_evaluations,
+        "blank_ring_weights_not_interpolated_or_approximated": True,
         "no_science_covariance_calibration_from_phase_matching": True,
         "native_diagonal_variance_comparability": {
             "schema": "desidera.photometry.blank-vs-target-diagonal-variance/1",
