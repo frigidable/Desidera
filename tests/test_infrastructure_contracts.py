@@ -60,7 +60,7 @@ def test_gui_ci_covers_core_changes_and_cancels_stale_pr_runs():
         'pytest -q tests/gui',
         'cancel-in-progress: true',
         'QT_QPA_PLATFORM: offscreen',
-        'actions/upload-artifact@v4'))
+        'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'))
     assert 'permissions:\n  contents: read' in text
 
 
@@ -77,3 +77,21 @@ def test_actual_archive_network_is_manual_only_but_offline_pr_tests_run():
         r"- name: Print verified source hashes and cross-release overlap\n"
         r"\s*if: github.event_name == 'workflow_dispatch'\n", text)
     assert "if: always() && github.event_name == 'workflow_dispatch'" in text
+
+
+
+def test_all_external_github_actions_are_sha_pinned():
+    """Floating tags must not silently change the Actions runtime."""
+    for name in (
+            "survey-tests.yml", "ui-baseline.yml",
+            "legacy-ccd-real-archive.yml"):
+        source = _workflow(name)
+        uses = re.findall(
+            r"(?m)^\s*- uses:\s+([^\s#]+)", source)
+        assert uses, name
+        for action in uses:
+            assert re.fullmatch(
+                r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-f]{40}",
+                action), (name, action)
+        assert "actions/checkout@" in source
+        assert "actions/setup-python@" in source
