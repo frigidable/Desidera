@@ -10,9 +10,11 @@ on:
       - "tests/**"
       - "scripts/**"
       - "pyproject.toml"
+      - "README.md"
       - "AGENTS.md"
+      - "docs/architecture/**"
       - "docs/ux/**"
-      - ".github/workflows/ui-baseline.yml"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 permissions:
