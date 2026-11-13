@@ -646,3 +646,56 @@ represent one instantaneous distributed snapshot. The approach is
 for cooperating local processes only; network filesystem lock
 semantics, power-loss durability and observational science
 acceptance remain separately unverified. `SCIENCE HOLD` persists.
+
+
+## 12. Saved registry path is not galaxy identity — 2026-11-14
+
+**Confirmed failure mode:** `recent_projects()` previously marked an
+entry available if `lsbpipe-object.json` existed at the saved root;
+it did **not** verify that the passport's immutable UUID matched
+the user-local library row's `project_id`. If a researcher moved or
+replaced folders, a completely different galaxy's valid passport
+could occupy the previous path. `ProjectHub._open_selected` and
+opt-in automatic resume read the passport by path and opened it
+without checking the selected row's UUID. This could show the old
+galaxy's name in the hub but enter a different scientific object —
+a provenance hazard even if the FITS bytes were not modified.
+
+**Focused fix:** the pure survey core adds
+`read_registered_object_project(root, expected_project_id)`.
+The expected UUID is validated against the on-disk passport before
+a registered workspace is accepted. The read-only project-library
+view now verifies each available passport's actual UUID and
+schema, presents the authoritative on-disk display name/last-open
+timestamp, and marks a replaced project as
+`availability_issue="UUID_MISMATCH"` rather than available.
+Corrupt/symlinked manifests are similarly marked
+`INVALID_PASSPORT`. No user-local index, passport, science
+receipt, original FITS or source path is rewritten by listing.
+
+The Project Hub distinguishes missing, invalid and wrong-UUID
+states, blocks unsafe one-click open, auto-resume, local/RGB
+previews and auxiliary knowledge/configuration dialogs if the
+registered row's identity has changed. Explicit relink continues
+to require the original UUID and explicit import of a different
+galaxy remains a separate user action. A late folder swap
+between listing and the Open click is refused again at the
+last moment.
+
+**Regressions:** replace one registered galaxy's JSON with another
+galaxy's *valid* passport while keeping the original path and
+placeholder FITS unchanged; assert no cross-object read via the
+registry, no registry mutation, the correct warning/status in a
+real offline Qt Hub, and refusal of automatic resume. Also test
+that a legitimate passport rename is read through into the
+navigation view without blindly modifying the library index.
+
+**Limits:** this is a strict local UUID and schema check,
+not a malicious filesystem security boundary or proof that
+all third-party software respects the lock protocol.
+A large registry now opens small passport JSON files to check
+identity when listing projects; profile UX latency for hundreds
+of objects before adopting caching or potentially unsafe
+mtime-based shortcuts. Relinking moved folders remains an
+explicit user action and does not rewrite science history.
+`SCIENCE HOLD` remains.
