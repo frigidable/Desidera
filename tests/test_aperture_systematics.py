@@ -1283,3 +1283,104 @@ def test_null_baseline_counterfactual_reintegration_catches_corrupt_relaxed_flux
             f, anchor_icrs=(155.4, 18.), provenance=provenance(),
             effective_source_mask=source, manual_exclude=manual,
             curves=[curve])
+
+
+def test_integer_translated_exact_blank_templates_match_independent_photutils():
+    """Same-phase native shifts must reproduce *independent* exact operators."""
+    import lsbpipe.photometry.aperture_systematics as systematics
+    from lsbpipe.photometry.aperture_flux import (
+        project_icrs_ellipse_to_native)
+
+    shape = (321, 321)
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    rng = np.random.default_rng(937)
+    image = rng.normal(.011, .07, shape)
+    ivar = rng.uniform(.7, 5.5, shape)
+    f = frame(image=image, ivar=ivar, shape=shape, w=pixel_wcs)
+    no_masks = np.zeros(shape, bool)
+    target = geometry(ra=155.400043, dec=18.000037, a=1.6,
+                      q=.68, pa=32.)
+    radii = (.5, 1.1, 1.6)
+    sky = ApertureSkyScenario(
+        method="tilted_plane", b0_nMgy_per_pixel=.0021,
+        bx_nMgy_per_pixel2=.00014,
+        by_nMgy_per_pixel2=-.00007,
+        reference_xy_pix=(31.3, 79.4),
+        evidence_id="PERFORMANCE_EXACT_TRANSLATION")
+    original = systematics._ring_aperture
+    calls = []
+    def tracked(x, y, projected, radii_arg, index):
+        calls.append((float(x), float(y), index))
+        return original(x, y, projected, radii_arg, index)
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(systematics, "_ring_aperture", tracked)
+        out = estimate_blank_annulus_covariance(
+            f, target, radii, effective_source_mask=no_masks,
+            manual_exclude=no_masks, sky=sky, max_placements=24)
+    finally:
+        monkeypatch.undo()
+    assert len(calls) == len(radii)
+    assert out["n_exact_ring_templates_rasterized"] == len(radii)
+    assert out["n_integer_translated_ring_evaluations"] == (
+        out["n_accepted"]*len(radii))
+    assert out["blank_ring_weights_not_interpolated_or_approximated"]
+    assert out["n_accepted"] >= out["n_required"]
+    projected = project_icrs_ellipse_to_native(target, f.wcs)
+    direct = []
+    for x, y in out["centres_native_xy"]:
+        row = []
+        for i in range(len(radii)):
+            aperture = original(x, y, projected, radii, i)
+            mask = aperture.to_mask(method="exact")
+            large, small = mask.get_overlap_slices(shape)
+            assert large is not None
+            wt = mask.data[small]
+            iy, ix = np.nonzero(wt > 0.)
+            px, py = ix + large[1].start, iy + large[0].start
+            sky_values = (sky.b0_nMgy_per_pixel +
+                          sky.bx_nMgy_per_pixel2*(px-sky.reference_xy_pix[0]) +
+                          sky.by_nMgy_per_pixel2*(py-sky.reference_xy_pix[1]))
+            row.append(float(np.sum(
+                wt[iy, ix]*(image[py, px]-sky_values))))
+        direct.append(row)
+    expected = np.cov(np.asarray(direct), rowvar=False, ddof=1)
+    np.testing.assert_allclose(
+        out["annulus_covariance_nMgy2"], expected,
+        rtol=3e-10, atol=1e-9)
+    np.testing.assert_allclose(
+        out["annulus_mean_blank_flux_nMgy"], np.mean(direct, axis=0),
+        rtol=3e-10, atol=1e-9)
+    assert out["covariance_calibrated_for_science"] is False
+    json.dumps(out, allow_nan=False)
+
+
+def test_integer_translated_aperture_bbox_slices_are_exact_at_native_edges():
+    from lsbpipe.photometry.aperture_systematics import (
+        _translated_exact_aperture_overlap_slices)
+    from photutils.aperture import EllipticalAnnulus
+
+    shape = (43, 47)
+    original = EllipticalAnnulus(
+        (20.37, 18.69), a_in=2.5, a_out=6.3,
+        b_out=4.7, b_in=2.5*4.7/6.3, theta=.31)
+    mask = original.to_mask(method="exact")
+    for dx, dy in ((0, 0), (-22, -22), (21, 22),
+                   (-28, 0), (28, 0), (-50, 0), (0, 60)):
+        large, small = _translated_exact_aperture_overlap_slices(
+            mask, shape, dx, dy)
+        translated = EllipticalAnnulus(
+            (20.37+dx, 18.69+dy),
+            a_in=2.5, a_out=6.3, b_out=4.7,
+            b_in=2.5*4.7/6.3, theta=.31).to_mask(method="exact")
+        expected_large, expected_small = translated.get_overlap_slices(shape)
+        assert large == expected_large
+        assert small == expected_small
+        if large is not None:
+            np.testing.assert_allclose(
+                mask.data[small], translated.data[expected_small],
+                rtol=0, atol=1.e-9)
+    with pytest.raises(TypeError, match="integer pixels"):
+        _translated_exact_aperture_overlap_slices(
+            mask, shape, .5, 0)
