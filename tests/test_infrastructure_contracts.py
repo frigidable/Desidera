@@ -59,7 +59,7 @@ def test_gui_ci_covers_core_changes_and_cancels_stale_pr_runs():
         '"pyproject.toml"', '"README.md"', '"AGENTS.md"',
         '"docs/architecture/**"', '"docs/ux/**"',
         '".github/workflows/**"',
-        '"[exact,gui,test,test-gui]"',
+        '".[exact,gui,test,test-gui]"',
         'python -m pip check',
         'pytest -q tests/gui',
         'cancel-in-progress: true',
