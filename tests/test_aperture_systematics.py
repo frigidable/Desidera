@@ -1044,3 +1044,96 @@ def test_blank_spatial_mean_scatter_reports_unavailable_for_no_blanks():
     assert qa["between_quadrant_mean_fraction_of_total_sum_squares"] is None
     assert qa["per_quadrant_mean_signed_ring_flux_nMgy"] == {}
     assert result["annulus_covariance_nMgy2"] is None
+
+
+def test_fractional_ring_shared_boundary_has_white_noise_cross_covariance():
+    """Geometric nonoverlap does NOT imply independent pixel noise for exact rings."""
+    from photutils.aperture import EllipticalAperture, EllipticalAnnulus
+    from lsbpipe.photometry.aperture_flux import project_icrs_ellipse_to_native
+
+    shape = (321, 321)
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    yy, xx = np.indices(shape)
+    # Heteroscedastic diagonal pixel noise, plus a target-only excluded pixel.
+    ivar = 1. + .003*xx + .001*yy
+    source = np.zeros(shape, dtype=bool)
+    source[158, 161] = True
+    manual = np.zeros(shape, dtype=bool)
+    target = geometry(
+        ra=155.400039, dec=18.000037, a=1.6, q=.73, pa=31.)
+    radii = (.55, 1.04, 1.6)
+    f = frame(image=np.zeros(shape), shape=shape,
+              w=pixel_wcs, ivar=ivar)
+    out = estimate_blank_annulus_covariance(
+        f, target, radii, effective_source_mask=source,
+        manual_exclude=manual)
+    qa = out["native_diagonal_variance_comparability"][
+        "target_exact_ring_diagonal_pixel_covariance"]
+    assert qa["schema"] == (
+        "desidera.photometry.exact-target-ring-diagonal-pixel-covariance/1")
+    result = np.asarray(qa["covariance_nMgy2"], dtype=float)
+    projected = project_icrs_ellipse_to_native(target, f.wcs)
+    # Completely independent reference: reconstruct the exact photutils
+    # ring masks on the full target image, then form W diag(1/ivar) W^T.
+    exact_masks = np.zeros((len(radii), *shape), dtype=float)
+    for i, outer in enumerate(radii):
+        kw = dict(
+            a=projected.a_pix*outer/radii[-1],
+            b=projected.b_pix*outer/radii[-1],
+            theta=projected.theta_rad_pixel_ccw)
+        if i == 0:
+            ap = EllipticalAperture(
+                (projected.x_center, projected.y_center), **kw)
+        else:
+            ap = EllipticalAnnulus(
+                (projected.x_center, projected.y_center),
+                a_in=projected.a_pix*radii[i-1]/radii[-1],
+                a_out=kw["a"],
+                b_in=projected.b_pix*radii[i-1]/radii[-1],
+                b_out=kw["b"], theta=kw["theta"])
+        m = ap.to_mask(method="exact")
+        large, small = m.get_overlap_slices(shape)
+        exact_masks[i][large] = m.data[small]
+    whitened = (
+        exact_masks * (f.valid & ~source & ~manual)[None, :, :] /
+        np.sqrt(f.invvar_nMgy2)[None, :, :]).reshape(len(radii), -1)
+    reference = whitened @ whitened.T
+    np.testing.assert_allclose(result, reference, rtol=1e-11, atol=1e-10)
+    np.testing.assert_allclose(
+        np.diag(result),
+        out["native_diagonal_variance_comparability"][
+            "target_partial_ring_formal_variance_nMgy2"])
+    assert result[0, 1] > 0.
+    assert result[1, 2] > 0.
+    assert qa["n_nonzero_off_diagonal_pairs"] >= 2
+    assert qa["max_off_diagonal_correlation"] > 0.
+    assert np.linalg.eigvalsh(result).min() > -1e-10
+    assert qa["off_diagonal_terms_are_present_even_for_white_pixel_noise"]
+    assert qa["excludes_resampling_noise_correlations_and_sky_uncertainty"]
+    assert out["covariance_calibrated_for_science"] is False
+    json.dumps(out, allow_nan=False)
+
+
+def test_target_ring_covariance_has_nulls_for_unmeasured_masked_annulus():
+    """An unmeasured ring is NOT a statistically known zero-variance ring."""
+    shape = (321, 321)
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    f = frame(image=np.zeros(shape), shape=shape, w=pixel_wcs)
+    source = np.zeros(shape, dtype=bool)
+    yy, xx = np.indices(shape)
+    source[(xx-160)**2 + (yy-160)**2 < 9.**2] = True
+    out = estimate_blank_annulus_covariance(
+        f, geometry(a=1.6, q=.8, pa=24.), (.5, 1., 1.6),
+        effective_source_mask=source,
+        manual_exclude=np.zeros(shape, dtype=bool))
+    comparison = out["native_diagonal_variance_comparability"]
+    cov = comparison["target_exact_ring_diagonal_pixel_covariance"]
+    assert comparison["target_partial_ring_formal_variance_nMgy2"][0] is None
+    assert all(x is None for x in cov[0])
+    assert all(row[0] is None for row in cov)
+    assert comparison["target_exact_ring_diagonal_pixel_covariance"][
+        "null_row_and_column_means_no_usable_target_pixels"]
+    assert cov[-1][-1] is not None
+    json.dumps(out, allow_nan=False)
