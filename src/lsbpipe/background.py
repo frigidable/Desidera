@@ -781,8 +781,12 @@ def _audit_sky_training_target_geometry(
     rows = np.flatnonzero(np.any(used, axis=1))
     if not len(rows):
         return result
-    minx = np.argmax(used[rows], axis=1)
-    maxx = nx - 1 - np.argmax(used[rows, ::-1], axis=1)
+    # Basic slicing is a view; advanced indexing used[rows] made a
+    # full-size Boolean copy TWICE on a near-contiguous sky training
+    # footprint. Reduce on original grid rows, then gather O(n_rows)
+    # scalar extrema only. Reversing the x axis is likewise a view.
+    minx = np.argmax(used, axis=1)[rows]
+    maxx = nx - 1 - np.argmax(used[:, ::-1], axis=1)[rows]
     points = np.concatenate((
         np.column_stack((minx, rows)),
         np.column_stack((maxx, rows)))).astype(float)
@@ -815,11 +819,16 @@ def _audit_sky_training_target_geometry(
         furthest = -np.inf
         for iy in np.flatnonzero(np.any(protected, axis=1)):
             xs = np.flatnonzero(protected[iy])
-            distances = (
-                equations[:, 0, None] * xs[None, :]
-                + equations[:, 1, None] * float(iy)
-                + equations[:, 2, None])
-            furthest_row = np.max(distances, axis=0)
+            # Never materialize an E_hull_edges × N_row_pixels
+            # float64 matrix. Accumulate the exact max supporting
+            # halfspace at each protected native pixel in O(nx)
+            # temporary memory, irrespective of hull complexity.
+            furthest_row = np.full(xs.shape, -np.inf, dtype=float)
+            for a, b, c in equations:
+                np.maximum(
+                    furthest_row,
+                    a*xs + b*float(iy) + c,
+                    out=furthest_row)
             outside += int(np.count_nonzero(furthest_row > eps))
             furthest = max(furthest, float(np.max(furthest_row)))
         result.update({
