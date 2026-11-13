@@ -454,10 +454,13 @@ def create_object_project(name: str, directory: str | Path, *,
         if any(item["display_name"].casefold() == name.strip().casefold()
                and item.get("available") for item in recent_projects()):
             raise ValueError("A project with this name is already in the library")
-        root.mkdir(parents=True, exist_ok=True)
         project = ObjectProject(
             project_id=str(uuid.uuid4()), display_name=name, root=root,
             field=field)
+        # Validate before creating a user-visible directory: an invalid
+        # name/radius must not leave a confusing empty pseudo-project.
+        _validate(project)
+        root.mkdir(parents=True, exist_ok=True)
         save_object_project(project)
         _register_object_project_unlocked(project)
         return project
