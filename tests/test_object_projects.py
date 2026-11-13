@@ -604,3 +604,111 @@ def test_never_observed_object_passport_cannot_replace_existing_identity(
     with pytest.raises(RuntimeError, match="never opened"):
         save_object_project(forged)
     assert record.read_bytes() == prior
+
+
+def test_legacy_import_concurrent_processes_reuse_one_project_uuid(
+        tmp_path, monkeypatch):
+    """Both importers scanned before either could create the object passport.
+
+    A stable library transaction must recheck existence after the
+    potentially slow FITS inventory. Independent imports cannot silently
+    choose two different immutable project identifiers.
+    """
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    root = tmp_path / "legacy"
+    data = _old_folder(root)
+    originals = {p: p.read_bytes() for p in data.rglob("*.fits.fz")}
+    first_ready, second_ready = tmp_path / "first-ready", tmp_path / "second-ready"
+    release = tmp_path / "allow-import"
+    code = (
+        "import pathlib,sys,time\n"
+        "import lsbpipe.surveys.object_projects as m\n"
+        "root,marker,release=map(pathlib.Path,sys.argv[1:])\n"
+        "original=m.open_local_project\n"
+        "def gated(*args,**kwargs):\n"
+        "    inventory=original(*args,**kwargs)\n"
+        "    marker.write_text('SCANNED',encoding='utf-8')\n"
+        "    while not release.is_file(): time.sleep(.02)\n"
+        "    return inventory\n"
+        "m.open_local_project=gated\n"
+        "project=m.import_object_project(root)\n"
+        "print(project.project_id,flush=True)\n"
+    )
+    def launch(ready):
+        return subprocess.Popen(
+            [sys.executable, "-u", "-c", code,
+             str(root), str(ready), str(release)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=dict(os.environ))
+    a, b = launch(first_ready), launch(second_ready)
+    try:
+        deadline = time.monotonic() + 20.
+        while not (first_ready.is_file() and second_ready.is_file()):
+            if a.poll() is not None or b.poll() is not None:
+                out_a, err_a = a.communicate(timeout=2)
+                out_b, err_b = b.communicate(timeout=2)
+                pytest.fail(
+                    f"Importer stopped before rendezvous: "
+                    f"{(a.returncode, out_a, err_a, b.returncode, out_b, err_b)}")
+            if time.monotonic() > deadline:
+                pytest.fail("Timed out waiting for two scanned FITS inventories")
+            time.sleep(.02)
+        release.write_text("CONTINUE", encoding="utf-8")
+        out_a, err_a = a.communicate(timeout=18)
+        out_b, err_b = b.communicate(timeout=18)
+        assert a.returncode == b.returncode == 0, (out_a, err_a, out_b, err_b)
+        assert out_a.strip() == out_b.strip()
+        selected = read_object_project(root)
+        assert selected.project_id == out_a.strip()
+        rows = recent_projects()
+        assert len(rows) == 1
+        assert rows[0]["project_id"] == selected.project_id
+        assert all(p.read_bytes() == original for p, original in originals.items())
+    finally:
+        for proc in (a, b):
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate(timeout=10)
+
+
+def test_interrupted_import_keeps_passport_uuid_and_recovers_by_reimport(
+        tmp_path, monkeypatch):
+    """Simulate process exit precisely between passport and library writes."""
+    import lsbpipe.surveys.object_projects as module
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    root = tmp_path / "legacy"
+    data = _old_folder(root)
+    originals = {p: p.read_bytes() for p in data.rglob("*.fits.fz")}
+    original_register = module._register_object_project_unlocked
+    def abort_between_files(project):
+        assert (root / PROJECT_FILENAME).is_file()
+        raise SystemExit("simulate crash after passport publication")
+    monkeypatch.setattr(module, "_register_object_project_unlocked",
+                        abort_between_files)
+    with pytest.raises(SystemExit, match="simulate crash"):
+        import_object_project(root)
+    orphan = read_object_project(root)
+    assert orphan.project_id
+    assert recent_projects() == []
+
+    # The user explicitly imports the same known folder after restarting.
+    # Recovery is an index repair, NOT a new project or FITS rewriting.
+    monkeypatch.setattr(module, "_register_object_project_unlocked",
+                        original_register)
+    recovered = import_object_project(root)
+    assert recovered.project_id == orphan.project_id
+    assert recent_projects()[0]["project_id"] == orphan.project_id
+    assert len(recent_projects()) == 1
+    assert all(p.read_bytes() == original for p, original in originals.items())
+
+
+def test_create_rejects_bad_name_before_making_empty_project_directory(
+        tmp_path, monkeypatch):
+    """Invalid metadata must not leave an unregistered new folder."""
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    root = tmp_path / "invalid-galaxy"
+    with pytest.raises(ValueError, match="unsupported characters"):
+        create_object_project("Bad|Name", root)
+    assert not root.exists()
+    assert not library_index_path().is_file()
