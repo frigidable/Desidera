@@ -312,6 +312,13 @@ def test_project_stage03_two_robust_sky_models_share_holdout_and_never_adopt():
     out=diagnose_current_project_residual_sky(dataset,draft,contamination)
     assert out["status"]=="AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
     assert out["schema"]=="desidera.sky.project-native-residual-diagnostic/2"
+    hull = out["target_training_geometry_qa"]
+    assert hull["schema"] == "desidera.sky.target-training-convex-support/1"
+    assert hull["target_inside_training_pixel_convex_hull"] is True
+    assert hull["status"] == "TARGET_INTERPOLATION_GEOMETRY_ONLY"
+    assert hull["max_signed_supporting_line_distance_native_pix"] < 0
+    assert hull["geometry_only_independent_of_image_flux"]
+    assert hull["inside_hull_does_not_prove_unbiased_sky"]
     assert out["automatic_sky_selection_qa"][
         "sky_regions_drawn_by_user_required"] is False
     assert out["automatic_sky_selection_qa"][
@@ -1155,3 +1162,63 @@ def test_stage03_ivar_weighted_heldout_rms_matches_direct_pixel_operator():
     assert report["sky_model_adopted"] is False
     assert report["automatic_sky_background_correction_authorized"] is False
     json.dumps(comparison, allow_nan=False)
+
+
+def test_sky_target_convex_support_detects_extrapolation_independently_of_flux():
+    """Three quadrants or a good fitted plane cannot certify spatial support."""
+    from lsbpipe.background import _audit_sky_training_target_geometry
+
+    train = np.zeros((60, 60), bool)
+    train[10:16, 10:16] = True
+    train[10:16, 30:36] = True
+    train[30:36, 10:16] = True
+    train[30:36, 30:36] = True
+    original = train.copy()
+    inside = _audit_sky_training_target_geometry(train, (22.5, 22.5))
+    outside = _audit_sky_training_target_geometry(train, (51., 22.5))
+    assert inside["status"] == "TARGET_INTERPOLATION_GEOMETRY_ONLY"
+    assert inside["target_inside_training_pixel_convex_hull"] is True
+    assert inside["max_signed_supporting_line_distance_native_pix"] < 0.
+    assert outside["status"] == "TARGET_EXTRAPOLATION_GEOMETRY_ONLY"
+    assert outside["target_inside_training_pixel_convex_hull"] is False
+    assert outside["max_signed_supporting_line_distance_native_pix"] > 0.
+    assert (inside["n_original_training_pixels"] ==
+            outside["n_original_training_pixels"] == np.count_nonzero(train))
+    assert outside["inside_hull_does_not_prove_unbiased_sky"]
+    assert outside["no_sky_or_psf_correction_authorized"]
+    np.testing.assert_array_equal(train, original)
+
+    collinear = np.zeros((60, 60), bool)
+    collinear[10, 10] = collinear[20, 20] = collinear[30, 30] = True
+    invalid = _audit_sky_training_target_geometry(collinear, (20., 20.))
+    assert invalid["status"] == "NO_NONDEGENERATE_SPATIAL_TRAINING_HULL"
+    assert invalid["target_inside_training_pixel_convex_hull"] is None
+    assert invalid["max_signed_supporting_line_distance_native_pix"] is None
+    with pytest.raises(ValueError, match="Boolean"):
+        _audit_sky_training_target_geometry(
+            np.zeros((60, 60), dtype=float), (20., 20.))
+    with pytest.raises(ValueError, match="finite native"):
+        _audit_sky_training_target_geometry(train, (True, 22.))
+
+
+def test_project_sky_report_flags_target_extrapolation_without_adopting(monkeypatch):
+    """Keep numeric sky candidates but expose extrapolation of the target."""
+    from lsbpipe.background import diagnose_current_project_residual_sky
+    dataset, draft, contamination = _stage03_project_fixture(
+        with_regions=False)
+    # The actual Scene protector remains central, while this intentionally
+    # inconsistent target-anchor alternative illustrates a displaced
+    # galaxy against unchanged sky training/heldout samples.
+    xfar, yfar = -10., 59.5
+    ra, dec = dataset["wcs"].all_pix2world(xfar, yfar, 0)
+    contamination["anchor_icrs"] = (float(ra), float(dec))
+    out = diagnose_current_project_residual_sky(
+        dataset, draft, contamination)
+    assert out["status"] == "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"
+    qa = out["target_training_geometry_qa"]
+    assert qa["status"] == "TARGET_EXTRAPOLATION_GEOMETRY_ONLY"
+    assert qa["target_inside_training_pixel_convex_hull"] is False
+    assert "SKY_AT_TARGET_EXTRAPOLATED_OUTSIDE_TRAINING_CONVEX_HULL" in (
+        out["warnings"])
+    assert out["sky_model_adopted"] is False
+    assert out["automatic_sky_background_correction_authorized"] is False
