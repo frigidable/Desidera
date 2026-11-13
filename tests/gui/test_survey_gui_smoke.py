@@ -1064,3 +1064,14 @@ def test_survey_long_status_is_fully_readable_and_explicitly_copyable(
     w.message.setText("")
     assert not w.message_details_btn.isEnabled()
     assert not w.full_message_box.isVisible()
+
+def test_survey_and_science_qa_buttons_keep_readable_literal_captions(
+        offline_explorer):
+    """Qt ampersand mnemonics must not damage user-visible action text."""
+    w = offline_explorer
+    w._refresh_workflow()
+    assert w.data_toggle.text() in (
+        "Data and diagnostics", "02 · Get original FITS")
+    assert w.science_qa.dataset_audit.text() == (
+        "Audit all local datasets and footprint")
+    assert w.science_qa.result_toggle.text() == "Report details and history"

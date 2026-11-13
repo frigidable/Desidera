@@ -1751,7 +1751,7 @@ class SurveyExplorer(QMainWindow):
                 "no sky, galaxy photometry or science adoption.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
-            else "Data & diagnostics")
+            else "Data and diagnostics")
 
     def _field(self):
         return self._target_controller.field()

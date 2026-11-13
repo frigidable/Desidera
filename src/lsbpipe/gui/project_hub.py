@@ -283,6 +283,31 @@ class ProjectHub(QMainWindow):
                 "startup/auto_resume_last", False, type=bool))
         self.auto_resume.toggled.connect(self._save_auto_resume_setting)
         actions.addWidget(self.auto_resume)
+        self.preview_settings_btn = QPushButton("Preview settings")
+        self.preview_settings_btn.setObjectName("hub_preview_preferences")
+        self.preview_settings_btn.setAccessibleName(
+            "Display-only image preview preferences")
+        self.preview_settings_btn.setToolTip(
+            "Control optional remote Legacy RGB display previews. "
+            "No setting changes original science FITS.")
+        self.preview_settings_menu = QMenu(self.preview_settings_btn)
+        self.auto_rgb_action = self.preview_settings_menu.addAction(
+            "Automatically fetch Legacy RGB preview (network)")
+        self.auto_rgb_action.setCheckable(True)
+        self.auto_rgb_action.setChecked(self._startup_settings.value(
+            "previews/automatic_remote_rgb", True, type=bool))
+        self.auto_rgb_action.setToolTip(
+            "When enabled, selection may request a display-only RGB "
+            "preview over the network after a short delay. "
+            "Manual refresh is always separate.")
+        if os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") == "1":
+            self.auto_rgb_action.setEnabled(False)
+            self.auto_rgb_action.setToolTip(
+                "Automatic RGB disabled by DESIDERA_DISABLE_AUTOMATIC_RGB=1. "
+                "This environment override takes precedence.")
+        self.auto_rgb_action.toggled.connect(self._save_auto_rgb_setting)
+        self.preview_settings_btn.setMenu(self.preview_settings_menu)
+        actions.addWidget(self.preview_settings_btn)
         outer.addLayout(actions)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -669,6 +694,7 @@ class ProjectHub(QMainWindow):
             if (allow_rgb and card.preview_source != "REMOTE_LEGACY_RGB"
                     and key not in self._rgb_attempted
                     and self._rgb_future is None
+                    and self.auto_rgb_action.isChecked()
                     and os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") != "1"):
                 self._rgb_auto_timer.start()
         self.knowledge_btn.setEnabled(
@@ -861,6 +887,7 @@ class ProjectHub(QMainWindow):
         record = self._selected_preview_record()
         key = self._rgb_request_for_record(record)
         if (key is None or key in self._rgb_attempted
+                or not self.auto_rgb_action.isChecked()
                 or self._rgb_future is not None
                 or os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") == "1"):
             return
@@ -1074,6 +1101,17 @@ class ProjectHub(QMainWindow):
             self.refresh()
         except (OSError, ValueError, TypeError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open Galaxy Knowledge", str(exc))
+
+    def _save_auto_rgb_setting(self, enabled):
+        """User-visible preference affects only optional display RGB traffic."""
+        self._startup_settings.setValue(
+            "previews/automatic_remote_rgb", bool(enabled))
+        self._startup_settings.sync()
+        if not enabled:
+            self._rgb_auto_timer.stop()
+        elif os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") != "1":
+            # Re-evaluate only the selected project; remote access stays debounced.
+            self._selection_changed()
 
     def _save_auto_resume_setting(self, enabled):
         self._startup_settings.setValue(
