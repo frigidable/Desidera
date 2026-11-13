@@ -15,6 +15,7 @@ import secrets
 from typing import Literal
 
 from .local_project import _atomic_json
+from .project_locking import exclusive_metadata_lock
 
 SCHEMA = "lsbpipe.operation-journal/1"
 LIVE = frozenset(("RUNNING", "STOP_REQUESTED"))
@@ -35,6 +36,16 @@ def _folder(project_root: str | Path) -> Path:
     if path.is_symlink():
         raise ValueError("Unsafe symlink at project operation journal")
     return path
+
+
+def _journal_transaction(directory: Path):
+    """One stable per-project lock for all job state transitions.
+
+    The non-JSON sidecar is persistent and never interpreted as a job.
+    """
+    if directory.is_symlink():
+        raise ValueError("Unsafe project operation journal directory")
+    return exclusive_metadata_lock(directory / ".operation-journal.lock")
 
 
 def _read(path: Path) -> dict:
@@ -61,30 +72,32 @@ def start_operation(project_root: str | Path, project_id: str,
         raise ValueError("Operation journal UUID does not match project")
     directory = _folder(root)
     directory.mkdir(parents=True, exist_ok=True)
-    ident = (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-             + "-" + secrets.token_hex(5))
-    path = directory / f"{ident}.json"
-    if path.exists():
-        raise FileExistsError("Operation ID collision")
-    _atomic_json(path, {
-        "schema": SCHEMA, "operation_id": ident,
-        "project_id": project_id, "action": action,
-        "state": "RUNNING", "started_utc": _utc(),
-        "updated_utc": _utc(),
-        "scientific_status": "NOT_SCIENTIFIC_EVIDENCE",
-        "message": "UI operation attempted; may be interrupted by process exit",
-    })
-    return path
+    with _journal_transaction(directory):
+        ident = (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                 + "-" + secrets.token_hex(5))
+        path = directory / f"{ident}.json"
+        if path.exists():
+            raise FileExistsError("Operation ID collision")
+        _atomic_json(path, {
+            "schema": SCHEMA, "operation_id": ident,
+            "project_id": project_id, "action": action,
+            "state": "RUNNING", "started_utc": _utc(),
+            "updated_utc": _utc(),
+            "scientific_status": "NOT_SCIENTIFIC_EVIDENCE",
+            "message": "UI operation attempted; may be interrupted by process exit",
+        })
+        return path
 
 
 def request_stop(path: str | Path) -> None:
     file = Path(path)
-    info = _read(file)
-    if info["state"] in TERMINAL:
-        return
-    info["state"] = "STOP_REQUESTED"
-    info["updated_utc"] = _utc()
-    _atomic_json(file, info)
+    with _journal_transaction(file.parent):
+        info = _read(file)
+        if info["state"] in TERMINAL:
+            return
+        info["state"] = "STOP_REQUESTED"
+        info["updated_utc"] = _utc()
+        _atomic_json(file, info)
 
 
 def finish_operation(path: str | Path, outcome: str) -> None:
@@ -92,16 +105,17 @@ def finish_operation(path: str | Path, outcome: str) -> None:
     if outcome not in TERMINAL:
         raise ValueError("Invalid GUI operation outcome")
     file = Path(path)
-    info = _read(file)
-    if info["state"] in TERMINAL:
-        raise ValueError("A terminal operation journal is immutable")
-    info["state"] = outcome
-    info["updated_utc"] = _utc()
-    info["message"] = (
-        "GUI callback handled; inspect immutable QA manifests separately"
-        if outcome == "COMPLETED" else
-        "No new scientific result was automatically adopted")
-    _atomic_json(file, info)
+    with _journal_transaction(file.parent):
+        info = _read(file)
+        if info["state"] in TERMINAL:
+            raise ValueError("A terminal operation journal is immutable")
+        info["state"] = outcome
+        info["updated_utc"] = _utc()
+        info["message"] = (
+            "GUI callback handled; inspect immutable QA manifests separately"
+            if outcome == "COMPLETED" else
+            "No new scientific result was automatically adopted")
+        _atomic_json(file, info)
 
 
 def interrupted_operations(project_root: str | Path) -> list[dict]:
