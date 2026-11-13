@@ -312,3 +312,87 @@ def test_broadcast_native_pa_sectors_exactly_equal_dense_original(shape):
     with pytest.raises(ValueError, match="sector"):
         _sector_ids_from_broadcast_native_centres(
             shape, 0., 0., np.ones((3, 3)))
+
+
+
+def test_native_pa_sector_weighted_histograms_match_original_eight_sums():
+    """P43: aggregate fractional overlaps without eight repeated selections."""
+    from lsbpipe.photometry.aperture_flux import (
+        _aggregate_native_pa_sector_areas)
+    rng = np.random.default_rng(20261113)
+    for shape in ((9, 11), (127, 103), (263, 257)):
+        sectors = rng.integers(0, 8, size=shape, dtype=np.int64)
+        weights = rng.uniform(0., 1., size=shape)
+        weights[rng.random(shape) < .14] = 0.
+        valid = rng.random(shape) > .29
+        got_inside, got_valid = _aggregate_native_pa_sector_areas(
+            sectors, weights, valid)
+        assert got_inside.shape == got_valid.shape == (8,)
+        reference_inside = [float(np.sum(weights[sectors == k]))
+                            for k in range(8)]
+        reference_valid = [float(np.sum(weights[(sectors == k) & valid]))
+                           for k in range(8)]
+        np.testing.assert_allclose(
+            got_inside, reference_inside, rtol=1.e-12, atol=1.e-12)
+        np.testing.assert_allclose(
+            got_valid, reference_valid, rtol=1.e-12, atol=1.e-12)
+        assert sum(got_valid) <= sum(got_inside) + 1.e-9
+    with pytest.raises(ValueError, match="aligned"):
+        _aggregate_native_pa_sector_areas(
+            np.zeros((2, 3), dtype=int), np.zeros((3, 2)),
+            np.zeros((2, 3), bool))
+    with pytest.raises(ValueError, match="labels"):
+        _aggregate_native_pa_sector_areas(
+            np.full((3, 3), 8, dtype=int), np.ones((3, 3)),
+            np.ones((3, 3), bool))
+
+
+def test_aperture_frozen_mask_receipts_reject_wrong_identity_and_mutable_views():
+    """P44: no caller may attach another mask's authenticated SHA to an aperture."""
+    from lsbpipe.photometry.aperture_flux import (
+        _FrozenApertureMaskDigests, _snapshot_native_boolean_mask)
+
+    f = frame()
+    src = np.zeros(f.shape, bool)
+    man = np.zeros(f.shape, bool)
+    src[43:52, 71:77] = True
+    man[61:70, 45:48] = True
+    snapshot_src = _snapshot_native_boolean_mask("source", src, f.shape)
+    snapshot_man = _snapshot_native_boolean_mask("manual", man, f.shape)
+    frozen = _FrozenApertureMaskDigests(snapshot_src, snapshot_man)
+    direct = measure_native_aperture(
+        f, geometry(), provenance(),
+        effective_source_mask=src, manual_exclude=man)
+    cached = measure_native_aperture(
+        f, geometry(), provenance(),
+        effective_source_mask=snapshot_src, manual_exclude=snapshot_man,
+        _frozen_mask_digests=frozen)
+    assert cached.to_dict() == direct.to_dict()
+    assert frozen.source_sha256 == __import__("hashlib").sha256(
+        src.tobytes()).hexdigest()
+    assert frozen.manual_sha256 == __import__("hashlib").sha256(
+        man.tobytes()).hexdigest()
+    # Equivalent content with a *different* immutable owned buffer
+    # must not silently authorize reuse of the earlier receipt.
+    another = _snapshot_native_boolean_mask("source", src.copy(), f.shape)
+    with pytest.raises(ValueError, match="identity mismatch"):
+        measure_native_aperture(
+            f, geometry(), provenance(),
+            effective_source_mask=another, manual_exclude=snapshot_man,
+            _frozen_mask_digests=frozen)
+    with pytest.raises(ValueError, match="immutable byte roots"):
+        _FrozenApertureMaskDigests(src, man)
+    view = src.view()
+    view.setflags(write=False)
+    with pytest.raises(ValueError, match="immutable byte roots"):
+        _FrozenApertureMaskDigests(view, snapshot_man)
+    with pytest.raises(ValueError, match="receipt"):
+        measure_native_aperture(
+            f, geometry(), provenance(),
+            effective_source_mask=snapshot_src, manual_exclude=snapshot_man,
+            _frozen_mask_digests={"source_sha256": "a"*64})
+    src[:] = True
+    man[:] = True
+    assert np.count_nonzero(snapshot_src) == 9*6
+    assert np.count_nonzero(snapshot_man) == 9*3
+    assert cached.to_dict() == direct.to_dict()
