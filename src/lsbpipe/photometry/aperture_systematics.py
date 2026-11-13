@@ -206,6 +206,13 @@ def estimate_blank_annulus_covariance(
     # Hard and source/manual masks remain effective at the target.
     target_ring_formal_variances = []
     target_ring_usable_areas = []
+    # Store only the used native pixels in each exact ring. Even rings
+    # disjoint on the sky share boundary PIXELS after fractional overlap;
+    # hence their formal white-noise cross-covariance is generally nonzero.
+    # A sparse Gram matrix distinguishes this known integration effect
+    # from the unknown correlated noise of the resampled survey coadd.
+    target_ring_pixel_indices = []
+    target_ring_whitened_weights = []
     for i in range(len(radii)):
         target_mask = _ring_aperture(
             projected.x_center, projected.y_center,
@@ -214,6 +221,8 @@ def estimate_blank_annulus_covariance(
         if tlarge is None:
             target_ring_formal_variances.append(None)
             target_ring_usable_areas.append(0.)
+            target_ring_pixel_indices.append(np.empty(0, dtype=np.int64))
+            target_ring_whitened_weights.append(np.empty(0, dtype=float))
             continue
         tw = np.asarray(target_mask.data[tsmall], dtype=float)
         if (not np.isfinite(tw).all() or
@@ -224,12 +233,58 @@ def estimate_blank_annulus_covariance(
         target_ring_usable_areas.append(float(np.sum(
             tw[target_usable], dtype=np.float64)))
         if np.any(target_usable):
+            local_y, local_x = np.nonzero(target_usable)
+            pixel_indices = (
+                (local_y.astype(np.int64) + tlarge[0].start) *
+                frame.shape[1] + local_x + tlarge[1].start)
+            whitened_weights = (
+                tw[target_usable] /
+                np.sqrt(frame.invvar_nMgy2[tlarge][target_usable]))
+            target_ring_pixel_indices.append(pixel_indices)
+            target_ring_whitened_weights.append(whitened_weights)
             target_ring_formal_variances.append(float(np.sum(
-                tw[target_usable]**2 /
-                frame.invvar_nMgy2[tlarge][target_usable],
-                dtype=np.float64)))
+                whitened_weights**2, dtype=np.float64)))
         else:
+            target_ring_pixel_indices.append(np.empty(0, dtype=np.int64))
+            target_ring_whitened_weights.append(np.empty(0, dtype=float))
             target_ring_formal_variances.append(None)
+
+    # C_ij = sum_p w_ip * w_jp / INVVAR_p on ACTUAL target pixels.
+    # A single pixel straddling two exact annuli contributes to BOTH,
+    # even for statistically independent native pixel errors. A sparse
+    # (n_ring x n_pixel) operator avoids a dense image covariance or
+    # allocating one full native image per ring.
+    from scipy.sparse import csr_matrix
+
+    ring_sizes = [len(indices) for indices in target_ring_pixel_indices]
+    operator = csr_matrix((
+        np.concatenate(target_ring_whitened_weights),
+        (np.repeat(np.arange(len(radii)), ring_sizes),
+         np.concatenate(target_ring_pixel_indices))),
+        shape=(len(radii), frame.shape[0] * frame.shape[1]))
+    target_diagonal_covariance = (operator @ operator.T).toarray()
+    for i, variance in enumerate(target_ring_formal_variances):
+        if variance is not None and not np.isclose(
+                target_diagonal_covariance[i, i], variance,
+                rtol=1.e-11, atol=1.e-10):
+            raise ValueError("Inconsistent exact target-ring diagonal covariance")
+    measured_ring_indices = [
+        i for i, variance in enumerate(target_ring_formal_variances)
+        if variance is not None]
+    off_diagonal_pairs = [
+        (i, j) for i in measured_ring_indices
+        for j in measured_ring_indices if i < j and
+        target_diagonal_covariance[i, j] > 0.]
+    max_boundary_correlation = max((
+        float(target_diagonal_covariance[i, j] /
+              math.sqrt(target_diagonal_covariance[i, i] *
+                        target_diagonal_covariance[j, j]))
+        for i, j in off_diagonal_pairs), default=0.)
+    target_diagonal_covariance_json = [
+        [float(target_diagonal_covariance[i, j])
+         if i in measured_ring_indices and j in measured_ring_indices
+         else None for j in range(len(radii))]
+        for i in range(len(radii))]
     exclusion_distance_pix = full_radius_pix + projected.a_pix + 3.
     margin = int(math.ceil(projected.a_pix + 3))
     step = max(2 * margin + 2, 8)
@@ -381,6 +436,17 @@ def estimate_blank_annulus_covariance(
             "target_measurements_keep_original_source_and_manual_exclusions":
                 True,
             "native_ivar_is_diagonal_only_not_coadd_covariance": True,
+            "target_exact_ring_diagonal_pixel_covariance": {
+                "schema": "desidera.photometry.exact-target-ring-diagonal-pixel-covariance/1",
+                "covariance_nMgy2": target_diagonal_covariance_json,
+                "n_nonzero_off_diagonal_pairs": len(off_diagonal_pairs),
+                "max_off_diagonal_correlation": max_boundary_correlation,
+                "null_row_and_column_means_no_usable_target_pixels": True,
+                "exact_fractional_boundaries_can_share_native_pixels": True,
+                "off_diagonal_terms_are_present_even_for_white_pixel_noise": True,
+                "excludes_resampling_noise_correlations_and_sky_uncertainty": True,
+                "no_science_covariance_calibration": True,
+            },
             "ratio_not_a_science_covariance_rescaling_factor": True,
             "no_automatic_target_noise_correction": True,
         },
