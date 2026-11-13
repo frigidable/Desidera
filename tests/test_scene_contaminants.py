@@ -1321,3 +1321,40 @@ def test_protected_overlapping_tractor_source_is_sky_only_veto_not_flux_mask():
         conflict["n_footprint_outside_target_protection_pixels"])
     assert conflict["sky_only_unresolved_source_veto"]
     assert not sky_veto.flags.writeable
+
+
+def test_catalogue_mask_svd_scales_once_for_many_sources(monkeypatch):
+    """One frozen TAN WCS cannot require an SVD for every Tractor row."""
+    import lsbpipe.photometry.scene_contaminants as module
+
+    wcs = _wcs()
+    wcs.wcs.cd = np.array([[-1., .22], [.11, .35]]) / 3600.
+    shape = (241, 241)
+    protected = np.zeros(shape, bool)
+    positions = np.asarray([
+        (15. + (i % 12)*18., 15. + (i // 12)*34.)
+        for i in range(72)], dtype=float)
+    rows = [_row("PSF", flux=100.) for _ in positions]
+    before_pos = positions.copy()
+    original_svd = np.linalg.svd
+    calls = []
+    def track_svd(*args, **kwargs):
+        calls.append(np.array(args[0], copy=True))
+        return original_svd(*args, **kwargs)
+    monkeypatch.setattr(module.np.linalg, "svd", track_svd)
+    source_mask, qa = conservative_catalogue_mask(
+        shape, positions, rows,
+        arcsec_per_pixel=1., protected=protected, wcs=wcs)
+    assert len(calls) == 1
+    assert calls[0].shape == (2, 2)
+    assert qa["masked_catalog_sources"] == len(rows)
+    assert source_mask.any()
+    assert not source_mask.flags.writeable
+    np.testing.assert_array_equal(positions, before_pos)
+    # No WCS means the documented isotropic legacy fallback; no SVD.
+    calls.clear()
+    fallback, _ = conservative_catalogue_mask(
+        shape, positions, rows,
+        arcsec_per_pixel=1., protected=protected, wcs=None)
+    assert not calls
+    assert fallback.any()
