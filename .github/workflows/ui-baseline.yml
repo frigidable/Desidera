@@ -2,23 +2,27 @@ name: UI baseline — offline Qt captures
 
 on:
   pull_request:
+    # GUI actions execute the complete scientific suite too. Any changes
+    # to its imported source, tests or fixture/scripts must invalidate this
+    # check; the former whitelist missed e.g. background.py and scene.py.
     paths:
-      - "AGENTS.md"
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
       - "pyproject.toml"
-      - "src/desidera/**"
-      - "tests/test_desidera_entrypoints.py"
+      - "AGENTS.md"
       - "docs/ux/**"
-      - "scripts/capture_gui_baseline.py"
-      - "tests/gui/**"
-      - "src/lsbpipe/gui/**"
-      - "src/lsbpipe/surveys/**"
-      - "src/lsbpipe/photometry/**"
-      - "tests/test_observation_lineage.py"
       - ".github/workflows/ui-baseline.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Cancel superseded screenshot/science runs for the same PR, as the
+# scientific matrix already does; do not build many stale GUI artifacts.
+concurrency:
+  group: ui-baseline-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   gui-baseline:
@@ -34,8 +38,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install LSBpipe GUI and test dependencies
-        run: python -m pip install -e ".[exact,gui,test]" pytest-qt
+      - name: Install declared GUI and test dependencies
+        run: python -m pip install -e ".[exact,gui,test,test-gui]"
+      - name: Check installed package dependency compatibility
+        run: python -m pip check
       - name: Scientific regression suite
         run: python -m pytest -q tests --ignore=tests/gui
       - name: Offline GUI smoke tests
