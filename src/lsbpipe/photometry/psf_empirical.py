@@ -983,6 +983,16 @@ def build_empirical_coadd_psf(
             f"Insufficient isolated, unsaturated, sky-screened stars: "
             f"{len(accepted)} (minimum {minimum_stars})",
             "stellar_sample_underflow")
+    # Distinguish genuinely insufficient Gaia validation stars from a
+    # separate shortage of nonholdout Gaia stars to learn the width prior.
+    # Checking the latter first would obscure the actual failed contract.
+    if (cfg.star_catalog_policy == "tractor_psf_validated" and
+            n_gaia_eligible < cfg.min_holdout_stars):
+        selection_rejection(
+            f"Insufficient Gaia DR3 holdout candidates: "
+            f"{n_gaia_eligible} (minimum {cfg.min_holdout_stars}); "
+            "Tractor-only sources cannot substitute for Gaia validation",
+            "gaia_holdout_underflow")
     if (cfg.star_catalog_policy == "tractor_psf_validated"
             and width_qa is None):
         selection_rejection(
