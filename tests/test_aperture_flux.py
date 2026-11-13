@@ -386,7 +386,7 @@ def test_aperture_frozen_mask_receipts_reject_wrong_identity_and_mutable_views()
     view.setflags(write=False)
     with pytest.raises(ValueError, match="immutable byte roots"):
         _FrozenApertureMaskDigests(view, snapshot_man)
-    with pytest.raises(ValueError, match="receipt"):
+    with pytest.raises(TypeError, match="receipt"):
         measure_native_aperture(
             f, geometry(), provenance(),
             effective_source_mask=snapshot_src, manual_exclude=snapshot_man,
