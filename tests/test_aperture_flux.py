@@ -279,3 +279,36 @@ def test_schema_rejects_bad_sky_geometry_and_mask_shapes():
             f,geometry(),provenance(),
             effective_source_mask=np.zeros(f.shape,int),
             manual_exclude=np.zeros(f.shape,bool))
+
+
+
+@pytest.mark.parametrize("shape", [(13, 17), (51, 63), (121, 97)])
+def test_broadcast_native_pa_sectors_exactly_equal_dense_original(shape):
+    """P42 replaces memory-hungry x/y stacks, not pixel-centre PA semantics."""
+    from lsbpipe.photometry.aperture_flux import (
+        _sector_ids_from_broadcast_native_centres)
+
+    rng = np.random.default_rng(20261113+shape[0])
+    for _ in range(5):
+        matrix = np.array([
+            [rng.uniform(.55, 1.45), rng.uniform(-.2, .2)],
+            [rng.uniform(-.2, .2), rng.uniform(.55, 1.45)],
+        ])
+        inv = np.linalg.inv(matrix)
+        xoff = rng.uniform(-33., -8.)
+        yoff = rng.uniform(-40., -6.)
+        old_y, old_x = np.indices(shape, dtype=float)
+        old_x += xoff
+        old_y += yoff
+        tangent = inv @ np.stack((old_x.ravel(), old_y.ravel()))
+        old_angles = np.mod(np.arctan2(tangent[0], tangent[1]), 2*np.pi)
+        expected = (
+            np.floor(old_angles/(np.pi/4)).astype(int) % 8).reshape(shape)
+        actual = _sector_ids_from_broadcast_native_centres(
+            shape, xoff, yoff, inv)
+        np.testing.assert_array_equal(actual, expected)
+        assert actual.dtype.kind in "iu"
+        assert actual.shape == shape
+    with pytest.raises(ValueError, match="sector"):
+        _sector_ids_from_broadcast_native_centres(
+            shape, 0., 0., np.ones((3, 3)))
