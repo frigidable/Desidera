@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desidera"
-version = "0.2.1.dev3"
+version = "0.2.1.dev4"
 description = "DESIDERA: experimental galaxy workbench for Legacy FITS/WCS and research QA"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "scipy>=1.10"]
