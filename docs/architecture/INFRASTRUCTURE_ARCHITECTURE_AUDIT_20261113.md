@@ -428,3 +428,66 @@ that replace content while preserving those metadata fields.
 No FITS is modified, merged, repixelized or scientifically
 adopted. Acceptance requires exact-HEAD Windows+Ubuntu CI and
 the deliberately interleaved process tests before merge.
+
+
+## 8. Legacy local-session optimistic concurrency — 2026-11-14 follow-up
+
+**Confirmed before correction:** the historical
+`lsbpipe-project.json` session retained the selected dataset,
+photometric-screening radii, the target field and a pointer to the
+last GUI QA artifact. `save_local_project` checked only the
+legacy schema then atomically replaced the whole JSON. Two separate
+Desidera instances could both open a valid original-FITS project;
+a later save of one stale in-memory `LocalProject` silently
+overwrote the other instance's dataset choice, QA pointer or
+screening parameters. This was independent of the already-fixed
+`projects.json` library, `datasets/index.json` and
+`operations/*.json` transaction locks.
+
+**Correction (focused PR `fix/legacy-project-session-integrity`):**
+
+- A private `LocalProject.metadata_sha256` / `metadata_observed`
+  pair records the SHA-256 of **the exact historical JSON bytes**
+  read at `open_local_project`. These private fields are never
+  written into the historical project schema and are **not**
+  an original-FITS checksum or scientific QA certificate.
+- `save_local_project` holds one stable cross-platform
+  `lsbpipe-project.json.lock` while reading the current
+  file, verifying both its schema and the originally observed
+  exact revision, and atomically publishing a replacement.
+  If another process changed the file, the stale writer
+  raises an actionable `RuntimeError` instructing a
+  *reopen* rather than silently discarding another window's
+  changes. A new session observed as initially absent may
+  create its JSON once. A directly constructed, never-opened
+  `LocalProject` cannot overwrite an existing session.
+- After successful publication, the in-memory object receives
+  the new content hash and may be saved again without a reopen.
+  This protects legitimate repeated edits by the same window.
+- Legacy `lsbpipe-project.json`, `download-report.json`
+  and historical QA manifest readers now reject metadata
+  *file symlinks* rather than following externally redirected
+  JSON. The user-local `last-project.json` hint also declines
+  to read a symlink or a pointer under a symlinked settings
+  directory; its writer rejects symlinked/nonregular paths.
+- Regression checks two independently opened projects,
+  stale-save rejection without overwriting the successful
+  edit, same-instance repeated save, exact byte isolation of
+  placeholder original FITS, and a deterministic **two-process**
+  stale-session interleaving. Negative symlink tests verify
+  that external metadata and the legacy last-session pointer
+  remain unchanged. These tests run offline.
+
+**Limitations:** a cross-file distributed transaction still
+does not exist. The legacy user-local `last-project.json`
+pointer is deliberately an independent last-active-session
+hint and can lag behind a successfully written project JSON if
+the process exits between those operations. No data-loss
+recovery or automatic merge of concurrent edits is promised;
+users must reopen the project when a revision conflict is
+detected. The advisory lock only coordinates cooperating
+local processes on a filesystem with correct OS lock
+semantics; third-party writers that ignore it are not
+excluded, although changed file bytes are normally detected
+before a cooperative save. No original native FITS are
+rewritten, and `SCIENCE HOLD` remains.
