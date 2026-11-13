@@ -24,6 +24,7 @@ concurrency:
 jobs:
   science-core:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -36,11 +37,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install scientific tests
         run: python -m pip install -e ".[exact,demo,test]"
+      - name: Check scientific dependency compatibility
+        run: python -m pip check
       - name: Run complete offline test suite
         run: python -m pytest -q
 
   gui-import:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,7 +52,61 @@ jobs:
           python-version: "3.10"
       - name: Install GUI optional dependencies
         run: python -m pip install -e ".[gui,test]"
+      - name: Check GUI dependency compatibility
+        run: python -m pip check
       - name: Verify GUI import without launching a display
         run: python -c "from lsbpipe.gui.survey_explorer import SurveyExplorer; print(SurveyExplorer.__name__)"
       - name: Verify official Viewer GUI integration contracts
         run: python -m pytest -q tests/test_survey_aladin_bootstrap.py tests/test_survey_viewer.py
+
+  # Editable installs alone hide packaging defects: published wheels must
+  # contain BOTH public namespaces and all advertised CLI entry points.
+  # Do not launch optional Qt here or mistake package import for science QA.
+  package-wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build a non-editable distribution wheel
+        run: |
+          mkdir -p "$RUNNER_TEMP/desidera-wheels"
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/desidera-wheels" .
+      - name: Install the actual built wheel and its declared dependencies
+        run: python -m pip install "$RUNNER_TEMP"/desidera-wheels/desidera-*.whl
+      - name: Check built-wheel dependencies
+        run: python -m pip check
+      - name: Verify installed distribution and both preserved APIs
+        run: |
+          cd "$RUNNER_TEMP"
+          python - <<'PY'
+          import importlib.metadata as md
+          import importlib.util
+          import desidera
+          import lsbpipe
+
+          distribution = md.distribution("desidera")
+          assert distribution.version == desidera.__version__ == lsbpipe.__version__
+          expected = {
+              "desidera": "desidera.cli:main",
+              "desidera-gui": "desidera.gui:main",
+              "desidera-survey-gui": "lsbpipe.gui.survey_explorer:main",
+              "lsbpipe": "lsbpipe.cli:main",
+              "lsbpipe-survey-gui": "lsbpipe.gui.survey_explorer:main",
+          }
+          console = {entry.name: entry.value
+                     for entry in distribution.entry_points
+                     if entry.group == "console_scripts"}
+          assert all(console.get(name) == value
+                     for name, value in expected.items()), console
+          assert importlib.util.find_spec("desidera.gui") is not None
+          assert importlib.util.find_spec("lsbpipe.photometry") is not None
+          assert importlib.util.find_spec("lsbpipe.surveys") is not None
+          from desidera.cli import main as modern
+          from lsbpipe.cli import main as legacy
+          assert modern is legacy
+          print("INSTALLED_WHEEL_IMPORT_AND_ENTRYPOINTS_OK",
+                distribution.version)
+          PY
