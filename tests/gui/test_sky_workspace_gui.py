@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGroupBox
 from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.gui.sky_workspace import SkyWorkspace
 import lsbpipe.gui.sky_workspace as sky_module
@@ -28,6 +28,8 @@ def test_stage03_is_real_and_resumable_without_loading_or_running(qtbot):
     assert w.scene_editor._loaded is None
     assert w.sky_stage._future is None
     assert "current" in w.sky_stage.context_label.text().lower()
+    assert w.sky_stage.findChild(QGroupBox).title() == (
+        "Use current Scene and Masks evidence")
     w.restore_navigation(stage="scene",band="i")
     assert w.current_navigation() == ("scene", "i")
     w.restore_navigation(stage="sky",band="i")

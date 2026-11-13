@@ -1,6 +1,6 @@
 """Stage 03: project-bound, read-only residual sky diagnostics.
 
-Shares the already opened Scene & Masks dataset/draft/Tractor preparation.
+Shares the already opened Scene and Masks dataset/draft/Tractor preparation.
 No network, no additional bricks, no automatic sky subtraction or adoption.
 """
 from __future__ import annotations
@@ -56,14 +56,14 @@ class SkyWorkspace(QWidget):
         note.setWordWrap(True)
         root.addWidget(note)
 
-        setup = QGroupBox("Use current Scene & Masks evidence")
+        setup = QGroupBox("Use current Scene and Masks evidence")
         layout = QVBoxLayout(setup)
-        self.context_label = QLabel("Open a galaxy project in Scene & Masks.")
+        self.context_label = QLabel("Open a galaxy project in Scene and Masks.")
         self.context_label.setObjectName("sky_project_context")
         self.context_label.setWordWrap(True)
         layout.addWidget(self.context_label)
         help_label = QLabel(
-            "In 02 Scene & Masks, load the existing original FITS and "
+            "In 02 Scene and Masks, load the existing original FITS and "
             "prepare neighbour masks. Desidera automatically excludes "
             "the protected target, isophote candidates, catalogued "
             "neighbours and bright Gaia stars, then selects spatially "
@@ -163,7 +163,7 @@ class SkyWorkspace(QWidget):
         if snap is None:
             self.context_label.setText(
                 f"Band {band} · No current validated-identity Scene snapshot. "
-                "Load original FITS and prepare masks in 02 Scene & Masks "
+                "Load original FITS and prepare masks in 02 Scene and Masks "
                 "before starting a background diagnostic.")
         else:
             identity = snap[0]
@@ -191,7 +191,7 @@ class SkyWorkspace(QWidget):
             self.refresh_context()
             self.status.setText(
                 "Cannot run: load native FITS and prepare current "
-                "Tractor neighbour masks in Scene & Masks first.")
+                "Tractor neighbour masks in Scene and Masks first.")
             return
         identity, dataset, draft, contamination = snap
         self._result = None

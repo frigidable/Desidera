@@ -754,3 +754,16 @@ def test_hub_keyboard_search_new_project_and_activation_contract(
     hub._new_project_shortcut.activated.emit()
     hub.projects.itemActivated.emit(hub.projects.currentItem())
     assert actions == ["new", "open"]
+
+def test_empty_hub_does_not_offer_science_evidence_for_no_galaxy(
+        hub, tmp_path):
+    """Only real selected projects expose dataset and QA details."""
+    assert not hub.galaxy_card.details_toggle.isVisible()
+    assert not hub.galaxy_card.observation_heading.isVisible()
+    create_object_project("Leo P", tmp_path / "leo-p-card")
+    hub.refresh()
+    assert hub.galaxy_card.details_toggle.isVisible()
+    assert hub.galaxy_card.observation_heading.isVisible()
+    hub.filter.setText("unmatched-galaxy-name")
+    assert not hub.galaxy_card.details_toggle.isVisible()
+    assert not hub.galaxy_card.observation_heading.isVisible()

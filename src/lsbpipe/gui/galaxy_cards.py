@@ -164,6 +164,7 @@ class GalaxyDetailCard(QFrame):
 
         observations = QLabel("OBSERVATION DATA")
         observations.setObjectName("galaxy_card_section")
+        self.observation_heading = observations
         body.addWidget(observations)
         self.dataset = _metadata("No dataset selected", selectable=True)
         self.dataset.setObjectName("galaxy_card_dataset")
@@ -297,6 +298,9 @@ class GalaxyDetailCard(QFrame):
         self._pixmap = None
         self.open_button.setEnabled(snapshot is not None)
         if snapshot is None:
+            self.details_toggle.setChecked(False)
+            self.details_toggle.hide()
+            self.observation_heading.hide()
             self.name.setText("Choose a galaxy")
             self.coordinates.setText("Select a project from the list.")
             self.preview.setPixmap(QPixmap())
@@ -324,6 +328,8 @@ class GalaxyDetailCard(QFrame):
             self.note.hide()
             return
 
+        self.observation_heading.show()
+        self.details_toggle.show()
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
         if (previous_id != snapshot.project_id
@@ -427,7 +433,7 @@ class GalaxyDetailCard(QFrame):
                 self.literature.setText("\n".join(literature))
                 self.literature.setToolTip(
                     "Source: NED ObjectLookup. Measurement/refcode details "
-                    "are in Sources & QA details; redshift is not a "
+                    "are in Sources and QA details; redshift is not a "
                     "distance estimate or adopted DESIDERA result.")
                 self.literature_heading.show()
                 self.literature.show()

@@ -136,7 +136,7 @@ class PSFStarReviewDialog(QDialog):
         notice = QLabel(
             "Exclusions affect ONLY the ePSF training sample. Independent "
             "holdout stars stay untouched. Changes apply only after clicking "
-            "Apply & save exclusions + rebuild; current model remains non-adopted.")
+            "Apply, save exclusions and rebuild; current model remains non-adopted.")
         notice.setWordWrap(True)
         root.addWidget(notice)
         self.count_label = QLabel()
