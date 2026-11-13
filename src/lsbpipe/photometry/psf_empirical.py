@@ -850,6 +850,27 @@ def build_empirical_coadd_psf(
                     cfg.max_training_stars//(cfg.holdout_every-1))):
             break
     accepted_before_width_screen = len(accepted)
+    # Freeze disjoint validation membership BEFORE learning any field-level
+    # width reference. Otherwise future holdouts help define the width
+    # distribution against which they themselves are screened.
+    # Predefined per-star DAO/Gaia/morphology/sky gates still apply to
+    # everyone and do not make this an untouched external star sample.
+    accepted.sort(key=lambda t: (int(t[2]//(cfg.cutout_size_pix*2)),
+                                 int(t[1]//(cfg.cutout_size_pix*2)), t[1], t[0]))
+    if cfg.star_catalog_policy == "tractor_psf_validated":
+        holdout_eligible_indices = [
+            i for i, entry in enumerate(accepted)
+            if (entry[-1].get("star_identity") or {}).get(
+                "gaia_source_id") is not None]
+    else:
+        holdout_eligible_indices = list(range(len(accepted)))
+    frozen_holdout_indices = set(
+        holdout_eligible_indices[::cfg.holdout_every])
+    if len(frozen_holdout_indices) < cfg.min_holdout_stars:
+        frozen_holdout_indices.update(
+            holdout_eligible_indices[:cfg.min_holdout_stars])
+    frozen_holdout_ids = {
+        accepted[i][0] for i in frozen_holdout_indices}
     width_qa = None
     if catalog_matcher is not None:
         # Define the field width reference ONLY from Gaia-confirmed cores,
@@ -858,17 +879,26 @@ def build_empirical_coadd_psf(
         # the star-size gate used to validate its own membership.
         reference_entries = [
             entry for entry in accepted
-            if (entry[-1].get("star_identity") or {}).get(
+            if entry[0] not in frozen_holdout_ids
+            and (entry[-1].get("star_identity") or {}).get(
                 "gaia_source_id") is not None]
         width_qa = assess_sample_widths([
             (entry[0], entry[-1]["shape_qa"])
             for entry in reference_entries])
         if width_qa is not None:
-            width_qa["reference_population"] = "GAIA_DR3_CORES_ONLY"
+            width_qa["reference_population"] = "GAIA_DR3_TRAIN_CORES_ONLY"
             width_qa["n_reference_gaia_candidates"] = len(reference_entries)
+            width_qa["holdout_ids_excluded_before_reference_learning"] = True
+            width_qa["n_frozen_holdout_stars_excluded"] = len(frozen_holdout_ids)
 
             compact = []
             for entry in accepted:
+                # Validation stars are not selected/rejected using a
+                # population statistic learned from the training sample.
+                # Retain genuinely unusual PSFs as informative holdouts.
+                if entry[0] in frozen_holdout_ids:
+                    compact.append(entry)
+                    continue
                 sigma = entry[-1]["shape_qa"]["sigma_eff_pix"]
                 ratio = sigma / width_qa["reference_core_sigma_pix"]
                 if not (width_qa["min_relative_core_sigma"] <= ratio <=
@@ -882,9 +912,8 @@ def build_empirical_coadd_psf(
         evidence = screening_by_id[entry[0]]
         evidence["outcome"] = "ACCEPTED_FOR_SPLIT"
         evidence["checks_passed"].append("field_relative_core_width")
-    # Prevent the brightest section of one brick monopolizing the holdout.
-    accepted.sort(key=lambda t: (int(t[2]//(cfg.cutout_size_pix*2)),
-                                 int(t[1]//(cfg.cutout_size_pix*2)), t[1], t[0]))
+    # The original spatial ordering and frozen holdout IDs survive
+    # train-only width screening and any later manual training exclusions.
     minimum_stars = cfg.min_train_stars + cfg.min_holdout_stars
     n_gaia_eligible = sum(
         (entry[-1].get("star_identity") or {}).get("gaia_source_id")
@@ -961,28 +990,16 @@ def build_empirical_coadd_psf(
             "fewer than 5 individually accepted Gaia DR3 reference cores. "
             "Do not use non-Gaia candidates to define their own width prior.",
             "gaia_width_reference_underflow")
-    # Gaia-only validation is reserved BEFORE fitting and BEFORE any
-    # train-only iterative outlier removal. This heldout set cannot include
-    # a Tractor-only training source, preventing identity leakage.
-    if cfg.star_catalog_policy == "tractor_psf_validated":
-        gaia_indices = [
-            i for i, entry in enumerate(accepted)
-            if (entry[-1].get("star_identity") or {}).get(
-                "gaia_source_id") is not None]
-        if len(gaia_indices) < cfg.min_holdout_stars:
-            selection_rejection(
-                f"Insufficient independent Gaia DR3 holdout stars: "
-                f"{len(gaia_indices)} (minimum {cfg.min_holdout_stars}); "
-                "Tractor-only sources cannot substitute for Gaia validation",
-                "gaia_holdout_underflow")
-        holdout_idx = set(gaia_indices[::cfg.holdout_every])
-        if len(holdout_idx) < cfg.min_holdout_stars:
-            holdout_idx.update(gaia_indices[:cfg.min_holdout_stars])
-    else:
-        holdout_idx = {
-            i for i in range(len(accepted)) if i % cfg.holdout_every == 0}
-        if len(holdout_idx) < cfg.min_holdout_stars:
-            holdout_idx.update(range(cfg.min_holdout_stars))
+    # Holdout membership was frozen before training-only width statistics.
+    # In the Tractor-assisted mode the holdout is Gaia-identified only.
+    holdout_idx = {
+        i for i, entry in enumerate(accepted)
+        if entry[0] in frozen_holdout_ids}
+    if len(holdout_idx) < cfg.min_holdout_stars:
+        selection_rejection(
+            f"Insufficient independent Gaia/DAO holdout stars: "
+            f"{len(holdout_idx)} (minimum {cfg.min_holdout_stars})",
+            "fixed_holdout_underflow")
     for i, entry in enumerate(accepted):
         screening_by_id[entry[0]]["selection_role"] = (
             "HOLDOUT_GAIA_DR3" if i in holdout_idx
@@ -1294,8 +1311,9 @@ def build_empirical_coadd_psf(
         "sky_correlation_uncertainty_calibrated":False,
     }
     # An independent ePSF *fit* holdout is not an untouched
-    # independent source-population validation: the field-relative
-    # Gaia core-width screen was learned before the final split.
+    # independent source-population validation: shared detection and
+    # per-star quality gates still determine eligibility. But the
+    # field-relative Gaia width reference now excludes frozen holdouts.
     # Record that distinction together with actual sky coverage and
     # stellar brightness spans, instead of relying on star count alone.
     ny, nx = frame.shape
@@ -1332,8 +1350,10 @@ def build_empirical_coadd_psf(
         "holdout": cohort_coverage(holdout),
         "holdout_is_disjoint_from_epsf_fitting": True,
         "holdout_is_not_an_untouched_preselection_population": True,
-        "gaia_core_width_reference_includes_pre_split_holdout": bool(
-            width_qa is not None),
+        "gaia_core_width_reference_includes_pre_split_holdout": False,
+        "holdout_selection_frozen_before_train_width_reference": True,
+        "width_reference_training_stars_only": True,
+        "heldout_stars_not_screened_against_train_width_distribution": True,
         "external_independent_stellar_validation_performed": False,
         "spatial_transfer_to_galaxy_calibrated": False,
         "brightness_dependent_psf_wings_calibrated": False,
