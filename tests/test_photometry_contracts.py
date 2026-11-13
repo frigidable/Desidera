@@ -308,3 +308,57 @@ def test_native_loader_rejects_declared_foreign_inverse_variance_units(
         load_native_legacy_quartet(
             tmp_path, release="dr9", region="south",
             brick="0401p012", band="r", hash_inputs=False)
+
+
+def test_native_fits_loader_builds_exactly_one_immutable_frame(monkeypatch, tmp_path):
+    """One validated source quartet must not be copied/validated twice."""
+    from lsbpipe.photometry import native_fits as loader
+    paths = make_fits(tmp_path)
+    previous_hashes = {
+        key: hashlib.sha256(path.read_bytes()).hexdigest()
+        for key, path in paths.items()}
+    original_constructor = loader.NativeBandFrame
+    calls = []
+    def record_constructor(*args, **kwargs):
+        calls.append(kwargs["source_evidence"])
+        return original_constructor(*args, **kwargs)
+    monkeypatch.setattr(loader, "NativeBandFrame", record_constructor)
+    f = load_native_legacy_quartet(
+        tmp_path, release="dr9", region="south", brick="0401p012",
+        band="r")
+    assert len(calls) == 1
+    assert dict(f.source_evidence["local_hashes"]) == previous_hashes
+    assert calls[0]["local_hashes"] == previous_hashes
+    assert f.source_evidence["hash_provenance"] == (
+        "LOCAL_SHA256_NOT_REMOTE_AUTHENTICITY")
+    assert f.image_nMgy.dtype == np.float64
+    assert f.invvar_nMgy2.dtype == np.float64
+    assert f.nexp.dtype == np.float64
+    assert f.maskbits.dtype == np.uint32
+    for array in (f.image_nMgy, f.invvar_nMgy2,
+                  f.nexp, f.maskbits, f.valid):
+        assert not array.flags.writeable
+        with pytest.raises(ValueError):
+            array.setflags(write=True)
+    assert {k: hashlib.sha256(v.read_bytes()).hexdigest()
+            for k, v in paths.items()} == previous_hashes
+
+
+def test_native_fits_loader_detects_changes_after_immutable_materialization(
+        monkeypatch, tmp_path):
+    """Hash-verified files must remain unchanged through the final buffer copy."""
+    from lsbpipe.photometry import native_fits as loader
+    paths = make_fits(tmp_path)
+    original_constructor = loader.NativeBandFrame
+    def modify_after_frame_copy(*args, **kwargs):
+        result = original_constructor(*args, **kwargs)
+        # Concurrent external modification simulated only on tmp_path FITS.
+        with paths["image"].open("ab") as stream:
+            stream.write(b"modified after the complete initial SHA-256")
+        return result
+    monkeypatch.setattr(loader, "NativeBandFrame",
+                        modify_after_frame_copy)
+    with pytest.raises(RuntimeError, match="changed during photometric"):
+        load_native_legacy_quartet(
+            tmp_path, release="dr9", region="south",
+            brick="0401p012", band="r")
