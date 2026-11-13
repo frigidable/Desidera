@@ -51,8 +51,10 @@ No cosmetic simplification may erase scientific qualifiers.
 ## Development and review protocol
 1. Inspect actual source, tests and existing project contracts.
 2. Record evidence and acceptance cases before changing the GUI.
-3. Work on a dedicated feature branch; never edit or merge `main` without
-   explicit approval. Keep unrelated science PRs separate.
+3. Continue on the already authorized feature branch for related work;
+   create another branch only when separation is genuinely necessary and
+   explicitly approved. Never edit or merge `main` without approval.
+   Keep unrelated science PRs separate.
 4. Separate Qt presentation from survey/network/photometry logic.
 5. Add or update offline GUI tests for empty, populated, loading,
    error and resized states; avoid real network in deterministic CI.
