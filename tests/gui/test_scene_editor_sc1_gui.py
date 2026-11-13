@@ -213,7 +213,7 @@ def test_scene_is_real_second_stage_without_auto_loading_fits(
     view.bind_project(p)
     assert view.stage_tabs.count()==4
     assert view.stage_tabs.tabText(0)=="1 · PSF-0"
-    assert view.stage_tabs.tabText(1)=="2 · Scene & Masks"
+    assert view.stage_tabs.tabText(1)=="2 · Scene and Masks"
     assert view.stage_tabs.tabText(2)=="3 · Background"
     assert view.stage_tabs.tabText(3)=="4 · Aperture Photometry"
     assert view.aperture_stage._result is None
