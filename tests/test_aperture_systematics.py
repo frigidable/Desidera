@@ -1148,7 +1148,8 @@ def test_target_ring_covariance_has_nulls_for_unmeasured_masked_annulus():
         effective_source_mask=source,
         manual_exclude=np.zeros(shape, dtype=bool))
     comparison = out["native_diagonal_variance_comparability"]
-    cov = comparison["target_exact_ring_diagonal_pixel_covariance"]
+    cov = comparison["target_exact_ring_diagonal_pixel_covariance"][
+        "covariance_nMgy2"]
     assert comparison["target_partial_ring_formal_variance_nMgy2"][0] is None
     assert all(x is None for x in cov[0])
     assert all(row[0] is None for row in cov)
