@@ -40,7 +40,9 @@ def test_science_ci_observes_source_tests_scripts_and_builds_a_real_wheel():
     assert re.search(r"(?m)^  pull_request:\s*$", text)
     assert all(token in text for token in (
         '"src/**"', '"tests/**"', '"scripts/**"',
-        '"pyproject.toml"', 'python -m pip check',
+        '"pyproject.toml"', '"README.md"', '"AGENTS.md"',
+        '"docs/architecture/**"', '".github/workflows/**"',
+        'python -m pip check',
         'package-wheel:', 'pip wheel --no-deps',
         'desidera-wheels/desidera-*.whl',
         'INSTALLED_WHEEL_IMPORT_AND_ENTRYPOINTS_OK',
@@ -54,7 +56,9 @@ def test_gui_ci_covers_core_changes_and_cancels_stale_pr_runs():
     text = _workflow("ui-baseline.yml")
     assert all(token in text for token in (
         '"src/**"', '"tests/**"', '"scripts/**"',
-        '"pyproject.toml"', '"docs/ux/**"',
+        '"pyproject.toml"', '"README.md"', '"AGENTS.md"',
+        '"docs/architecture/**"', '"docs/ux/**"',
+        '".github/workflows/**"',
         '"[exact,gui,test,test-gui]"',
         'python -m pip check',
         'pytest -q tests/gui',
