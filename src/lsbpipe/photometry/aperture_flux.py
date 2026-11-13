@@ -8,7 +8,7 @@ PSF deconvolution, or total-galaxy flux claim.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from hashlib import sha256
 import json
 import math
@@ -337,12 +337,58 @@ def _aggregate_native_pa_sector_areas(sector_ids, weights, usable):
     return inside, valid
 
 
+
+@dataclass(frozen=True, eq=False)
+class _FrozenApertureMaskDigests:
+    """SHA receipts tied to exact immutable native-array identities.
+
+    No global cache and no caller-supplied digest. Hashes are computed
+    inside this constructor, after the source/manual worker snapshots.
+    Never accept a mere NumPy writeable=False flag as proof of safety.
+    """
+    source: np.ndarray = field(repr=False, compare=False)
+    manual: np.ndarray = field(repr=False, compare=False)
+    source_sha256: str = field(init=False)
+    manual_sha256: str = field(init=False)
+
+    def __post_init__(self):
+        if (self.source.ndim != 2 or self.source.dtype.kind != "b"
+                or self.manual.shape != self.source.shape
+                or self.manual.dtype.kind != "b"):
+            raise ValueError("Frozen aperture mask receipt grid mismatch")
+        if (not self.source.flags.c_contiguous or
+                not self.manual.flags.c_contiguous or
+                not _bytes_rooted_readonly_mask(self.source) or
+                not _bytes_rooted_readonly_mask(self.manual)):
+            raise ValueError(
+                "Frozen aperture mask receipts require immutable byte roots")
+        object.__setattr__(
+            self, "source_sha256",
+            sha256(self.source.tobytes()).hexdigest())
+        object.__setattr__(
+            self, "manual_sha256",
+            sha256(self.manual.tobytes()).hexdigest())
+
+    def verify_inputs(self, source, manual):
+        if (source is not self.source or manual is not self.manual
+                or not _bytes_rooted_readonly_mask(source)
+                or not _bytes_rooted_readonly_mask(manual)):
+            raise ValueError(
+                "Frozen aperture mask receipt identity mismatch")
+        return {
+            "effective_source": self.source_sha256,
+            "manual_exclude": self.manual_sha256,
+        }
+
+
 def measure_native_aperture(
         frame: NativeBandFrame, geometry: ApertureGeometryICRS,
         provenance: ApertureProvenance, *,
         effective_source_mask: np.ndarray,
         manual_exclude: np.ndarray,
-        sky: ApertureSkyScenario | None = None) -> ApertureFluxRecord:
+        sky: ApertureSkyScenario | None = None,
+        _frozen_mask_digests: _FrozenApertureMaskDigests | None = None
+        ) -> ApertureFluxRecord:
     """Read-only valid-area aperture sum, no interpolation or total claim.
 
     Manual restorations MUST be applied upstream to effective_source_mask,
@@ -359,6 +405,17 @@ def measure_native_aperture(
     shape = frame.shape
     source = _mask_for("effective source mask",effective_source_mask,shape)
     manual = _mask_for("manual exclusion",manual_exclude,shape)
+    if _frozen_mask_digests is None:
+        # Standalone aperture calls retain the original, independent
+        # content-hash operation even on mutable GUI inputs.
+        mask_hashes = {
+            "effective_source": sha256(source.tobytes()).hexdigest(),
+            "manual_exclude": sha256(manual.tobytes()).hexdigest(),
+        }
+    else:
+        if type(_frozen_mask_digests) is not _FrozenApertureMaskDigests:
+            raise TypeError("Invalid frozen aperture mask receipt")
+        mask_hashes = _frozen_mask_digests.verify_inputs(source, manual)
     wcs = frame.wcs
     ellipse = project_icrs_ellipse_to_native(geometry,wcs)
 
@@ -537,10 +594,7 @@ def measure_native_aperture(
         "geometry":geometry_dict,"native":native_dict,
         "sky":asdict(sky),
         "grid_fingerprint":frame.native_grid_fingerprint,
-        "mask_sha256": {
-            "effective_source":sha256(source.tobytes()).hexdigest(),
-            "manual_exclude":sha256(manual.tobytes()).hexdigest(),
-        },
+        "mask_sha256": mask_hashes,
         "original_fits_hashes":dict(hashes),
         "aperture_method":"photutils_exact_native_pixel_overlap_v1",
     }
