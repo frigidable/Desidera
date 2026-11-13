@@ -395,7 +395,7 @@ def _automatic_scene_sky_pixels(
         dataset, preview, contamination, *,
         tile_edge_native_pix=None, grid_offset_xy_native_pix=(0, 0),
         target_guard_factor=1.0, source_guard_factor=1.0,
-        sample_policy="ROW_MAJOR_UNIFORM_V1"):
+        sample_policy="ROW_MAJOR_UNIFORM_V1", _guard_cache=None):
     """Deterministic spatially disjoint source-vetoed tiles, no image-based picking.
 
     Selection is solely based on geometry, validity, existing Scene
@@ -410,6 +410,10 @@ def _automatic_scene_sky_pixels(
     if sample_policy not in ("ROW_MAJOR_UNIFORM_V1",
                              "SPATIAL_8X8_PROPORTIONAL_V2"):
         raise ValueError("Invalid predeclared sky sampling policy")
+    # Private, strictly call-scoped cache. Never keep mutable Scene,
+    # source or WCS inputs in a module-global registry.
+    if _guard_cache is not None and not isinstance(_guard_cache, dict):
+        raise ValueError("Sky geometry guard cache must be a local mapping")
     if (not np.isfinite(target_guard_factor) or target_guard_factor < 1.
             or not np.isfinite(source_guard_factor) or source_guard_factor < 1.):
         raise ValueError("Sensitivity guards may only extend original exclusions")
@@ -458,12 +462,29 @@ def _automatic_scene_sky_pixels(
     source_guard_px = int(np.ceil(source_guard_factor*max(
         2., 6./guard_arcsec_per_pixel)))
 
-    def guarded(mask, radius):
-        if not np.any(mask):
-            return np.zeros(shape, dtype=bool)
-        return distance_transform_edt(~mask) <= radius
+    def guarded(mask, radius, *, role):
+        # Reuse only if BOTH the radius and ALL original Boolean mask
+        # pixels agree. The cached source raster is a private owned
+        # snapshot: a caller mutating its original input later cannot
+        # silently change the geometry represented by this entry.
+        # Only the first (baseline) mask/radius is retained per role;
+        # extended guards in sensitivity trials never evict it.
+        record = (_guard_cache.get(role)
+                  if _guard_cache is not None else None)
+        if (record is not None and record[0] == radius
+                and record[1].shape == mask.shape
+                and np.array_equal(record[1], mask)):
+            return record[2]
+        result = (distance_transform_edt(~mask) <= radius
+                  if np.any(mask) else np.zeros(shape, dtype=bool))
+        if _guard_cache is not None and record is None:
+            mask_snapshot = np.array(mask, dtype=bool, copy=True)
+            mask_snapshot.setflags(write=False)
+            result.setflags(write=False)
+            _guard_cache[role] = (radius, mask_snapshot, result)
+        return result
 
-    target_veto = guarded(target, target_guard_px)
+    target_veto = guarded(target, target_guard_px, role="target")
     # Ambiguous Tractor footprints intersecting the protected dwarf
     # are not auto-masked in photometry; veto the full contested source
     # footprint ONLY from sky fitting, including its exterior portion.
@@ -481,7 +502,8 @@ def _automatic_scene_sky_pixels(
                 native_boolean_mask_sha256(ambiguous_sky_veto) !=
                 contamination["unresolved_target_overlap_sky_veto_sha256"]):
             raise ValueError("Unresolved target-overlap sky-veto provenance mismatch")
-    catalog_veto = guarded(source | ambiguous_sky_veto, source_guard_px)
+    catalog_veto = guarded(
+        source | ambiguous_sky_veto, source_guard_px, role="catalogue")
 
     # Existing Tractor/Gaia sources only. These radii are intentionally
     # conservative pilot vetoes and NOT a measured bright-star halo model.
@@ -1043,13 +1065,14 @@ def _audit_current_project_sky_grid_sensitivity(
         dataset, preview, contamination, *, grid, band, shape,
         revision, original_hard, source_mask, manual_mask, target_mask,
         original_image, inverse_variance, anchor_native_xy,
-        original_candidates, settings):
+        original_candidates, settings, _guard_cache=None):
     """Predeclared same-project sky-grid perturbations, all non-adopted."""
     result = []
     ax, ay = map(float, anchor_native_xy)
     for name, overrides in _SKY_FIXED_SENSITIVITY_TRIALS:
         train, hold, selection = _automatic_scene_sky_pixels(
-            dataset, preview, contamination, **overrides)
+            dataset, preview, contamination,
+            _guard_cache=_guard_cache, **overrides)
         item = {
             "name": name,
             "parameters": {
@@ -1415,8 +1438,14 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             raise ValueError(
                 "Stage03 native Scene/sky mask geometry fingerprint mismatch: "
                 + key)
+    # Reuse the exact baseline source/target distance guards within
+    # this single immutable Stage03 diagnostic and its fixed six trials.
+    # Cache entries are dropped when this function returns. They are
+    # invalidated by an exact mask-pixel comparison even if an input
+    # dictionary is mutated during the evaluation.
+    guard_cache = {}
     sky_train, sky_holdout, selection = _automatic_scene_sky_pixels(
-        dataset, preview, contamination)
+        dataset, preview, contamination, _guard_cache=guard_cache)
     sky_protected = protected | preview["target_protect"] | preview["isophote_candidate"]
     grid = grid_fingerprint(dataset["wcs"], shape)
     warnings = [
@@ -1700,7 +1729,8 @@ def diagnose_current_project_residual_sky(dataset, draft, contamination):
             source_mask=auto, manual_mask=preview["manual_exclude"],
             target_mask=sky_protected, original_image=image,
             inverse_variance=ivar, anchor_native_xy=(x,y),
-            original_candidates=candidates, settings=settings))
+            original_candidates=candidates, settings=settings,
+            _guard_cache=guard_cache))
     base["sky_injection_recovery_qa"] = (
         _audit_current_project_sky_injection_recovery(
             image, ivar, scene, candidates,
