@@ -81,8 +81,8 @@ necessarily queue the Windows full-suite GUI workflow.
 
 **Correction:** `ui-baseline.yml` and `survey-tests.yml` both
 cover `src/**`, `tests/**`, `scripts/**`, `pyproject.toml`,
-`README.md`, `AGENTS.md`, `docs/architecture/**`,
-`docs/ux/**` and `.github/workflows/**`. The additional
+`README.md`, `AGENTS.md`, **all** `docs/**` (including
+`docs/README.md`) and `.github/workflows/**`. The additional
 documentation/governance triggers deliberately ensure that the
 *final documentation-only HEAD commit* gets a new full CI verdict.
 This costs CI minutes; a later change to event filtering must
