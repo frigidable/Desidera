@@ -71,7 +71,7 @@ def test_two_process_external_fits_imports_do_not_lose_asset_records(
         "import pathlib,sys,time\n"
         "import lsbpipe.surveys.dataset_registry as d\n"
         "mode=sys.argv[1]\n"
-        "project,asset,flag=map(pathlib.Path,sys.argv[2:])\n"
+        "project,asset,flag=map(pathlib.Path,sys.argv[2:5])\n"
         "if mode=='pause':\n"
         "    original=d.read_dataset_index\n"
         "    def delayed(root):\n"
