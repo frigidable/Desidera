@@ -95,3 +95,47 @@ def test_all_external_github_actions_are_sha_pinned():
                 action), (name, action)
         assert "actions/checkout@" in source
         assert "actions/setup-python@" in source
+
+
+
+def test_scientific_and_survey_core_do_not_import_gui_or_qt():
+    """Enforce the source-level GUI/science dependency inversion.
+
+    Parse the real Python files rather than import Qt in the test runner;
+    this remains valid in minimal headless installations and tests direct
+    import regressions even on otherwise untested CLI paths.
+    """
+    import ast
+
+    core = ROOT / "src" / "lsbpipe"
+    paths = [
+        core / "background.py",
+        core / "scene.py",
+        core / "survey.py",
+        core / "mask_engine.py",
+        *sorted((core / "photometry").rglob("*.py")),
+        *sorted((core / "surveys").rglob("*.py")),
+    ]
+    forbidden = (
+        "PySide6", "PyQt5", "PyQt6", "qtpy", "lsbpipe.gui",
+        "desidera.gui",
+    )
+    assert len(paths) >= 55
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+                # Relative imports inside the science package remain legal;
+                # Python resolves these against the local science module.
+                if node.level:
+                    continue
+            else:
+                continue
+            for name in names:
+                assert not any(
+                    name == prefix or name.startswith(prefix + ".")
+                    for prefix in forbidden
+                ), (path.relative_to(ROOT), node.lineno, name)
