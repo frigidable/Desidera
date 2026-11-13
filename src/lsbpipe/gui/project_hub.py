@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
 from lsbpipe.surveys.legacy import SkyField
 from lsbpipe.surveys.object_projects import (
     create_object_project, import_object_project, read_object_project,
-    recent_projects, relink_object_project, touch_object_project,
+    read_registered_object_project, recent_projects, relink_object_project,
+    touch_object_project,
     forget_recent_project,
 )
 from lsbpipe.surveys.local_project import open_local_project
@@ -482,7 +483,12 @@ class ProjectHub(QMainWindow):
         for record in rows:
             exists = bool(record["available"])
             name = record.get("display_name") or "Unnamed"
-            status = "Project saved" if exists else "Missing · relink needed"
+            issue = record.get("availability_issue")
+            status = (
+                "Project saved" if exists
+                else "Different galaxy UUID · relink original" if issue == "UUID_MISMATCH"
+                else "Invalid project passport" if issue == "INVALID_PASSPORT"
+                else "Missing · relink needed")
             detail = ""
             search_identifiers = []
             if exists:
@@ -494,7 +500,7 @@ class ProjectHub(QMainWindow):
                             f"{prior_project.field.ra_deg:.6f}°, "
                             f"{prior_project.field.dec_deg:+.6f}°")
                     else:
-                        entry = read_object_project(record["root"])
+                        entry = read_registered_object_project(record["root"], record["project_id"])
                         stage = inspect_passport_readiness(entry)
                         if stage.code == "DATASET_NOT_SELECTED":
                             status = "Select survey data"
@@ -598,7 +604,7 @@ class ProjectHub(QMainWindow):
         allow_rgb = False
         if can_preview:
             try:
-                request_for_project(read_object_project(record["root"]))
+                request_for_project(read_registered_object_project(record["root"], record["project_id"]))
                 allow_rgb = True
             except (ValueError, OSError, KeyError, TypeError):
                 pass
@@ -608,7 +614,7 @@ class ProjectHub(QMainWindow):
         if can_preview:
             try:
                 source_for_local = has_local_image_source(
-                    read_object_project(record["root"]))
+                    read_registered_object_project(record["root"], record["project_id"]))
             except (OSError, ValueError, KeyError, TypeError):
                 pass
         self.local_preview_action.setEnabled(
@@ -659,10 +665,29 @@ class ProjectHub(QMainWindow):
         self.detail_path.setText(
             "Project folder:\n" + str(record.get("root", "")))
         if not record["available"]:
-            self.detail_status.setText("Project folder is missing.")
-            self.detail_meta.setText("The saved project identity is preserved.")
-            self.detail_note.setText(
-                "Relink the moved project folder. No local data are deleted.")
+            issue = record.get("availability_issue")
+            if issue == "UUID_MISMATCH":
+                self.detail_status.setText(
+                    "Registered galaxy UUID differs from the passport in this folder.")
+                self.detail_meta.setText(
+                    "A different project occupies the saved directory. "
+                    "The original registered identity has not been changed.")
+                self.detail_note.setText(
+                    "Find and relink the ORIGINAL galaxy folder, or explicitly "
+                    "import the other galaxy as a separate project. No files "
+                    "are modified by this warning.")
+            elif issue == "INVALID_PASSPORT":
+                self.detail_status.setText("Project passport needs attention.")
+                self.detail_meta.setText(
+                    "The saved project metadata is invalid or unsafe to read.")
+                self.detail_note.setText(
+                    "Inspect the original project folder or restore a valid "
+                    "passport before relinking. No FITS files were changed.")
+            else:
+                self.detail_status.setText("Project folder is missing.")
+                self.detail_meta.setText("The saved project identity is preserved.")
+                self.detail_note.setText(
+                    "Relink the moved project folder. No local data are deleted.")
             return
         if record.get("legacy"):
             self.detail_status.setText("Older local project")
@@ -672,7 +697,7 @@ class ProjectHub(QMainWindow):
                 "original survey FITS.")
             return
         try:
-            project = read_object_project(record["root"])
+            project = read_registered_object_project(record["root"], record["project_id"])
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.detail_status.setText("Project metadata needs attention")
             self.detail_meta.setText(str(exc))
@@ -729,7 +754,7 @@ class ProjectHub(QMainWindow):
         if card.thumbnail is not None or self._preview_future is not None:
             return
         try:
-            project = read_object_project(record["root"])
+            project = read_registered_object_project(record["root"], record["project_id"])
             if not has_local_image_source(project):
                 # No local IMAGE source is a normal state of a new galaxy
                 # project, not an error. Never show a prior exception here.
@@ -779,7 +804,7 @@ class ProjectHub(QMainWindow):
         if record is None or self._preview_future is not None:
             return
         try:
-            if not has_local_image_source(read_object_project(record["root"])):
+            if not has_local_image_source(read_registered_object_project(record["root"], record["project_id"])):
                 self.galaxy_card.preview.setText("No local FITS preview")
                 self.galaxy_card.preview.setToolTip(
                     "Select a dataset and obtain its original IMAGE FITS first.")
@@ -796,7 +821,7 @@ class ProjectHub(QMainWindow):
             return None
         try:
             request = request_for_project(
-                read_object_project(record["root"]))
+                read_registered_object_project(record["root"], record["project_id"]))
             return record["project_id"], request["url"]
         except (OSError, ValueError, KeyError, TypeError):
             return None
@@ -978,6 +1003,7 @@ class ProjectHub(QMainWindow):
                 or record.get("legacy")):
             return
         try:
+            read_registered_object_project(record["root"], record["project_id"])
             dialog = AnalysisConfigurationsDialog(record["root"], self)
             dialog.exec()
         except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -993,6 +1019,7 @@ class ProjectHub(QMainWindow):
                 or record.get("legacy")):
             return
         try:
+            read_registered_object_project(record["root"], record["project_id"])
             dialog = NedKnowledgeDialog(record["root"], self)
             dialog.exec()
             self.refresh()
@@ -1008,6 +1035,7 @@ class ProjectHub(QMainWindow):
                 or record.get("legacy")):
             return
         try:
+            read_registered_object_project(record["root"], record["project_id"])
             dialog = GalaxyKnowledgeDialog(record["root"], self)
             dialog.exec()
             # Rebuild aliases/confirmed-ID search and the selected card from
@@ -1033,11 +1061,21 @@ class ProjectHub(QMainWindow):
             if row is None:
                 return
             if not row.get("available"):
-                self.hint.setText(
-                    "Last galaxy is missing from disk. Relink it in "
-                    "Galaxy Projects rather than opening a different galaxy.")
+                if row.get("availability_issue") == "UUID_MISMATCH":
+                    self.hint.setText(
+                        "Auto-resume blocked: the saved path now contains a "
+                        "DIFFERENT galaxy project UUID. Relink the original "
+                        "galaxy; do not assume two folders are the same target.")
+                elif row.get("availability_issue") == "INVALID_PASSPORT":
+                    self.hint.setText(
+                        "Auto-resume blocked: the saved galaxy passport "
+                        "is invalid or unsafe. Inspect the project metadata.")
+                else:
+                    self.hint.setText(
+                        "Last galaxy is missing from disk. Relink it in "
+                        "Galaxy Projects rather than opening a different galaxy.")
                 return
-            project = read_object_project(row["root"])
+            project = read_registered_object_project(row["root"], row["project_id"])
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.hint.setText(
                 "Last galaxy could not be restored: " + str(exc)
@@ -1064,7 +1102,7 @@ class ProjectHub(QMainWindow):
             self.import_folder(row["root"])
             return
         try:
-            self._enter_project(read_object_project(row["root"]))
+            self._enter_project(read_registered_object_project(row["root"], row["project_id"]))
         except (OSError, ValueError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open project", str(exc))
 
