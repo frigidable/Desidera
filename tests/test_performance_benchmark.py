@@ -33,6 +33,8 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
         "ten_radii_full_mask_copies_vs_immutable_snapshot_reuse",
         "exact_blank_ring_rasterization_vs_integer_template_translation",
         "sky_frozen_injection_dense_xy_vs_broadcast_reusable_distance",
+        "native_wcs_grid_header_serialization_vs_per_frame_fingerprint",
+        "sky_six_fixed_trials_full_edt_vs_exact_guard_reuse",
     }
     for row in report["comparison"].values():
         assert row["reference_median_ms"] >= 0.
@@ -51,6 +53,18 @@ def test_performance_benchmark_runs_without_original_fits_or_thresholds():
     assert injection["full_float64_coordinate_grids_avoided"] == 2
     assert injection["repeated_elliptical_distance_maps_avoided"] == 2
     assert injection["peak_rss_not_measured"]
+    wcs_qa = report["comparison"][
+        "native_wcs_grid_header_serialization_vs_per_frame_fingerprint"]
+    assert wcs_qa["wcs_header_serializations_reference"] == 10
+    assert wcs_qa["wcs_header_serializations_optimized"] == 1
+    assert wcs_qa["exact_header_and_shape_identity_verified"]
+    guards = report["comparison"][
+        "sky_six_fixed_trials_full_edt_vs_exact_guard_reuse"]
+    assert guards["sky_grid_trials"] == 7
+    assert guards["reference_distance_transforms_maximum"] == 14
+    assert guards["optimized_distance_transforms_maximum"] == 4
+    assert guards["exact_native_source_target_geometry_verified"]
+    assert guards["cache_lifetime"] == "ONE_STAGE03_CALL_NO_GLOBAL_STATE"
     json.dumps(report, allow_nan=False)
     with pytest.raises(ValueError, match="Synthetic benchmark size"):
         module.run(size=32, repeats=1)
