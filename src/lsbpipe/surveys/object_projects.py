@@ -15,6 +15,7 @@ import re
 import uuid
 
 from .legacy import SkyField
+from .project_locking import exclusive_metadata_lock
 from .local_project import (
     _atomic_json, open_local_project, session_pointer_path,
     last_project_directory,
@@ -33,6 +34,17 @@ def _now() -> str:
 def library_index_path() -> Path:
     """Dedicated registry; does not replace the legacy last-project pointer."""
     return session_pointer_path().parent / REGISTRY_FILENAME
+
+
+def _registry_transaction():
+    """One stable cross-process lock for each user-local project library.
+
+    Do not delete the lock sidecar. Its inode is the synchronization
+    identity; cleanup while another process waits could split the lock.
+    """
+    index = library_index_path()
+    return exclusive_metadata_lock(
+        index.with_name(index.name + ".lock"))
 
 
 def _read_json(path: Path) -> dict:
@@ -269,49 +281,50 @@ def forget_recent_project(project_id: str, root: str | Path) -> None:
     without registering it. Such suggestions are suppressed by a registry
     tombstone instead of deleting their original last-session pointer.
     """
-    selected_root = str(Path(root).expanduser().resolve())
-    if not selected_root:
-        raise ValueError("A project root is required")
-    legacy_id = "legacy:" + selected_root
-    if project_id != legacy_id:
-        project_id = _project_id(project_id)
-    payload = _registry_payload()
-    rows = payload["projects"]
-    matches = [
-        row for row in rows
-        if isinstance(row, dict) and row.get("project_id") == project_id
-        and isinstance(row.get("root"), str)
-        and str(Path(row["root"]).expanduser().resolve()) == selected_root
-    ]
-    if project_id != legacy_id and not matches:
-        raise ValueError(
-            "Selected project entry is no longer in the library; refresh first")
-    if project_id == legacy_id:
-        # Only allow dismissing the exact synthetic entry produced by
-        # the legacy pointer, not arbitrary user-provided legacy: strings.
-        old = last_project_directory()
-        if old is None:
-            raise ValueError("Legacy suggestion no longer exists")
-        original = old.parent if old.name == "data" else old
-        if str(original.resolve()) != selected_root:
-            raise ValueError("Selected legacy suggestion has changed")
-    kept = [
-        row for row in rows
-        if not (isinstance(row, dict)
-                and row.get("project_id") == project_id
-                and isinstance(row.get("root"), str)
-                and str(Path(row["root"]).expanduser().resolve())
-                == selected_root)
-    ]
-    # A now-missing registered path may also be the old application's
-    # last-session pointer. Keep that suggestion from reappearing.
-    hidden = list(payload["dismissed_legacy_roots"])
-    if selected_root not in hidden:
-        hidden.append(selected_root)
-    _atomic_json(library_index_path(), {
-        **payload, "projects": kept,
-        "dismissed_legacy_roots": hidden,
-    })
+    with _registry_transaction():
+        selected_root = str(Path(root).expanduser().resolve())
+        if not selected_root:
+            raise ValueError("A project root is required")
+        legacy_id = "legacy:" + selected_root
+        if project_id != legacy_id:
+            project_id = _project_id(project_id)
+        payload = _registry_payload()
+        rows = payload["projects"]
+        matches = [
+            row for row in rows
+            if isinstance(row, dict) and row.get("project_id") == project_id
+            and isinstance(row.get("root"), str)
+            and str(Path(row["root"]).expanduser().resolve()) == selected_root
+        ]
+        if project_id != legacy_id and not matches:
+            raise ValueError(
+                "Selected project entry is no longer in the library; refresh first")
+        if project_id == legacy_id:
+            # Only allow dismissing the exact synthetic entry produced by
+            # the legacy pointer, not arbitrary user-provided legacy: strings.
+            old = last_project_directory()
+            if old is None:
+                raise ValueError("Legacy suggestion no longer exists")
+            original = old.parent if old.name == "data" else old
+            if str(original.resolve()) != selected_root:
+                raise ValueError("Selected legacy suggestion has changed")
+        kept = [
+            row for row in rows
+            if not (isinstance(row, dict)
+                    and row.get("project_id") == project_id
+                    and isinstance(row.get("root"), str)
+                    and str(Path(row["root"]).expanduser().resolve())
+                    == selected_root)
+        ]
+        # A now-missing registered path may also be the old application's
+        # last-session pointer. Keep that suggestion from reappearing.
+        hidden = list(payload["dismissed_legacy_roots"])
+        if selected_root not in hidden:
+            hidden.append(selected_root)
+        _atomic_json(library_index_path(), {
+            **payload, "projects": kept,
+            "dismissed_legacy_roots": hidden,
+        })
 
 
 def recent_projects() -> list[dict]:
@@ -344,12 +357,19 @@ def recent_projects() -> list[dict]:
 
 
 def register_object_project(project: ObjectProject) -> None:
+    """Serialize project-library updates across Desidera processes."""
+    with _registry_transaction():
+        _register_object_project_unlocked(project)
+
+
+def _register_object_project_unlocked(project: ObjectProject) -> None:
+    """Only call while already holding the same stable library lock."""
     _validate(project)
     # Use ONE consistent registry snapshot for the whole update.
     # The previous double read could combine a stale 'projects' list
     # with newer dismissal metadata, silently discarding entries
-    # registered between those reads. Multi-process concurrent writes
-    # still require a separate cross-platform lock/transaction design.
+    # registered between those reads. This function runs under the
+    # same OS-level advisory lock throughout read-modify-atomic-replace.
     payload = _registry_payload()
     rows = payload["projects"]
     canonical = str(project.root.resolve())
@@ -371,20 +391,21 @@ def touch_object_project(project: ObjectProject) -> None:
 
 def create_object_project(name: str, directory: str | Path, *,
                           field: SkyField | None = None) -> ObjectProject:
-    root = Path(directory).expanduser().resolve()
-    if root.exists() and any(root.iterdir()):
-        raise FileExistsError(
-            "Project folder is not empty; use Import existing project instead")
-    if any(item["display_name"].casefold() == name.strip().casefold()
-           and item.get("available") for item in recent_projects()):
-        raise ValueError("A project with this name is already in the library")
-    root.mkdir(parents=True, exist_ok=True)
-    project = ObjectProject(
-        project_id=str(uuid.uuid4()), display_name=name, root=root,
-        field=field)
-    save_object_project(project)
-    register_object_project(project)
-    return project
+    with _registry_transaction():
+        root = Path(directory).expanduser().resolve()
+        if root.exists() and any(root.iterdir()):
+            raise FileExistsError(
+                "Project folder is not empty; use Import existing project instead")
+        if any(item["display_name"].casefold() == name.strip().casefold()
+               and item.get("available") for item in recent_projects()):
+            raise ValueError("A project with this name is already in the library")
+        root.mkdir(parents=True, exist_ok=True)
+        project = ObjectProject(
+            project_id=str(uuid.uuid4()), display_name=name, root=root,
+            field=field)
+        save_object_project(project)
+        _register_object_project_unlocked(project)
+        return project
 
 
 def import_object_project(directory: str | Path, *,
