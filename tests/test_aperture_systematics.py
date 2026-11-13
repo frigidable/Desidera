@@ -1158,3 +1158,96 @@ def test_target_ring_covariance_has_nulls_for_unmeasured_masked_annulus():
         "null_row_and_column_means_no_usable_target_pixels"]
     assert cov[-1][-1] is not None
     json.dumps(out, allow_nan=False)
+
+
+def test_blank_spatial_coverage_uses_phase_shifted_actual_quadrants(monkeypatch):
+    """A lattice left of the midline can land right of it after phase matching."""
+    import lsbpipe.photometry.aperture_systematics as systematics
+
+    pixel_wcs = wcs()
+    pixel_wcs.wcs.crpix = [161., 161.]
+    ra, dec = pixel_wcs.all_pix2world(160.75, 160.25, 0)
+    target = geometry(ra=float(ra), dec=float(dec),
+                      a=1.6, q=.8, pa=22.)
+    f = frame(
+        image=np.random.default_rng(340).normal(0., .5, (321, 321)),
+        shape=(321, 321), w=pixel_wcs)
+    none = np.zeros(f.shape, bool)
+    # Predeclared, separated positions in both native y halves. Integer
+    # x=160 is LEFT of x=160.5 but x=160+0.75 is RIGHT of the boundary.
+    candidates = []
+    for index in range(15):
+        x, y = (160 if index % 2 == 0 else 185), 16 + 20*index
+        quadrant = int(x >= 321/2.) + 2*int(y >= 321/2.)
+        candidates.append((quadrant, x, y))
+    def fixed_lattice(shape, margin, step, *, seed=20261112):
+        assert shape == f.shape
+        counts = [sum(q == k for q, _, _ in candidates) for k in range(4)]
+        return counts, iter(candidates)
+    monkeypatch.setattr(
+        systematics, "_bounded_quadrant_blank_candidates", fixed_lattice)
+    out = estimate_blank_annulus_covariance(
+        f, target, (.5, 1., 1.6),
+        effective_source_mask=none, manual_exclude=none)
+    assert out["n_accepted"] >= out["n_required"]
+    nominal = out["accepted_lattice_nodes_by_quadrant"]
+    actual = out["accepted_centres_by_quadrant"]
+    assert all(n > 0 for n in nominal)
+    assert actual[0] == actual[2] == 0
+    assert actual[1] > 0 and actual[3] > 0
+    assert sum(actual) == sum(nominal) == out["n_accepted"]
+    assert out["n_quadrants_with_accepted_blanks"] == 2
+    assert "BLANK_APERTURE_SPATIAL_QUADRANT_COVERAGE_LIMITED" in out["warnings"]
+    assert out["accepted_centres_are_actual_phase_shifted_native_positions"]
+    assert actual == out["quadrant_mean_flux_scatter_decomposition"][
+        "counts_by_native_quadrant"]
+    assert out["covariance_calibrated_for_science"] is False
+    json.dumps(out, allow_nan=False)
+
+
+def test_fully_source_masked_radial_counterfactual_remains_directly_observable():
+    """Source-only relaxation can measure a region even with a null baseline."""
+    f = frame(value=1.5)
+    source = np.ones(f.shape, bool)
+    manual = np.zeros(f.shape, bool)
+    sky = ApertureSkyScenario(
+        method="constant", b0_nMgy_per_pixel=.3,
+        evidence_id="M30_FIXED_CONDITIONAL_SKY")
+    radii = (1., 2.5, 4.)
+    curve = _curve(f, source, manual, radii=radii, sky=sky)
+    out = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=manual,
+        curves=[curve], sky=sky)
+    radial = out["radial_catalogue_mask_counterfactual"]
+    assert out["reference_valid_flux_nMgy"] is None
+    assert out["catalogue_mask_counterfactual"]["conditional_delta_nMgy"] is None
+    assert not radial["outer_native_reintegration_verified"]
+    assert radial["relaxed_flux_may_be_observable_with_null_baseline"]
+    for i, radius in enumerate(radii):
+        row = radial["cumulative"][i]
+        expected = measure_native_aperture(
+            f, geometry(a=radius, q=1., pa=0.), provenance(),
+            effective_source_mask=np.zeros(f.shape, bool),
+            manual_exclude=manual, sky=sky)
+        assert row["baseline_underconstrained"]
+        assert row["relaxed_flux_measured_only_after_unmasking_source"]
+        assert row["conditional_flux_with_source_mask_removed_nMgy"] == (
+            pytest.approx(expected.signed_valid_flux_nMgy, abs=1e-8))
+        assert row["signed_flux_newly_available_nMgy"] == pytest.approx(
+            expected.signed_valid_flux_nMgy, abs=1e-8)
+    assert not out["covariance_calibrated_for_science"]
+    assert not out["adopted_for_science"]
+
+    # Relaxing the *source* mask never restores a hard/manual exclusion.
+    no_manual_flux = np.ones(f.shape, bool)
+    blocked = _curve(f, source, no_manual_flux, radii=radii, sky=sky)
+    still_absent = diagnose_aperture_systematics(
+        f, anchor_icrs=(155.4, 18.), provenance=provenance(),
+        effective_source_mask=source, manual_exclude=no_manual_flux,
+        curves=[blocked], sky=sky)
+    assert all(
+        row["conditional_flux_with_source_mask_removed_nMgy"] is None
+        and row["relaxed_flux_measured_only_after_unmasking_source"] is False
+        for row in still_absent["radial_catalogue_mask_counterfactual"]["cumulative"])
+    json.dumps(still_absent, allow_nan=False)
