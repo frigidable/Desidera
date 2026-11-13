@@ -1,4 +1,4 @@
-# Desidera performance audit — v0.2.1.dev0 (2026-11-13)
+# Desidera performance audit — v0.2.1.dev1 (2026-11-13)
 
 Status: **development candidate in existing Draft PR #84**,
 `feature/scene-wcs-editor-sc1`. No merge, new branch or directory,
@@ -184,3 +184,169 @@ or validated astronomy science release. The same on-disk object-project
 formats, legacy `lsbpipe` API, preserved original FITS and scientific
 SCIENCE HOLD continue. The final change status is determined only by
 exact HEAD GitHub Actions and dedicated observational benchmarks.
+
+
+## Continued performance audit — v0.2.1.dev1, P35–P38 (2026-11-13)
+
+This iteration **continues** the pre-existing source audit rather than
+assuming that earlier benchmark runs represent the full scientific
+pipeline. Four additional exact-operator improvements were made in
+the same Draft PR #84. None changes source-mask policy, sky-model
+acceptance, fitted noise covariance, PSF scientific validation,
+original FITS, scene-draft lineage, or the science HOLD.
+
+### P35 — repeated 2×2 native WCS SVD per Tractor row — FIXED
+
+`photometry/scene_contaminants.conservative_catalogue_mask` derives
+a native-space outer bounding radius from the smallest singular value
+of one local tangent-plane WCS Jacobian:
+
+`r_bbox_pix = source_major_axis_arcsec / sigma_min(J_WCS)`.
+
+The Jacobian was computed once, yet its `np.linalg.svd(...)` was
+unnecessarily repeated inside the per-Tractor-source loop. For
+`N` valid catalogue candidates this caused up to `N` identical
+decompositions. The SVD now runs **once for the entire fixed-WCS
+mask build**, ahead of candidate iteration; per-source angular radii,
+TAN shape orientation, pixel footprints and protection-overlap
+decisions remain unchanged.
+
+A synthetic test instruments SVD calls for 72 sources under
+anisotropic/sheared WCS, asserts **one decomposition**, and preserves
+the existing no-WCS legacy fallback. The scientific limitation is
+unchanged: a single local Jacobian is only a TAN-local affine
+approximation, not a measured extended PSF or true celestial
+isophotal fit.
+
+### P36 — double factorization inside each sky IRLS step — FIXED
+
+`background._weighted_lstsq` called
+`np.linalg.svd(weighted_design, compute_uv=False)` to determine
+the condition number, then `np.linalg.lstsq(weighted_design, weighted_y)`
+to solve the **same weighted design**. The latter already returns
+the singular-value spectrum and matrix rank, so performing an
+additional decomposition repeats O(n_samples × p²) work at each
+robust Huber/IRLS iteration.
+
+The implementation now obtains coefficients, rank and singular values
+from the same `lstsq` call. The original
+`condition > max_design_condition`, nonfinite-parameter and rank
+guards remain. Regressions assert coefficients and condition numbers
+against the independent SVD reference; they deliberately disable
+Python-level `np.linalg.svd` in the tested function and exercise
+a collinear and an explicit condition-threshold failure.
+
+This does **not** reduce sky training samples or relax rejection
+of ill-conditioned tilted planes; it only avoids a duplicate
+decomposition. The impact on total Stage03 wall-time has not yet
+been directly profiled on a real coadd.
+
+### P37 — redundant full-frame sky-injection coordinate arrays — FIXED
+
+`background._audit_current_project_sky_injection_recovery`
+formerly created two full `float64` coordinate grids
+`yy, xx = np.indices(shape)`, one circular-radius grid and,
+for each of the **three predeclared** exponential-profile scale
+lengths, recalculated the same elliptical-radius grid:
+
+`r_ell = hypot(x-x_anchor, (y-y_anchor)/0.65)`.
+
+The method now uses 1-D native x/y offset arrays with NumPy
+broadcasting, creates the circular selection grid once, and reuses
+a single elliptical-radius grid for all three fixed scale lengths.
+The selection remains on original valid, unmasked native pixels and
+each injected image remains a separate `float64` copy; no model
+selection is changed.
+
+At 2048×2048 pixels, the **two removed persistent coordinate
+arrays alone** would occupy 64 MiB of `float64` storage
+(2×2048²×8 bytes), before any other arrays or temporary
+broadcast operations. This is a calculation from array shapes,
+**not** an empirically observed reduction in process peak RSS.
+
+An independent test reconstructs the earlier full-density
+`np.indices`/ellipse expression and checks the exact integrated
+synthetic flux over the complete native grid and surviving aperture
+for three profile scales. The extended benchmark measures both
+methods on the same synthetic grid without setting absolute timing
+requirements.
+
+### P38 — Stage04.3 blank-scale probes copied the same masks repeatedly — FIXED
+
+`aperture_systematics._scene_masks` defensively copied full-frame
+source and manual exclusion masks at **every** call to
+`estimate_blank_annulus_covariance`, even when invoked by
+`diagnose_aperture_systematics` on an already-snapshotted input.
+The fallback attempt at smaller annular scales could thus allocate
+another pair of full-grid Booleans for each predeclared scale.
+
+`_scene_masks` now snapshots into the existing immutable,
+`bytes`-rooted Boolean representation from Stage04.2.
+`_snapshot_native_boolean_mask` reuses that buffer only after
+walking the complete NumPy `base` chain and confirming that
+the ultimate immutable root really is read-only `bytes`.
+A NumPy view with `writeable=False` but ultimately mutable
+parent still undergoes a defensive copy.
+
+Regressions check object identity over eight nested probes,
+mutation-isolation from a GUI-owned writable array, failure of
+`setflags(write=True)` on byte-owned masks, and **bitwise-identical**
+blank covariance/QA for mutable versus pre-frozen source masks.
+This is a local memory optimization, not a workaround for source
+identity and mask provenance gates.
+
+### Updated synthetic kernel benchmark
+
+The existing command remains:
+
+```powershell
+python scripts/benchmark_desidera_performance.py --size 512 --repeats 3
+```
+
+The benchmark now reports four independent comparisons, adding
+`sky_frozen_injection_dense_xy_vs_broadcast_reusable_distance`.
+The added comparison verifies integrated synthetic flux independently
+before reporting two wall times, the formula-based byte count for
+the omitted dense coordinate grids, and the number of elliptical
+distance-map recomputations avoided.
+
+**No end-to-end observational timing was executed here.** Neither
+an apparent synthetic speedup nor a green CI establishes faster
+real-world photometry under high catalogue density, PSF iterations,
+FITS I/O, GUI event processing or large image cutouts.
+
+### Remaining performance roadmap after P38
+
+1. **Measure real process RSS and cold/warm FITS time:** isolate file
+   decompression, SHA-256, FITS decoding, immutable frame
+   construction, Qt RGB images, Stage01 empirical PSF, Stage02
+   masks, Stage03 variants and Stage04 radial+blank diagnostics.
+   Record Python, Astropy, Photutils, NumPy and OS versions.
+2. **Repeated Stage04 WCS transformations:** `frame.wcs` returns a
+   defensive deep copy, as required for immutability. Most radial
+   measurements repeat 16-boundary-point affine-accuracy checks.
+   A bounded cache is a potential future improvement, but must be
+   keyed by genuine immutable source WCS/geometry/version evidence
+   and NEVER skip a changed-radius affine-error limit.
+3. **Whole-image distance-transform reuse:** Stage03 repeats target
+   and source guard constructions for six predeclared grid/guard
+   sensitivity trials. A protected, immutable distance-field cache
+   could reduce these passes, but the masks and guards differ across
+   trials and stale-cache risk is scientifically significant.
+4. **Dense Tractor footprint rasterization:** repeatedly allocating
+   large source patches can dominate time for crowded fields.
+   Candidate batching or footprint reuse must retain exact
+   target-overlap, SGA/Gaia protection policies and source identity.
+5. **GUI responsiveness:** Scene Editor source registry rebuilds a
+   QListWidget for every filter/search change; display image
+   stretches can also hold up the main Qt thread. Consider a
+   debounced, bounded list model and cached display-only renditions,
+   but test selection stability and stale-generation protections.
+6. **Whole pipeline vs kernels:** independently establish p50/p95
+   user-visible latencies, stage throughput and failure rates over
+   a fixed real-data corpus; no observational performance SLA is
+   currently justified.
+
+**Development status: v0.2.1.dev1 candidate, Draft PR #84.**
+No new branches/directories. Keep the original FITS and `main`
+unaltered, preserve all science safeguards and SCIENCE HOLD.
