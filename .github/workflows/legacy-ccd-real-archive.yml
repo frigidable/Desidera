@@ -24,9 +24,15 @@ jobs:
         run: python -m pip install -e ".[astro,test]"
       - name: Validate acceptance runner without network
         run: python -m pytest -q tests/test_real_legacy_ccd_acceptance.py
+      # PR changes are covered by deterministic OFFLINE acceptance tests.
+      # Real network downloads, their external availability/cost and
+      # potentially large original FITS evidence require a researcher-
+      # initiated workflow_dispatch, never an automatic PR CI event.
       - name: Fetch official DR9 DR11 original FITS and audit
+        if: github.event_name == 'workflow_dispatch'
         run: python scripts/accept_legacy_ccd_archives.py --report-dir real-ccd-evidence
       - name: Print verified source hashes and cross-release overlap
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python - <<'PY'
           import json
@@ -44,7 +50,7 @@ jobs:
                 "DR11_ONLY:",c.get("dr11_only_count"))
           PY
       - name: Preserve actual evidence even when audit fails
-        if: always()
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: desidera-p06c-archive-${{ github.run_id }}
