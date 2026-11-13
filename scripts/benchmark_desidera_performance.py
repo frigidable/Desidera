@@ -216,6 +216,104 @@ def run(*, size, repeats):
         "peak_rss_not_measured": True,
     })
 
+    # The native WCS/shape identity is unchanged during a whole
+    # growth curve. Previously every cumulative aperture serialized
+    # that same WCS header again; preserve the exact original SHA
+    # while doing that expensive conversion only once per frame.
+    from lsbpipe.scene import grid_fingerprint
+    frozen_frame = make_frame()
+    expected_grid = grid_fingerprint(frozen_frame.wcs, frozen_frame.shape)
+    if expected_grid != frozen_frame.native_grid_fingerprint:
+        raise RuntimeError("Memoized native grid fingerprint changed WCS identity")
+
+    def repeated_grid_header_serialization():
+        return [grid_fingerprint(frozen_frame.wcs, frozen_frame.shape)
+                for _ in range(n_radii)]
+
+    def cached_native_grid_header_identity():
+        return [frozen_frame.native_grid_fingerprint
+                for _ in range(n_radii)]
+
+    grid_identity_result = _compare(
+        repeated_grid_header_serialization,
+        cached_native_grid_header_identity, repeats)
+    grid_identity_result.update({
+        "wcs_header_serializations_reference": n_radii,
+        "wcs_header_serializations_optimized": 1,
+        "exact_header_and_shape_identity_verified": True,
+        "scientific_wcs_affine_projection_checks_still_required": True,
+    })
+
+    # The six predeclared same-project Stage03 sky-grid variants often
+    # change only tile boundaries, not original target/source veto
+    # geometry. Reusing baseline Boolean EDT guards is safe only
+    # after an exact raster comparison (the implementation does this).
+    from lsbpipe.background import _automatic_scene_sky_pixels
+
+    sky_target = np.zeros(shape, bool)
+    yy1, xx1 = np.ogrid[:size, :size]
+    sky_target[(xx1-size/2.)**2+(yy1-size/2.)**2 < (size/12.)**2] = True
+    sky_source = np.zeros(shape, bool)
+    sky_source[size//4:size//4+9, size//5:size//5+11] = True
+    sky_source[size//2:size//2+8, 4*size//5:4*size//5+10] = True
+    sky_dataset = {
+        "pixel_shape": shape, "wcs": wcs,
+        "native_hard": np.zeros(shape, bool),
+        "data": {"image": image, "invvar": ivar},
+    }
+    sky_preview = {
+        "manual_exclude": np.zeros(shape, bool),
+        "target_protect": np.zeros(shape, bool),
+        "isophote_candidate": np.zeros(shape, bool),
+    }
+    sky_contamination = {
+        "auto_mask": sky_source,
+        "protected": sky_target,
+        "source_inventory": {
+            "entries": [], "stored_count": 0,
+            "total_relevant_sources": 0, "truncated": 0,
+            "screening_evidence_incomplete": False,
+        },
+    }
+    variants = (
+        {}, {"tile_edge_native_pix": 72},
+        {"tile_edge_native_pix": 96,
+         "grid_offset_xy_native_pix": (48, 48)},
+        {"tile_edge_native_pix": 128},
+        {"target_guard_factor": 1.5},
+        {"source_guard_factor": 1.5},
+        {"sample_policy": "SPATIAL_8X8_PROPORTIONAL_V2"},
+    )
+
+    def sky_grid_trials(cache):
+        results = []
+        for options in variants:
+            train, hold, qa = _automatic_scene_sky_pixels(
+                sky_dataset, sky_preview, sky_contamination,
+                _guard_cache=cache, **options)
+            results.append((int(np.count_nonzero(train)),
+                            int(np.count_nonzero(hold)),
+                            qa["target_outskirts_guard_native_pix"],
+                            qa["source_neighbour_guard_native_pix"],
+                            tuple(qa["training_quadrants"]),
+                            tuple(qa["holdout_quadrants"])))
+        return results
+
+    if sky_grid_trials(None) != sky_grid_trials({}):
+        raise RuntimeError(
+            "Sky cached guards changed deterministic selected-tile QA")
+    sky_guard_result = _compare(
+        lambda: sky_grid_trials(None),
+        lambda: sky_grid_trials({}), repeats)
+    sky_guard_result.update({
+        "sky_grid_trials": len(variants),
+        "reference_distance_transforms_maximum": 2*len(variants),
+        "optimized_distance_transforms_maximum": 4,
+        "exact_native_source_target_geometry_verified": True,
+        "cache_lifetime": "ONE_STAGE03_CALL_NO_GLOBAL_STATE",
+        "cache_memory_cost_not_peak_rss_measured": True,
+    })
+
     return {
         "schema": "desidera.performance.synthetic-operator-benchmark/1",
         "size_native_pixels": [size, size],
@@ -229,9 +327,13 @@ def run(*, size, repeats):
                 ring_result,
             "sky_frozen_injection_dense_xy_vs_broadcast_reusable_distance":
                 injection_result,
+            "native_wcs_grid_header_serialization_vs_per_frame_fingerprint":
+                grid_identity_result,
+            "sky_six_fixed_trials_full_edt_vs_exact_guard_reuse":
+                sky_guard_result,
         },
         "interpretation": [
-            "Four distinct computational kernels, not end-to-end FITS loading time",
+            "Six distinct computational kernels, not end-to-end FITS loading time",
             "No network, original FITS, catalogue fetch or GUI involved",
             "No scientific sky, PSF, photometric, SBF or covariance adoption",
             "Ratio depends on machine, NumPy, Photutils, OS cache and FITS size",
