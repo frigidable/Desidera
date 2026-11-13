@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -57,6 +58,24 @@ def _read_json(path: Path) -> dict:
     return item
 
 
+def _read_manifest_with_sha(path: Path) -> tuple[dict, str]:
+    """Read an object passport and authenticate the exact parsed JSON bytes.
+
+    This is a concurrency revision token, not an original-FITS checksum
+    or scientific acceptance receipt. Never follow an external symlink.
+    """
+    if path.is_symlink():
+        raise ValueError("Unsafe symlinked object project manifest")
+    try:
+        payload = path.read_bytes()
+        record = json.loads(payload.decode("utf-8"))
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise ValueError(f"Cannot read project metadata at {path}: {exc}") from exc
+    if not isinstance(record, dict):
+        raise ValueError(f"Project metadata must be a JSON object: {path}")
+    return record, hashlib.sha256(payload).hexdigest()
+
+
 def _field_from_payload(data: object) -> SkyField | None:
     if data is None:
         return None
@@ -101,6 +120,12 @@ class ObjectProject:
     target_radius_arcsec: float = 60.
     sky_inner_arcsec: float = 90.
     sky_outer_arcsec: float = 180.
+    # Private JSON revision from an actually read/published passport.
+    # These fields are NEVER serialized to the on-disk science schema.
+    manifest_sha256: str | None = dc_field(
+        default=None, repr=False, compare=False)
+    manifest_observed: bool = dc_field(
+        default=False, repr=False, compare=False)
 
     @property
     def status(self) -> str:
@@ -141,62 +166,79 @@ def project_path(root: str | Path) -> Path:
 
 
 def save_object_project(project: ObjectProject) -> Path:
-    """Persist only the new companion metadata; legacy 0.1 stays untouched."""
+    """Publish only a revision-observed object passport, never stale data.
+
+    A passport owns target coordinates, aliases, dataset selection and QA
+    references. The stable OS lock guards read/check/atomic-replace, while
+    the private full-file SHA catches a stale independent GUI instance.
+    """
     _validate(project)
     project.root = project.root.expanduser().resolve()
     if not project.root.is_dir():
         raise FileNotFoundError(f"Project directory missing: {project.root}")
     path = project_path(project.root)
-    # os.replace() would replace the link itself, but first reading its
-    # target can import untrusted project metadata from outside this
-    # project. Match the stricter dataset/resume sidecar policies.
-    if path.is_symlink():
-        raise ValueError("Unsafe symlinked object project manifest")
-    if path.exists():
-        current = _read_json(path)
-        if current.get("schema") != SCHEMA or _project_id(
-                current.get("project_id")) != project.project_id:
-            raise ValueError("Refusing to overwrite a different project identity")
-    root = project.root
-    # Store data_root relative only if within project root. External paths
-    # remain absolute and must be relinked if moved.
-    data_root = project.data_root.resolve() if project.data_root else None
-    if data_root is None:
-        data_link = None
-    elif data_root.is_relative_to(root):
-        data_link = {"relative": data_root.relative_to(root).as_posix()}
-    else:
-        data_link = {"absolute": str(data_root)}
-    _atomic_json(path, {
-        "schema": SCHEMA,
-        "project_id": project.project_id,
-        "display_name": project.display_name,
-        "aliases": list(project.aliases),
-        "field": _field_dict(project.field),
-        "target_source": project.target_source,
-        "selected_dataset": (
-            list(project.selected_dataset) if project.selected_dataset else None),
-        "data_root": data_link,
-        "created_at": project.created_at,
-        "last_opened_at": project.last_opened_at,
-        "last_science": project.last_science,
-        "catalog_match": project.catalog_match,
-        "last_dataset_audit": project.last_dataset_audit,
-        "target_radius_arcsec": project.target_radius_arcsec,
-        "sky_inner_arcsec": project.sky_inner_arcsec,
-        "sky_outer_arcsec": project.sky_outer_arcsec,
-        "status": project.status,
-        "science_status": "DIAGNOSTIC_NOT_ADOPTED",
-    })
+    with exclusive_metadata_lock(path.with_name(path.name + ".lock")):
+        if path.is_symlink():
+            raise ValueError("Unsafe symlinked object project manifest")
+        if path.exists():
+            current, current_sha = _read_manifest_with_sha(path)
+            if (current.get("schema") != SCHEMA or
+                    _project_id(current.get("project_id")) != project.project_id):
+                raise ValueError(
+                    "Refusing to overwrite a different project identity")
+        else:
+            current_sha = None
+        if not project.manifest_observed:
+            if current_sha is not None:
+                raise RuntimeError(
+                    "Object project passport was never opened at this revision; "
+                    "reopen the galaxy project before saving")
+        elif current_sha != project.manifest_sha256:
+            raise RuntimeError(
+                "Object project passport changed in another process; "
+                "reopen the galaxy project before saving")
+        root = project.root
+        # Store data_root relative only if within project root. External paths
+        # remain absolute and must be relinked if moved.
+        data_root = project.data_root.resolve() if project.data_root else None
+        if data_root is None:
+            data_link = None
+        elif data_root.is_relative_to(root):
+            data_link = {"relative": data_root.relative_to(root).as_posix()}
+        else:
+            data_link = {"absolute": str(data_root)}
+        _atomic_json(path, {
+            "schema": SCHEMA,
+            "project_id": project.project_id,
+            "display_name": project.display_name,
+            "aliases": list(project.aliases),
+            "field": _field_dict(project.field),
+            "target_source": project.target_source,
+            "selected_dataset": (
+                list(project.selected_dataset)
+                if project.selected_dataset else None),
+            "data_root": data_link,
+            "created_at": project.created_at,
+            "last_opened_at": project.last_opened_at,
+            "last_science": project.last_science,
+            "catalog_match": project.catalog_match,
+            "last_dataset_audit": project.last_dataset_audit,
+            "target_radius_arcsec": project.target_radius_arcsec,
+            "sky_inner_arcsec": project.sky_inner_arcsec,
+            "sky_outer_arcsec": project.sky_outer_arcsec,
+            "status": project.status,
+            "science_status": "DIAGNOSTIC_NOT_ADOPTED",
+        })
+        project.manifest_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        project.manifest_observed = True
     return path
-
 
 def read_object_project(root: str | Path) -> ObjectProject:
     folder = Path(root).expanduser().resolve()
     path = project_path(folder)
     if path.is_symlink():
         raise ValueError("Unsafe symlinked object project manifest")
-    info = _read_json(path)
+    info, manifest_sha256 = _read_manifest_with_sha(path)
     if info.get("schema") != SCHEMA:
         raise ValueError(f"Unsupported project schema in {path}")
     link = info.get("data_root")
@@ -246,7 +288,8 @@ def read_object_project(root: str | Path) -> ObjectProject:
         last_dataset_audit=info.get("last_dataset_audit") or {},
         target_radius_arcsec=float(info.get("target_radius_arcsec", 60.)),
         sky_inner_arcsec=float(info.get("sky_inner_arcsec", 90.)),
-        sky_outer_arcsec=float(info.get("sky_outer_arcsec", 180.)))
+        sky_outer_arcsec=float(info.get("sky_outer_arcsec", 180.)),
+        manifest_sha256=manifest_sha256, manifest_observed=True)
     _validate(project)
     return project
 

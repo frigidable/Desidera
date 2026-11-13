@@ -491,3 +491,51 @@ semantics; third-party writers that ignore it are not
 excluded, although changed file bytes are normally detected
 before a cooperative save. No original native FITS are
 rewritten, and `SCIENCE HOLD` remains.
+
+
+## 9. Galaxy object-passport stale-state protection — 2026-11-14 follow-up
+
+**Affected source:** `surveys/object_projects.py` writes the authoritative
+object-centric `lsbpipe-object.json`, which contains the immutable
+galaxy project UUID, display name, target field, dataset selection,
+aliases, confirmed/unconfirmed catalogue associations, latest QA
+references and screening radii. PR #85 fixed the *user-local
+project-library index*, but it did not serialize or version this
+distinct per-galaxy passport. The previously atomic, same-directory
+`os.replace` could still silently publish stale in-memory fields
+from a second GUI instance with the **same valid UUID**.
+
+**Focused correction:** `fix/object-passport-stale-writes` adds
+private, nonserialized `ObjectProject.manifest_sha256` and
+`manifest_observed` revision fields. The read path computes SHA-256
+of the **same file bytes** from which the passport was decoded.
+Before any save, the writer acquires a stable per-galaxy
+`lsbpipe-object.json.lock`, rechecks the on-disk schema, UUID and
+exact observed byte hash, then atomically publishes the new record.
+It updates its own revision token on success, allowing repeated saves
+from the same GUI instance. A stale second writer or a caller that
+constructed a record without ever observing the existing passport
+must explicitly **reopen** rather than overwrite the first writer.
+
+**Regression requirements:** independent Python processes open the
+same passport before either writes, and only the first committed
+writer's target/project fields survive. A second test checks that
+stale catalogue metadata cannot erase changed selected datasets or
+QA pointers. A negative test refuses a reconstructed record that
+knows the correct UUID but lacks an authenticated manifest revision.
+No original FITS pixels, project schema keys, absolute/relative FITS
+links or scientific QA acceptance flags are modified.
+
+**Limits and follow-up:** read revision tokens are optimistic
+concurrency checks against cooperative local writers, not
+cryptographic guarantees of a trusted machine, transactional
+multi-file snapshots or independent astronomy validation. GUI
+resume pointers still intentionally use last-writer-wins semantics
+for active-tab selection and need no lost-update transaction
+unless their role changes. The highest-priority remaining
+cross-file issue is crash recovery when *several* different
+metadata stores must be published together (passport, dataset
+index, journal and GUI resume). A future design should specify a
+recoverable operation protocol with a single unambiguous owner
+for each source-of-truth field instead of adding hidden locks
+around the entire application. `SCIENCE HOLD` persists.

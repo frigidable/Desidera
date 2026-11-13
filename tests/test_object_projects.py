@@ -1,6 +1,10 @@
 """Project Hub core contract: portable identity, migration, offline and safety."""
 from pathlib import Path
 import json
+import os
+import subprocess
+import sys
+import time
 
 import pytest
 
@@ -483,3 +487,120 @@ def test_registry_registration_uses_single_consistent_index_snapshot(
     module.register_object_project(project)
     assert len(reads) == 1
     assert recent_projects()[0]["project_id"] == project.project_id
+
+
+
+def test_stale_object_passport_cannot_overwrite_updated_target_or_qa(
+        tmp_path):
+    """Separate live GUI snapshots must not silently lose science pointers."""
+    project = create_object_project(
+        "Dwarf", tmp_path / "Dwarf", field=FIELD)
+    observed_a = read_object_project(project.root)
+    observed_b = read_object_project(project.root)
+    assert observed_a.manifest_sha256 == observed_b.manifest_sha256
+    assert observed_a.manifest_observed and observed_b.manifest_observed
+
+    source_original = project.root / "coadd-original-image.fits.fz"
+    source_original.write_bytes(b"keep original pixel stream")
+    observed_a.selected_dataset = ("dr11", "south", "0401p012", "r")
+    observed_a.last_science = {
+        "action": "photometry", "path": "qa-runs/first.json",
+        "scientific_status": "DIAGNOSTIC_NOT_ADOPTED"}
+    observed_a.target_radius_arcsec = 45.
+    observed_a.sky_inner_arcsec = 95.
+    observed_a.sky_outer_arcsec = 180.
+    manifest = save_object_project(observed_a)
+    original_revision = manifest.read_bytes()
+    observed_b.catalog_match = {"provider": "SIMBAD", "confirmed": False}
+    with pytest.raises(RuntimeError, match="changed in another process"):
+        save_object_project(observed_b)
+    assert manifest.read_bytes() == original_revision
+    assert source_original.read_bytes() == b"keep original pixel stream"
+
+    observed_a.display_name = "Dwarf updated"
+    save_object_project(observed_a)
+    latest = read_object_project(project.root)
+    assert latest.last_science == observed_a.last_science
+    assert latest.selected_dataset == observed_a.selected_dataset
+    assert latest.display_name == "Dwarf updated"
+    assert latest.manifest_sha256 == observed_a.manifest_sha256
+    assert latest.catalog_match is None
+    assert json.loads(manifest.read_text())["science_status"] == (
+        "DIAGNOSTIC_NOT_ADOPTED")
+
+
+def test_two_process_object_passport_stale_save_conflict(
+        tmp_path, monkeypatch):
+    """Actual OS processes open the same passport before either can write."""
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = create_object_project("Galaxy", tmp_path / "Galaxy", field=FIELD)
+    root = project.root
+    first_ready = tmp_path / "first-ready"
+    second_ready = tmp_path / "second-ready"
+    first_go = tmp_path / "first-go"
+    second_go = tmp_path / "second-go"
+    code = (
+        "import pathlib,sys,time\n"
+        "from lsbpipe.surveys.object_projects import read_object_project,save_object_project\n"
+        "root,ready,go=map(pathlib.Path,sys.argv[1:4])\n"
+        "label=sys.argv[4]\n"
+        "p=read_object_project(root)\n"
+        "ready.write_text('OPENED')\n"
+        "while not go.is_file(): time.sleep(.02)\n"
+        "p.display_name=label\n"
+        "try:\n"
+        "    save_object_project(p)\n"
+        "except RuntimeError as exc:\n"
+        "    assert 'changed in another process' in str(exc),str(exc)\n"
+        "    print('CONFLICT',flush=True)\n"
+        "else:\n"
+        "    print('SAVED',flush=True)\n"
+    )
+    def start(ready, go, label):
+        return subprocess.Popen(
+            [sys.executable, "-u", "-c", code,
+             str(root), str(ready), str(go), label],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=dict(os.environ))
+    a = start(first_ready, first_go, "First writer")
+    b = start(second_ready, second_go, "Second writer")
+    try:
+        deadline = time.monotonic() + 18.
+        while not (first_ready.is_file() and second_ready.is_file()):
+            if a.poll() is not None or b.poll() is not None:
+                pytest.fail("Object-project worker exited before opening")
+            if time.monotonic() >= deadline:
+                pytest.fail("Timed out opening two object-passport workers")
+            time.sleep(.02)
+        first_go.write_text("GO", encoding="utf-8")
+        result_a, error_a = a.communicate(timeout=15)
+        assert a.returncode == 0 and result_a.strip() == "SAVED", (
+            result_a, error_a)
+        second_go.write_text("GO", encoding="utf-8")
+        result_b, error_b = b.communicate(timeout=15)
+        assert b.returncode == 0 and result_b.strip() == "CONFLICT", (
+            result_b, error_b)
+        assert read_object_project(root).display_name == "First writer"
+        assert (root / "lsbpipe-object.json.lock").is_file()
+        assert read_object_project(root).project_id == project.project_id
+    finally:
+        for worker in (a, b):
+            if worker.poll() is None:
+                worker.kill()
+                worker.communicate(timeout=10)
+
+
+def test_never_observed_object_passport_cannot_replace_existing_identity(
+        tmp_path):
+    """Directly constructed project objects cannot guess a live revision."""
+    from lsbpipe.surveys.object_projects import ObjectProject
+    existing = create_object_project("Original", tmp_path / "original")
+    record = existing.root / PROJECT_FILENAME
+    prior = record.read_bytes()
+    forged = ObjectProject(
+        project_id=existing.project_id, display_name="Spoofed",
+        root=existing.root, field=FIELD)
+    assert not forged.manifest_observed
+    with pytest.raises(RuntimeError, match="never opened"):
+        save_object_project(forged)
+    assert record.read_bytes() == prior
