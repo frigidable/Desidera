@@ -14,8 +14,7 @@ on:
       - "pyproject.toml"
       - "README.md"
       - "AGENTS.md"
-      - "docs/architecture/**"
-      - "docs/ux/**"
+      - "docs/**"
       - ".github/workflows/**"
 
 permissions:
