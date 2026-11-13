@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import time
 
 import pytest
 
 from lsbpipe.surveys.legacy import SkyField, BrickHit, product_for
 from lsbpipe.surveys.local_project import (
     PROJECT_FILE, last_project_directory, open_local_project,
-    save_local_project, session_pointer_path)
+    save_local_project, session_pointer_path,
+    remember_project_directory)
 
 
 FIELD = SkyField(40.096208, 1.229250, 5.)
@@ -148,3 +153,146 @@ def test_import_older_qa_record_by_exact_context_not_arbitrary_latest(tmp_path):
     receipt["context"]["ra_deg"] = 31.
     (qa / "manifest.json").write_text(json.dumps(receipt))
     assert open_local_project(root).last_science == {}
+
+
+
+def test_stale_local_project_session_rejects_overwrite_and_can_reopen(
+        tmp_path, monkeypatch):
+    """An immutable FITS dataset cannot justify a stale UI metadata write."""
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "settings"))
+    root = tmp_path / "UGC_2162"
+    data = make_data(root, both_regions=False)
+    originals = {p: p.read_bytes() for p in data.rglob("*.fits.fz")}
+    writer_a = open_local_project(root)
+    writer_b = open_local_project(root)
+    assert writer_a.metadata_observed and writer_b.metadata_observed
+    assert writer_a.metadata_sha256 is None
+    assert writer_b.metadata_sha256 is None
+
+    writer_a.target_radius_arcsec = 42.
+    writer_a.sky_inner_arcsec = 88.
+    writer_a.sky_outer_arcsec = 150.
+    path = save_local_project(writer_a)
+    original_generation = path.read_bytes()
+    assert writer_a.metadata_sha256 is not None
+    writer_b.target_radius_arcsec = 27.
+    with pytest.raises(RuntimeError, match="changed in another process"):
+        save_local_project(writer_b)
+    assert path.read_bytes() == original_generation
+
+    # The successful writer may continue saving its own observed revision.
+    writer_a.sky_outer_arcsec = 175.
+    save_local_project(writer_a)
+    latest = open_local_project(root)
+    assert latest.target_radius_arcsec == 42.
+    assert latest.sky_inner_arcsec == 88.
+    assert latest.sky_outer_arcsec == 175.
+    assert latest.metadata_sha256 == writer_a.metadata_sha256
+    for p, original in originals.items():
+        assert p.read_bytes() == original
+
+
+def test_legacy_project_cross_process_stale_save_fails_closed(
+        tmp_path, monkeypatch):
+    """Actual independent Python processes reopen after a conflicting save."""
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "settings"))
+    root = tmp_path / "galaxy"
+    make_data(root, both_regions=False)
+    first_ready = tmp_path / "first-ready"
+    second_ready = tmp_path / "second-ready"
+    first_go = tmp_path / "first-go"
+    second_go = tmp_path / "second-go"
+    worker = (
+        "import pathlib, sys, time\n"
+        "from lsbpipe.surveys.local_project import open_local_project,save_local_project\n"
+        "root,ready,go=map(pathlib.Path,sys.argv[1:4])\n"
+        "value=float(sys.argv[4])\n"
+        "project=open_local_project(root)\n"
+        "ready.write_text('OPENED',encoding='utf-8')\n"
+        "while not go.is_file(): time.sleep(.02)\n"
+        "project.sky_outer_arcsec=value\n"
+        "try:\n"
+        "    save_local_project(project)\n"
+        "except RuntimeError as exc:\n"
+        "    assert 'changed in another process' in str(exc),str(exc)\n"
+        "    print('CONFLICT',flush=True)\n"
+        "else:\n"
+        "    print('SAVED',flush=True)\n"
+    )
+    env = dict(os.environ)
+    def spawn(ready, go, value):
+        return subprocess.Popen(
+            [sys.executable, "-u", "-c", worker, str(root), str(ready),
+             str(go), str(value)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=env)
+    first = spawn(first_ready, first_go, 240.)
+    second = spawn(second_ready, second_go, 320.)
+    try:
+        deadline = time.monotonic() + 18.
+        while not first_ready.exists() or not second_ready.exists():
+            if first.poll() is not None or second.poll() is not None:
+                pytest.fail("A subprocess exited before loading its snapshot")
+            if time.monotonic() > deadline:
+                pytest.fail("Timed out opening both local project snapshots")
+            time.sleep(.02)
+        first_go.write_text("GO")
+        out_first, err_first = first.communicate(timeout=15)
+        assert first.returncode == 0 and out_first.strip() == "SAVED", (
+            out_first, err_first)
+        second_go.write_text("GO")
+        out_second, err_second = second.communicate(timeout=15)
+        assert second.returncode == 0 and out_second.strip() == "CONFLICT", (
+            out_second, err_second)
+        assert open_local_project(root).sky_outer_arcsec == 240.
+        assert (root / "lsbpipe-project.json.lock").is_file()
+    finally:
+        for child in (first, second):
+            if child.poll() is None:
+                child.kill()
+                child.communicate(timeout=10)
+
+
+def test_legacy_metadata_symlink_rejected_without_reading_external_file(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "settings"))
+    root = tmp_path / "galaxy"
+    make_data(root, both_regions=False)
+    session = open_local_project(root)
+    path = save_local_project(session)
+    outside = tmp_path / "foreign-legacy-project.json"
+    original = path.read_bytes()
+    outside.write_bytes(original)
+    path.unlink()
+    try:
+        path.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not permit symlinks")
+    with pytest.raises(ValueError, match="Unsafe symlinked local project metadata"):
+        open_local_project(root)
+    with pytest.raises(ValueError, match="Unsafe symlinked local project metadata"):
+        save_local_project(session)
+    assert outside.read_bytes() == original
+    assert path.is_symlink()
+
+
+def test_legacy_session_pointer_does_not_follow_external_symlink(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "settings"))
+    root = tmp_path / "galaxy"
+    root.mkdir()
+    pointer = session_pointer_path()
+    pointer.parent.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "external-last-project.json"
+    outside.write_text(
+        json.dumps({"schema": "lsbpipe.local-project/0.1",
+                    "root": str(root)}), encoding="utf-8")
+    before = outside.read_bytes()
+    try:
+        pointer.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("Filesystem does not permit symlinks")
+    assert last_project_directory() is None
+    with pytest.raises(ValueError, match="Unsafe legacy last-project"):
+        remember_project_directory(root)
+    assert outside.read_bytes() == before
