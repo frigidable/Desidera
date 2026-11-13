@@ -248,26 +248,8 @@ def project_icrs_ellipse_to_native(geometry: ApertureGeometryICRS, wcs):
         local_area_arcsec2_per_native_pixel=area)
 
 
-def _snapshot_native_boolean_mask(name, mask, shape):
-    """Own one full-grid GUI mask snapshot in an immutable bytes buffer."""
-    values = np.asarray(mask)
-    if values.dtype.kind != "b" or values.shape != shape:
-        raise ValueError(name + " requires an explicit same-grid boolean array")
-    # Copy only once, at the boundary of a complete growth operation.
-    # An ordinary read-only NumPy *view* is not an immutable snapshot:
-    # its owning GUI array can be mutated or flags reset.
-    return np.frombuffer(values.tobytes(order="C"), dtype=np.bool_).reshape(shape)
-
-
-def _mask_for(name, mask, shape):
-    values = np.asarray(mask)
-    if values.dtype.kind != "b" or values.shape != shape:
-        raise ValueError(name+" requires an explicit same-grid boolean array")
-    # Stage04.2 takes an immutable BYTES-backed snapshot once. A byte
-    # root cannot be modified through NumPy (including setflags), so
-    # each nested aperture may safely reuse it without 2× full-image
-    # copies per radius. Ordinary writable masks, including read-only
-    # views backed by a writable ndarray, STILL get defensive snapshots.
+def _bytes_rooted_readonly_mask(values):
+    """True only for immutable byte storage, not flag-only read-only views."""
     parent = values
     safe = not values.flags.writeable
     while safe and isinstance(parent, np.ndarray):
@@ -275,9 +257,34 @@ def _mask_for(name, mask, shape):
             safe = False
             break
         parent = parent.base
-    if safe and (isinstance(parent, bytes) or
-                 (isinstance(parent, memoryview) and
-                  parent.readonly and isinstance(parent.obj, bytes))):
+    return bool(safe and (
+        isinstance(parent, bytes) or
+        (isinstance(parent, memoryview) and
+         parent.readonly and isinstance(parent.obj, bytes))))
+
+
+def _snapshot_native_boolean_mask(name, mask, shape):
+    """Snapshot at worker boundaries, reuse verified immutable byte roots.
+
+    Stage04.3 nested blank-scale probes may call this repeatedly. With
+    the same already-snapshotted mask there is no need to allocate
+    another O(image_pixels) native array on each probe.
+    """
+    values = np.asarray(mask)
+    if values.dtype.kind != "b" or values.shape != shape:
+        raise ValueError(name + " requires an explicit same-grid boolean array")
+    if _bytes_rooted_readonly_mask(values):
+        return values
+    return np.frombuffer(values.tobytes(order="C"), dtype=np.bool_).reshape(shape)
+
+
+def _mask_for(name, mask, shape):
+    values = np.asarray(mask)
+    if values.dtype.kind != "b" or values.shape != shape:
+        raise ValueError(name+" requires an explicit same-grid boolean array")
+    # Only a genuinely immutable root authorizes the fast path.
+    # A read-only view with a writable ndarray owner MUST be copied.
+    if _bytes_rooted_readonly_mask(values):
         return values
     return np.array(values, dtype=bool, copy=True)
 
