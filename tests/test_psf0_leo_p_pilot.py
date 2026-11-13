@@ -364,7 +364,8 @@ def test_tractor_psf_training_reserves_gaia_only_holdouts_on_native_synthetic_fi
     for j, (cy, cx) in enumerate(
             (cy, cx) for cy in (35, 78, 122, 166, 209, 248)
             for cx in (35, 78, 122, 166, 209, 248)):
-        gaia = j % 6 == 0
+        # Keep >=5 Gaia reference stars after reserving fixed holdouts.
+        gaia = j % 4 == 0
         positions.append((cx + .12, cy - .29))
         rows.append({
             "ref_cat": "G3" if gaia else "",
