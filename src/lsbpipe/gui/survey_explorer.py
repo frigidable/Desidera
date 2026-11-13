@@ -1384,7 +1384,10 @@ class SurveyExplorer(QMainWindow):
                 if self._local_project.last_science:
                     project.last_science = self._local_project.last_science
             save_object_project(project)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RuntimeError) as exc:
+            # A stale passport revision must be visible to the researcher
+            # rather than bubbling out of a Qt timer or overwriting another
+            # GUI instance's dataset/target/QA state.
             self.project_status.setText(
                 f"Project remains open; saving its context failed: {exc}")
 
@@ -1426,7 +1429,7 @@ class SurveyExplorer(QMainWindow):
             # writer. In object-project mode the old 0.1 file is immutable.
             try:
                 save_local_project(project)
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, RuntimeError) as exc:
                 self.project_status.setText(
                     f"Local files opened, but session could not be saved: {exc}")
         else:
@@ -1617,7 +1620,7 @@ class SurveyExplorer(QMainWindow):
         project.sky_outer_arcsec = self.sky_outer.value()
         try:
             save_local_project(project)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             self.project_status.setText(
                 f"Science files remain available; session save failed: {exc}")
 
@@ -2616,6 +2619,7 @@ class SurveyExplorer(QMainWindow):
                 "summary": "\n".join(lines), "path": str(path),
                 "manifest_path": str(path), "is_figure": False,
             })
+            project_index_warning = None
             if project is not None:
                 from lsbpipe.surveys.object_projects import save_object_project
                 project.last_dataset_audit = {
@@ -2628,14 +2632,20 @@ class SurveyExplorer(QMainWindow):
                 }
                 try:
                     save_object_project(project)
-                except (ValueError, OSError) as exc:
-                    self.project_status.setText(
-                        f"Dataset audit saved but project index update failed: {exc}")
+                except (ValueError, OSError, RuntimeError) as exc:
+                    project_index_warning = (
+                        "Dataset audit receipt saved, but galaxy passport "
+                        f"update failed: {exc}")
             self.message.setText(
                 f"Dataset integrity audit saved: {path}")
-            self.project_status.setText(
-                f"FITS audit: {validated}/{total} quartets validated, "
-                "not scientifically adopted.")
+            if project_index_warning is not None:
+                # Do not overwrite a failed passport update with an
+                # apparently clean audit status in the same callback.
+                self.project_status.setText(project_index_warning)
+            else:
+                self.project_status.setText(
+                    f"FITS audit: {validated}/{total} quartets validated, "
+                    "not scientifically adopted.")
 
         work.operation_name = "dataset_audit"
         self._start(

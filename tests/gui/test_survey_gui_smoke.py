@@ -926,3 +926,117 @@ def test_local_project_selected_products_need_no_download(
                side_effect=AssertionError("should not offer to download")):
         w.download()
     assert "No network download was attempted" in w.message.text()
+
+
+
+def test_stale_galaxy_passport_save_is_reported_without_qt_exception(
+        offline_explorer, tmp_path, monkeypatch):
+    """A changed object passport must produce a visible reopen warning."""
+    from lsbpipe.surveys.object_projects import create_object_project
+    from lsbpipe.surveys.legacy import SkyField
+    import lsbpipe.surveys.object_projects as storage
+
+    original = create_object_project(
+        "Galaxy A", tmp_path / "galaxy",
+        field=SkyField(40.096208, 1.22925, 5.))
+    window = offline_explorer
+    window.attach_object_project(original)
+    window._project_save_timer.stop()
+    saved_before = (original.root / "lsbpipe-object.json").read_bytes()
+
+    def conflict(_):
+        raise RuntimeError(
+            "Object project passport changed in another process; reopen")
+    monkeypatch.setattr(storage, "save_object_project", conflict)
+    window._save_object_project_context()
+    assert "saving its context failed" in window.project_status.text()
+    assert "changed in another process" in window.project_status.text()
+    assert "reopen" in window.project_status.text()
+    assert (original.root / "lsbpipe-object.json").read_bytes() == saved_before
+
+
+def test_legacy_local_project_open_survives_stale_session_save(
+        offline_explorer, tmp_path, monkeypatch):
+    """A legacy on-disk FITS quartet remains accessible if save conflicts."""
+    from lsbpipe.surveys.legacy import BrickHit, product_for
+    import json
+    import lsbpipe.gui.survey_explorer as gui
+
+    root = tmp_path / "legacy"
+    data = root / "data"
+    hit = BrickHit(
+        "dr9", "south", "0401p012", 0, 0, 0, 0, {"r": 1})
+    original_bytes = {}
+    for kind in ("image", "invvar", "nexp", "maskbits"):
+        relative = product_for(
+            hit, kind, None if kind == "maskbits" else "r")
+        path = data / relative.relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"original native FITS placeholder " +
+                         kind.encode("ascii"))
+        original_bytes[path] = path.read_bytes()
+    (data / "download-report.json").write_text(json.dumps({
+        "schema": "lsbpipe.legacy-download-report/0.1",
+        "field": {
+            "ra_deg": 40.096208, "dec_deg": 1.22925,
+            "width_arcmin": 5.},
+        "results": [],
+    }), encoding="utf-8")
+
+    def conflict(_):
+        raise RuntimeError(
+            "Local project session changed in another process; reopen")
+    monkeypatch.setattr(gui, "save_local_project", conflict)
+    window = offline_explorer
+    assert window._open_local_project_folder(root) is True
+    assert window._local_project is not None
+    assert "session could not be saved" in window.project_status.text()
+    assert "changed in another process" in window.project_status.text()
+    assert all(path.read_bytes() == payload
+               for path, payload in original_bytes.items())
+
+
+def test_dataset_audit_passport_conflict_is_not_hidden_by_success_status(
+        offline_explorer, tmp_path, monkeypatch):
+    """The immutable audit receipt and failed passport write are distinct."""
+    from lsbpipe.surveys.legacy import SkyField
+    from lsbpipe.surveys.object_projects import create_object_project
+    import lsbpipe.surveys.object_projects as storage
+
+    project = create_object_project(
+        "Audit target", tmp_path / "target",
+        field=SkyField(40.096208, 1.22925, 5.))
+    window = offline_explorer
+    window.attach_object_project(project)
+    window._project_save_timer.stop()
+    window.science_qa.directory.setText(str(project.root))
+    callbacks = []
+
+    def capture_start(work, finished, **kwargs):
+        callbacks.append(finished)
+    monkeypatch.setattr(window, "_start", capture_start)
+    original = (project.root / "lsbpipe-object.json").read_bytes()
+
+    def conflict(_):
+        raise RuntimeError(
+            "Object project passport changed in another process; reopen")
+    monkeypatch.setattr(storage, "save_object_project", conflict)
+    window._start_dataset_audit()
+    assert len(callbacks) == 1
+    output = project.root / "qa-runs" / "audit.json"
+    output.parent.mkdir(exist_ok=True)
+    output.write_text("{}", encoding="utf-8")
+    report = {
+        "counts": {
+            "validated": 1, "total": 2,
+            "incomplete_or_invalid": 1},
+        "multi_brick_groups": [],
+        "created_utc": "2026-11-14T00:00:00Z",
+    }
+    callbacks[0]((report, output))
+    status = window.project_status.text()
+    assert "passport update failed" in status
+    assert "changed in another process" in status
+    assert "FITS audit: 1/2 quartets" not in status
+    assert "Dataset integrity audit saved" in window.message.text()
+    assert (project.root / "lsbpipe-object.json").read_bytes() == original

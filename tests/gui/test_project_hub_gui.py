@@ -614,3 +614,26 @@ def test_opt_in_startup_resumes_recent_galaxy_at_saved_scene(
     assert h.workspace is None
     assert h.isVisible()
     h.auto_resume.setChecked(False)
+
+
+
+def test_hub_import_shows_passport_revision_conflict_in_warning(
+        hub, tmp_path, monkeypatch):
+    """Import must not allow a storage RuntimeError to escape Qt callback."""
+    from PySide6.QtWidgets import QMessageBox
+    import lsbpipe.gui.project_hub as gui
+
+    messages = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda *args, **kwargs: messages.append(
+            (args[1], args[2])))
+    def conflict(*args, **kwargs):
+        raise RuntimeError(
+            "Object project passport changed in another process; reopen")
+    monkeypatch.setattr(gui, "import_object_project", conflict)
+    assert hub.import_folder(tmp_path / "some-project") is False
+    assert hub.workspace is None
+    assert "changed in another process" in hub.hint.text()
+    assert messages and "Import was not completed" in messages[-1][0]
+    assert "reopen" in messages[-1][1]

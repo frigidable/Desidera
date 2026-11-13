@@ -960,7 +960,9 @@ class ProjectHub(QMainWindow):
         try:
             project = import_object_project(
                 directory, fallback_field=fallback_field)
-        except (OSError, ValueError, KeyError) as exc:
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            # Importing an already-existing project can race with another
+            # GUI's passport touch; report the revision conflict cleanly.
             self.hint.setText(f"Import failed: {exc}")
             QMessageBox.warning(self, "Import was not completed", str(exc))
             return False

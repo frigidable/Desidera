@@ -539,3 +539,49 @@ index, journal and GUI resume). A future design should specify a
 recoverable operation protocol with a single unambiguous owner
 for each source-of-truth field instead of adding hidden locks
 around the entire application. `SCIENCE HOLD` persists.
+
+
+## 10. GUI integration of optimistic project revisions — 2026-11-14
+
+The storage fixes introduced a deliberately distinct error signal:
+`RuntimeError("... changed in another process; reopen ...")`
+when a second GUI attempts to save stale `lsbpipe-project.json`
+or `lsbpipe-object.json`. The original `SurveyExplorer` UI
+callback handlers caught only `ValueError` and `OSError`.
+Consequently a correct storage-level conflict could escape
+a Qt timeout or worker completion callback as an unhandled
+exception, without communicating the safe action to the user.
+
+Separately, the dataset-audit callback initially displayed a
+warning when the **audit receipt succeeded** but the subsequent
+galaxy-passport update failed. It then unconditionally replaced
+that warning with the ordinary FITS audit summary in the same
+method. The researcher could thus miss the failure to record
+the latest audit link in the project passport.
+
+The focused `fix/gui-project-save-conflicts` repair makes
+both object and historical local session save callbacks
+treat `RuntimeError` as a **visible, recoverable project-state
+conflict**. `ProjectHub.import_folder` similarly displays
+a warning for passport-version races during import.
+The audit callback retains the passport failure warning
+after displaying the independently saved non-adopted QA
+receipt, rather than pretending the index update succeeded.
+
+GUI acceptance exercises the actual Qt windows in offline
+mode, with injected storage conflicts: object context
+autosave, historical local FITS project opening, dataset
+audit receipt/passport split, and Project Hub import.
+The assertions check visible messages, absence of unhandled
+callbacks, the original manifest bytes and continued
+availability of local placeholder FITS. The tests do not
+claim that a conflict was automatically merged or that
+an immutable QA receipt gained science-adopted status.
+
+**Remaining UX limitation:** while the error tells the user
+to reopen, no merge/rebase of conflicting editor drafts
+is implemented. A future explicit *Reload / Compare /
+Discard local changes* interface should preserve unsaved
+drafts without misrepresenting which version is authoritative.
+Neither background autosave nor worker completion should
+silently retry an object save against an unobserved version.
