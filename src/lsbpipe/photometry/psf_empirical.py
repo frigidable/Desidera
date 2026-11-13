@@ -886,7 +886,7 @@ def build_empirical_coadd_psf(
             (entry[0], entry[-1]["shape_qa"])
             for entry in reference_entries])
         if width_qa is not None:
-            width_qa["reference_population"] = "GAIA_DR3_TRAIN_CORES_ONLY"
+            width_qa["reference_population"] = "GAIA_DR3_NONHOLDOUT_CANDIDATE_CORES"
             width_qa["n_reference_gaia_candidates"] = len(reference_entries)
             width_qa["holdout_ids_excluded_before_reference_learning"] = True
             width_qa["n_frozen_holdout_stars_excluded"] = len(frozen_holdout_ids)
@@ -1352,7 +1352,7 @@ def build_empirical_coadd_psf(
         "holdout_is_not_an_untouched_preselection_population": True,
         "gaia_core_width_reference_includes_pre_split_holdout": False,
         "holdout_selection_frozen_before_train_width_reference": True,
-        "width_reference_training_stars_only": True,
+        "width_reference_nonholdout_candidates_only": True,
         "heldout_stars_not_screened_against_train_width_distribution": True,
         "external_independent_stellar_validation_performed": False,
         "spatial_transfer_to_galaxy_calibrated": False,
