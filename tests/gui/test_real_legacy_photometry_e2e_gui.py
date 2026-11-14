@@ -77,6 +77,39 @@ def _source_hashes(paths, root):
             for name, path in paths.items()}
 
 
+
+def test_real_archive_test_is_explicitly_opt_in(monkeypatch):
+    monkeypatch.delenv("DESIDERA_REAL_FITS_ROOT", raising=False)
+    monkeypatch.delenv("DESIDERA_REAL_BRICK", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="not supplied"):
+        _archive_test_input()
+
+
+def test_real_archive_partial_or_invalid_input_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.delenv("DESIDERA_REAL_FITS_ROOT", raising=False)
+    monkeypatch.setenv("DESIDERA_REAL_BRICK", "0401p012")
+    with pytest.raises(pytest.fail.Exception, match="ROOT is missing"):
+        _archive_test_input()
+    monkeypatch.setenv("DESIDERA_REAL_FITS_ROOT", str(tmp_path))
+    monkeypatch.setenv("DESIDERA_REAL_BRICK", "not_a_brick")
+    with pytest.raises(pytest.fail.Exception, match="verified 8-character brick"):
+        _archive_test_input()
+    monkeypatch.setenv("DESIDERA_REAL_BRICK", "0401p012")
+    monkeypatch.setenv("DESIDERA_REAL_BAND", "")
+    with pytest.raises(pytest.fail.Exception, match="Unsupported optical band"):
+        _archive_test_input()
+
+
+def test_real_archive_missing_original_fits_is_failure_not_skip(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("DESIDERA_REAL_FITS_ROOT", str(tmp_path))
+    monkeypatch.setenv("DESIDERA_REAL_BRICK", "0401p012")
+    monkeypatch.setenv("DESIDERA_REAL_BAND", "r")
+    root, key = _archive_test_input()
+    with pytest.raises(pytest.fail.Exception, match="Missing/unsafe original"):
+        _archive_paths(root, key)
+
+
 def test_supplied_archive_brick_full_gui_route(qtbot, tmp_path, monkeypatch):
     root, key = _archive_test_input()
     paths = _archive_paths(root, key)
