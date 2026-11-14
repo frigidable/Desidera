@@ -1777,10 +1777,16 @@ class SurveyExplorer(QMainWindow):
         if has_bricks and selected and has_catalog:
             hit = self.hits[row]
             self.bricks_help.setText(
-                f"Selected: {hit.release.upper()} · {hit.region} · {hit.name}. "
-                "Use Archive files to choose or inspect this brick's inputs.")
+                f"Selected · {hit.release.upper()} {hit.region} {hit.name}")
+            details = (
+                "Use Archive files on the right to choose or inspect "
+                "original products. Selecting a brick never downloads data.")
+            self.bricks_help.setToolTip(details)
+            self.bricks_help.setAccessibleDescription(details)
         else:
             self.bricks_help.setText("Select a brick to work with its files.")
+            self.bricks_help.setToolTip("")
+            self.bricks_help.setAccessibleDescription("")
         for widget in (self.bricks, self.bricks_heading, self.bricks_help):
             widget.setVisible(has_bricks)
         self.comparison_btn.setVisible(bool(local_available or image_ready))

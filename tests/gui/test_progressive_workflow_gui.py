@@ -103,12 +103,16 @@ def test_selected_brick_help_tracks_selection_without_data_side_effects(qtbot):
     help_text = w.bricks_help.text()
     assert selected.name in help_text
     assert selected.release.upper() in help_text
-    assert "Archive files" in help_text
+    assert "Selected" in help_text
+    assert "Archive files" in w.bricks_help.toolTip()
+    assert "Archive files" in w.bricks_help.accessibleDescription()
     assert "Select a brick" not in help_text
     assert w._selected() == before_selection  # no automatic file selection
     w.bricks.clearSelection()
     qtbot.wait(25)
     assert "Select a brick" in w.bricks_help.text()
+    assert not w.bricks_help.toolTip()
+    assert not w.bricks_help.accessibleDescription()
 
 
 def test_archive_screening_controls_fit_narrow_dock_without_horizontal_scroll(
