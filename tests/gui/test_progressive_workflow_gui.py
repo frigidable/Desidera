@@ -87,6 +87,55 @@ def test_discovery_moves_to_data_step_without_auto_downloading(qtbot):
     assert not w.advanced_files.isVisible()
 
 
+def test_selected_brick_help_tracks_selection_without_data_side_effects(qtbot):
+    """The status below a selected brick must not ask to select it again."""
+    from lsbpipe.gui.survey_explorer import SurveyExplorer
+    with offline_legacy_viewer():
+        w = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(w)
+    w.show()
+    apply_offline_state(w, "S1")
+    assert "Select a brick" in w.bricks_help.text()
+    before_selection = w._selected()
+    w.bricks.selectRow(0)
+    qtbot.wait(25)
+    selected = w.hits[0]
+    help_text = w.bricks_help.text()
+    assert selected.name in help_text
+    assert selected.release.upper() in help_text
+    assert "Archive files" in help_text
+    assert "Select a brick" not in help_text
+    assert w._selected() == before_selection  # no automatic file selection
+    w.bricks.clearSelection()
+    qtbot.wait(25)
+    assert "Select a brick" in w.bricks_help.text()
+
+
+def test_archive_screening_controls_fit_narrow_dock_without_horizontal_scroll(
+        qtbot):
+    """Expanded file options must not hide QA fields beyond the dock edge."""
+    from PySide6.QtCore import QPoint
+    from lsbpipe.gui.survey_explorer import SurveyExplorer
+    with offline_legacy_viewer():
+        w = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(w)
+    w.resize(1366, 768)
+    w.show()
+    apply_offline_state(w, "S1")
+    assert w.data_drawer.isVisible()
+    w.files_options.click()
+    assert w.advanced_files.isVisible()
+    qtbot.wait(60)
+    viewport = w.data_scroll.viewport()
+    for control in (w.target_radius, w.sky_inner, w.sky_outer):
+        assert control.isVisibleTo(w.data_scroll)
+        x = control.mapTo(viewport, QPoint(0, 0)).x()
+        assert 0 <= x
+        assert x + control.width() <= viewport.width()
+    assert w.data_scroll.horizontalScrollBar().maximum() == 0
+    assert w.download_btn.isVisible()
+
+
 def test_science_panel_has_single_visible_primary_action(qtbot):
     from lsbpipe.gui.qa_workbench import ScienceQAControls
     qa = ScienceQAControls()

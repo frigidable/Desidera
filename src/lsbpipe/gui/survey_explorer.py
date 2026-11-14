@@ -373,6 +373,7 @@ class SurveyExplorer(QMainWindow):
         self.bricks.viewport().installEventFilter(self)
         self.bricks.cellEntered.connect(self._hover_brick_row)
         self.bricks_help = QLabel("Select a brick to work with its files.")
+        self.bricks_help.setAccessibleName("Current survey brick and next action")
         self.bricks_help.setStyleSheet("color: palette(text);")
         self.bricks_help.setWordWrap(True)
         panel.addWidget(self.bricks_help)
@@ -504,14 +505,18 @@ class SurveyExplorer(QMainWindow):
         self.sky_outer.setDecimals(1)
         self.sky_outer.setValue(180.)
         self.sky_outer.setToolTip("Outer radius of diagnostic sky ring")
+        # Narrow dock inspectors must not force a horizontal scrollbar:
+        # each screening radius is a full-width labelled control.
         for label, control in (
                 ("Object radius (arcsec)", self.target_radius),
                 ("Sky inner (arcsec)", self.sky_inner),
                 ("Sky outer (arcsec)", self.sky_outer)):
-            line = QHBoxLayout()
-            line.addWidget(QLabel(label))
-            line.addWidget(control)
-            qa_layout.addLayout(line)
+            caption = QLabel(label)
+            caption.setWordWrap(True)
+            caption.setBuddy(control)
+            qa_layout.addWidget(caption)
+            control.setMinimumWidth(0)
+            qa_layout.addWidget(control)
         self.qa_btn = QPushButton("Inspect local FITS")
         self.qa_btn.setToolTip(
             "Analyse downloaded IMAGE, INVVAR, NEXP and MASKBITS")
@@ -1743,6 +1748,13 @@ class SurveyExplorer(QMainWindow):
             selected and bool(has_catalog) and self.thread is None)
         # An empty brick grid is not a meaningful default navigation element.
         has_bricks = bool(self.hits)
+        if has_bricks and selected and has_catalog:
+            hit = self.hits[row]
+            self.bricks_help.setText(
+                f"Selected: {hit.release.upper()} · {hit.region} · {hit.name}. "
+                "Use Archive files to choose or inspect this brick's inputs.")
+        else:
+            self.bricks_help.setText("Select a brick to work with its files.")
         for widget in (self.bricks, self.bricks_heading, self.bricks_help):
             widget.setVisible(has_bricks)
         self.comparison_btn.setVisible(bool(local_available or image_ready))
