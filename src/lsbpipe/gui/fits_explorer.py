@@ -80,6 +80,20 @@ class FITSGraphicsView(QGraphicsView):
             self.keyboardPixelMoved.emit(-1., -1.)
             event.accept()
             return
+        # The native FITS canvas must be fully usable without a mouse.
+        if event.modifiers() in (Qt.NoModifier, Qt.ShiftModifier):
+            if key in (Qt.Key_Plus, Qt.Key_Equal):
+                self.zoom_by(1.22)
+                event.accept()
+                return
+            if key in (Qt.Key_Minus, Qt.Key_Underscore):
+                self.zoom_by(1 / 1.22)
+                event.accept()
+                return
+            if key in (Qt.Key_0, Qt.Key_F):
+                self.fit_image()
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -87,12 +101,22 @@ class FITSGraphicsView(QGraphicsView):
         self.pointHovered.emit(point.x(), point.y())
         super().mouseMoveEvent(event)
 
-    def wheelEvent(self, event):
-        factor = 1.22 if event.angleDelta().y() > 0 else (1 / 1.22)
+    def zoom_by(self, factor):
+        if self.scene() is None or self.scene().sceneRect().isEmpty():
+            return
         new_zoom = self._relative_zoom * factor
         if 0.20 <= new_zoom <= 24.:
             self._relative_zoom = new_zoom
             self.scale(factor, factor)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if not delta:
+            # Trackpad horizontal/zero-vertical motion must never zoom out.
+            super().wheelEvent(event)
+            return
+        # Keep precision trackpad motion proportional to its angle delta.
+        self.zoom_by(1.22 ** (delta / 120.))
         event.accept()
 
     def fit_image(self):
@@ -347,7 +371,8 @@ class FITSExplorer(QWidget):
         self.view.setAccessibleDescription(
             "Display only. Focus the image and use arrow keys to inspect "
             "native FITS pixels; Shift+arrow moves ten pixels, Escape clears "
-            "the cursor. Mouse hover also inspects pixels. No science data "
+            "the cursor. Plus/minus zoom, 0 or F fits the image. Mouse hover "
+            "also inspects pixels. No science data "
             "are modified.")
         self.view.setStyleSheet(
             "QGraphicsView:focus {border: 2px solid palette(highlight);}")
@@ -528,7 +553,7 @@ class FITSExplorer(QWidget):
         self.pixel_info.setText(
             "Hover over the image or focus it and use arrows for original FITS values.")
         self.viewport_hint.setText(
-            "Wheel: zoom · drag: pan · arrows: inspect pixel · "
+            "Wheel or +/-: zoom · 0 or F: fit · drag: pan · arrows: inspect · "
             "Shift+arrows: 10 pixels · Esc: clear cursor")
         ny, nx = shape
         self.scene.setSceneRect(0, 0, nx, ny)

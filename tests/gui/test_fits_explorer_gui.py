@@ -449,3 +449,35 @@ def test_high_contrast_keyboard_marker_and_focus_contract(explorer, qtbot):
     assert not explorer.keyboard_cursor_shadow.isVisible()
     explorer.clear_data()
     assert not explorer.keyboard_cursor_shadow.isVisible()
+
+
+
+def test_keyboard_zoom_fit_and_horizontal_wheel_do_not_change_raw_fits(
+        explorer, qtbot):
+    """Keyboard has zoom parity; horizontal trackpad motion must not zoom out."""
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QWheelEvent
+    dataset = synthetic_dataset()
+    expected = dataset["data"]["image"].copy()
+    explorer.set_dataset(dataset)
+    view = explorer.view
+    view.setFocus()
+    initial = view.transform().m11()
+    qtbot.keyClick(view, Qt.Key_Plus)
+    assert view.transform().m11() > initial
+    assert view._relative_zoom > 1.
+    qtbot.keyClick(view, Qt.Key_Minus)
+    assert view._relative_zoom == pytest.approx(1.)
+    qtbot.keyClick(view, Qt.Key_Plus)
+    qtbot.keyClick(view, Qt.Key_0)
+    assert view._relative_zoom == pytest.approx(1.)
+    before = view.transform().m11()
+    horizontal = QWheelEvent(
+        QPointF(20, 20), QPointF(20, 20),
+        QPoint(120, 0), QPoint(0, 0),
+        Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False)
+    view.wheelEvent(horizontal)
+    assert view.transform().m11() == pytest.approx(before)
+    qtbot.keyClick(view, Qt.Key_F)
+    assert view._relative_zoom == pytest.approx(1.)
+    np.testing.assert_array_equal(dataset["data"]["image"], expected)

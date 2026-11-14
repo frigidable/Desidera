@@ -18,7 +18,8 @@ from offline_gui_fixture import (offline_legacy_viewer, apply_offline_state,
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtGui import QFont, QFontInfo, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGroupBox, QTableWidget
 
@@ -122,16 +123,16 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
                     not window.science_qa.south_directory.isVisible()):
                 raise AssertionError(
                     "Separate original North/South inputs are unreachable")
-    if state == "S5":
+    if state in ("S5", "S9"):
         if window.data_drawer.isVisible():
             raise AssertionError(
                 "FITS viewer should not be squeezed by archive controls")
         if window.preview_tabs.currentWidget() is not window.fits_explorer:
-            raise AssertionError("S5 native FITS Explorer is not visible")
+            raise AssertionError("Native FITS Explorer is not visible")
         if not window.fits_explorer.layer.isVisible():
-            raise AssertionError("S5 image-layer control is clipped or hidden")
+            raise AssertionError("Image-layer control is clipped or hidden")
         if window.fits_explorer.base_item.pixmap().isNull():
-            raise AssertionError("S5 synthetic image not rendered")
+            raise AssertionError("Synthetic FITS image not rendered")
     report = {
         "state": state + "_offline_synthetic",
         "viewer_width_fraction": round(viewer_share, 4),
@@ -144,7 +145,10 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
         "screenshot_bytes": screenshot.stat().st_size,
         "github_sha": os.getenv("GITHUB_SHA"),
         "network_used": False,
-        "viewer_content": "BLANK_OFFLINE_PLACEHOLDER_NOT_SURVEY_IMAGERY",
+        "viewer_content": (
+            "SYNTHETIC_LOCAL_FITS_NOT_SURVEY_IMAGERY"
+            if state in ("S5", "S9")
+            else "BLANK_OFFLINE_PLACEHOLDER_NOT_SURVEY_IMAGERY"),
         "scientific_status": "NO_SCIENCE_RESULT",
         "science_workbench_visible": (
             window.inspector_tabs.currentWidget() is window.science_qa),
@@ -360,6 +364,26 @@ def main():
                 for w, h in SIZES:
                     reports.append(_capture(
                         window, app, outdir, w, h, state))
+                if state == "S5":
+                    # The same *synthetic* native FITS, with a real keyboard
+                    # step and non-color-only pixel category visible.
+                    window.fits_explorer.layer.setCurrentIndex(
+                        window.fits_explorer.layer.findData("quality"))
+                    for w, h in SIZES[:2]:
+                        window.resize(w, h)
+                        window.show()
+                        app.processEvents()
+                        window.fits_explorer.view.setFocus()
+                        QTest.keyClick(window.fits_explorer.view, Qt.Key_Right)
+                        app.processEvents()
+                        if not window.fits_explorer.keyboard_cursor.isVisible():
+                            raise AssertionError(
+                                "FITS keyboard marker not visible after arrow")
+                        if "QUALITY class" not in window.fits_explorer.pixel_quality.text():
+                            raise AssertionError(
+                                "FITS diagnostic text absent after key step")
+                        reports.append(_capture(
+                            window, app, outdir, w, h, "S9"))
             finally:
                 window.close()
                 app.processEvents()
@@ -445,6 +469,7 @@ def main():
             "S4–S6 are mock UI content; no original FITS are opened",
             "S5 FITS raster is artificial and cannot support scientific conclusions",
             "S7 band comparison is synthetic and contains no original survey pixels",
+            "S9 keyboard pixel inspection uses synthetic native-grid FITS only",
             "S8 status is synthetic and does not represent a real failure",
             "Offscreen Qt capture cannot verify real monitor / DPI rendering",
             "This job does not certify accessibility or scientific validity",
