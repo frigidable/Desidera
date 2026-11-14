@@ -2199,3 +2199,114 @@ def test_scene_cancel_shape_preserves_draft_and_does_not_claim_worker_stop(
     scene.cancel_btn.click()
     assert "No unfinished drawing" in scene.status.text()
     assert scene.draft.digest==before_digest
+
+
+def test_scene_failed_fits_load_preserves_draft_and_supports_retry(
+        qtbot,tmp_path,monkeypatch):
+    """A recoverable read failure never erases saved/manual regions."""
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    scene.mode.setCurrentIndex(scene.mode.findData("circle"))
+    _click_at_native(scene,40,40)
+    _click_at_native(scene,49,40)
+    assert len(scene.draft.edits)==1
+    draft=scene.draft
+    digest=draft.digest
+    failed=Future()
+    failed.set_exception(OSError("test-only missing original INVVAR"))
+    recovered=Future()
+    recovered.set_result(_data(project.project_id))
+    futures=[failed,recovered]
+    monkeypatch.setattr(
+        scene._executor,"submit",lambda *args,**kwargs:futures.pop(0))
+    scene.load_original()
+    assert scene._loaded is None
+    assert scene._future is failed
+    assert not scene.load_btn.isEnabled()
+    scene._poll_load()
+    assert scene._future is None
+    assert scene.load_btn.isEnabled()
+    assert scene.load_btn.text()=="Retry FITS load"
+    assert "test-only missing original INVVAR" in scene.status.text()
+    assert "draft regions remain unchanged" in scene.status.text()
+    assert scene.draft is draft
+    assert scene.draft.digest==digest
+    scene.load_original()
+    assert scene._future is recovered
+    scene._poll_load()
+    assert scene._loaded is not None
+    assert scene.load_btn.text()=="Load original FITS"
+    assert scene.draft.digest==digest
+    assert scene.draft.edits==draft.edits
+    assert not futures
+    scene.shutdown()
+
+
+def test_scene_prevents_reload_that_would_discard_unfinished_geometry(
+        qtbot,tmp_path,monkeypatch):
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    scene.mode.setCurrentIndex(scene.mode.findData("polygon"))
+    _click_at_native(scene,35,35)
+    assert len(scene._pending_world)==1
+    pending=tuple(scene._pending_world)
+    source=scene._loaded
+    draft=scene.draft
+    calls=[]
+    monkeypatch.setattr(
+        scene._executor,"submit",
+        lambda *args,**kwargs:calls.append(args) or Future())
+    scene.load_original()
+    assert scene._loaded is source
+    assert scene.draft is draft
+    assert tuple(scene._pending_world)==pending
+    assert "Finish the shape" in scene.status.text()
+    assert not calls
+    scene.cancel_btn.click()
+    assert not scene._pending_world
+    assert scene.draft is draft
+    scene.shutdown()
+
+
+def test_scene_completed_future_is_not_replaceable_before_gui_delivery(
+        qtbot,tmp_path,monkeypatch):
+    """Future.done() must not re-enable load before _poll_load has run."""
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    previous=Future()
+    previous.set_exception(OSError("test-only prior task failure"))
+    scene._future=previous
+    scene._work_kind="load"
+    scene._active_generation=scene._load_generation
+    calls=[]
+    monkeypatch.setattr(
+        scene._executor,"submit",
+        lambda *args,**kw:calls.append(args) or Future())
+    scene._refresh_controls()
+    assert not scene.load_btn.isEnabled()
+    scene.load_original()
+    assert scene._future is previous
+    assert not calls
+    assert "being finalized" in scene.status.text()
+    scene._poll_load()
+    assert scene._future is None
+    assert scene.load_btn.isEnabled()
+    assert scene.load_btn.text()=="Retry FITS load"
+    scene.shutdown()
+
+
+def test_scene_executor_start_failure_is_recoverable_without_losing_mask(
+        qtbot,tmp_path,monkeypatch):
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    draft=scene.draft
+    monkeypatch.setattr(
+        scene._executor,"submit",
+        lambda *args,**kw:(_ for _ in ()).throw(
+            RuntimeError("test-only worker closed")))
+    scene.load_original()
+    assert scene._future is None
+    assert scene.load_btn.isEnabled()
+    assert scene.load_btn.text()=="Retry FITS load"
+    assert "test-only worker closed" in scene.status.text()
+    assert scene.draft is draft
+    scene.shutdown()

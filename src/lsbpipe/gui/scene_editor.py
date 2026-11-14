@@ -1302,6 +1302,13 @@ class SceneEditor(QWidget):
         toolbar.addWidget(self.width)
         self.load_btn = QPushButton("Load original FITS")
         self.load_btn.setObjectName("scene_load_original")
+        self.load_btn.setAccessibleDescription(
+            "Explicitly reload the native FITS quartet. Saved masks and "
+            "completed draft regions are preserved. Unfinished drawings "
+            "must be finished or discarded first.")
+        self.load_btn.setToolTip(
+            "Read the current-band native FITS without changing originals. "
+            "Finish or cancel unfinished shapes before reloading.")
         self.load_btn.clicked.connect(self.load_original)
         toolbar.addWidget(self.load_btn)
         self.display_mode = QComboBox()
@@ -2069,6 +2076,12 @@ class SceneEditor(QWidget):
 
     def _switch_source(self, key, dataset):
         self._load_generation += 1
+        # A Retry label belongs only to the source that failed. Rebinding
+        # project/band or launching a new load must clear the old failure.
+        self.load_btn.setText("Load original FITS")
+        self.load_btn.setToolTip(
+            "Read the current-band native FITS without changing originals. "
+            "Finish or cancel unfinished shapes before reloading.")
         # QA-only inner foreground exclusions require fresh opt-in for
         # every changed project, band or native FITS source.
         self.iso_gaia_inner_preview.blockSignals(True)
@@ -2135,8 +2148,21 @@ class SceneEditor(QWidget):
         if self._project_root is None or not self._available:
             self.status.setText("Open a valid galaxy project before loading FITS.")
             return
-        if self._future is not None and not self._future.done():
-            self.status.setText("Original FITS load in progress.")
+        # A completed Future still belongs to the GUI until _poll_load()
+        # delivers/rejects its result. Replacing it early silently loses QA
+        # and can queue another expensive read in the same executor.
+        if self._future is not None:
+            self.status.setText(
+                "Scene task still being finalized. Retry FITS loading "
+                "after the current task status has updated.")
+            return
+        # A re-read must not silently erase a polygon in progress or an
+        # unfinished redraw. Complete or explicitly cancel that shape first.
+        if (self._pending_world or self._pending_scene or
+                self._replace_index is not None):
+            self.status.setText(
+                "Unfinished Scene drawing. Finish the shape or choose "
+                "Cancel shape before reloading FITS. Draft unchanged.")
             return
         self._switch_source(self._source_key, None)
         width = float(self.width.value())
@@ -2144,9 +2170,20 @@ class SceneEditor(QWidget):
             f"Reading original {self._band.upper()} quartet, "
             f"{width:g} arcmin cutout… No source files will be written.")
         self.load_btn.setEnabled(False)
-        self._future = self._executor.submit(
-            load_scene_original_cutout, str(self._project_root),
-            self._band, width)
+        try:
+            self._future = self._executor.submit(
+                load_scene_original_cutout, str(self._project_root),
+                self._band, width)
+        except (RuntimeError, OSError) as exc:
+            self.load_btn.setText("Retry FITS load")
+            self.load_btn.setToolTip(
+                "The FITS reader could not start. Review the error and "
+                "current project source before retrying; masks are intact.")
+            self.status.setText(
+                f"Original FITS load could not start: {exc}. "
+                "Review the data source and retry; Scene draft unchanged.")
+            self._refresh_controls()
+            return
         self._work_kind = "load"
         self._active_generation = self._load_generation
         self._poll_timer.start()
@@ -2211,8 +2248,15 @@ class SceneEditor(QWidget):
                     "Read-only foreground PSF-0 probe FAILED: "
                     + str(exc) + ". No model subtraction or mask change.")
             else:
+                self.load_btn.setText("Retry FITS load")
+                self.load_btn.setToolTip(
+                    "Review the selected band and the original IMAGE, "
+                    "INVVAR, NEXP, MASKBITS quartet, then retry. "
+                    "The current Scene draft has not been discarded.")
                 self.status.setText(
-                    f"Original FITS scene could not be displayed: {exc}")
+                    f"Original FITS scene could not be displayed: {exc}. "
+                    "Check the native files and retry FITS load; existing "
+                    "draft regions remain unchanged.")
         self._refresh_controls()
 
     def _accept_dataset(self, data):
@@ -4092,8 +4136,9 @@ class SceneEditor(QWidget):
                 "Copy current project/band/Tractor/SGA/mask/isophote "
                 "diagnostics as JSON, including any completed mask-policy "
                 "experiment. No FITS or project writes.")
-        self.load_btn.setEnabled(ready and (
-            self._future is None or self._future.done()))
+        # The worker result must first pass _poll_load() on the GUI thread:
+        # Future.done() alone is NOT a safe point to enable another read.
+        self.load_btn.setEnabled(ready and self._future is None)
         self.mode.setEnabled(active)
         self.purpose.setEnabled(active)
         self.scope.setEnabled(active)
