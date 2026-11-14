@@ -292,6 +292,16 @@ def test_synthetic_original_fits_full_photometry_gui_route(
             if pix.isNull() or not pix.save(str(
                     screenshot_root/filename), "PNG"):
                 raise AssertionError(f"Cannot capture {stage} fixture")
+            if stage == "scene":
+                # Capture the outer QMainWindow to diagnose whether any
+                # narrow embedded canvas comes from the splitter geometry
+                # or merely from the individual QWidget grab.
+                outer = explorer.grab()
+                if outer.isNull() or not outer.save(str(
+                        screenshot_root/(
+                            f"synthetic_native_outer_scene_"
+                            f"{outer.width()}x{outer.height()}.png")), "PNG"):
+                    raise AssertionError("Cannot capture galaxy workspace")
 
     # A second manual edit immediately invalidates BOTH derived QA views.
     widget.restore_navigation(stage="scene",band="r")
@@ -351,4 +361,9 @@ def test_synthetic_original_fits_full_photometry_gui_route(
                 "real_monitor_dpi_tested":False,
                 "launch_path":"PROJECT_HUB_TO_GALAXY_WORKSPACE_TO_PHOTOMETRY",
                 "embedded_photometry_size_px":[widget.width(),widget.height()],
+                "galaxy_workspace_size_px":[explorer.width(),explorer.height()],
+                "preview_tabs_size_px":[explorer.preview_tabs.width(),
+                                        explorer.preview_tabs.height()],
+                "workspace_split_sizes_px":explorer.workspace_split.sizes(),
+                "navigation_scroll_width_px":explorer.navigation_scroll.width(),
             },indent=2,sort_keys=True),encoding="utf-8")
