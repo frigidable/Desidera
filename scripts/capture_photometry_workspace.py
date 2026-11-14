@@ -221,6 +221,43 @@ def capture(output_dir: Path) -> list[dict]:
                 "size_image":[shot04.width(),shot04.height()],
                 "visual_reviewed":False,
             })
+            # Enlarged font fixture: checks text reflow in the actual
+            # Photometry shell. This does NOT emulate hardware Windows DPI.
+            widget.setFont(QFont(family, 16))
+            for stage_key, stage_widget, label in (
+                    ("sky", widget.sky_stage, "background"),
+                    ("aperture", widget.aperture_stage, "aperture")):
+                widget.restore_navigation(stage=stage_key, band="r")
+                widget.resize(1366,768)
+                widget.show()
+                app.processEvents()
+                if (not stage_widget.status.isVisible()
+                        or not stage_widget.context_label.isVisible()
+                        or not stage_widget.run_btn.isVisible()):
+                    raise AssertionError(
+                        "High-font stage lost primary context/actions: "
+                        + stage_key)
+                if (stage_widget.readout.isVisible()
+                        or stage_widget.report_toggle.isVisible()):
+                    raise AssertionError(
+                        "High-font empty stage shows unnecessary report")
+                image = widget.grab()
+                target=output_dir / (
+                    f"photometry_{label}_font16_1366x768.png")
+                if image.isNull() or not image.save(str(target),"PNG"):
+                    raise RuntimeError(f"Cannot capture {target}")
+                manifest.append({
+                    "path":str(target),
+                    "state":f"stage_{stage_key}_large_font_no_native_scene",
+                    "fixture":"SYNTHETIC_NON_FITS_METADATA",
+                    "font_points":16,
+                    "real_windows_dpi_verified":False,
+                    "native_fits_read":False,
+                    "size_logical":[1366,768],
+                    "size_image":[image.width(),image.height()],
+                    "visual_reviewed":False,
+                })
+            widget.setFont(app.font())
             # Stage 02 task navigation: metadata only, with no FITS read,
             # no automatic SGA network access or scientific inference.
             widget.stage_tabs.setCurrentWidget(widget.scene_editor)

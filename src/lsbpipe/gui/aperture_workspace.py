@@ -346,13 +346,14 @@ class ApertureWorkspace(QWidget):
         title.setObjectName("aperture_stage_title")
         title.setStyleSheet("font-size: 19px; font-weight: 600;")
         root.addWidget(title)
-        note=QLabel(
-            "Direct finite-aperture flux only. No total galaxy magnitude, "
-            "source filling, sky adoption or calibrated noise covariance. "
-            "Original DR11 sky-subtracted pixels are retained.")
+        note=QLabel("Finite-aperture flux · diagnostic only · science HOLD.")
+        note.setToolTip(
+            "Only observed valid-area native pixels are measured. No "
+            "missing-area interpolation, total galaxy magnitude, adopted "
+            "sky or calibrated covariance. DR11 pixels stay unchanged.")
         note.setWordWrap(True)
         root.addWidget(note)
-        setup=QGroupBox("Current native Scene → automatic fixed ellipses")
+        setup=QGroupBox("Current native Scene")
         box=QVBoxLayout(setup)
         self.context_label=QLabel(
             "In Stage 02 load the original FITS and prepare neighbour masks.")
@@ -380,12 +381,15 @@ class ApertureWorkspace(QWidget):
         self.status.setObjectName("aperture_stage_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        plots=QHBoxLayout()
-        self.plot=ApertureCurvePlot(self,mode="cumulative")
+        self.plots_panel=QWidget(self)
+        plots=QHBoxLayout(self.plots_panel)
+        plots.setContentsMargins(0,0,0,0)
+        self.plot=ApertureCurvePlot(self.plots_panel,mode="cumulative")
         plots.addWidget(self.plot,1)
-        self.annulus_plot=ApertureCurvePlot(self,mode="annular")
+        self.annulus_plot=ApertureCurvePlot(self.plots_panel,mode="annular")
         plots.addWidget(self.annulus_plot,1)
-        root.addLayout(plots)
+        root.addWidget(self.plots_panel,1)
+        self.plots_panel.hide()
         self.readout=QPlainTextEdit(self)
         self.readout.setObjectName("aperture_stage_readout")
         self.readout.setMinimumWidth(0)
@@ -394,8 +398,26 @@ class ApertureWorkspace(QWidget):
         self.readout.setPlainText(
             "No aperture measurement. Open Stage 02, prepare native "
             "source masks, then explicitly build diagnostic curves.")
+        self.report_toggle=QPushButton("Full aperture QA")
+        self.report_toggle.setObjectName("aperture_show_detailed_report")
+        self.report_toggle.setCheckable(True)
+        self.report_toggle.setToolTip(
+            "Show per-geometry numerical aperture and ring measurements, "
+            "all uncertainty/systematics caveats and science HOLD.")
+        self.report_toggle.toggled.connect(
+            lambda checked:self.readout.setVisible(
+                bool(checked) and self._result is not None))
+        root.addWidget(self.report_toggle)
         root.addWidget(self.readout,1)
+        self._reset_report_visibility()
+        root.addStretch(1)
         self.refresh_context()
+
+    def _reset_report_visibility(self):
+        self.report_toggle.setChecked(False)
+        self.report_toggle.hide()
+        self.readout.hide()
+        self.plots_panel.hide()
 
     def _snapshot(self):
         # Source and drafts are owned by Stage 02. Stage 03's project
@@ -428,13 +450,14 @@ class ApertureWorkspace(QWidget):
         snap=self._snapshot()
         if snap is None:
             self.context_label.setText(
-                "No current source-bound Scene. Load original native FITS "
-                "and prepare provisional neighbour masks in Stage 02.")
+                "Scene not ready · load native FITS and prepare masks in Stage 02.")
         else:
             self.context_label.setText(
-                f"{snap[1]['source']} · project {snap[1]['project_id']} · "
-                f"draft {snap[2].digest[:12]} · "
-                "same project anchor; no sky subtraction.")
+                f"Band {snap[1]['band'].upper()} · native Scene masks ready "
+                "· zero additional sky correction.")
+            self.context_label.setToolTip(
+                f"Source {snap[1]['source']}; project {snap[1]['project_id']}; "
+                f"draft {snap[2].digest}. Provisional geometry only.")
         if self._result is not None and (
                 snap is None or self._result_identity!=snap[0]):
             self._result=None
@@ -445,7 +468,8 @@ class ApertureWorkspace(QWidget):
             self.readout.setPlainText(
                 "Previous aperture curves invalidated by project, band, "
                 "Scene draft, source or geometric hypothesis change.")
-            self.status.setText("Stale aperture result · run again.")
+            self.status.setText("Stale aperture result · run again · science HOLD.")
+            self._reset_report_visibility()
         self.run_btn.setEnabled(snap is not None and self._future is None)
         return snap is not None
 
@@ -465,6 +489,7 @@ class ApertureWorkspace(QWidget):
         self.copy_btn.setEnabled(False)
         self.plot.set_curves(())
         self.annulus_plot.set_curves(())
+        self._reset_report_visibility()
         self._future=self._executor.submit(
             build_project_aperture_growth,
             dataset,draft,contamination,
@@ -524,10 +549,13 @@ class ApertureWorkspace(QWidget):
         self.plot.set_curves(result["curves"])
         self.annulus_plot.set_curves(result["curves"])
         self.readout.setPlainText(self._format_readout(result))
+        self.report_toggle.show()
+        usable=int(result.get("n_measurable_geometry_hypotheses",0))
+        self.plots_panel.setVisible(usable>0)
         self.status.setText(
-            f"{len(result['curves'])} fixed-geometry curves on "
-            f"{result['band'].upper()} · direct valid-area flux · "
-            "UNADOPTED. Original FITS unchanged.")
+            f"Band {result['band'].upper()} · {usable}/"
+            f"{len(result['curves'])} usable geometries · "
+            "direct native flux · UNADOPTED.")
         self.refresh_context()
 
     @staticmethod

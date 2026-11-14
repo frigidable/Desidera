@@ -178,3 +178,30 @@ def test_stage03_readout_exposes_synthetic_sky_leakage_not_only_recovery():
     assert "NOT total galaxy light" in displayed
     assert "signal leakage, NOT a sky pedestal" in displayed
     assert "SKY SCIENCE HOLD" in displayed
+
+
+def test_sky_summary_is_compact_and_full_science_report_on_demand(qtbot):
+    from types import SimpleNamespace
+    scene=SimpleNamespace(
+        _band="r",_future=None,_project_root=Path("/not/read"),
+        _project_id="p",_loaded=None,_draft=None,_contamination=None)
+    w=SkyWorkspace(scene)
+    qtbot.addWidget(w)
+    w.resize(1100,700)
+    w.show()
+    assert not w.run_btn.isEnabled()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+    assert w.status.isVisible()
+    assert "HOLD" in w.status.text()
+    assert "Scene" in w.context_label.text()
+    # A numeric readout remains stored (and can be exported) but is not
+    # a permanently open wall of text in the initial workspace.
+    assert "No background result" in w.readout.toPlainText()
+    w._result={"status":"INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY"}
+    w.report_toggle.show()
+    w.report_toggle.click()
+    assert w.readout.isVisible()
+    w._reset_report_visibility()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()

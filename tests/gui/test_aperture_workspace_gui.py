@@ -229,6 +229,10 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     sky=SimpleNamespace(_snapshot=sky_snapshot)
     w=ApertureWorkspace(scene,sky)
     qtbot.addWidget(w)
+    w.resize(1100,750)
+    w.show()
+    assert not w.plots_panel.isVisible()
+    assert not w.report_toggle.isVisible()
     assert w.run_btn.isEnabled()
     assert not w.copy_btn.isEnabled()
     assert w._future is None
@@ -241,6 +245,11 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     assert "UNADOPTED" in w.readout.toPlainText()
     assert "04.3 · Conditional uncertainty diagnostics" in w.readout.toPlainText()
     assert len(w.plot._curves)==3
+    assert w.plots_panel.isVisible()
+    assert w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+    w.report_toggle.click()
+    assert w.readout.isVisible()
     w.copy_qa()
     copied=QApplication.clipboard().text()
     assert "DIRECT_FINITE_APERTURE_DIAGNOSTICS_NOT_ADOPTED" in copied
@@ -256,6 +265,9 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     assert w._result is None
     assert not w.copy_btn.isEnabled()
     assert not w.plot._curves
+    assert not w.plots_panel.isVisible()
+    assert not w.readout.isVisible()
+    assert not w.report_toggle.isVisible()
 
 
 def test_sga_aperture_geometry_uses_seed_not_protection(qtbot):
@@ -285,3 +297,19 @@ def test_sga_aperture_geometry_uses_seed_not_protection(qtbot):
     snapshot2 = w._snapshot()
     assert snapshot2[-2:] == (None, None)
     assert snapshot2[0] != snapshot[0]
+
+
+def test_aperture_empty_stage_hides_duplicate_graphs_and_report(qtbot):
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    w=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(w)
+    w.resize(1100,700)
+    w.show()
+    assert not w.run_btn.isEnabled()
+    assert not w.plots_panel.isVisible()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+    assert w.status.isVisible()
+    assert "HOLD" in w.status.text()
+    assert "No aperture measurement" in w.readout.toPlainText()

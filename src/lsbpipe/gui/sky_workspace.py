@@ -48,11 +48,11 @@ class SkyWorkspace(QWidget):
         heading.setObjectName("sky_stage_title")
         heading.setStyleSheet("font-size: 19px; font-weight: 600;")
         root.addWidget(heading)
-        note = QLabel(
-            "Diagnostic only. DESI coadds have already been sky-subtracted. "
-            "This stage estimates the remaining local background but cannot "
-            "restore flux removed upstream, calibrate PSF wings, or validate "
-            "the galaxy's outer envelope.")
+        note = QLabel("Residual sky · diagnostic only · science HOLD.")
+        note.setToolTip(
+            "DESI coadds were sky-subtracted upstream. A residual sky model "
+            "cannot recover removed LSB flux, validate PSF wings or prove "
+            "the outer galaxy envelope. Nothing is adopted or subtracted.")
         note.setWordWrap(True)
         root.addWidget(note)
 
@@ -62,21 +62,15 @@ class SkyWorkspace(QWidget):
         self.context_label.setObjectName("sky_project_context")
         self.context_label.setWordWrap(True)
         layout.addWidget(self.context_label)
-        help_label = QLabel(
-            "In 02 Scene and Masks, load the existing original FITS and "
-            "prepare neighbour masks. Desidera automatically excludes "
-            "the protected target, isophote candidates, catalogued "
-            "neighbours and bright Gaia stars, then selects spatially "
-            "separated sky training and holdout tiles from the SAME "
-            "native image. No manual sky-region drawing is required. "
-            "Review failed geometry or PSF-wing warnings rather than "
-            "forcing a sky fit.")
-        help_label.setWordWrap(True)
-        layout.addWidget(help_label)
+        setup.setToolTip(
+            "Load original FITS and prepare neighbour masks in Scene. "
+            "This stage selects separated sky training and holdout tiles "
+            "from the same native image, excluding provisional target and "
+            "contaminant regions. No manual sky drawing is needed.")
         root.addWidget(setup)
 
         tools = QHBoxLayout()
-        self.run_btn = QPushButton("Build automatic sky")
+        self.run_btn = QPushButton("Evaluate residual sky")
         self.run_btn.setObjectName("sky_diagnostic_run")
         self.run_btn.setToolTip(
             "Uses only the loaded Scene/native image and prepared masks. "
@@ -94,7 +88,7 @@ class SkyWorkspace(QWidget):
         tools.addStretch(1)
         root.addLayout(tools)
 
-        self.status = QLabel("Not evaluated · sky and masks remain provisional.")
+        self.status = QLabel("Not evaluated · science HOLD.")
         self.status.setObjectName("sky_diagnostic_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -106,8 +100,25 @@ class SkyWorkspace(QWidget):
         self.readout.setPlainText(
             "No background result. Sky training/holdout regions will be "
             "selected automatically from the current masked Scene.")
+        self.report_toggle = QPushButton("Full numerical sky QA")
+        self.report_toggle.setObjectName("sky_show_detailed_report")
+        self.report_toggle.setCheckable(True)
+        self.report_toggle.setToolTip(
+            "Inspect complete fit, holdout, tile, sensitivity and caveat "
+            "text. Copy background QA exports the full structured result.")
+        self.report_toggle.toggled.connect(
+            lambda checked: self.readout.setVisible(
+                bool(checked) and self._result is not None))
+        root.addWidget(self.report_toggle)
         root.addWidget(self.readout, 1)
+        self._reset_report_visibility()
+        root.addStretch(1)
         self.refresh_context()
+
+    def _reset_report_visibility(self):
+        self.report_toggle.setChecked(False)
+        self.report_toggle.hide()
+        self.readout.hide()
 
     def _snapshot(self):
         """Return immutable identity plus currently loaded read-only inputs."""
@@ -162,15 +173,15 @@ class SkyWorkspace(QWidget):
         band = scene._band.upper() if scene._band else "?"
         if snap is None:
             self.context_label.setText(
-                f"Band {band} · No current validated-identity Scene snapshot. "
-                "Load original FITS and prepare masks in 02 Scene and Masks "
-                "before starting a background diagnostic.")
+                f"Band {band} · No current Scene evidence. "
+                "Load FITS and prepare neighbour masks in Scene.")
         else:
             identity = snap[0]
             self.context_label.setText(
-                f"Current project · band {band} · "
-                f"{identity[1]} · draft {identity[3][:12]} · "
-                "provisional Tractor masks available.")
+                f"Band {band} · native Scene masks ready for diagnostic.")
+            self.context_label.setToolTip(
+                f"Native source {identity[1]}; mask draft {identity[3]}. "
+                "Tractor masks are provisional; no sky adopted.")
         if self._result is not None and (
                 snap is None or snap[0] != self._result_identity):
             self._result = None
@@ -179,7 +190,8 @@ class SkyWorkspace(QWidget):
             self.readout.setPlainText(
                 "Previous sky result invalidated by a change in "
                 "project, band, native pixels or scene mask draft.")
-            self.status.setText("Stale input · evaluate again.")
+            self.status.setText("Stale input · evaluate again · science HOLD.")
+            self._reset_report_visibility()
         self.run_btn.setEnabled(snap is not None and self._future is None)
         return snap is not None
 
@@ -198,6 +210,7 @@ class SkyWorkspace(QWidget):
         self._result_identity = None
         self._last_failure = None
         self.copy_btn.setEnabled(False)
+        self._reset_report_visibility()
         self._active_identity = identity
         self._future = self._executor.submit(
             diagnose_current_project_residual_sky,
@@ -262,6 +275,7 @@ class SkyWorkspace(QWidget):
             f"{warning_count} spatial quality warnings · "
             "UNADOPTED · original FITS unchanged.")
         self.readout.setPlainText(self._format_readout(result))
+        self.report_toggle.show()
         self.refresh_context()
 
     @staticmethod
