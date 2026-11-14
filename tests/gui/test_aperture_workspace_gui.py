@@ -462,3 +462,43 @@ def test_aperture_pool_start_failure_is_closed_and_retryable(qtbot,monkeypatch):
     assert "to retry" in stage.status.text()
     assert not stage.copy_btn.isEnabled()
     assert not stage.plots_panel.isVisible()
+
+
+def test_aperture_copy_failure_report_contains_recovery_not_source_paths(
+        qtbot,monkeypatch):
+    import json
+    from concurrent.futures import Future
+    from PySide6.QtWidgets import QApplication
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    identity=("private-uuid","sensitive-local-path","r",draft.digest,
+              "c"*64)
+    snapshot=(identity,ds,draft,mask,("dr11","south","1554p180"),
+              (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snapshot)
+    stage.refresh_context()
+    future=Future()
+    future.set_exception(OSError(
+        r"C:\\Users\\private\\galaxy.fits failed access"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage.copy_error_btn.isVisible()
+    assert not stage.copy_btn.isVisible()
+    stage.copy_error_btn.click()
+    text=QApplication.clipboard().text()
+    report=json.loads(text)
+    assert report["operation"]=="build_aperture_curves"
+    assert report["error_type"]=="OSError"
+    assert report["status"]=="WORKER_FAILED_CLOSED"
+    assert "Build aperture curves" in report["recommended_action"]
+    assert "private" not in text
+    assert "1554p180" not in text
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    assert stage._last_failure is None
+    assert not stage.copy_error_btn.isVisible()

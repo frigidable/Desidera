@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
+from lsbpipe.gui.workflow_ux import format_gui_failure_report
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
 from lsbpipe.gui.fits_raster import fits_pixel_from_scene, rgb_for_layer
 from lsbpipe.photometry.mask_drafts import (
@@ -1247,6 +1248,7 @@ class SceneEditor(QWidget):
         self._sga_item = None
         self._future = None
         self._work_kind = None
+        self._fits_load_failure = None
         self._load_generation = 0
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="desidera-scene-fits")
@@ -1336,6 +1338,15 @@ class SceneEditor(QWidget):
             "every sensitivity trial and all source-evidence metadata as JSON. "
             "May include local catalogue paths. No FITS or project writes.")
         self.copy_scene_qa_btn.clicked.connect(self._copy_complete_scene_qa)
+        self.copy_error_btn = QPushButton("Copy error")
+        self.copy_error_btn.setObjectName("scene_copy_fits_error")
+        self.copy_error_btn.setAccessibleName(
+            "Copy safe FITS loading failure report")
+        self.copy_error_btn.setToolTip(
+            "Copy the failure category and recovery action for support. "
+            "No traceback, local paths or project identifiers are included.")
+        self.copy_error_btn.clicked.connect(self.copy_failure_report)
+        self.copy_error_btn.hide()
         # QA export remains available in a pinned footer beside Save draft.
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -1919,6 +1930,7 @@ class SceneEditor(QWidget):
         footer_actions.addWidget(self.save_btn, 1)
         self.copy_scene_qa_btn.setText("Copy QA")
         footer_actions.addWidget(self.copy_scene_qa_btn)
+        footer_actions.addWidget(self.copy_error_btn)
         right_layout.addLayout(footer_actions)
         right_layout.addWidget(self.status)
         self.view.setMinimumWidth(0)
@@ -2076,6 +2088,8 @@ class SceneEditor(QWidget):
 
     def _switch_source(self, key, dataset):
         self._load_generation += 1
+        self._fits_load_failure = None
+        self.copy_error_btn.hide()
         # A Retry label belongs only to the source that failed. Rebinding
         # project/band or launching a new load must clear the old failure.
         self.load_btn.setText("Load original FITS")
@@ -2175,6 +2189,7 @@ class SceneEditor(QWidget):
                 load_scene_original_cutout, str(self._project_root),
                 self._band, width)
         except (RuntimeError, OSError) as exc:
+            self._record_fits_load_failure(exc, "WORKER_START_FAILED_CLOSED")
             self.load_btn.setText("Retry FITS load")
             self.load_btn.setToolTip(
                 "The FITS reader could not start. Review the error and "
@@ -2248,6 +2263,7 @@ class SceneEditor(QWidget):
                     "Read-only foreground PSF-0 probe FAILED: "
                     + str(exc) + ". No model subtraction or mask change.")
             else:
+                self._record_fits_load_failure(exc, "FITS_LOAD_FAILED_CLOSED")
                 self.load_btn.setText("Retry FITS load")
                 self.load_btn.setToolTip(
                     "Review the selected band and the original IMAGE, "
@@ -2258,6 +2274,25 @@ class SceneEditor(QWidget):
                     "Check the native files and retry FITS load; existing "
                     "draft regions remain unchanged.")
         self._refresh_controls()
+
+    def _record_fits_load_failure(self, exc, status):
+        # Store a minimal, source-free report category, not exception text.
+        self._fits_load_failure = {
+            "error_type": type(exc).__name__, "status": status,
+            "band": self._band,
+        }
+        self.copy_error_btn.show()
+
+    def copy_failure_report(self):
+        failure = self._fits_load_failure
+        if failure is None or self._future is not None:
+            return
+        QApplication.clipboard().setText(format_gui_failure_report(
+            stage="scene", error_type=failure["error_type"],
+            failure_status=failure["status"], band=failure["band"]))
+        self.status.setText(
+            "FITS failure report copied (no local paths or traceback). "
+            "Review the quartet and choose Retry FITS load.")
 
     def _accept_dataset(self, data):
         """Main-thread Qt creation from a native worker's immutable arrays."""

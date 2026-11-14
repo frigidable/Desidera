@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton, QSizePolicy, QVBoxLayout, QWidget, QTabWidget,
 )
 
+from lsbpipe.gui.workflow_ux import format_gui_failure_report
 from lsbpipe.photometry.aperture_flux import (
     ApertureProvenance, ApertureSkyScenario,
 )
@@ -336,6 +337,7 @@ class ApertureWorkspace(QWidget):
         self._result_identity=None
         self._result=None
         self._last_failure=None
+        self._failure_identity=None
         self._discard_requested=False
         self._timer=QTimer(self)
         self._timer.setInterval(100)
@@ -393,6 +395,16 @@ class ApertureWorkspace(QWidget):
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self.copy_qa)
         buttons.addWidget(self.copy_btn)
+        self.copy_error_btn=QPushButton("Copy error report")
+        self.copy_error_btn.setObjectName("aperture_copy_failure_report")
+        self.copy_error_btn.setAccessibleName(
+            "Copy safe aperture photometry failure report")
+        self.copy_error_btn.setToolTip(
+            "Copy the failure category and recovery instructions; "
+            "no raw traceback, identifiers or filesystem paths.")
+        self.copy_error_btn.clicked.connect(self.copy_failure_report)
+        self.copy_error_btn.hide()
+        buttons.addWidget(self.copy_error_btn)
         buttons.addStretch(1)
         root.addLayout(buttons)
         self.status=QLabel("Not measured.")
@@ -488,6 +500,10 @@ class ApertureWorkspace(QWidget):
             self.context_label.setToolTip(
                 f"Source {snap[1]['source']}; project {snap[1]['project_id']}; "
                 f"draft {snap[2].digest}. Provisional geometry only.")
+        if self._last_failure is not None and (
+                snap is None or self._failure_identity!=snap[0]):
+            self._last_failure=None
+            self._failure_identity=None
         if self._result is not None and (
                 snap is None or self._result_identity!=snap[0]):
             self._result=None
@@ -505,6 +521,8 @@ class ApertureWorkspace(QWidget):
             not ready and self._scene_tabs() is not None)
         self.run_btn.setVisible(ready)
         self.copy_btn.setVisible(self._result is not None)
+        self.copy_error_btn.setVisible(
+            self._last_failure is not None and self._future is None)
         self.discard_btn.setVisible(self._future is not None)
         self.discard_btn.setEnabled(
             self._future is not None and not self._discard_requested)
@@ -525,6 +543,8 @@ class ApertureWorkspace(QWidget):
         self._result=None
         self._result_identity=None
         self._last_failure=None
+        self._failure_identity=None
+        self.copy_error_btn.hide()
         self.copy_btn.setEnabled(False)
         self.copy_btn.hide()
         self.plot.set_curves(())
@@ -538,6 +558,7 @@ class ApertureWorkspace(QWidget):
                 sga_q=q,sga_pa_deg=pa)
         except (OSError,RuntimeError) as exc:
             self._active_identity=None
+            self._failure_identity=identity
             self._last_failure={
                 "error_type":type(exc).__name__,
                 "message":str(exc)[:1600],
@@ -587,6 +608,7 @@ class ApertureWorkspace(QWidget):
             self._result=None
             self._result_identity=None
             self._last_failure=None
+            self._failure_identity=None
             self.plot.set_curves(())
             self.annulus_plot.set_curves(())
             self.readout.setPlainText(
@@ -609,6 +631,7 @@ class ApertureWorkspace(QWidget):
             result=future.result()
         except (OSError,ValueError,KeyError,TypeError,ArithmeticError,
                 RuntimeError,ImportError) as exc:
+            self._failure_identity=identity
             self._last_failure={
                 "error_type":type(exc).__name__,
                 "message":str(exc)[:1600],
@@ -739,6 +762,19 @@ class ApertureWorkspace(QWidget):
             "and mask provenance.",
         ]
         return "\n".join(lines)
+
+    def copy_failure_report(self):
+        self.refresh_context()
+        if (self._last_failure is None or self._future is not None
+                or self._failure_identity is None):
+            return
+        QApplication.clipboard().setText(format_gui_failure_report(
+            stage="aperture", error_type=self._last_failure["error_type"],
+            failure_status=self._last_failure["status"],
+            band=self._failure_identity[2]))
+        self.status.setText(
+            "Aperture failure report copied without local paths or "
+            "traceback. Review Stage 02 evidence, then retry.")
 
     def copy_qa(self):
         snap=self._snapshot()

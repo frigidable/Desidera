@@ -364,3 +364,75 @@ def test_sky_executor_start_failure_is_reported_without_qt_exception(
     assert "test-only pool unavailable" in stage.status.text()
     assert "to retry" in stage.status.text()
     assert not stage.copy_btn.isEnabled()
+
+
+def test_sky_copy_failure_report_redacts_exception_and_invalidates_on_rebind(
+        qtbot,monkeypatch):
+    import json
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication
+
+    scene=SimpleNamespace(_band="r",_loaded=None,_draft=None,
+                          _contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    ds={"project_id":"private-galaxy","source":"native-r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=(ds["project_id"],ds["source"],"r",draft.digest,
+              mask["catalog_sha256"],id(ds),id(mask))
+    snapshot=(identity,ds,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snapshot)
+    stage.refresh_context()
+    future=Future()
+    future.set_exception(RuntimeError(
+        "sensitive /home/researcher/secret/FITS and token=private"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage._last_failure is not None
+    assert stage.copy_error_btn.isVisible()
+    assert not stage.copy_btn.isVisible()
+    stage.copy_error_btn.click()
+    report=QApplication.clipboard().text()
+    payload=json.loads(report)
+    assert payload["operation"]=="evaluate_residual_sky"
+    assert payload["error_type"]=="RuntimeError"
+    assert payload["status"]=="WORKER_FAILED_CLOSED"
+    assert payload["band"]=="r"
+    assert "/home/researcher" not in report
+    assert "token=private" not in report
+    assert "private-galaxy" not in report
+    assert "traceback" not in payload
+    assert payload["science_status"]=="UNADOPTED_DIAGNOSTIC_ONLY"
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    assert stage._last_failure is None
+    assert not stage.copy_error_btn.isVisible()
+    previous=QApplication.clipboard().text()
+    stage.copy_failure_report()
+    assert QApplication.clipboard().text()==previous
+
+
+def test_failure_report_formatter_is_strict_allowlist():
+    import json
+    import pytest
+    from lsbpipe.gui.workflow_ux import format_gui_failure_report
+    report=json.loads(format_gui_failure_report(
+        stage="background", error_type="Access /home/secret token",
+        failure_status="WORKER_START_FAILED_CLOSED",
+        band="../private/dir"))
+    assert report["error_type"]=="Exception"
+    assert report["band"] is None
+    assert "secret" not in json.dumps(report)
+    assert "background worker" in report["possible_cause"].lower()
+    with pytest.raises(ValueError):
+        format_gui_failure_report(
+            stage="/home/private",error_type="ValueError",
+            failure_status="WORKER_FAILED_CLOSED")
+    with pytest.raises(ValueError):
+        format_gui_failure_report(
+            stage="scene",error_type="ValueError",
+            failure_status="RAW_PRIVATE_TRACEBACK")

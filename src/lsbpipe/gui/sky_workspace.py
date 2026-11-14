@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget, QSizePolicy, QTabWidget,
 )
 
+from lsbpipe.gui.workflow_ux import format_gui_failure_report
 from lsbpipe.background import diagnose_current_project_residual_sky
 
 
@@ -37,6 +38,7 @@ class SkyWorkspace(QWidget):
         self._result_identity = None
         self._result = None
         self._last_failure = None
+        self._failure_identity = None
         self._discard_requested = False
         self._timer = QTimer(self)
         self._timer.setInterval(80)
@@ -104,6 +106,16 @@ class SkyWorkspace(QWidget):
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self.copy_qa)
         tools.addWidget(self.copy_btn)
+        self.copy_error_btn = QPushButton("Copy error report")
+        self.copy_error_btn.setObjectName("sky_copy_failure_report")
+        self.copy_error_btn.setAccessibleName(
+            "Copy safe residual background failure report")
+        self.copy_error_btn.setToolTip(
+            "Share the error category and retry instructions. "
+            "No traceback, project identifiers or local paths are copied.")
+        self.copy_error_btn.clicked.connect(self.copy_failure_report)
+        self.copy_error_btn.hide()
+        tools.addWidget(self.copy_error_btn)
         tools.addStretch(1)
         root.addLayout(tools)
 
@@ -215,6 +227,10 @@ class SkyWorkspace(QWidget):
             self.context_label.setToolTip(
                 f"Native source {identity[1]}; mask draft {identity[3]}. "
                 "Tractor masks are provisional; no sky adopted.")
+        if self._last_failure is not None and (
+                snap is None or snap[0] != self._failure_identity):
+            self._last_failure = None
+            self._failure_identity = None
         if self._result is not None and (
                 snap is None or snap[0] != self._result_identity):
             self._result = None
@@ -230,6 +246,8 @@ class SkyWorkspace(QWidget):
             not ready and self._scene_tabs() is not None)
         self.run_btn.setVisible(ready)
         self.copy_btn.setVisible(self._result is not None)
+        self.copy_error_btn.setVisible(
+            self._last_failure is not None and self._future is None)
         self.discard_btn.setVisible(self._future is not None)
         self.discard_btn.setEnabled(
             self._future is not None and not self._discard_requested)
@@ -250,6 +268,8 @@ class SkyWorkspace(QWidget):
         self._result = None
         self._result_identity = None
         self._last_failure = None
+        self._failure_identity = None
+        self.copy_error_btn.hide()
         self.copy_btn.setEnabled(False)
         self.copy_btn.hide()
         self._reset_report_visibility()
@@ -263,6 +283,7 @@ class SkyWorkspace(QWidget):
             # Thread-pool startup failures must not escape a Qt button
             # callback. All source evidence and manual masks stay intact.
             self._active_identity = None
+            self._failure_identity = identity
             self._last_failure = {
                 "error_type": type(exc).__name__,
                 "message": str(exc)[:1600],
@@ -315,6 +336,7 @@ class SkyWorkspace(QWidget):
             self._result = None
             self._result_identity = None
             self._last_failure = None
+            self._failure_identity = None
             self.readout.setPlainText(
                 "Background calculation discarded by user; no sky model "
                 "was accepted, saved or subtracted.")
@@ -336,6 +358,7 @@ class SkyWorkspace(QWidget):
             result = future.result()
         except (OSError, ValueError, KeyError, TypeError,
                 ArithmeticError, RuntimeError) as exc:
+            self._failure_identity = identity
             self._last_failure = {
                 "error_type": type(exc).__name__,
                 "message": str(exc)[:1600],
@@ -550,6 +573,19 @@ class SkyWorkspace(QWidget):
             "Full provenance and warnings: Copy background QA.",
         ]
         return "\n".join(lines)
+
+    def copy_failure_report(self):
+        self.refresh_context()
+        if (self._last_failure is None or self._future is not None
+                or self._failure_identity is None):
+            return
+        band = self._failure_identity[2]
+        QApplication.clipboard().setText(format_gui_failure_report(
+            stage="background", error_type=self._last_failure["error_type"],
+            failure_status=self._last_failure["status"], band=band))
+        self.status.setText(
+            "Background failure report copied without file paths or "
+            "traceback. Correct Stage 02 evidence, then retry.")
 
     def copy_qa(self):
         if self._result is None or self._snapshot() is None or (

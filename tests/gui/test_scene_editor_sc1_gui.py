@@ -2310,3 +2310,38 @@ def test_scene_executor_start_failure_is_recoverable_without_losing_mask(
     assert "test-only worker closed" in scene.status.text()
     assert scene.draft is draft
     scene.shutdown()
+
+
+def test_scene_copy_fits_error_report_omits_private_path_and_resets_on_retry(
+        qtbot,tmp_path,monkeypatch):
+    """Support clipboard must not disclose absolute local FITS paths."""
+    import json
+    from concurrent.futures import Future
+    from PySide6.QtWidgets import QApplication
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    raw_secret=r"C:\\Users\\private\\Documents\\PhD\\galaxy-source.fits.fz"
+    prior=Future()
+    prior.set_exception(FileNotFoundError(raw_secret))
+    monkeypatch.setattr(scene._executor,"submit",lambda *args,**kw:prior)
+    scene.load_original()
+    scene._poll_load()
+    assert scene.load_btn.text()=="Retry FITS load"
+    assert scene.copy_error_btn.isVisible()
+    scene.copy_error_btn.click()
+    payload=QApplication.clipboard().text()
+    report=json.loads(payload)
+    assert report["report_format"]=="DESIDERA_GUI_FAILURE_REPORT_V1"
+    assert report["operation"]=="load_original_fits"
+    assert report["error_type"]=="FileNotFoundError"
+    assert report["status"]=="FITS_LOAD_FAILED_CLOSED"
+    assert report["band"]=="g"
+    assert "Retry FITS load" in report["recommended_action"]
+    assert not report["traceback_included"]
+    assert raw_secret not in payload
+    assert str(tmp_path) not in payload
+    assert "project_id" not in payload
+    scene.set_band("r")
+    assert scene._fits_load_failure is None
+    assert not scene.copy_error_btn.isVisible()
+    assert scene.load_btn.text()=="Load original FITS"
+    scene.shutdown()
