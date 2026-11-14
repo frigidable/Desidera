@@ -14,6 +14,7 @@ import sys
 import numpy as np
 
 from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
     QComboBox, QHeaderView, QLabel, QPushButton, QScrollArea, QTabBar, QTabWidget, QTableWidget,
@@ -335,6 +336,22 @@ class PhotometryWorkspace(QWidget):
         self.stage_tabs.currentChanged.connect(self._emit_navigation)
         self.band_tabs.currentChanged.connect(self._emit_navigation)
         self.scene_editor.band.currentIndexChanged.connect(self._emit_navigation)
+        # Direct task navigation is active only when focus belongs to this
+        # workspace; hidden project pages must never intercept shortcuts.
+        self.stage_tabs.tabBar().setAccessibleName(
+            "Photometry stages; Ctrl+1 PSF, Ctrl+2 Scene, "
+            "Ctrl+3 Background, Ctrl+4 Aperture")
+        self._stage_shortcuts = {}
+        for index in range(self.stage_tabs.count()):
+            combination = f"Ctrl+{index+1}"
+            self.stage_tabs.setTabToolTip(
+                index, self.stage_tabs.tabToolTip(index)
+                + f" Keyboard shortcut: {combination}.")
+            shortcut = QShortcut(QKeySequence(combination), self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(
+                lambda idx=index: self.stage_tabs.setCurrentIndex(idx))
+            self._stage_shortcuts[index+1] = shortcut
         self._set_view_mode()
         self._update_band_tab_statuses()
         self._apply_science_reflow()

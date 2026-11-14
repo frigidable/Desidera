@@ -116,3 +116,25 @@ def test_right_inspector_remains_resizable_and_scrollable(qtbot):
     assert not view.detail.safety.isVisible()
     assert "scientific QA" in view.detail.open_button.toolTip()
     assert not view.detail.details_panel.isVisible()
+
+
+
+def test_empty_galaxy_passport_removes_redundant_explanations(qtbot):
+    from types import SimpleNamespace
+    card=GalaxyDetailCard()
+    qtbot.addWidget(card)
+    card.resize(600,650)
+    card.show()
+    snapshot=sample("UGC 2162", "ugc")
+    # A selected object with no confirmed catalogue has one short status,
+    # with complete research help in the accessible tooltip.
+    card.set_snapshot(snapshot)
+    assert not card.catalogue_help.isVisible()
+    assert "Why identify this galaxy" in card.catalogue.toolTip() or (
+        "Why identify this galaxy" in card.catalogue.accessibleDescription())
+    assert card.preview.width()==124
+    assert card.preview.height()==124
+    # A source-bearing snapshot remains fully visible and keeps the facts.
+    assert "0400p012" in card.dataset.text()
+    assert "No local FITS link" in card.fits.text()
+    assert card.fits.isVisible()

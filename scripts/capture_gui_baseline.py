@@ -242,6 +242,28 @@ def main():
                     "screenshot": path.name,
                     "screenshot_bytes": path.stat().st_size,
                     "network_used": False, "scientific_status": "NO_SCIENCE_RESULT"})
+            # Verify the real Project Hub remains readable with larger UI
+            # text, without pretending to emulate physical monitor DPI.
+            hub.setFont(QFont(preferred, 16))
+            hub.resize(1366, 768)
+            hub.show()
+            app.processEvents()
+            if (not hub.galaxy_card.open_button.isVisible()
+                    or not hub.filter.isVisible()
+                    or hub.galaxy_card.snapshot is None):
+                raise AssertionError("High-font Hub lost the selected object")
+            shot = hub.grab()
+            path = outdir / "hub_recent_font16_1366x768.png"
+            if shot.isNull() or not shot.save(str(path), "PNG"):
+                raise RuntimeError(f"Could not capture {path}")
+            reports.append({
+                "state":"H4_recent_project_large_font_offline",
+                "screenshot":path.name,
+                "screenshot_bytes":path.stat().st_size,
+                "font_points":16, "real_monitor_dpi_tested":False,
+                "network_used":False,
+                "scientific_status":"NO_SCIENCE_RESULT",
+            })
         finally:
             hub.close()
         # Capture the real single-page creation form with synthetic input.

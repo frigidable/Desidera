@@ -100,3 +100,35 @@ def test_advanced_photometry_preserves_multiband_controls_without_fits(qtbot):
     assert w.copy_full_qa_btn.isVisible()
     w.view_mode.setCurrentIndex(w.view_mode.findData("guided"))
     assert not w.batch_box.isVisible()
+
+
+
+def test_photometry_stage_shortcuts_are_scoped_and_side_effect_free(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QShortcut
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1000,700)
+    w.show()
+    assert w.stage_tabs.count()==4
+    assert len(w._stage_shortcuts)==4
+    assert "Ctrl+2" in w.stage_tabs.tabToolTip(1)
+    assert "Ctrl+4" in w.stage_tabs.tabToolTip(3)
+    assert w.stage_tabs.tabBar().accessibleName().startswith(
+        "Photometry stages; Ctrl+1")
+    for key,expected in enumerate(range(4),start=1):
+        shortcut=w._stage_shortcuts[key]
+        assert isinstance(shortcut,QShortcut)
+        assert shortcut.key().toString()==f"Ctrl+{key}"
+        assert shortcut.context()==Qt.WidgetWithChildrenShortcut
+        shortcut.activated.emit()
+        assert w.stage_tabs.currentIndex()==expected
+        assert w.scene_editor._loaded is None
+        assert w.scene_editor._future is None
+        assert w.sky_stage._future is None
+        assert w.aperture_stage._future is None
+    assert w.current_navigation()==("aperture","g")
+    w._stage_shortcuts[1].activated.emit()
+    assert w.current_navigation()==("psf0","g")

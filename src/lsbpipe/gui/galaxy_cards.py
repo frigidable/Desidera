@@ -309,6 +309,8 @@ class GalaxyDetailCard(QFrame):
             self.preview_note.hide()
             self.dataset.clear()
             self.fits.clear()
+            self.fits.hide()
+            self._set_preview_side(124)
             self.aliases.hide()
             self.catalogue.setText("No galaxy selected")
             self.catalogue_provenance.hide()
@@ -330,12 +332,21 @@ class GalaxyDetailCard(QFrame):
 
         self.observation_heading.show()
         self.details_toggle.show()
+        self.dataset.show()
+        self.fits.show()
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
         if (previous_id != snapshot.project_id
                 and snapshot.knowledge_status != "EVIDENCE_ERROR"):
             self.details_toggle.setChecked(False)
         self.dataset.setText(f"Dataset: {snapshot.dataset}")
+        self.dataset.setToolTip("")
+        self.dataset.setAccessibleDescription("")
+        self.fits.setToolTip("")
+        self.catalogue.setToolTip(
+            "Only user-confirmed catalogue identities. External evidence "
+            "does not change project coordinates or adopt measurements.")
+        self.catalogue.setAccessibleDescription(self.catalogue.toolTip())
         self.literature_heading.hide()
         self.literature.hide()
         self.cross_catalogue.hide()
@@ -409,15 +420,21 @@ class GalaxyDetailCard(QFrame):
                     "Why identify this galaxy? SIMBAD connects names and "
                     "literature; NED provides published galaxy properties. "
                     "Use Catalogues to confirm a match; no science is adopted.")
-                self.catalogue_help.show()
+                self.catalogue_help.hide()
             elif "SIMBAD" not in providers:
                 self.catalogue_help.setText(
                     "Link SIMBAD for alternative names and literature references.")
-                self.catalogue_help.show()
+                self.catalogue_help.hide()
             elif "NED" not in providers:
                 self.catalogue_help.setText(
                     "Link NED for sourced extragalactic properties.")
-                self.catalogue_help.show()
+                self.catalogue_help.hide()
+            if self.catalogue_help.text():
+                explanation = (
+                    self.catalogue.toolTip() + " " +
+                    self.catalogue_help.text())
+                self.catalogue.setToolTip(explanation)
+                self.catalogue.setAccessibleDescription(explanation)
             ned = next((entry for entry in catalogues
                         if entry.provider == "NED"), None)
             if ned is not None and (ned.object_type or ned.redshift is not None):
@@ -461,6 +478,14 @@ class GalaxyDetailCard(QFrame):
             self.fits.setToolTip(snapshot.readiness.explanation)
             self.observation_explanation.setText(
                 snapshot.readiness.explanation)
+            if snapshot.readiness.code in (
+                    "TARGET_NOT_SET", "DATASET_NOT_SELECTED"):
+                # One actionable line; no second "dataset missing" report.
+                self.dataset.setText(snapshot.readiness.observation_label)
+                self.dataset.setToolTip(snapshot.readiness.explanation)
+                self.dataset.setAccessibleDescription(
+                    snapshot.readiness.explanation)
+                self.fits.hide()
             self.observation_explanation.show()
             self.next_step.setText(snapshot.readiness.next_action_label)
             self.open_button.setText("Open project")
@@ -548,6 +573,9 @@ class GalaxyDetailCard(QFrame):
             tooltip += " Link local FITS or select a dataset to obtain a preview."
         self.preview.setToolTip(tooltip)
         self.preview.setAccessibleDescription(tooltip)
+        # Leave larger image space only when real preview pixels exist.
+        self._set_preview_side(
+            124 if self._pixmap is None or self.width() < 540 else 184)
 
     def _update_preview(self) -> None:
         if self._pixmap is not None:
@@ -558,7 +586,8 @@ class GalaxyDetailCard(QFrame):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._set_preview_side(124 if self.width() < 540 else 184)
+        self._set_preview_side(
+            124 if self._pixmap is None or self.width() < 540 else 184)
         self._update_preview()
 
     def _request_open(self) -> None:

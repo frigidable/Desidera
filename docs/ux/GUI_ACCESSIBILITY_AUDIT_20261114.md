@@ -285,3 +285,15 @@ Windows GUI run `43542742606`: `292 passed, 1 failed`; scientific `987 passed, 3
 ### Qt-parent fix после CI da5bd94
 
 Коммит `da5bd94`: научные тесты 987/3 skipped, основная матрица 6/6 successful; Windows GUI 295 passed / 2 failed. Оба падения и screenshot-scenario были связаны с Qt ownership: после `QTabWidget.addTab` сам QWidget страницы получает непосредственного родителя типа **QStackedWidget** (внутренний стек Qt), а не QTabWidget. Поэтому новая кнопка `Open Scene and Masks` ошибочно скрывалась. Исправлено в Stage 03/04 через обход `parentWidget()` до фактического QTabWidget с проверкой `indexOf(scene)`. Если такого контейнера нет (standalone), кнопка по-прежнему не показывается. Тесты оставлены неизменными; научные данные не затронуты.
+
+
+## 21. Project Hub: компактная карточка без дублирования и клавиатурные научные этапы
+
+По реальному Windows Hub screenshot (`hub_recent_1366x768.png`) карточка объекта при отсутствии каталогов показывала «Not yet linked to SIMBAD or NED» **и** отдельный длинный абзац «Why identify this galaxy». Для проекта без выбранного survey dataset отображались одновременно «Dataset: Not selected» и «No survey dataset selected». Пустое место для несуществующего JPEG занимало столько же, сколько реальная миниатюра.
+
+**UI-only:** отсутствие привязок SIMBAD/NED выражено одной строкой, а прежняя подробная мотивация/источник вынесены в tooltip и accessible description каталожного поля. «TARGET_NOT_SET» или «DATASET_NOT_SELECTED» отображается в одном observation label вместо двух повторных статусов; явная готовность и целевые CTA не меняются. Пустой thumbnail 124×124 logical px; реальный preview в просторной карточке сохраняет 184×184. Provenance, полная проверка FITS/WCS, опубликованные величины, ссылки на подтверждённые каталожные совпадения и меню научных инструментов остались доступны.
+
+**Клавиатура:** четыре shortcut `Ctrl+1..4` переключают PSF-0 / Scene / Background / Aperture непосредственно из Photometry; scope только активный widget и его потомки (`Qt.WidgetWithChildrenShortcut`). Сохранено независимое состояние native Scene band, unadopted edits, worker output и полная навигация при возврате. Tab tooltip и accessibleName теперь объясняют соответствующий shortcut. Никакие worker/FITS reads не инициируются одним переключением.
+
+**Контроль:** добавлены object-card, production Hub, Photometry GUI тесты. Offline screenshot workflow отдельно снимает Project Hub с 16pt шрифтом на 1366×768 (физический DPI 125/150/200% не моделируется и не заявляется). Полное E1/CI и E2-сравнение последуют после запуска.
+
