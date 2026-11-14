@@ -17,8 +17,8 @@ def test_stage03_is_real_and_resumable_without_loading_or_running(qtbot):
     w = PhotometryWorkspace()
     qtbot.addWidget(w)
     assert w.stage_tabs.count() == 4
-    assert w.stage_tabs.tabText(2) == "3 · Background"
-    assert w.stage_tabs.tabText(3) == "4 · Aperture Photometry"
+    assert w.stage_tabs.tabText(2) == "3 · Sky"
+    assert w.stage_tabs.tabText(3) == "4 · Apertures"
     assert w.sky_stage._future is None
     assert w.sky_stage._result is None
     assert not w.sky_stage.run_btn.isEnabled()

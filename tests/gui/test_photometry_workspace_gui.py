@@ -260,6 +260,12 @@ def test_short_stage_labels_preserve_long_scientific_tooltips(qtbot):
     w.show()
     qtbot.wait(40)
     assert w.width()<=760
+    assert w.back_btn.text()=="Workspace"
+    assert w.back_btn.accessibleName()=="Return to Galaxy Workspace"
+    assert w.sources_btn.text()=="Sources"
+    assert w.sources_btn.accessibleName()=="Manage observational sources"
+    assert w.refresh_btn.text()=="Refresh"
+    assert "observational selection" in w.refresh_btn.accessibleName()
     assert w.stage_tabs.tabText(1)=="2 · Scene"
     assert w.stage_tabs.tabText(2)=="3 · Sky"
     assert w.stage_tabs.tabText(3)=="4 · Apertures"

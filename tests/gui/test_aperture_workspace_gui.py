@@ -48,7 +48,7 @@ def test_aperture_fourth_tab_restore_no_automatic_fits_work(qtbot):
     widget=PhotometryWorkspace()
     qtbot.addWidget(widget)
     assert widget.stage_tabs.count()==4
-    assert widget.stage_tabs.tabText(3)=="4 · Aperture Photometry"
+    assert widget.stage_tabs.tabText(3)=="4 · Apertures"
     assert widget.aperture_stage._future is None
     assert widget.aperture_stage._result is None
     assert not widget.aperture_stage.run_btn.isEnabled()

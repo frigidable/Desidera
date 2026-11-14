@@ -59,19 +59,27 @@ class PhotometryWorkspace(QWidget):
         root.setSpacing(12)
 
         header = QHBoxLayout()
-        self.back_btn = QPushButton("← Galaxy Workspace")
+        self.back_btn = QPushButton("Workspace")
         self.back_btn.setObjectName("photometry_back_to_workspace")
+        self.back_btn.setAccessibleName("Return to Galaxy Workspace")
+        self.back_btn.setToolTip(
+            "Return to the galaxy's data workspace without running analysis.")
         adorn(self.back_btn, "back")
         self.back_btn.clicked.connect(self.backRequested.emit)
         header.addWidget(self.back_btn)
         header.addStretch(1)
-        self.sources_btn = QPushButton("Manage sources")
+        self.sources_btn = QPushButton("Sources")
         self.sources_btn.setObjectName("photometry_manage_sources")
+        self.sources_btn.setAccessibleName("Manage observational sources")
+        self.sources_btn.setToolTip(
+            "Inspect linked local FITS and catalogues; no science is run.")
         adorn(self.sources_btn, "database")
         self.sources_btn.clicked.connect(self.sourcesRequested.emit)
         header.addWidget(self.sources_btn)
-        self.refresh_btn = QPushButton("Refresh saved selection")
+        self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setObjectName("photometry_refresh")
+        self.refresh_btn.setAccessibleName(
+            "Refresh saved observational selection")
         adorn(self.refresh_btn, "refresh")
         self.refresh_btn.setToolTip(
             "Read project metadata and local file existence, without "
