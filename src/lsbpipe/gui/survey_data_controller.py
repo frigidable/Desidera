@@ -239,6 +239,9 @@ class SurveyDataController(QObject):
             f"{report.verified_files} URLs HTTP OK; "
             f"{report.unknown_size_files} selected files have unknown sizes; "
             f"{report.missing_files} known HTTP-missing.")
+        # A checkbox or bulk-selection action must update next-step guidance
+        # in place, without starting downloads or scientific work.
+        w._refresh_workflow()
 
     def _apply_profile(self, _=None):
         w = self.owner

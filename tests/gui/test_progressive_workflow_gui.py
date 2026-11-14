@@ -115,6 +115,33 @@ def test_selected_brick_help_tracks_selection_without_data_side_effects(qtbot):
     assert not w.bricks_help.accessibleDescription()
 
 
+def test_workflow_hint_distinguishes_complete_quartet_from_arbitrary_files(qtbot):
+    """Selection changes guidance only; no automatic data or science work."""
+    from unittest.mock import patch
+    from lsbpipe.gui import survey_explorer as gui
+    with offline_legacy_viewer():
+        w = gui.SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(w)
+    w.show()
+    apply_offline_state(w, "S1")
+    w.bricks.selectRow(0)
+    assert "Choose the four science FITS" in w.workflow_hint.text()
+    with patch.object(gui.QInputDialog, "getItem", return_value=("r", True)):
+        w.science_btn.click()
+    assert len(w._selected()) == 4
+    assert "R-band science quartet selected" in w.workflow_hint.text()
+    assert "check URLs" in w.workflow_hint.text()
+    assert w.thread is None
+    w.clear_all_btn.click()
+    assert not w._selected()
+    assert "Choose the four science FITS" in w.workflow_hint.text()
+    w._set_visible_selection(True)
+    assert len(w._selected()) > 4
+    assert "archive files selected" in w.workflow_hint.text()
+    assert "science quartet selected" not in w.workflow_hint.text()
+    assert w.thread is None
+
+
 def test_archive_screening_controls_fit_narrow_dock_without_horizontal_scroll(
         qtbot):
     """Expanded file options must not hide QA fields beyond the dock edge."""

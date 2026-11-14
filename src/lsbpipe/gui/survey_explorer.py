@@ -1770,6 +1770,39 @@ class SurveyExplorer(QMainWindow):
             has_interactive_image=image_ready)
         self.workflow_stage.setText(cue.title)
         self.workflow_hint.setText(cue.instruction)
+        if has_catalog and selected and not local_available:
+            # Reflect EXPLICIT download selections. A selected native quartet
+            # must no longer be described as "choose four files"; an arbitrary
+            # selection must never be misrepresented as a science quartet.
+            selected_paths = self._selected()
+            if selected_paths:
+                hit = self.hits[row]
+                entries = [
+                    item for item in self.manifest["products"]
+                    if item["relative_path"] in selected_paths]
+                same_brick = all(
+                    (item["release"], item["region"], item["brick"]) ==
+                    (hit.release, hit.region, hit.name)
+                    for item in entries)
+                bands = {
+                    item["band"] for item in entries
+                    if item["kind"] != "maskbits"}
+                is_quartet = (
+                    len(selected_paths) == len(entries) == 4
+                    and same_brick
+                    and {item["kind"] for item in entries} ==
+                    {"image", "invvar", "nexp", "maskbits"}
+                    and len(bands) == 1
+                    and next(iter(bands)) in ("g", "r", "i", "z"))
+                if is_quartet:
+                    band = next(iter(bands)).upper()
+                    self.workflow_hint.setText(
+                        f"{band}-band science quartet selected (4 FITS). "
+                        "Review Archive files and check URLs before download.")
+                else:
+                    self.workflow_hint.setText(
+                        f"{len(selected_paths)} archive files selected. "
+                        "Review the full selection before downloading.")
         self.science_btn.setEnabled(
             selected and bool(has_catalog) and self.thread is None)
         # An empty brick grid is not a meaningful default navigation element.
