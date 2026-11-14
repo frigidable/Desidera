@@ -646,8 +646,15 @@ def test_legacy_import_concurrent_processes_reuse_one_project_uuid(
         deadline = time.monotonic() + 20.
         while not (first_ready.is_file() and second_ready.is_file()):
             if a.poll() is not None or b.poll() is not None:
-                out_a, err_a = a.communicate(timeout=2)
-                out_b, err_b = b.communicate(timeout=2)
+                # If one importer exits prematurely, the OTHER importer
+                # may still be deliberately blocked on the release marker.
+                # Release it before communicate(): otherwise Windows CI
+                # reports a misleading 2-second subprocess timeout and
+                # hides the actual failure output from the early process.
+                # The premature exit STILL fails this concurrency test.
+                release.write_text("CONTINUE", encoding="utf-8")
+                out_a, err_a = a.communicate(timeout=18)
+                out_b, err_b = b.communicate(timeout=18)
                 pytest.fail(
                     f"Importer stopped before rendezvous: "
                     f"{(a.returncode, out_a, err_a, b.returncode, out_b, err_b)}")

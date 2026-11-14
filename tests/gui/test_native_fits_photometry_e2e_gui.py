@@ -136,7 +136,31 @@ def test_synthetic_original_fits_full_photometry_gui_route(
             for key,path in source_files.items()}
     before_passport=(project.root/"lsbpipe-object.json").read_bytes()
 
+    # Offscreen Qt on GitHub Windows can have NO renderable fonts until
+    # installed OS fonts are registered. Scope only to screenshot runs
+    # and this widget, without redistributing font files or global style.
+    capture_dir=os.environ.get("DESIDERA_E2E_SCREENSHOT_DIR")
+    capture_font=None
+    font_families=()
+    if capture_dir:
+        from PySide6.QtGui import QFont, QFontDatabase
+        font_dir=Path(os.environ.get("WINDIR","C:/Windows"))/"Fonts"
+        for name in ("segoeui.ttf","arial.ttf","tahoma.ttf"):
+            font_path=font_dir/name
+            if font_path.is_file():
+                QFontDatabase.addApplicationFont(str(font_path))
+        font_families=tuple(QFontDatabase.families())
+        family=next((name for name in (
+            "Segoe UI","Arial","Tahoma","DejaVu Sans")
+            if name in font_families),None)
+        if family is None:
+            raise RuntimeError(
+                "Native FITS screenshot has no registered readable system font")
+        capture_font=QFont(family,10)
+
     widget=PhotometryWorkspace()
+    if capture_font is not None:
+        widget.setFont(capture_font)
     qtbot.addWidget(widget)
     widget.resize(1366,768)
     widget.show()
@@ -234,7 +258,6 @@ def test_synthetic_original_fits_full_photometry_gui_route(
 
     # Capture the *actual successful synthetic data-bearing stages*
     # before invalidating their results; these are not archival observations.
-    capture_dir=os.environ.get("DESIDERA_E2E_SCREENSHOT_DIR")
     if capture_dir:
         screenshot_root=Path(capture_dir)
         screenshot_root.mkdir(parents=True,exist_ok=True)
@@ -293,5 +316,7 @@ def test_synthetic_original_fits_full_photometry_gui_route(
                     "n_measurable_geometry_hypotheses"],
                 "sky_model_adopted":False,
                 "aperture_adopted_for_science":False,
+                "rendered_font_family":widget.font().family(),
+                "renderable_font_families_count":len(font_families),
                 "real_monitor_dpi_tested":False,
             },indent=2,sort_keys=True),encoding="utf-8")
