@@ -216,6 +216,9 @@ class PhotometryWorkspace(QWidget):
         batch_buttons = QHBoxLayout()
         self.build_all_psfs_btn = QPushButton("Build PSF for available bands")
         self.build_all_psfs_btn.setObjectName("psf0_build_all_bands")
+        # Disabled before source binding; refresh() enables only when an
+        # actual native FITS + catalogue PSF operation can run.
+        self.build_all_psfs_btn.setEnabled(False)
         self.build_all_psfs_btn.setToolTip(
             "Runs one real native FITS/Tractor PSF-0 diagnostic for each "
             "available band, sequentially, in the existing background "
