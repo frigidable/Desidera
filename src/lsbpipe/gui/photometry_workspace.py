@@ -90,17 +90,15 @@ class PhotometryWorkspace(QWidget):
         title_row.addWidget(self.copy_project_qa_btn)
         root.addLayout(title_row)
         self.subtitle = QLabel(
-            "PSF, residual sky and aperture fluxes are diagnostic only · "
-            "no adopted galaxy photometry")
+            "Experimental diagnostics · no adopted galaxy photometry")
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
-        self.project_qa_status = QLabel(
-            "One-click project QA is read-only. Run each stage as needed; "
-            "not-run or stale stages are reported explicitly.")
+        self.project_qa_status = QLabel("")
         self.project_qa_status.setObjectName("photometry_project_qa_status")
         self.project_qa_status.setWordWrap(True)
         root.addWidget(self.project_qa_status)
+        self.project_qa_status.hide()
 
         # These are two real user workflows in ONE object-bound
         # Photometry Workspace, not eight non-executable roadmap cards.
@@ -239,7 +237,7 @@ class PhotometryWorkspace(QWidget):
         batch_buttons.addWidget(self.save_full_qa_btn)
         batch_buttons.addStretch(1)
         batch_layout.addLayout(batch_buttons)
-        self.batch_status = QLabel("No batch run started. Original FITS unchanged.")
+        self.batch_status = QLabel("")
         self.batch_status.setObjectName("psf0_griz_batch_status")
         self.batch_status.setWordWrap(True)
         batch_layout.addWidget(self.batch_status)
@@ -472,6 +470,7 @@ class PhotometryWorkspace(QWidget):
         if self._project_root is None or self._bound_project_id is None:
             self.project_qa_status.setText(
                 "Open a saved galaxy project before copying project QA.")
+            self.project_qa_status.show()
             return
         try:
             content = serialize_project_diagnostic_bundle(self)
@@ -480,12 +479,14 @@ class PhotometryWorkspace(QWidget):
             self.project_qa_status.setText(
                 f"Project QA collection failed ({type(exc).__name__}): "
                 f"{exc}. Clipboard not changed.")
+            self.project_qa_status.show()
             return
         QApplication.clipboard().setText(content)
         self.project_qa_status.setText(
             f"Copied all-stage project QA: {len(content):,} JSON characters. "
             "Paste into ChatGPT or save the clipboard as UTF-8 .json. "
             "No worker, FITS or draft changed. NOT_RUN is not a pass.")
+        self.project_qa_status.show()
 
     def full_qa_report(self):
         from lsbpipe.photometry.psf_gui_backend import (

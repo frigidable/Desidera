@@ -182,28 +182,32 @@ class SurveyExplorer(QMainWindow):
         panel.setSpacing(8)
         # Project navigation belongs above the coordinates card, not inside
         # the target parameters and scientific input controls.
-        self.back_to_projects = QPushButton("← All galaxy projects")
+        navigation_actions = QHBoxLayout()
+        navigation_actions.setSpacing(5)
+        self.back_to_projects = QPushButton("Projects")
         self.back_to_projects.setObjectName("workspace_back_to_projects")
         self.back_to_projects.setAccessibleName("Return to galaxy projects")
         self.back_to_projects.clicked.connect(self._go_back_to_projects)
         self.back_to_projects.setVisible(False)
-        panel.addWidget(self.back_to_projects)
-        self.dataset_manager_btn = QPushButton("Data Manager · local sources")
+        navigation_actions.addWidget(self.back_to_projects)
+        self.dataset_manager_btn = QPushButton("Sources")
         self.dataset_manager_btn.setObjectName("workspace_open_dataset_manager")
         self.dataset_manager_btn.setToolTip(
             "Inspect all local observational sources, bricks and filters "
             "before configuring scientific analysis. No network requests.")
         self.dataset_manager_btn.clicked.connect(self._open_dataset_manager)
         self.dataset_manager_btn.setVisible(False)
-        panel.addWidget(self.dataset_manager_btn)
-        self.photometry_btn = QPushButton("Photometry · PSF workspace")
+        self.dataset_manager_btn.setAccessibleName("Open local observational sources manager")
+        navigation_actions.addWidget(self.dataset_manager_btn)
+        self.photometry_btn = QPushButton("Photometry")
         self.photometry_btn.setObjectName("workspace_open_photometry")
         self.photometry_btn.setToolTip(
             "Open the separate scientific photometry screen for this galaxy. "
             "No measurements are performed or adopted by navigation.")
         self.photometry_btn.clicked.connect(self._open_photometry)
         self.photometry_btn.setVisible(False)
-        panel.addWidget(self.photometry_btn)
+        navigation_actions.addWidget(self.photometry_btn)
+        panel.addLayout(navigation_actions)
         self.workflow_stage = QLabel("01 / 03 · Target")
         self.workflow_stage.setObjectName("workflow_stage")
         self.workflow_stage.setStyleSheet(
@@ -241,15 +245,18 @@ class SurveyExplorer(QMainWindow):
             "Default units: arcmin; also accepts deg or arcsec. "
             "The outline is shown in the Legacy Viewer.")
 
-        for label, field in (
-            ("RA · degrees / hh:mm:ss", self.ra),
-            ("Dec · degrees / ±dd:mm:ss", self.dec),
-            ("Search area · side length (arcmin)", self.field_width),
-        ):
-            caption = QLabel(label)
-            caption.setBuddy(field)
-            target_form.addWidget(caption)
-            target_form.addWidget(field)
+        # Three compact form rows replace six stacked label/field rows.
+        # The complete coordinate conventions stay in accessible names,
+        # placeholders and tooltips, not in permanently repeated prose.
+        self.target_compact_form = QFormLayout()
+        self.target_compact_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.target_compact_form.setHorizontalSpacing(7)
+        self.target_compact_form.setVerticalSpacing(7)
+        self.target_compact_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.target_compact_form.addRow("RA", self.ra)
+        self.target_compact_form.addRow("Dec", self.dec)
+        self.target_compact_form.addRow("Field (arcmin)", self.field_width)
+        target_form.addLayout(self.target_compact_form)
 
         self.advanced_target = QWidget()
         self.advanced_target.setObjectName("target_advanced_options")
@@ -270,7 +277,9 @@ class SurveyExplorer(QMainWindow):
         for field in (self.ra, self.dec, self.field_width):
             field.textChanged.connect(self._target_edited)
 
-        target_form.addWidget(QLabel("Data releases · select before Find data"))
+        release_label = QLabel("Releases")
+        release_label.setToolTip("Choose the official survey releases before Find data")
+        target_form.addWidget(release_label)
         releases_container = QWidget()
         releases = QHBoxLayout(releases_container)
         releases.setContentsMargins(0, 0, 0, 0)
@@ -312,7 +321,7 @@ class SurveyExplorer(QMainWindow):
         self.project_status.setObjectName("local_project_status")
         self.project_status.setWordWrap(True)
         self.advanced_target_layout.addWidget(self.project_status)
-        self.target_options = QPushButton("More target options")
+        self.target_options = QPushButton("Target utilities")
         self.target_options.setProperty("disclosureAction", True)
         self.target_options.setObjectName("target_advanced_toggle")
         self.target_options.setCheckable(True)
@@ -335,7 +344,7 @@ class SurveyExplorer(QMainWindow):
         self.view_mode.currentIndexChanged.connect(self.show_viewer)
         viewer_controls.addWidget(self.view_mode, 2)
         self.advanced_target_layout.addLayout(viewer_controls)
-        self.data_toggle = QPushButton("02 · Data files")
+        self.data_toggle = QPushButton("Files / QA")
         self.data_toggle.setAccessibleName("Show or hide file selection and coverage")
         self.data_toggle.setToolTip(
             "Open the download and local FITS coverage workbench")
@@ -471,8 +480,9 @@ class SurveyExplorer(QMainWindow):
         self.qa_toggle.setCheckable(True)
         self.qa_toggle.setChecked(False)
         self.qa_toggle.setToolTip(
-            "Show circular source and sky-ring radii for local FITS diagnostics")
-        advanced_files_layout.addWidget(self.qa_toggle)
+            "Legacy control: coverage radii now appear directly under File options.")
+        # Keep this compatibility control available to integrations, but do
+        # not surface a redundant second disclosure in the active UI.
         self.qa_widget = QWidget()
         qa_layout = QVBoxLayout(self.qa_widget)
         qa_layout.setContentsMargins(0, 0, 0, 0)
@@ -506,8 +516,13 @@ class SurveyExplorer(QMainWindow):
             "Analyse downloaded IMAGE, INVVAR, NEXP and MASKBITS")
         self.qa_btn.clicked.connect(self.inspect_coverage)
         qa_layout.addWidget(self.qa_btn)
+        qa_caption = QLabel("Local FITS screening · arcsec")
+        qa_caption.setToolTip(
+            "Display-only circular source and sky-ring regions; "
+            "not adopted photometric apertures.")
+        advanced_files_layout.addWidget(qa_caption)
         advanced_files_layout.addWidget(self.qa_widget)
-        self.files_options = QPushButton("Advanced file filters and checks")
+        self.files_options = QPushButton("File options")
         self.files_options.setProperty("disclosureAction", True)
         self.files_options.setObjectName("archive_advanced_toggle")
         self.files_options.setCheckable(True)
@@ -521,8 +536,9 @@ class SurveyExplorer(QMainWindow):
         self.advanced_files.setVisible(False)
         # Anchor the short collapsed workbench at top of the inspector.
         data_panel.addStretch(1)
-        self.qa_toggle.toggled.connect(self.qa_widget.setVisible)
-        self.qa_widget.setVisible(False)
+        # Advanced file options contain the three explicit screening radii
+        # directly; no additional "Coverage QA settings" accordion.
+        self.qa_widget.setVisible(True)
 
         bottom = QHBoxLayout()
         self.save_btn = QPushButton("Save manifest")
@@ -658,7 +674,7 @@ class SurveyExplorer(QMainWindow):
         self.preview_label.setAccessibleName("Remote image provenance warning")
         heading_row = QHBoxLayout()
         heading_row.addWidget(self.preview_label, 1)
-        self.band_compare_btn = QPushButton("Compare bands · g/r/i/z")
+        self.band_compare_btn = QPushButton("Compare bands")
         self.band_compare_btn.setObjectName("fits_open_band_comparison")
         self.band_compare_btn.setToolTip(
             "Compare original IMAGE in all locally available optical bands "
@@ -666,7 +682,7 @@ class SurveyExplorer(QMainWindow):
             "PSF matching or photometric color measurement.")
         self.band_compare_btn.clicked.connect(self._toggle_multiband)
         heading_row.addWidget(self.band_compare_btn)
-        self.comparison_btn = QPushButton("Inspect data quality · 4 maps")
+        self.comparison_btn = QPushButton("Pixel QA")
         self.comparison_btn.setObjectName("fits_open_four_comparison")
         self.comparison_btn.setToolTip(
             "Interactive 2×2 quality viewer for ONE optical band. "
@@ -1694,7 +1710,7 @@ class SurveyExplorer(QMainWindow):
 
     def _drawer_visibility_changed(self, visible):
         self.data_toggle.setText(
-            "Hide files and coverage" if visible else "Files and coverage")
+            "Close files / QA" if visible else "Files / QA")
 
     def _refresh_workflow(self):
         """Presentation only; no auto-selection or science acceptance."""
@@ -1751,7 +1767,7 @@ class SurveyExplorer(QMainWindow):
                 "no sky, galaxy photometry or science adoption.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
-            else "Data and diagnostics")
+            else "Files / QA")
 
     def _field(self):
         return self._target_controller.field()

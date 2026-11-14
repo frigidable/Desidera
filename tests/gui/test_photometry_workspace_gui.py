@@ -57,3 +57,17 @@ def test_manage_sources_from_photometry_opens_real_dataset_manager(workspace):
     assert window.preview_tabs.currentWidget() is window.dataset_manager
     assert window.dataset_manager.tree.topLevelItemCount() == 0
     assert not (project.root / "datasets" / "index.json").exists()
+
+
+
+def test_photometry_initial_status_does_not_repeat_copy_qa_instructions(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.show()
+    assert "no adopted galaxy photometry" in w.subtitle.text()
+    assert not w.project_qa_status.isVisible()
+    assert not w.batch_status.isVisible() or not w.batch_status.text()
+    w.copy_project_qa_btn.click()
+    assert w.project_qa_status.isVisible()
+    assert "Open a saved galaxy project" in w.project_qa_status.text()

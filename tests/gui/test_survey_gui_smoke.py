@@ -123,13 +123,11 @@ def test_data_workbench_is_progressive_and_essential_actions_remain_reachable(
     # No catalog has been searched; advanced settings must not fabricate
     # or reveal a candidate FITS table before it has entries.
     assert not window.files.isVisible()
-    assert window.qa_toggle.isVisible()
-    window.qa_toggle.click()
-    qtbot.wait(20)
+    assert not window.qa_toggle.isVisible()  # no redundant second accordion
     assert window.qa_widget.isVisible()
     assert window.qa_btn.isVisible()
     assert window.download_btn.isVisible()
-    window.qa_toggle.click()
+    window.files_options.click()
     qtbot.wait(20)
     assert not window.qa_widget.isVisible()
     window.data_toggle.click()
@@ -1071,7 +1069,32 @@ def test_survey_and_science_qa_buttons_keep_readable_literal_captions(
     w = offline_explorer
     w._refresh_workflow()
     assert w.data_toggle.text() in (
-        "Data and diagnostics", "02 · Get original FITS")
+        "Files / QA", "02 · Get original FITS")
     assert w.science_qa.dataset_audit.text() == (
         "Audit all local datasets and footprint")
     assert w.science_qa.result_toggle.text() == "Report details and history"
+
+
+
+def test_primary_survey_navigation_is_compact_and_no_nested_file_disclosure(
+        offline_explorer, qtbot):
+    """The primary controls remain discoverable without accordion cascades."""
+    w = offline_explorer
+    w.resize(1366, 768)
+    qtbot.wait(20)
+    assert w.target_compact_form.rowCount() == 3
+    for field in (w.ra, w.dec, w.field_width):
+        assert w.target_compact_form.labelForField(field) is not None
+    assert w.ra.accessibleName() and w.dec.accessibleName()
+    assert "Files / QA" in w.data_toggle.text() or "original FITS" in w.data_toggle.text()
+    w.data_toggle.click()
+    assert not w.advanced_files.isVisible()
+    assert not w.qa_widget.isVisible()
+    w.files_options.click()
+    assert w.qa_widget.isVisible()
+    assert w.qa_btn.isVisible()
+    assert not w.qa_toggle.isVisible()
+    for field in (w.target_radius, w.sky_inner, w.sky_outer):
+        assert field.isVisible()
+    w.files_options.click()
+    assert not w.qa_widget.isVisible()

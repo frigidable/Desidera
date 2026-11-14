@@ -81,7 +81,8 @@ def test_discovery_moves_to_data_step_without_auto_downloading(qtbot):
     assert w.files.isVisible()
     assert w.profile.isVisible()
     assert w.verify_btn.isVisible()
-    assert w.qa_toggle.isVisible()
+    assert not w.qa_toggle.isVisible()
+    assert w.qa_widget.isVisible()
     w.files_options.click()
     assert not w.advanced_files.isVisible()
 

@@ -481,3 +481,26 @@ def test_keyboard_zoom_fit_and_horizontal_wheel_do_not_change_raw_fits(
     qtbot.keyClick(view, Qt.Key_F)
     assert view._relative_zoom == pytest.approx(1.)
     np.testing.assert_array_equal(dataset["data"]["image"], expected)
+
+
+
+def test_fits_has_single_advanced_disclosure_preserving_full_qa(explorer):
+    """One visible disclosure holds masks and metadata without deleting evidence."""
+    assert explorer.overlay_toggle.isVisible()
+    assert explorer.detail_toggle.isHidden()
+    assert not explorer.overlay_panel.isVisible()
+    assert not explorer.detail_panel.isVisible()
+    assert explorer.overlay_summary.isVisible()
+    assert "Masks:" in explorer.overlay_summary.text()
+    explorer.overlay_toggle.click()
+    assert explorer.overlay_panel.isVisible()
+    assert explorer.detail_panel.isVisible()
+    assert explorer.color_legend.isVisible()
+    assert explorer.context.isVisible()
+    assert explorer.range_info.isVisible()
+    explorer.flags["GALAXY"].setChecked(True)
+    assert "GALAXY" in explorer.overlay_summary.text()
+    explorer.overlay_toggle.click()
+    assert not explorer.overlay_panel.isVisible()
+    assert not explorer.detail_panel.isVisible()
+    assert explorer.flags["GALAXY"].isChecked()

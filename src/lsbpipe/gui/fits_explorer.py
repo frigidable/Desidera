@@ -301,10 +301,13 @@ class FITSExplorer(QWidget):
         layout.addWidget(self.flags["OUTLINES"])
         self.overlay_toggle = QToolButton()
         self.overlay_toggle.setObjectName("fits_toggle_mask_overlays")
-        self.overlay_toggle.setText("Mask overlays")
+        self.overlay_toggle.setText("Display settings and provenance")
         self.overlay_toggle.setCheckable(True)
         self.overlay_toggle.setChecked(False)
         self.overlay_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.overlay_toggle.setToolTip(
+            "Edit display-only mask overlays, inspect native range, "
+            "provenance, render status and the full mask legend.")
         self.overlay_toggle.setArrowType(Qt.RightArrow)
         self.overlay_toggle.toggled.connect(
             lambda expanded: self.overlay_toggle.setArrowType(
@@ -352,7 +355,9 @@ class FITSExplorer(QWidget):
         self.detail_toggle.toggled.connect(
             lambda expanded: self.detail_toggle.setArrowType(
                 Qt.DownArrow if expanded else Qt.RightArrow))
-        layout.addWidget(self.detail_toggle)
+        # Compatibility handle for callers; one visible disclosure now
+        # opens both mask controls and full metadata.
+        self.overlay_toggle.toggled.connect(self.detail_toggle.setChecked)
         self.detail_panel = QWidget()
         detail_layout = QVBoxLayout(self.detail_panel)
         detail_layout.setContentsMargins(0, 0, 0, 0)
@@ -477,7 +482,17 @@ class FITSExplorer(QWidget):
             msg = ("Active display masks: " + (", ".join(enabled) or "none")
                    + ". Visual only; masks may overlap. "
                    "Read exact MASKBITS and pixel quality below the image.")
-        self.overlay_summary.setText(msg)
+        self.overlay_summary.setToolTip(msg)
+        if self.layer.currentData() == "quality":
+            self.overlay_summary.setText(
+                "QUALITY categories · mask overlays suppressed · diagnostic")
+        else:
+            enabled_names = [key for key in (
+                "SATUR", "ALLMASK", "BRIGHT", "MEDIUM",
+                "GALAXY", "INVALID") if self.flags[key].isChecked()]
+            self.overlay_summary.setText(
+                "Masks: " + (", ".join(enabled_names) or "none")
+                + " · display only")
 
     def _hover_inspect_pixel(self, x_scene, y_scene):
         self.view.clear_keyboard_pixel()
