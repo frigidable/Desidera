@@ -45,10 +45,16 @@ jobs:
         run: python -m pip check
       - name: Scientific regression suite
         run: python -m pytest -q tests --ignore=tests/gui
+      # The full native-FITS E2E starts Qt, Astropy FITS/WCS and multiple
+      # scientific worker threads. Give it an isolated Qt/Python process:
+      # global font registration and Qt object destruction must not inherit
+      # the state of hundreds of unrelated GUI tests.
       - name: Offline GUI smoke tests
+        run: python -m pytest -q tests/gui --ignore=tests/gui/test_native_fits_photometry_e2e_gui.py
+      - name: Native FITS photometry GUI E2E (isolated Qt process)
         env:
           DESIDERA_E2E_SCREENSHOT_DIR: gui-artifacts/native-fits
-        run: python -m pytest -q tests/gui
+        run: python -m pytest -q tests/gui/test_native_fits_photometry_e2e_gui.py
       - name: Capture GUI baseline (remote Viewer substituted offline)
         if: always()
         run: python scripts/capture_gui_baseline.py --output-dir gui-artifacts
