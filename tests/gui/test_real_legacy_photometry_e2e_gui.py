@@ -36,6 +36,8 @@ from lsbpipe.photometry.mask_drafts import read_active_mask_draft
 
 def _archive_test_input():
     root = os.environ.get("DESIDERA_REAL_FITS_ROOT", "").strip()
+    if not root and os.environ.get("DESIDERA_REAL_BRICK", "").strip():
+        pytest.fail("DESIDERA_REAL_FITS_ROOT is missing for the requested archive brick")
     if not root:
         pytest.skip(
             "Authentic Legacy FITS not supplied: set DESIDERA_REAL_FITS_ROOT "
@@ -50,7 +52,7 @@ def _archive_test_input():
         pytest.fail("Unsupported source release")
     if region not in ("north", "south") or (release == "dr10" and region != "south"):
         pytest.fail("Unsupported source region for release")
-    if band not in "griz" or (region == "north" and band == "i"):
+    if band not in ("g", "r", "i", "z") or (region == "north" and band == "i"):
         pytest.fail("Unsupported optical band for source region")
     data_root = Path(root).expanduser().resolve()
     if not data_root.is_dir():
@@ -238,8 +240,8 @@ def test_supplied_archive_brick_full_gui_route(qtbot, tmp_path, monkeypatch):
             "source_files_unchanged": True,
             "science_adopted": False,
         }
-        (report_dir / "real_fits_e2e_receipt.json").write_text(
+        (report_dir / "archive_candidate_e2e_receipt.json").write_text(
             json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
         widget.restore_navigation(stage="scene", band=band)
         QApplication.processEvents()
-        assert explorer.grab().save(str(report_dir / "real_fits_scene.png"))
+        assert explorer.grab().save(str(report_dir / "archive_candidate_scene.png"))
