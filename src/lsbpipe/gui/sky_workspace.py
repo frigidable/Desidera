@@ -37,6 +37,7 @@ class SkyWorkspace(QWidget):
         self._result_identity = None
         self._result = None
         self._last_failure = None
+        self._discard_requested = False
         self._timer = QTimer(self)
         self._timer.setInterval(80)
         self._timer.timeout.connect(self._poll_worker)
@@ -87,6 +88,17 @@ class SkyWorkspace(QWidget):
             "of original FITS or new DR11 bricks.")
         self.run_btn.clicked.connect(self.run_diagnostic)
         tools.addWidget(self.run_btn)
+        self.discard_btn = QPushButton("Discard result")
+        self.discard_btn.setObjectName("sky_discard_pending_result")
+        self.discard_btn.setAccessibleName(
+            "Discard pending residual background result")
+        self.discard_btn.setToolTip(
+            "If queued, cancel before execution. If already running, "
+            "let the background calculation finish but ignore its result. "
+            "No worker thread is forcibly stopped and no FITS is modified.")
+        self.discard_btn.clicked.connect(self.discard_pending_result)
+        self.discard_btn.hide()
+        tools.addWidget(self.discard_btn)
         self.copy_btn = QPushButton("Copy background QA")
         self.copy_btn.setObjectName("sky_diagnostic_copy_qa")
         self.copy_btn.setEnabled(False)
@@ -218,6 +230,9 @@ class SkyWorkspace(QWidget):
             not ready and self._scene_tabs() is not None)
         self.run_btn.setVisible(ready)
         self.copy_btn.setVisible(self._result is not None)
+        self.discard_btn.setVisible(self._future is not None)
+        self.discard_btn.setEnabled(
+            self._future is not None and not self._discard_requested)
         self.run_btn.setEnabled(ready and self._future is None)
         return ready
 
@@ -239,14 +254,33 @@ class SkyWorkspace(QWidget):
         self.copy_btn.hide()
         self._reset_report_visibility()
         self._active_identity = identity
+        self._discard_requested = False
         self._future = self._executor.submit(
             diagnose_current_project_residual_sky,
             dataset, draft, contamination)
         self.run_btn.setEnabled(False)
+        self.discard_btn.setVisible(True)
+        self.discard_btn.setEnabled(True)
         self.status.setText(
             "Automatically selecting safe Scene sky tiles, then "
             "fitting constant and planar residual sky candidates…")
         self._timer.start()
+
+    def discard_pending_result(self):
+        """Withdraw interest in a pending diagnostic without killing a thread."""
+        future = self._future
+        if future is None or self._discard_requested:
+            return
+        self._discard_requested = True
+        self.discard_btn.setEnabled(False)
+        if future.cancel():
+            # Future was still queued, so no science worker executed.
+            self._poll_worker()
+        else:
+            self.status.setText(
+                "Background result discard requested. The running "
+                "calculation will finish, but its result will be ignored; "
+                "retry becomes available afterward. Original FITS unchanged.")
 
     def _poll_worker(self):
         future = self._future
@@ -256,6 +290,22 @@ class SkyWorkspace(QWidget):
         identity = self._active_identity
         self._active_identity = None
         self._future = None
+        discard = self._discard_requested
+        self._discard_requested = False
+        if discard:
+            # Ignore even an exception from an already-running Future:
+            # the researcher explicitly withdrew this diagnostic request.
+            self._result = None
+            self._result_identity = None
+            self._last_failure = None
+            self.readout.setPlainText(
+                "Background calculation discarded by user; no sky model "
+                "was accepted, saved or subtracted.")
+            self.status.setText(
+                "Background result discarded by user · ready to retry "
+                "with current Scene evidence · science HOLD.")
+            self.refresh_context()
+            return
         snap = self._snapshot()
         if snap is None or snap[0] != identity:
             self._result = None

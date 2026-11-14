@@ -333,3 +333,64 @@ def test_aperture_empty_state_navigates_to_scene_without_starting_work(qtbot):
     assert w.stage_tabs.currentWidget() is w.scene_editor
     assert w.aperture_stage._future is None
     assert w.scene_editor._loaded is None
+
+
+def test_stage04_user_discard_prevents_running_result_and_recovers(qtbot,monkeypatch):
+    """No stale plots, cached QA or adoption after an explicit discard."""
+    from concurrent.futures import Future
+
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    identity=("p","native","r",draft.digest,"a"*64)
+    snap=(identity,ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    assert future.set_running_or_notify_cancel()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    assert stage.discard_btn.isVisible()
+    stage.discard_btn.click()
+    assert not stage.discard_btn.isEnabled()
+    assert "continues" in stage.status.text()
+    assert not stage.run_btn.isEnabled()
+    future.set_result({"status":"SHOULD_NEVER_RENDER"})
+    stage._poll_worker()
+    assert stage._future is None
+    assert stage._result is None
+    assert stage._result_identity is None
+    assert not stage.plot._curves
+    assert not stage.annulus_plot._curves
+    assert not stage.plots_panel.isVisible()
+    assert not stage.copy_btn.isEnabled()
+    assert stage.run_btn.isEnabled()
+    assert "discarded by user" in stage.status.text()
+    assert not stage._timer.isActive()
+
+
+def test_stage04_user_can_cancel_queued_future_immediately(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    snap=(("p","native","r",draft.digest,"a"*64),
+          ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage.discard_btn.click()
+    assert future.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+    assert not stage.discard_btn.isVisible()

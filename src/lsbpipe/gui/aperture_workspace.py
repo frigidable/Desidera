@@ -336,6 +336,7 @@ class ApertureWorkspace(QWidget):
         self._result_identity=None
         self._result=None
         self._last_failure=None
+        self._discard_requested=False
         self._timer=QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._poll_worker)
@@ -377,6 +378,16 @@ class ApertureWorkspace(QWidget):
             "brick or writes an image. No manual aperture drawing required.")
         self.run_btn.clicked.connect(self.run_diagnostic)
         buttons.addWidget(self.run_btn)
+        self.discard_btn=QPushButton("Discard result")
+        self.discard_btn.setObjectName("aperture_discard_pending_result")
+        self.discard_btn.setAccessibleName(
+            "Discard pending aperture-curve diagnostic result")
+        self.discard_btn.setToolTip(
+            "Cancel a queued calculation, or ignore its result after a "
+            "running worker finishes. No forced thread stop or FITS writes.")
+        self.discard_btn.clicked.connect(self.discard_pending_result)
+        self.discard_btn.hide()
+        buttons.addWidget(self.discard_btn)
         self.copy_btn=QPushButton("Copy aperture QA")
         self.copy_btn.setObjectName("aperture_stage_copy_qa")
         self.copy_btn.setEnabled(False)
@@ -494,6 +505,9 @@ class ApertureWorkspace(QWidget):
             not ready and self._scene_tabs() is not None)
         self.run_btn.setVisible(ready)
         self.copy_btn.setVisible(self._result is not None)
+        self.discard_btn.setVisible(self._future is not None)
+        self.discard_btn.setEnabled(
+            self._future is not None and not self._discard_requested)
         self.run_btn.setEnabled(ready and self._future is None)
         return ready
 
@@ -507,6 +521,7 @@ class ApertureWorkspace(QWidget):
             return
         identity,dataset,draft,contamination,triplet,anchor,q,pa=snap
         self._active_identity=identity
+        self._discard_requested=False
         self._result=None
         self._result_identity=None
         self._last_failure=None
@@ -521,10 +536,27 @@ class ApertureWorkspace(QWidget):
             source_triplet=triplet,target_icrs=anchor,
             sga_q=q,sga_pa_deg=pa)
         self.run_btn.setEnabled(False)
+        self.discard_btn.setVisible(True)
+        self.discard_btn.setEnabled(True)
         self.status.setText(
             "Integrating exact observed native-pixel ellipses and "
             "independent rings in background…")
         self._timer.start()
+
+    def discard_pending_result(self):
+        """Withdraw a Stage 04 diagnostic; never terminate a running thread."""
+        future=self._future
+        if future is None or self._discard_requested:
+            return
+        self._discard_requested=True
+        self.discard_btn.setEnabled(False)
+        if future.cancel():
+            self._poll_worker()
+        else:
+            self.status.setText(
+                "Aperture result discard requested. Running calculation "
+                "continues, but the result will be ignored. Retry is "
+                "available after it finishes; original FITS unchanged.")
 
     def _poll_worker(self):
         future=self._future
@@ -534,6 +566,23 @@ class ApertureWorkspace(QWidget):
         self._future=None
         identity=self._active_identity
         self._active_identity=None
+        discard=self._discard_requested
+        self._discard_requested=False
+        if discard:
+            self._result=None
+            self._result_identity=None
+            self._last_failure=None
+            self.plot.set_curves(())
+            self.annulus_plot.set_curves(())
+            self.readout.setPlainText(
+                "Aperture result discarded by user; no flux measurement "
+                "accepted, exported or adopted.")
+            self.status.setText(
+                "Aperture result discarded by user · ready to retry "
+                "with current Scene evidence · science HOLD.")
+            self._reset_report_visibility()
+            self.refresh_context()
+            return
         snap=self._snapshot()
         if snap is None or snap[0]!=identity:
             self.status.setText(

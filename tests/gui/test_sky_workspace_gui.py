@@ -224,3 +224,72 @@ def test_sky_empty_state_has_one_active_navigation_action(qtbot):
     w.sky_stage.open_scene_btn.click()
     assert w.stage_tabs.currentWidget() is w.scene_editor
     assert w.scene_editor._loaded is None
+
+
+def test_stage03_user_discard_during_running_worker_is_safe_and_retryable(
+        qtbot, monkeypatch):
+    """A running Future finishes, but its result never reaches QA or cache."""
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+
+    scene=SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    dataset={"project_id":"p","source":"r-native","band":"r"}
+    draft=SimpleNamespace(digest="a"*64)
+    contamination={"catalog_sha256":"b"*64}
+    identity=("p","r-native","r",draft.digest,"b"*64,
+              id(dataset),id(contamination))
+    snap=(identity,dataset,draft,contamination)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    assert future.set_running_or_notify_cancel()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    assert stage._future is future
+    assert stage.discard_btn.isVisible()
+    assert not stage.run_btn.isEnabled()
+    stage.discard_btn.click()
+    assert not stage.discard_btn.isEnabled()
+    assert "will finish" in stage.status.text()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.run_btn.isEnabled()
+    future.set_result({"status":"SHOULD_NEVER_ENTER_QA"})
+    stage._poll_worker()
+    assert stage._result is None
+    assert stage._result_identity is None
+    assert stage._last_failure is None
+    assert "discarded by user" in stage.status.text()
+    assert stage.run_btn.isEnabled()
+    assert not stage.discard_btn.isVisible()
+    assert not stage.copy_btn.isVisible()
+    assert "SHOULD_NEVER_ENTER_QA" not in stage.readout.toPlainText()
+    assert not stage._timer.isActive()
+
+
+def test_stage03_queued_diagnostic_is_cancelled_before_execution(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    scene=SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    dataset={"project_id":"p","source":"r-native","band":"r"}
+    draft=SimpleNamespace(digest="a"*64)
+    mask={"catalog_sha256":"b"*64}
+    snap=(("p","r-native","r",draft.digest,"b"*64,
+           id(dataset),id(mask)),dataset,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage.discard_btn.click()
+    assert future.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+    assert "discarded by user" in stage.status.text()
