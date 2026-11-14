@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QLineEdit,
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QInputDialog,
     QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QHeaderView, QDockWidget, QScrollArea, QSizePolicy,
+    QVBoxLayout, QWidget, QHeaderView, QDockWidget, QScrollArea, QSizePolicy, QLayout,
     QTabWidget, QToolButton, QPlainTextEdit)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
@@ -386,6 +386,12 @@ class SurveyExplorer(QMainWindow):
         # They no longer set a 900+ px minimum width on the survey navigation.
         data_container = QWidget()
         data_panel = QVBoxLayout(data_container)
+        # Prevent one long option or table header from setting the scroll
+        # widget's minimum width above the narrow dock viewport.
+        data_panel.setSizeConstraint(QLayout.SetNoConstraint)
+        data_container.setMinimumWidth(0)
+        data_container.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
         data_panel.setContentsMargins(10, 8, 10, 8)
         data_panel.setSpacing(6)
 
@@ -394,6 +400,10 @@ class SurveyExplorer(QMainWindow):
         self.advanced_files = QWidget()
         self.advanced_files.setObjectName("archive_advanced_options")
         advanced_files_layout = QVBoxLayout(self.advanced_files)
+        advanced_files_layout.setSizeConstraint(QLayout.SetNoConstraint)
+        self.advanced_files.setMinimumWidth(0)
+        self.advanced_files.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
         advanced_files_layout.setContentsMargins(0, 4, 0, 4)
         advanced_files_layout.setSpacing(6)
         self.profile = QComboBox()
@@ -477,6 +487,9 @@ class SurveyExplorer(QMainWindow):
         self.files.horizontalHeader().resizeSection(3, 43)
         self.files.setTextElideMode(Qt.ElideMiddle)
         self.files.setAlternatingRowColors(True)
+        self.files.setMinimumWidth(0)
+        self.files.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.files.setMinimumHeight(160)
         self.files.verticalHeader().setVisible(False)
         # Candidate files are primary workflow content, not an advanced option.
@@ -496,6 +509,10 @@ class SurveyExplorer(QMainWindow):
         # not surface a redundant second disclosure in the active UI.
         self.qa_widget = QWidget()
         qa_layout = QVBoxLayout(self.qa_widget)
+        qa_layout.setSizeConstraint(QLayout.SetNoConstraint)
+        self.qa_widget.setMinimumWidth(0)
+        self.qa_widget.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
         qa_layout.setContentsMargins(0, 0, 0, 0)
         qa_layout.setSpacing(4)
         self.target_radius = QDoubleSpinBox()
