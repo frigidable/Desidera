@@ -545,3 +545,29 @@ def test_aperture_failure_shortcut_and_narrow_font_actions(qtbot,monkeypatch):
     QApplication.clipboard().setText("sentinel")
     stage._failure_shortcut.activated.emit()
     assert QApplication.clipboard().text()=="sentinel"
+
+
+def test_aperture_visual_error_tone_cannot_promote_flux(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    ds,draft,mask=_inputs()
+    stage=ApertureWorkspace(
+        SimpleNamespace(_project_target=None,_source_key=None),
+        SimpleNamespace(_snapshot=lambda:None))
+    qtbot.addWidget(stage)
+    identity=("p","r","r",draft.digest,"c"*64)
+    snapshot=(identity,ds,draft,mask,("dr11","south","1554p180"),
+              (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snapshot)
+    failed=Future()
+    failed.set_exception(ValueError("test-only aperture failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**k:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage.status.property("visualState")=="error"
+    assert stage.run_btn.property("visualRole")=="primary"
+    assert not stage.copy_error_btn.icon().isNull()
+    assert stage._result is None
+    assert not stage.copy_btn.isEnabled()
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    assert stage.status.property("visualState")=="normal"

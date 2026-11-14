@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
+from lsbpipe.gui.visual_theme import adorn, set_status_tone
 from lsbpipe.photometry.aperture_flux import (
     ApertureProvenance, ApertureSkyScenario,
 )
@@ -367,6 +368,7 @@ class ApertureWorkspace(QWidget):
         buttons=QHBoxLayout()
         self.open_scene_btn=QPushButton("Open Scene and Masks")
         self.open_scene_btn.setObjectName("aperture_open_scene")
+        adorn(self.open_scene_btn, "mask")
         self.open_scene_btn.setToolTip(
             "Open Stage 02 to load native FITS and prepare source masks; "
             "no aperture measurement is started.")
@@ -374,6 +376,7 @@ class ApertureWorkspace(QWidget):
         buttons.addWidget(self.open_scene_btn)
         self.run_btn=QPushButton("Build aperture curves")
         self.run_btn.setObjectName("aperture_stage_run")
+        adorn(self.run_btn, "aperture", primary=True)
         self.run_btn.setToolTip(
             "Use project-anchored circles and explicit provisional ellipses "
             "on the current native FITS scene. Worker never reads a new "
@@ -382,6 +385,7 @@ class ApertureWorkspace(QWidget):
         buttons.addWidget(self.run_btn)
         self.discard_btn=QPushButton("Discard result")
         self.discard_btn.setObjectName("aperture_discard_pending_result")
+        adorn(self.discard_btn, "back", caution=True)
         self.discard_btn.setAccessibleName(
             "Discard pending aperture-curve diagnostic result")
         self.discard_btn.setToolTip(
@@ -392,11 +396,13 @@ class ApertureWorkspace(QWidget):
         buttons.addWidget(self.discard_btn)
         self.copy_btn=QPushButton("Copy aperture QA")
         self.copy_btn.setObjectName("aperture_stage_copy_qa")
+        adorn(self.copy_btn, "copy")
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self.copy_qa)
         buttons.addWidget(self.copy_btn)
         self.copy_error_btn=QPushButton("Copy error report")
         self.copy_error_btn.setObjectName("aperture_copy_failure_report")
+        adorn(self.copy_error_btn, "copy", caution=True)
         self.copy_error_btn.setAccessibleName(
             "Copy safe aperture photometry failure report")
         self.copy_error_btn.setToolTip(
@@ -508,6 +514,7 @@ class ApertureWorkspace(QWidget):
                 snap is None or self._failure_identity!=snap[0]):
             self._last_failure=None
             self._failure_identity=None
+            set_status_tone(self.status,error=False)
         if self._result is not None and (
                 snap is None or self._result_identity!=snap[0]):
             self._result=None
@@ -548,6 +555,7 @@ class ApertureWorkspace(QWidget):
         self._result_identity=None
         self._last_failure=None
         self._failure_identity=None
+        set_status_tone(self.status,error=False)
         self.copy_error_btn.hide()
         self.copy_btn.setEnabled(False)
         self.copy_btn.hide()
@@ -569,6 +577,7 @@ class ApertureWorkspace(QWidget):
                 "scene_identity_at_attempt":list(identity[:5]),
                 "status":"WORKER_START_FAILED_CLOSED",
             }
+            set_status_tone(self.status,error=True)
             self.status.setText(
                 f"Aperture worker could not start: {exc}. "
                 "Check the environment, then choose Build aperture curves "
@@ -613,6 +622,7 @@ class ApertureWorkspace(QWidget):
             self._result_identity=None
             self._last_failure=None
             self._failure_identity=None
+            set_status_tone(self.status,error=False)
             self.plot.set_curves(())
             self.annulus_plot.set_curves(())
             self.readout.setPlainText(
@@ -644,6 +654,7 @@ class ApertureWorkspace(QWidget):
                 "scene_identity_at_attempt":list(identity[:5]),
                 "status":"WORKER_FAILED_CLOSED",
             }
+            set_status_tone(self.status,error=True)
             self.status.setText(
                 f"Aperture diagnostic refused: {exc}. "
                 "Review Stage 02 inputs and geometry, then choose Build "

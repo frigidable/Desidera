@@ -479,3 +479,29 @@ def test_sky_failure_keyboard_copy_shortcut_scoped_and_safe(qtbot,monkeypatch):
     QApplication.clipboard().setText("sentinel")
     stage._failure_shortcut.activated.emit()
     assert QApplication.clipboard().text()=="sentinel"
+
+
+def test_sky_visual_error_tone_is_not_science_acceptance(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    stage=SkyWorkspace(SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None))
+    qtbot.addWidget(stage)
+    ds={"project_id":"p","source":"r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=("p","r","r",draft.digest,"c"*64,id(ds),id(mask))
+    monkeypatch.setattr(stage,"_snapshot",lambda:(identity,ds,draft,mask))
+    failed=Future()
+    failed.set_exception(ValueError("test-only sky failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**k:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage.status.property("visualState")=="error"
+    assert stage.run_btn.property("visualRole")=="primary"
+    assert not stage.run_btn.icon().isNull()
+    assert stage._result is None
+    assert not stage.copy_btn.isEnabled()
+    stage._snapshot=lambda:None
+    stage.refresh_context()
+    assert stage.status.property("visualState")=="normal"

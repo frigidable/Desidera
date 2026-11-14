@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
+from lsbpipe.gui.visual_theme import adorn, set_status_tone
 from lsbpipe.background import diagnose_current_project_residual_sky
 
 
@@ -76,6 +77,7 @@ class SkyWorkspace(QWidget):
         tools = QHBoxLayout()
         self.open_scene_btn = QPushButton("Open Scene and Masks")
         self.open_scene_btn.setObjectName("sky_open_scene")
+        adorn(self.open_scene_btn, "mask")
         self.open_scene_btn.setToolTip(
             "Open Stage 02 to load the current native FITS and prepare "
             "neighbour masks. Does not run any background fit.")
@@ -83,6 +85,7 @@ class SkyWorkspace(QWidget):
         tools.addWidget(self.open_scene_btn)
         self.run_btn = QPushButton("Evaluate residual sky")
         self.run_btn.setObjectName("sky_diagnostic_run")
+        adorn(self.run_btn, "sky", primary=True)
         self.run_btn.setToolTip(
             "Uses only the loaded Scene/native image and prepared masks. "
             "Includes automatically chosen fixed tile grids, wider mask "
@@ -93,6 +96,7 @@ class SkyWorkspace(QWidget):
         tools.addWidget(self.run_btn)
         self.discard_btn = QPushButton("Discard result")
         self.discard_btn.setObjectName("sky_discard_pending_result")
+        adorn(self.discard_btn, "back", caution=True)
         self.discard_btn.setAccessibleName(
             "Discard pending residual background result")
         self.discard_btn.setToolTip(
@@ -104,11 +108,13 @@ class SkyWorkspace(QWidget):
         tools.addWidget(self.discard_btn)
         self.copy_btn = QPushButton("Copy background QA")
         self.copy_btn.setObjectName("sky_diagnostic_copy_qa")
+        adorn(self.copy_btn, "copy")
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self.copy_qa)
         tools.addWidget(self.copy_btn)
         self.copy_error_btn = QPushButton("Copy error report")
         self.copy_error_btn.setObjectName("sky_copy_failure_report")
+        adorn(self.copy_error_btn, "copy", caution=True)
         self.copy_error_btn.setAccessibleName(
             "Copy safe residual background failure report")
         self.copy_error_btn.setToolTip(
@@ -236,6 +242,7 @@ class SkyWorkspace(QWidget):
                 snap is None or snap[0] != self._failure_identity):
             self._last_failure = None
             self._failure_identity = None
+            set_status_tone(self.status, error=False)
         if self._result is not None and (
                 snap is None or snap[0] != self._result_identity):
             self._result = None
@@ -274,6 +281,7 @@ class SkyWorkspace(QWidget):
         self._result_identity = None
         self._last_failure = None
         self._failure_identity = None
+        set_status_tone(self.status, error=False)
         self.copy_error_btn.hide()
         self.copy_btn.setEnabled(False)
         self.copy_btn.hide()
@@ -295,6 +303,7 @@ class SkyWorkspace(QWidget):
                 "scene_identity_at_attempt": list(identity[:5]),
                 "status": "WORKER_START_FAILED_CLOSED",
             }
+            set_status_tone(self.status, error=True)
             self.status.setText(
                 f"Background worker could not start: {exc}. "
                 "Check the environment, then choose Evaluate residual sky "
@@ -342,6 +351,7 @@ class SkyWorkspace(QWidget):
             self._result_identity = None
             self._last_failure = None
             self._failure_identity = None
+            set_status_tone(self.status, error=False)
             self.readout.setPlainText(
                 "Background calculation discarded by user; no sky model "
                 "was accepted, saved or subtracted.")
@@ -372,6 +382,7 @@ class SkyWorkspace(QWidget):
                 "scene_identity_at_attempt": list(identity[:5]),
                 "status": "WORKER_FAILED_CLOSED",
             }
+            set_status_tone(self.status, error=True)
             self.status.setText(
                 f"Sky diagnostic failed closed: {exc}. "
                 "Review Stage 02 masks and coverage, then choose Evaluate "

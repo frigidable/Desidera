@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
+from lsbpipe.gui.visual_theme import adorn, theme_colors, set_status_tone
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
 from lsbpipe.gui.fits_raster import fits_pixel_from_scene, rgb_for_layer
 from lsbpipe.photometry.mask_drafts import (
@@ -1318,6 +1319,7 @@ class SceneEditor(QWidget):
         inputs.addWidget(self.width)
         self.load_btn = QPushButton("Load original FITS")
         self.load_btn.setObjectName("scene_load_original")
+        adorn(self.load_btn, "folder")
         self.load_btn.setAccessibleDescription(
             "Explicitly reload the native FITS quartet. Saved masks and "
             "completed draft regions are preserved. Unfinished drawings "
@@ -1348,6 +1350,7 @@ class SceneEditor(QWidget):
         # row above the primary science-image canvas.
         self.copy_scene_qa_btn = QPushButton("Copy Scene QA")
         self.copy_scene_qa_btn.setObjectName("scene_copy_complete_qa")
+        adorn(self.copy_scene_qa_btn, "copy")
         self.copy_scene_qa_btn.setMaximumWidth(130)
         self.copy_scene_qa_btn.setToolTip(
             "Copy current project/band/Tractor/SGA/mask/isophote diagnostics, "
@@ -1356,6 +1359,7 @@ class SceneEditor(QWidget):
         self.copy_scene_qa_btn.clicked.connect(self._copy_complete_scene_qa)
         self.copy_error_btn = QPushButton("Copy error")
         self.copy_error_btn.setObjectName("scene_copy_fits_error")
+        adorn(self.copy_error_btn, "copy", caution=True)
         self.copy_error_btn.setAccessibleName(
             "Copy safe FITS loading failure report")
         self.copy_error_btn.setToolTip(
@@ -1901,6 +1905,7 @@ class SceneEditor(QWidget):
         manual_layout.addWidget(self.show_hard)
         self.save_btn = QPushButton("Save scene draft")
         self.save_btn.setObjectName("scene_save_draft")
+        adorn(self.save_btn, "save", primary=True)
         self.save_btn.clicked.connect(self.save_draft)
         self.save_btn.setToolTip(
             "Explicitly save one new immutable project mask-draft revision. "
@@ -1932,9 +1937,10 @@ class SceneEditor(QWidget):
             button.setAccessibleName(description)
             button.setToolTip(description + "; no scientific adoption")
             button.setCheckable(True)
+            accent = theme_colors(self)["ACCENT"]
             button.setStyleSheet(
-                "QPushButton:checked { border: 2px solid palette(highlight); "
-                "font-weight: 600; }")
+                "QPushButton:checked { border: 2px solid " + accent +
+                "; font-weight: 650; }")
             button.clicked.connect(
                 lambda _checked=False, idx=page: self._change_scene_task(idx))
             self.scene_task_buttons[task_id] = button
@@ -2135,6 +2141,7 @@ class SceneEditor(QWidget):
         self._load_generation += 1
         self._fits_load_failure = None
         self.copy_error_btn.hide()
+        set_status_tone(self.status, error=False)
         # A Retry label belongs only to the source that failed. Rebinding
         # project/band or launching a new load must clear the old failure.
         self.load_btn.setText("Load original FITS")
@@ -2327,6 +2334,7 @@ class SceneEditor(QWidget):
             "band": self._band,
         }
         self.copy_error_btn.show()
+        set_status_tone(self.status, error=True)
 
     def copy_failure_report(self):
         failure = self._fits_load_failure

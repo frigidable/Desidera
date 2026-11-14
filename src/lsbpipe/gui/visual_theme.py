@@ -92,7 +92,9 @@ QLabel#scene_status {
     border-radius: 5px;
     padding: 7px 10px;
 }
-QLabel[visualState="error"] {
+QLabel#sky_diagnostic_status[visualState="error"],
+QLabel#aperture_stage_status[visualState="error"],
+QLabel#scene_status[visualState="error"] {
     color: $ERROR;
     background-color: $ERROR_BG;
     border-left: 3px solid $ERROR;
@@ -230,7 +232,7 @@ def icon_for(name: str, *, color: str = "#215CAA", size: int = 18) -> QIcon:
     known = {
         "galaxy", "folder", "plus", "back", "database", "chart",
         "download", "search", "refresh", "copy", "settings",
-        "mask", "sky", "aperture", "open", "check",
+        "mask", "sky", "aperture", "open", "check", "save",
     }
     if name not in known:
         raise ValueError(f"Unknown Desidera icon: {name}")
@@ -300,6 +302,10 @@ def icon_for(name: str, *, color: str = "#215CAA", size: int = 18) -> QIcon:
             painter.drawArc(QRectF(4, 4, 16, 16), 24 * 16, 300 * 16)
             painter.drawLine(18, 4, 20, 9)
             painter.drawLine(20, 9, 15, 10)
+        elif name == "save":
+            painter.drawRoundedRect(QRectF(4, 3, 16, 18), 2, 2)
+            painter.drawRect(QRectF(7, 3, 10, 7))
+            painter.drawRoundedRect(QRectF(7, 13, 10, 8), 1, 1)
         elif name == "copy":
             painter.drawRoundedRect(QRectF(8, 7, 12, 14), 2, 2)
             painter.drawLine(5, 17, 4, 17)
@@ -356,3 +362,15 @@ def adorn(button, icon_name: str, *, primary: bool = False,
         button.setProperty("visualRole", "primary")
     if caution:
         button.setProperty("visualRole", "caution")
+
+
+def set_status_tone(label, *, error: bool) -> None:
+    """Repolish a semantic Qt state; visible text remains authoritative."""
+    desired = "error" if error else "normal"
+    if label.property("visualState") == desired:
+        return
+    label.setProperty("visualState", desired)
+    style = label.style()
+    style.unpolish(label)
+    style.polish(label)
+    label.update()

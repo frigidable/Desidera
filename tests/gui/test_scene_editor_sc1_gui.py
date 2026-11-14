@@ -2396,3 +2396,21 @@ def test_scene_failure_footer_and_keyboard_copy_fit_compact_inspector(
     scene._failure_shortcut.activated.emit()
     assert QApplication.clipboard().text()=="sentinel"
     scene.shutdown()
+
+
+def test_scene_fits_failure_visual_tone_is_recovered_with_new_source(
+        qtbot,tmp_path,monkeypatch):
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    future=Future()
+    future.set_exception(FileNotFoundError("test-only missing FITS"))
+    monkeypatch.setattr(scene._executor,"submit",lambda *a,**k:future)
+    scene.load_original()
+    scene._poll_load()
+    assert scene.status.property("visualState")=="error"
+    assert not scene.copy_error_btn.icon().isNull()
+    assert scene.save_btn.property("visualRole")=="primary"
+    scene.set_band("r")
+    assert scene.status.property("visualState")=="normal"
+    assert scene._fits_load_failure is None
+    scene.shutdown()
