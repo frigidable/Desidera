@@ -394,3 +394,71 @@ def test_stage04_user_can_cancel_queued_future_immediately(qtbot,monkeypatch):
     assert stage._future is None
     assert stage.run_btn.isEnabled()
     assert not stage.discard_btn.isVisible()
+
+
+def test_aperture_worker_failure_recovers_with_same_original_pixels(
+        qtbot,monkeypatch):
+    """A failed attempt must leave the measured input arrays unchanged."""
+    from concurrent.futures import Future
+    ds,draft,mask=_inputs()
+    original=ds["data"]["image"].copy()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    identity=("p","native-r","r",draft.digest,"c"*64)
+    snap=(identity,ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only bad aperture geometry"))
+    retry=Future()
+    tasks=[failed,retry]
+    monkeypatch.setattr(stage._executor,"submit",lambda *args,**kw:tasks.pop(0))
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage._result is None
+    assert stage._last_failure["status"]=="WORKER_FAILED_CLOSED"
+    assert "test-only bad aperture geometry" in stage.status.text()
+    assert "Build aperture curves to retry" in stage.status.text()
+    assert stage.run_btn.isEnabled()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.plots_panel.isVisible()
+    assert np.array_equal(ds["data"]["image"],original)
+    assert draft.digest==snap[0][3]
+    stage.run_diagnostic()
+    assert stage._future is retry
+    assert stage._last_failure is None
+    stage.discard_pending_result()
+    assert retry.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+    assert np.array_equal(ds["data"]["image"],original)
+
+
+def test_aperture_pool_start_failure_is_closed_and_retryable(qtbot,monkeypatch):
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    snap=(("p","native-r","r",draft.digest,"c"*64),
+          ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    monkeypatch.setattr(
+        stage._executor,"submit",
+        lambda *args,**kw:(_ for _ in ()).throw(
+            RuntimeError("test-only thread pool unavailable")))
+    stage.refresh_context()
+    stage.run_diagnostic()
+    assert stage._future is None
+    assert stage._active_identity is None
+    assert stage.run_btn.isEnabled()
+    assert stage._last_failure["status"]=="WORKER_START_FAILED_CLOSED"
+    assert "test-only thread pool unavailable" in stage.status.text()
+    assert "to retry" in stage.status.text()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.plots_panel.isVisible()

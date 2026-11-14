@@ -293,3 +293,74 @@ def test_stage03_queued_diagnostic_is_cancelled_before_execution(qtbot,monkeypat
     assert stage._future is None
     assert stage.run_btn.isEnabled()
     assert "discarded by user" in stage.status.text()
+
+
+def test_sky_worker_failure_is_actionable_and_can_be_retried_without_new_scene(
+        qtbot,monkeypatch):
+    """Failed diagnostic never consumes original Scene/mask evidence."""
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    scene=SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    dataset={"project_id":"p","source":"native-r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=("p","native-r","r",draft.digest,mask["catalog_sha256"],
+              id(dataset),id(mask))
+    snap=(identity,dataset,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only insufficient tiles"))
+    retried=Future()
+    tasks=[failed,retried]
+    monkeypatch.setattr(stage._executor,"submit",lambda *args,**kw:tasks.pop(0))
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage._result is None
+    assert stage._last_failure["status"]=="WORKER_FAILED_CLOSED"
+    assert "test-only insufficient tiles" in stage.status.text()
+    assert "Evaluate residual sky to retry" in stage.status.text()
+    assert stage.run_btn.isEnabled()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.report_toggle.isVisible()
+    assert stage._snapshot() is snap
+    stage.run_diagnostic()
+    assert stage._future is retried
+    assert stage._last_failure is None
+    assert not stage.run_btn.isEnabled()
+    stage.discard_pending_result()
+    assert retried.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+
+
+def test_sky_executor_start_failure_is_reported_without_qt_exception(
+        qtbot,monkeypatch):
+    from types import SimpleNamespace
+    scene=SimpleNamespace(_band="r",_loaded=None,_draft=None,
+                          _contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    ds={"project_id":"p","source":"native-r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    snap=(("p","native-r","r",draft.digest,"c"*64,
+           id(ds),id(mask)),ds,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    monkeypatch.setattr(
+        stage._executor,"submit",
+        lambda *args,**kw:(_ for _ in ()).throw(
+            RuntimeError("test-only pool unavailable")))
+    stage.refresh_context()
+    stage.run_diagnostic()
+    assert stage._future is None
+    assert stage._active_identity is None
+    assert stage.run_btn.isEnabled()
+    assert stage._last_failure["status"]=="WORKER_START_FAILED_CLOSED"
+    assert "test-only pool unavailable" in stage.status.text()
+    assert "to retry" in stage.status.text()
+    assert not stage.copy_btn.isEnabled()

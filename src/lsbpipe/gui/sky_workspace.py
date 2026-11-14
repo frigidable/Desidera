@@ -255,9 +255,26 @@ class SkyWorkspace(QWidget):
         self._reset_report_visibility()
         self._active_identity = identity
         self._discard_requested = False
-        self._future = self._executor.submit(
-            diagnose_current_project_residual_sky,
-            dataset, draft, contamination)
+        try:
+            self._future = self._executor.submit(
+                diagnose_current_project_residual_sky,
+                dataset, draft, contamination)
+        except (OSError, RuntimeError) as exc:
+            # Thread-pool startup failures must not escape a Qt button
+            # callback. All source evidence and manual masks stay intact.
+            self._active_identity = None
+            self._last_failure = {
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:1600],
+                "scene_identity_at_attempt": list(identity[:5]),
+                "status": "WORKER_START_FAILED_CLOSED",
+            }
+            self.status.setText(
+                f"Background worker could not start: {exc}. "
+                "Check the environment, then choose Evaluate residual sky "
+                "to retry. No sky or Scene edits were adopted.")
+            self.refresh_context()
+            return
         self.run_btn.setEnabled(False)
         self.discard_btn.setVisible(True)
         self.discard_btn.setEnabled(True)
@@ -327,10 +344,13 @@ class SkyWorkspace(QWidget):
                 "scene_identity_at_attempt": list(identity[:5]),
                 "status": "WORKER_FAILED_CLOSED",
             }
-            self.status.setText(f"Sky diagnostic failed closed: {exc}")
+            self.status.setText(
+                f"Sky diagnostic failed closed: {exc}. "
+                "Review Stage 02 masks and coverage, then choose Evaluate "
+                "residual sky to retry. No background was adopted.")
             self.readout.setPlainText(
                 "No background candidate accepted or subtracted. "
-                "Review prepared Scene evidence and mask coverage.")
+                "The Scene draft remains available for correction and retry.")
             self.refresh_context()
             return
         if (result.get("project_id") != identity[0] or

@@ -530,11 +530,26 @@ class ApertureWorkspace(QWidget):
         self.plot.set_curves(())
         self.annulus_plot.set_curves(())
         self._reset_report_visibility()
-        self._future=self._executor.submit(
-            build_project_aperture_growth,
-            dataset,draft,contamination,
-            source_triplet=triplet,target_icrs=anchor,
-            sga_q=q,sga_pa_deg=pa)
+        try:
+            self._future=self._executor.submit(
+                build_project_aperture_growth,
+                dataset,draft,contamination,
+                source_triplet=triplet,target_icrs=anchor,
+                sga_q=q,sga_pa_deg=pa)
+        except (OSError,RuntimeError) as exc:
+            self._active_identity=None
+            self._last_failure={
+                "error_type":type(exc).__name__,
+                "message":str(exc)[:1600],
+                "scene_identity_at_attempt":list(identity[:5]),
+                "status":"WORKER_START_FAILED_CLOSED",
+            }
+            self.status.setText(
+                f"Aperture worker could not start: {exc}. "
+                "Check the environment, then choose Build aperture curves "
+                "to retry. No flux or Scene edits were adopted.")
+            self.refresh_context()
+            return
         self.run_btn.setEnabled(False)
         self.discard_btn.setVisible(True)
         self.discard_btn.setEnabled(True)
@@ -602,10 +617,13 @@ class ApertureWorkspace(QWidget):
                 "scene_identity_at_attempt":list(identity[:5]),
                 "status":"WORKER_FAILED_CLOSED",
             }
-            self.status.setText(f"Aperture diagnostic refused: {exc}")
+            self.status.setText(
+                f"Aperture diagnostic refused: {exc}. "
+                "Review Stage 02 inputs and geometry, then choose Build "
+                "aperture curves to retry. No photometry was adopted.")
             self.readout.setPlainText(
-                "No adopted photometry. Review original Scene, "
-                "native FITS/WCS and exact Photutils dependency.")
+                "No adopted photometry. Review original Scene, native "
+                "FITS/WCS, masks and Photutils dependency before retry.")
             self.refresh_context()
             return
         if (result.get("project_id")!=identity[0]
