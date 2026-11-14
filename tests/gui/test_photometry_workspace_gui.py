@@ -71,3 +71,17 @@ def test_photometry_initial_status_does_not_repeat_copy_qa_instructions(qtbot):
     w.copy_project_qa_btn.click()
     assert w.project_qa_status.isVisible()
     assert "Open a saved galaxy project" in w.project_qa_status.text()
+
+
+
+def test_empty_photometry_does_not_show_disabled_multiband_toolbar(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366, 768)
+    w.show()
+    assert not w.batch_box.isVisible()
+    # Hidden until real inputs exist, but project QA and stage navigation remain.
+    assert w.stage_tabs.count() == 4
+    assert w.copy_project_qa_btn.isVisible()
+    assert w.sources_btn.isVisible()

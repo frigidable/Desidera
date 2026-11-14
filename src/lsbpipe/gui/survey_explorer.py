@@ -476,7 +476,8 @@ class SurveyExplorer(QMainWindow):
 
         # Advanced local FITS coverage parameters are available on demand;
         # they should not permanently hide the file table's rows.
-        self.qa_toggle = QPushButton("Coverage QA settings")
+        self.qa_toggle = QPushButton("Coverage QA settings", self.advanced_files)
+        self.qa_toggle.hide()
         self.qa_toggle.setCheckable(True)
         self.qa_toggle.setChecked(False)
         self.qa_toggle.setToolTip(
@@ -682,7 +683,7 @@ class SurveyExplorer(QMainWindow):
             "PSF matching or photometric color measurement.")
         self.band_compare_btn.clicked.connect(self._toggle_multiband)
         heading_row.addWidget(self.band_compare_btn)
-        self.comparison_btn = QPushButton("Pixel QA")
+        self.comparison_btn = QPushButton("Quality maps")
         self.comparison_btn.setObjectName("fits_open_four_comparison")
         self.comparison_btn.setToolTip(
             "Interactive 2×2 quality viewer for ONE optical band. "

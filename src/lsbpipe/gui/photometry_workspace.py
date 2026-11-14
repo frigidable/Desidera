@@ -90,7 +90,8 @@ class PhotometryWorkspace(QWidget):
         title_row.addWidget(self.copy_project_qa_btn)
         root.addLayout(title_row)
         self.subtitle = QLabel(
-            "Experimental diagnostics · no adopted galaxy photometry")
+            "PSF, sky and aperture fluxes are diagnostic only · "
+            "no adopted galaxy photometry")
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
@@ -202,11 +203,14 @@ class PhotometryWorkspace(QWidget):
         # with another band, and batch runs still visit all four.
 
         batch = QGroupBox("Multi-band PSF diagnostics")
+        self.batch_box = batch
         batch.setObjectName("psf0_four_band_toolbar")
         batch_layout = QVBoxLayout(batch)
         batch_note = QLabel(
-            "Process available bands with independent QA. Original FITS "
-            "are never modified; results are not adopted automatically.")
+            "Independent per-band PSF diagnostics · not adopted")
+        batch_note.setToolTip(
+            "Runs one diagnostic for each available band. Original FITS "
+            "are never modified and results are never adopted automatically.")
         batch_note.setWordWrap(True)
         batch_layout.addWidget(batch_note)
         batch_buttons = QHBoxLayout()
@@ -274,6 +278,9 @@ class PhotometryWorkspace(QWidget):
             self.band_selector.setCurrentIndex)
         body.addWidget(self.band_tabs)
         body.addWidget(batch)
+        # No empty multi-band action block when the selected galaxy has
+        # no usable local PSF inputs. It reappears as soon as data exist.
+        self.batch_box.setVisible(False)
         self.view_mode.currentIndexChanged.connect(
             self._set_view_mode)
         # Compatibility alias for older callers; resolves to the first
@@ -643,6 +650,9 @@ class PhotometryWorkspace(QWidget):
             self._tab_source_identity = source_key
         self.build_all_psfs_btn.setEnabled(any(
             panel.run_btn.isEnabled() for panel in self.psf0_panels.values()))
+        self.batch_box.setVisible(
+            self.build_all_psfs_btn.isEnabled()
+            or bool(self.batch_status.text().strip()))
         self._update_band_tab_statuses()
         if self._project_root is None:
             self.title.setText("Photometry")

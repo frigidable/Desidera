@@ -412,7 +412,7 @@ def test_pixel_quality_is_readable_without_colour_and_uses_existing_classes(
     data["data"]["invvar"][5, 3] = 0.0
     original = {k: v.copy() for k, v in data["data"].items()}
     explorer.set_dataset(data)
-    assert "Active display masks: SATUR" in explorer.overlay_summary.text()
+    assert "Masks: SATUR" in explorer.overlay_summary.text()
     explorer.inspect_pixel(1.3, 1.3)  # FITS (1,4): clear
     assert "QUALITY class 0" in explorer.pixel_quality.text()
     explorer.inspect_pixel(2.3, 0.3)  # FITS (2,5): GALAXY
