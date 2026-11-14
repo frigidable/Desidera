@@ -423,7 +423,7 @@ def test_pixel_quality_is_readable_without_colour_and_uses_existing_classes(
     explorer.inspect_pixel(3.3, 0.3)  # FITS (3,5): zero INVVAR
     assert "QUALITY class 4" in explorer.pixel_quality.text()
     explorer.layer.setCurrentIndex(explorer.layer.findData("quality"))
-    assert "overlays are suppressed" in explorer.overlay_summary.text()
+    assert "overlays suppressed" in explorer.overlay_summary.text()
     explorer.layer.setCurrentIndex(explorer.layer.findData("image"))
     explorer.flags["SATUR"].setChecked(False)
     assert "SATUR" not in explorer.overlay_summary.text().split(": ", 1)[1].split(".")[0]

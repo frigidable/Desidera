@@ -415,6 +415,11 @@ class PhotometryWorkspace(QWidget):
         self.source_box.setVisible(
             research and self.source_details_toggle.isChecked())
         self.copy_full_qa_btn.setVisible(research)
+        # Scientific controls remain inspectable in explicit research mode,
+        # including before any local FITS can be used.
+        self.batch_box.setVisible(
+            research or self.build_all_psfs_btn.isEnabled()
+            or bool(self.batch_status.text().strip()))
         # Complete JSON export remains accessible in Guided mode.
         self._update_band_tab_statuses()
 
@@ -651,7 +656,8 @@ class PhotometryWorkspace(QWidget):
         self.build_all_psfs_btn.setEnabled(any(
             panel.run_btn.isEnabled() for panel in self.psf0_panels.values()))
         self.batch_box.setVisible(
-            self.build_all_psfs_btn.isEnabled()
+            self.view_mode.currentData() == "research"
+            or self.build_all_psfs_btn.isEnabled()
             or bool(self.batch_status.text().strip()))
         self._update_band_tab_statuses()
         if self._project_root is None:

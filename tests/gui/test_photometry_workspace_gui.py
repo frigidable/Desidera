@@ -85,3 +85,18 @@ def test_empty_photometry_does_not_show_disabled_multiband_toolbar(qtbot):
     assert w.stage_tabs.count() == 4
     assert w.copy_project_qa_btn.isVisible()
     assert w.sources_btn.isVisible()
+
+
+def test_advanced_photometry_preserves_multiband_controls_without_fits(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366, 768)
+    w.show()
+    assert not w.batch_box.isVisible()
+    w.view_mode.setCurrentIndex(w.view_mode.findData("research"))
+    assert w.batch_box.isVisible()
+    assert w.save_full_qa_btn.isVisible()
+    assert w.copy_full_qa_btn.isVisible()
+    w.view_mode.setCurrentIndex(w.view_mode.findData("guided"))
+    assert not w.batch_box.isVisible()
