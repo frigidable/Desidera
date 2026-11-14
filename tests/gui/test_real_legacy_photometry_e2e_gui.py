@@ -211,6 +211,11 @@ def test_supplied_archive_brick_full_gui_route(qtbot, tmp_path, monkeypatch):
     sky_result = sky._result
     assert sky_result["catalog_sha256"] == original_hashes["tractor"]
     assert sky_result["science_status"] == "UNADOPTED_DIAGNOSTIC_ONLY"
+    assert sky_result["status"] == (
+        "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED"), sky_result["status"]
+    assert len(sky_result["methods"]) == 2
+    assert sky_result["method_comparison"] is not None
+    assert sky_result["sky_holdout_effective_pixels"] > 0
     assert sky_result.get("sky_model_adopted") is False
 
     widget.restore_navigation(stage="aperture", band=band)
@@ -219,10 +224,14 @@ def test_supplied_archive_brick_full_gui_route(qtbot, tmp_path, monkeypatch):
     qtbot.waitUntil(lambda: aperture._future is None, timeout=180000)
     assert aperture._result is not None, aperture.status.text()
     aperture_result = aperture._result
+    assert aperture_result["status"] == (
+        "DIRECT_FINITE_APERTURE_DIAGNOSTICS_NOT_ADOPTED"), aperture_result["status"]
     assert aperture_result["source_quartet_key"] == list(key)
     assert aperture_result["source_fits_hashes_verified"]
     assert aperture_result["original_fits_sha256_local"] == {
         k: original_hashes[k] for k in ("image", "invvar", "nexp", "maskbits")}
+    assert aperture_result["n_measurable_geometry_hypotheses"] >= 1
+    assert aperture.plots_panel.isVisible()
     assert not aperture_result["adopted_for_science"]
     assert not aperture_result["masked_light_reconstructed"]
 
