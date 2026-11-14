@@ -193,7 +193,10 @@ def test_sky_summary_is_compact_and_full_science_report_on_demand(qtbot):
     assert not w.report_toggle.isVisible()
     assert not w.readout.isVisible()
     assert w.status.isVisible()
-    assert "HOLD" in w.status.text()
+    assert w.status.text() == "Not evaluated."
+    from PySide6.QtWidgets import QLabel
+    assert any("science HOLD" in label.text()
+               for label in w.findChildren(QLabel))
     assert "Scene" in w.context_label.text()
     # A numeric readout remains stored (and can be exported) but is not
     # a permanently open wall of text in the initial workspace.
@@ -205,3 +208,19 @@ def test_sky_summary_is_compact_and_full_science_report_on_demand(qtbot):
     w._reset_report_visibility()
     assert not w.report_toggle.isVisible()
     assert not w.readout.isVisible()
+
+
+def test_sky_empty_state_has_one_active_navigation_action(qtbot):
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366,768)
+    w.show()
+    w.restore_navigation(stage="sky",band="g")
+    assert w.sky_stage.open_scene_btn.isVisible()
+    assert w.sky_stage.open_scene_btn.isEnabled()
+    assert not w.sky_stage.run_btn.isVisible()
+    assert not w.sky_stage.copy_btn.isVisible()
+    assert not w.sky_stage.report_toggle.isVisible()
+    w.sky_stage.open_scene_btn.click()
+    assert w.stage_tabs.currentWidget() is w.scene_editor
+    assert w.scene_editor._loaded is None

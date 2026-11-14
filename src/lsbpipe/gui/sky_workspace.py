@@ -13,7 +13,7 @@ import traceback
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QVBoxLayout, QWidget, QSizePolicy,
+    QPushButton, QVBoxLayout, QWidget, QSizePolicy, QTabWidget,
 )
 
 from lsbpipe.background import diagnose_current_project_residual_sky
@@ -70,6 +70,13 @@ class SkyWorkspace(QWidget):
         root.addWidget(setup)
 
         tools = QHBoxLayout()
+        self.open_scene_btn = QPushButton("Open Scene and Masks")
+        self.open_scene_btn.setObjectName("sky_open_scene")
+        self.open_scene_btn.setToolTip(
+            "Open Stage 02 to load the current native FITS and prepare "
+            "neighbour masks. Does not run any background fit.")
+        self.open_scene_btn.clicked.connect(self._open_scene)
+        tools.addWidget(self.open_scene_btn)
         self.run_btn = QPushButton("Evaluate residual sky")
         self.run_btn.setObjectName("sky_diagnostic_run")
         self.run_btn.setToolTip(
@@ -88,7 +95,7 @@ class SkyWorkspace(QWidget):
         tools.addStretch(1)
         root.addLayout(tools)
 
-        self.status = QLabel("Not evaluated · science HOLD.")
+        self.status = QLabel("Not evaluated.")
         self.status.setObjectName("sky_diagnostic_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -119,6 +126,11 @@ class SkyWorkspace(QWidget):
         self.report_toggle.setChecked(False)
         self.report_toggle.hide()
         self.readout.hide()
+
+    def _open_scene(self):
+        tabs = self.parentWidget()
+        if isinstance(tabs, QTabWidget) and tabs.indexOf(self._scene) >= 0:
+            tabs.setCurrentWidget(self._scene)
 
     def _snapshot(self):
         """Return immutable identity plus currently loaded read-only inputs."""
@@ -192,8 +204,15 @@ class SkyWorkspace(QWidget):
                 "project, band, native pixels or scene mask draft.")
             self.status.setText("Stale input · evaluate again · science HOLD.")
             self._reset_report_visibility()
-        self.run_btn.setEnabled(snap is not None and self._future is None)
-        return snap is not None
+        ready = snap is not None
+        tabs = self.parentWidget()
+        self.open_scene_btn.setVisible(
+            not ready and isinstance(tabs, QTabWidget)
+            and tabs.indexOf(self._scene) >= 0)
+        self.run_btn.setVisible(ready)
+        self.copy_btn.setVisible(self._result is not None)
+        self.run_btn.setEnabled(ready and self._future is None)
+        return ready
 
     def run_diagnostic(self):
         if self._future is not None:
@@ -210,6 +229,7 @@ class SkyWorkspace(QWidget):
         self._result_identity = None
         self._last_failure = None
         self.copy_btn.setEnabled(False)
+        self.copy_btn.hide()
         self._reset_report_visibility()
         self._active_identity = identity
         self._future = self._executor.submit(

@@ -311,5 +311,25 @@ def test_aperture_empty_stage_hides_duplicate_graphs_and_report(qtbot):
     assert not w.report_toggle.isVisible()
     assert not w.readout.isVisible()
     assert w.status.isVisible()
-    assert "HOLD" in w.status.text()
+    assert w.status.text() == "Not measured."
+    from PySide6.QtWidgets import QLabel
+    assert any("science HOLD" in label.text()
+               for label in w.findChildren(QLabel))
     assert "No aperture measurement" in w.readout.toPlainText()
+
+
+def test_aperture_empty_state_navigates_to_scene_without_starting_work(qtbot):
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366,768)
+    w.show()
+    w.restore_navigation(stage="aperture",band="r")
+    assert w.aperture_stage.open_scene_btn.isVisible()
+    assert w.aperture_stage.open_scene_btn.isEnabled()
+    assert not w.aperture_stage.run_btn.isVisible()
+    assert not w.aperture_stage.copy_btn.isVisible()
+    assert not w.aperture_stage.plots_panel.isVisible()
+    w.aperture_stage.open_scene_btn.click()
+    assert w.stage_tabs.currentWidget() is w.scene_editor
+    assert w.aperture_stage._future is None
+    assert w.scene_editor._loaded is None

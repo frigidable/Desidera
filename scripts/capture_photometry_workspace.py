@@ -233,10 +233,12 @@ def capture(output_dir: Path) -> list[dict]:
                 app.processEvents()
                 if (not stage_widget.status.isVisible()
                         or not stage_widget.context_label.isVisible()
-                        or not stage_widget.run_btn.isVisible()):
+                        or not stage_widget.open_scene_btn.isVisible()
+                        or stage_widget.run_btn.isVisible()
+                        or stage_widget.copy_btn.isVisible()):
                     raise AssertionError(
-                        "High-font stage lost primary context/actions: "
-                        + stage_key)
+                        "High-font empty stage has no primary Scene action "
+                        "or shows inactive run/copy controls: " + stage_key)
                 if (stage_widget.readout.isVisible()
                         or stage_widget.report_toggle.isVisible()):
                     raise AssertionError(

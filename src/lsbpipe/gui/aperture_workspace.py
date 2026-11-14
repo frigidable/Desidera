@@ -17,7 +17,7 @@ from PySide6.QtCore import Qt, QTimer, QRectF
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QPushButton, QSizePolicy, QVBoxLayout, QWidget, QTabWidget,
 )
 
 from lsbpipe.photometry.aperture_flux import (
@@ -362,6 +362,13 @@ class ApertureWorkspace(QWidget):
         box.addWidget(self.context_label)
         root.addWidget(setup)
         buttons=QHBoxLayout()
+        self.open_scene_btn=QPushButton("Open Scene and Masks")
+        self.open_scene_btn.setObjectName("aperture_open_scene")
+        self.open_scene_btn.setToolTip(
+            "Open Stage 02 to load native FITS and prepare source masks; "
+            "no aperture measurement is started.")
+        self.open_scene_btn.clicked.connect(self._open_scene)
+        buttons.addWidget(self.open_scene_btn)
         self.run_btn=QPushButton("Build aperture curves")
         self.run_btn.setObjectName("aperture_stage_run")
         self.run_btn.setToolTip(
@@ -377,7 +384,7 @@ class ApertureWorkspace(QWidget):
         buttons.addWidget(self.copy_btn)
         buttons.addStretch(1)
         root.addLayout(buttons)
-        self.status=QLabel("Not measured · science HOLD.")
+        self.status=QLabel("Not measured.")
         self.status.setObjectName("aperture_stage_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -418,6 +425,11 @@ class ApertureWorkspace(QWidget):
         self.report_toggle.hide()
         self.readout.hide()
         self.plots_panel.hide()
+
+    def _open_scene(self):
+        tabs=self.parentWidget()
+        if isinstance(tabs,QTabWidget) and tabs.indexOf(self._scene)>=0:
+            tabs.setCurrentWidget(self._scene)
 
     def _snapshot(self):
         # Source and drafts are owned by Stage 02. Stage 03's project
@@ -470,8 +482,15 @@ class ApertureWorkspace(QWidget):
                 "Scene draft, source or geometric hypothesis change.")
             self.status.setText("Stale aperture result · run again · science HOLD.")
             self._reset_report_visibility()
-        self.run_btn.setEnabled(snap is not None and self._future is None)
-        return snap is not None
+        ready=snap is not None
+        tabs=self.parentWidget()
+        self.open_scene_btn.setVisible(
+            not ready and isinstance(tabs,QTabWidget)
+            and tabs.indexOf(self._scene)>=0)
+        self.run_btn.setVisible(ready)
+        self.copy_btn.setVisible(self._result is not None)
+        self.run_btn.setEnabled(ready and self._future is None)
+        return ready
 
     def run_diagnostic(self):
         if self._future is not None:
@@ -487,6 +506,7 @@ class ApertureWorkspace(QWidget):
         self._result_identity=None
         self._last_failure=None
         self.copy_btn.setEnabled(False)
+        self.copy_btn.hide()
         self.plot.set_curves(())
         self.annulus_plot.set_curves(())
         self._reset_report_visibility()
