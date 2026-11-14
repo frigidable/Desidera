@@ -46,6 +46,8 @@ jobs:
       - name: Scientific regression suite
         run: python -m pytest -q tests --ignore=tests/gui
       - name: Offline GUI smoke tests
+        env:
+          DESIDERA_E2E_SCREENSHOT_DIR: gui-artifacts/native-fits
         run: python -m pytest -q tests/gui
       - name: Capture GUI baseline (remote Viewer substituted offline)
         if: always()
