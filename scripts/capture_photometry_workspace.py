@@ -354,6 +354,23 @@ def capture(output_dir: Path) -> list[dict]:
                         f"{widget.size()}")
                 if not scene.copy_error_btn.isVisible():
                     raise AssertionError("Scene error report action hidden")
+                if width==760:
+                    from PySide6.QtWidgets import QBoxLayout
+                    if scene._toolbar.direction()!=QBoxLayout.TopToBottom:
+                        raise AssertionError(
+                            "Narrow Scene FITS toolbar did not reflow")
+                expected=scene.load_btn.fontMetrics().horizontalAdvance(
+                    scene.load_btn.text())+12
+                if scene.load_btn.width()<expected:
+                    raise AssertionError(
+                        "Scene Retry FITS button text clipped: "
+                        f"{scene.load_btn.width()} < {expected}")
+                if (scene.status.parentWidget() is not scene or
+                        scene.status.mapTo(
+                            scene,scene.status.rect().bottomRight()).y()
+                        >= scene.height()):
+                    raise AssertionError(
+                        "Scene status truncated beneath inspector")
                 focus=scene.copy_error_btn.mapTo(
                     widget,scene.copy_error_btn.rect().center())
                 if not widget.rect().contains(focus):

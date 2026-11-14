@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
     QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout,
-    QSizePolicy,
+    QSizePolicy, QBoxLayout,
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
@@ -1282,14 +1282,26 @@ class SceneEditor(QWidget):
         self.warning.setWordWrap(True)
         root.addWidget(self.warning)
 
-        toolbar = QHBoxLayout()
+        # Two grouped rows can reflow vertically at laptop widths / high
+        # font sizes. A fixed single-row toolbar clipped the Retry FITS
+        # and cutout-width labels at 760 px and 16 pt.
+        toolbar = QBoxLayout(QBoxLayout.LeftToRight)
+        self._toolbar = toolbar
+        inputs = QHBoxLayout()
+        actions = QHBoxLayout()
+        inputs.setSpacing(5)
+        actions.setSpacing(5)
+        toolbar.addLayout(inputs)
+        toolbar.addLayout(actions, 1)
         self.band = QComboBox()
         self.band.setObjectName("scene_band")
         for b in "griz":
             self.band.addItem(b.upper(), b)
         self.band.currentIndexChanged.connect(self._band_changed)
-        toolbar.addWidget(QLabel("Band"))
-        toolbar.addWidget(self.band)
+        band_caption = QLabel("Band")
+        band_caption.setBuddy(self.band)
+        inputs.addWidget(band_caption)
+        inputs.addWidget(self.band)
         self.width = QDoubleSpinBox()
         self.width.setObjectName("scene_cutout_width")
         self.width.setRange(.5, 9.)
@@ -1300,8 +1312,10 @@ class SceneEditor(QWidget):
         self.width.setToolTip(
             "Only an original native-pixel cutout is rendered. "
             "A larger target may extend beyond this explicit view.")
-        toolbar.addWidget(QLabel("View width"))
-        toolbar.addWidget(self.width)
+        width_caption = QLabel("View width")
+        width_caption.setBuddy(self.width)
+        inputs.addWidget(width_caption)
+        inputs.addWidget(self.width)
         self.load_btn = QPushButton("Load original FITS")
         self.load_btn.setObjectName("scene_load_original")
         self.load_btn.setAccessibleDescription(
@@ -1312,7 +1326,7 @@ class SceneEditor(QWidget):
             "Read the current-band native FITS without changing originals. "
             "Finish or cancel unfinished shapes before reloading.")
         self.load_btn.clicked.connect(self.load_original)
-        toolbar.addWidget(self.load_btn)
+        actions.addWidget(self.load_btn)
         self.display_mode = QComboBox()
         self.display_mode.setObjectName("scene_image_stretch")
         self.display_mode.addItem("Asinh · faint", ("faint", "asinh"))
@@ -1323,10 +1337,12 @@ class SceneEditor(QWidget):
             "Display-only stretch on original IMAGE values; no science data changed.")
         self.fit_btn = QPushButton("Fit")
         self.fit_btn.clicked.connect(lambda: self.view.fit_image())
-        toolbar.addWidget(self.fit_btn)
-        toolbar.addWidget(QLabel("Stretch"))
-        toolbar.addWidget(self.display_mode)
-        toolbar.addStretch(1)
+        actions.addWidget(self.fit_btn)
+        stretch_caption = QLabel("Stretch")
+        stretch_caption.setBuddy(self.display_mode)
+        actions.addWidget(stretch_caption)
+        actions.addWidget(self.display_mode)
+        actions.addStretch(1)
         root.addLayout(toolbar)
         # QA export is pinned beside Save draft, not a duplicate toolbar
         # row above the primary science-image canvas.
@@ -1939,13 +1955,16 @@ class SceneEditor(QWidget):
         # ONLY while a current FITS failure exists.
         footer_actions.addWidget(self.copy_error_btn)
         right_layout.addLayout(footer_actions)
-        right_layout.addWidget(self.status)
         self.view.setMinimumWidth(0)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([920, 345])
         root.addWidget(splitter, 1)
+        # An error is often a long native-FITS path or exception message.
+        # Its full-width footer remains readable instead of being clipped
+        # beneath the narrow Scene inspector's Save/Copy action buttons.
+        root.addWidget(self.status)
         self.pixel_info = QLabel("Hover original FITS to inspect native pixel and ICRS.")
         self.pixel_info.setObjectName("scene_pixel_info")
         self.pixel_info.setWordWrap(True)
@@ -1969,6 +1988,22 @@ class SceneEditor(QWidget):
             self._invalidate_radius_sweep)
         self._mode_changed()
         self._refresh_controls()
+
+    def resizeEvent(self, event):
+        if hasattr(self, "_toolbar"):
+            narrow = event.size().width() < 1050
+            direction = (
+                QBoxLayout.TopToBottom if narrow else
+                QBoxLayout.LeftToRight)
+            if self._toolbar.direction() != direction:
+                self._toolbar.setDirection(direction)
+            # Show the full native-pixel width+unit at 16-pt font, without
+            # artificially expanding the whole workspace horizontally.
+            minimum = max(
+                112, self.width.fontMetrics().horizontalAdvance(
+                    "9.0 arcmin") + 36)
+            self.width.setMinimumWidth(minimum)
+        super().resizeEvent(event)
 
     @property
     def draft(self):

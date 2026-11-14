@@ -2377,6 +2377,16 @@ def test_scene_failure_footer_and_keyboard_copy_fit_compact_inspector(
     assert qa.isVisible() and save.isVisible()
     assert error.width()>0 and qa.width()>0
     assert error.x()>=0 and error.x()+error.width()<=error.parentWidget().width()
+    from PySide6.QtWidgets import QBoxLayout
+    assert scene._toolbar.direction()==QBoxLayout.TopToBottom
+    assert scene.load_btn.width() >= (
+        scene.load_btn.fontMetrics().horizontalAdvance(
+            scene.load_btn.text()) + 12)
+    assert scene.width.width() >= (
+        scene.width.fontMetrics().horizontalAdvance("9.0 arcmin") + 30)
+    assert scene.status.parentWidget() is scene
+    assert scene.status.mapTo(scene,scene.status.rect().bottomRight()).y() < (
+        scene.height())
     QApplication.clipboard().setText("sentinel")
     scene._failure_shortcut.activated.emit()
     payload=json.loads(QApplication.clipboard().text())
