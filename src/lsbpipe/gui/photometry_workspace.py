@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 import platform
+import re
 import sys
 
 import numpy as np
@@ -48,6 +49,7 @@ class PhotometryWorkspace(QWidget):
         self.setObjectName("photometry_workspace")
         self._project_root = None
         self._bound_project_id = None
+        self._project_display_name = None
         self._bound_source_identity = None
         self._suppress_navigation = False
         self._tab_source_identity = None
@@ -481,7 +483,7 @@ class PhotometryWorkspace(QWidget):
 
     def _request_all_psfs(self):
         if self._project_root is None:
-            self.batch_status.setText("Open Leo P in Galaxy Projects first.")
+            self.batch_status.setText("Open a galaxy project first.")
             return
         requests, skipped = [], []
         for band, panel in self.psf0_panels.items():
@@ -588,7 +590,7 @@ class PhotometryWorkspace(QWidget):
     def save_full_qa(self):
         """Explicit atomic JSON export, not a scientific PSF product."""
         if self._project_root is None:
-            self.batch_status.setText("Open Leo P first; no QA file written.")
+            self.batch_status.setText("Open a galaxy project first; no QA file written.")
             return
         try:
             content = self._serialize_full_qa()
@@ -597,8 +599,14 @@ class PhotometryWorkspace(QWidget):
                 f"Cannot serialize complete QA: {exc}. No file written.")
             return
         suffix = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        # Portable filename: reflect the bound galaxy, not a fixed Leo P
+        # example. The input is a validated project display name; strip
+        # reserved punctuation and cap the component length.
+        galaxy = re.sub(
+            r"[^\w-]+", "_", self._project_display_name or "galaxy"
+        ).strip("_")[:48].rstrip("_") or "galaxy"
         proposed = self._project_root / (
-            f"Desidera_LeoP_PSF0_griz_debug_{suffix}.json")
+            f"Desidera_{galaxy}_PSF0_griz_debug_{suffix}.json")
         selected, _ = QFileDialog.getSaveFileName(
             self, "Save non-adopted PSF-0 griz QA", str(proposed),
             "JSON diagnostic report (*.json)")
@@ -644,6 +652,7 @@ class PhotometryWorkspace(QWidget):
         self._project_root = Path(saved.root)
         self.scene_editor.bind_project(self._project_root)
         self._bound_project_id = saved.project_id
+        self._project_display_name = saved.display_name
         self._bound_source_identity = identity
         # A new UUID, release/region/brick or data root invalidates PSFs.
         # Changing only the saved default band does NOT change the four

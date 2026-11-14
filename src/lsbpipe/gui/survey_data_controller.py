@@ -9,8 +9,30 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import (
     QCheckBox, QHBoxLayout, QInputDialog, QMessageBox,
-    QTableWidgetItem, QWidget)
+    QTableWidget, QTableWidgetItem, QWidget)
 from lsbpipe.surveys.selection import matching_product, summarize_selection
+
+
+class ArchiveFileTable(QTableWidget):
+    """Keyboard-friendly file choices; selecting rows never starts transfers."""
+
+    def keyPressEvent(self, event):
+        if (event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter)
+                and event.modifiers() == Qt.NoModifier):
+            row = self.currentRow()
+            if row < 0:
+                row = next((i for i in range(self.rowCount())
+                            if not self.isRowHidden(i)), -1)
+                if row >= 0:
+                    self.setCurrentCell(row, 1)
+            if 0 <= row < self.rowCount() and not self.isRowHidden(row):
+                holder = self.cellWidget(row, 0)
+                check = holder.findChild(QCheckBox) if holder is not None else None
+                if check is not None and check.isEnabled():
+                    check.setChecked(not check.isChecked())
+                    event.accept()
+                    return
+        super().keyPressEvent(event)
 
 
 class SurveyDataController(QObject):
@@ -55,6 +77,9 @@ class SurveyDataController(QObject):
             provenance = (
                 f"{entry['release'].upper()} {entry['region']} {entry['brick']}")
             check = QCheckBox()
+            # One keyboard tab stop for the table, not for every file.
+            # Space/Enter toggles the highlighted row; mouse remains usable.
+            check.setFocusPolicy(Qt.NoFocus)
             check.setAccessibleName(
                 f"Select {suffix} for download from {provenance}")
             check.setToolTip(

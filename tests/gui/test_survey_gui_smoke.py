@@ -1108,3 +1108,55 @@ def test_primary_survey_navigation_is_compact_and_no_nested_file_disclosure(
         assert field.isVisible()
     w.files_options.click()
     assert not w.qa_widget.isVisible()
+
+
+def test_archive_file_table_keyboard_toggle_is_read_only_and_no_download(
+        offline_explorer, qtbot):
+    """One table tab-stop; Space/Enter toggles only a download checkbox."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QAbstractItemView, QCheckBox
+
+    w = offline_explorer
+    apply_offline_state(w, "S1")
+    w.bricks.selectRow(0)
+    assert w.bricks.editTriggers() == QAbstractItemView.NoEditTriggers
+    assert w.files.editTriggers() == QAbstractItemView.NoEditTriggers
+    assert "Space or Enter" in w.files.accessibleDescription()
+    assert not w._selected()
+    row = next(i for i in range(w.files.rowCount())
+               if not w.files.isRowHidden(i))
+    check = w.files.cellWidget(row, 0).findChild(QCheckBox)
+    assert check.focusPolicy() == Qt.NoFocus
+    path = w.manifest["products"][row]["relative_path"]
+    w.files.setCurrentCell(row, 1)
+    w.files.setFocus()
+    qtbot.keyClick(w.files, Qt.Key_Space)
+    assert w._selected() == {path}
+    assert w.thread is None
+    assert w.download_btn.isEnabled()
+    qtbot.keyClick(w.files, Qt.Key_Return)
+    assert not w._selected()
+    assert not w.download_btn.isEnabled()
+    qtbot.keyClick(w.files, Qt.Key_Space, modifier=Qt.ControlModifier)
+    assert not w._selected()
+    assert w.thread is None
+
+
+def test_keyboard_does_not_check_hidden_archive_rows(offline_explorer, qtbot):
+    """Hidden products cannot be toggled by stale keyboard current-index."""
+    from PySide6.QtCore import Qt
+    w = offline_explorer
+    apply_offline_state(w, "S1")
+    w.bricks.selectRow(0)
+    row = next(i for i in range(w.files.rowCount())
+               if not w.files.isRowHidden(i))
+    w.files.setCurrentCell(row, 1)
+    kind = w.manifest["products"][row]["kind"]
+    w.kind_filter.setCurrentText("tractor" if kind != "tractor" else "image")
+    assert w.files.isRowHidden(row)
+    # Qt can move the current index to a different visible row on filtering.
+    # Only exercise the hidden-row guard when the index remains unchanged.
+    if w.files.currentRow() == row:
+        w.files.setFocus()
+        qtbot.keyClick(w.files, Qt.Key_Space)
+        assert not w._selected()

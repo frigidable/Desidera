@@ -132,3 +132,46 @@ def test_photometry_stage_shortcuts_are_scoped_and_side_effect_free(qtbot):
     assert w.current_navigation()==("aperture","g")
     w._stage_shortcuts[1].activated.emit()
     assert w.current_navigation()==("psf0","g")
+
+
+def test_psf_qa_export_suggests_bound_galaxy_not_leo_p(
+        qtbot, tmp_path, monkeypatch):
+    """A different galaxy must never inherit Leo P's debug export name."""
+    from pathlib import Path
+    from lsbpipe.gui import photometry_workspace as module
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = create_object_project(
+        "UGC 2162 (candidate)", tmp_path / "UGC_2162",
+        field=SkyField(40.096208, 1.229250, 5.))
+    widget = module.PhotometryWorkspace()
+    qtbot.addWidget(widget)
+    widget.bind_project(project)
+    widget.show()
+    dialogs = []
+
+    def cancel_dialog(*args):
+        dialogs.append(args)
+        return "", ""
+
+    monkeypatch.setattr(module.QFileDialog, "getSaveFileName", cancel_dialog)
+    widget.save_full_qa()
+    assert len(dialogs) == 1
+    proposed = Path(dialogs[0][2])
+    assert proposed.parent == project.root
+    assert proposed.name.startswith("Desidera_UGC_2162_candidate_PSF0_griz_debug_")
+    assert proposed.suffix == ".json"
+    assert "LeoP" not in proposed.name
+    assert not list(project.root.glob("Desidera_*.json"))
+
+
+def test_unbound_psf_feedback_is_galaxy_neutral(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    widget = PhotometryWorkspace()
+    qtbot.addWidget(widget)
+    widget._request_all_psfs()
+    assert "galaxy project" in widget.batch_status.text()
+    assert "Leo P" not in widget.batch_status.text()
+    widget.save_full_qa()
+    assert "galaxy project" in widget.batch_status.text()
+    assert "Leo P" not in widget.batch_status.text()

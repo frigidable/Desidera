@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QInputDialog,
     QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QHeaderView, QDockWidget, QScrollArea, QSizePolicy, QLayout,
+    QAbstractItemView,
     QTabWidget, QToolButton, QPlainTextEdit)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
@@ -44,7 +45,7 @@ from lsbpipe.gui.qa_records import ScienceContext
 from lsbpipe.gui.task_execution import (
     TaskWorker, TaskDispatch, TaskToken, WorkspaceTaskController)
 from lsbpipe.gui.target_controller import TargetController, TargetTextField
-from lsbpipe.gui.survey_data_controller import SurveyDataController
+from lsbpipe.gui.survey_data_controller import ArchiveFileTable, SurveyDataController
 from lsbpipe.gui.science_context_controller import ScienceContextController
 from lsbpipe.gui.workflow_ux import workflow_cue
 
@@ -353,6 +354,10 @@ class SurveyExplorer(QMainWindow):
 
         self.bricks = QTableWidget(0, 4)
         self.bricks.setAccessibleName("Release bricks and median exposure diagnostics")
+        self.bricks.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.bricks.setAccessibleDescription(
+            "Use arrow keys to choose a brick or double-click to preview. "
+            "Selecting a row never downloads original FITS.")
         self.bricks.setHorizontalHeaderLabels(["DR", "Region", "Brick", "NEXP g/r/i/z"])
         # Avoid giving narrow DR/region columns the same width as NEXP.
         for column in (0, 1, 2):
@@ -469,9 +474,13 @@ class SurveyExplorer(QMainWindow):
         self.clear_all_btn.clicked.connect(self._clear_all_selection)
         advanced_files_layout.addWidget(self.clear_all_btn)
 
-        self.files = QTableWidget(0, 4)
+        self.files = ArchiveFileTable(0, 4)
         self.files.setAccessibleName(
             "Candidate Legacy FITS files, HTTP evidence and download selections")
+        self.files.setAccessibleDescription(
+            "Use arrow keys to navigate archive files. Press Space or Enter "
+            "to check or uncheck the highlighted file. No automatic download.")
+        self.files.setEditTriggers(QAbstractItemView.NoEditTriggers)
         # Keep the header readable in 250-px dock viewports; each file row
         # and its tooltip carry the complete product/source provenance.
         self.files.setHorizontalHeaderLabels(["Use", "File", "HTTP", "MiB"])
