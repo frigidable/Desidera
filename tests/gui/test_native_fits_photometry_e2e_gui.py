@@ -63,7 +63,15 @@ def _write_original_synthetic_quartet(project, root):
             hdr["BUNIT"]="nanomaggies"
         if kind == "invvar":
             hdr["BUNIT"]="1/nanomaggies^2"
-        fits.PrimaryHDU(data=arrays[kind],header=hdr).writeto(path)
+        if kind == "maskbits":
+            # The official optical MASKBITS is HDU1. A generic primary
+            # raster is invalid even when its FITS bytes and WCS are sound.
+            fits.HDUList([
+                fits.PrimaryHDU(),
+                fits.ImageHDU(data=arrays[kind],header=hdr,name="MASKBITS"),
+            ]).writeto(path)
+        else:
+            fits.PrimaryHDU(data=arrays[kind],header=hdr).writeto(path)
     return wcs,paths
 
 
@@ -213,6 +221,21 @@ def test_synthetic_original_fits_full_photometry_gui_route(
     aperture_json=json.loads(QApplication.clipboard().text())
     assert not aperture_json["adopted_for_science"]
 
+    # Capture the *actual successful synthetic data-bearing stages*
+    # before invalidating their results; these are not archival observations.
+    capture_dir=os.environ.get("DESIDERA_E2E_SCREENSHOT_DIR")
+    if capture_dir:
+        screenshot_root=Path(capture_dir)
+        screenshot_root.mkdir(parents=True,exist_ok=True)
+        for stage in ("scene","sky","aperture"):
+            widget.restore_navigation(stage=stage,band="r")
+            QApplication.processEvents()
+            pix=widget.grab()
+            if pix.isNull() or not pix.save(str(
+                    screenshot_root/f"synthetic_native_{stage}_1366x768.png"),
+                    "PNG"):
+                raise AssertionError(f"Cannot capture {stage} fixture")
+
     # A second manual edit immediately invalidates BOTH derived QA views.
     widget.restore_navigation(stage="scene",band="r")
     _draw_native_circle(scene,100.,120.)
@@ -236,19 +259,15 @@ def test_synthetic_original_fits_full_photometry_gui_route(
     assert {key:hashlib.sha256(path.read_bytes()).hexdigest()
             for key,path in source_files.items()}==before
 
-    # Export offscreen GUI proof only when CI explicitly asks for it.
-    directory=os.environ.get("DESIDERA_E2E_SCREENSHOT_DIR")
-    if directory:
-        root=Path(directory)
-        root.mkdir(parents=True,exist_ok=True)
-        for stage in ("scene","sky","aperture"):
-            widget.restore_navigation(stage=stage,band="r")
-            QApplication.processEvents()
-            pix=widget.grab()
-            if pix.isNull() or not pix.save(
-                    str(root/f"synthetic_native_{stage}_1366x768.png"),"PNG"):
-                raise AssertionError(f"Cannot capture {stage} fixture")
-        (root/"synthetic_native_receipt.json").write_text(
+    if capture_dir:
+        widget.restore_navigation(stage="aperture",band="r")
+        QApplication.processEvents()
+        stale=widget.grab()
+        if stale.isNull() or not stale.save(
+                str(screenshot_root/"synthetic_native_aperture_stale_1366x768.png"),
+                "PNG"):
+            raise AssertionError("Cannot capture invalidated aperture")
+        (screenshot_root/"synthetic_native_receipt.json").write_text(
             json.dumps({
                 "fixture":"GENERATED_SYNTHETIC_FITS_NOT_DESI_OBSERVATION",
                 "science_adopted":False,
@@ -256,7 +275,11 @@ def test_synthetic_original_fits_full_photometry_gui_route(
                 "original_fits_sha256":{key:before[key] for key in paths},
                 "tractor_sha256":before["tractor"],
                 "sky_status":sky_json["status"],
+                "sky_training_pixels":sky_json["sky_train_effective_pixels"],
+                "sky_holdout_pixels":sky_json["sky_holdout_effective_pixels"],
                 "aperture_status":aperture_json["status"],
+                "measurable_geometry_count":result[
+                    "n_measurable_geometry_hypotheses"],
                 "sky_model_adopted":False,
                 "aperture_adopted_for_science":False,
                 "real_monitor_dpi_tested":False,
