@@ -309,10 +309,16 @@ def test_synthetic_original_fits_full_photometry_gui_route(
     assert len(updated.edits)==2 and updated_digest!=digest
     np.testing.assert_array_equal(native["data"]["image"],native_image)
 
-    # The only on-disk edits are the explicit mask draft and GUI resume
-    # receipts; the original four FITS, Tractor, and project passport
-    # are byte-identical after every stage.
-    assert (project.root/"lsbpipe-object.json").read_bytes()==before_passport
+    # Opening a registered galaxy through Hub intentionally updates only
+    # last_opened_at in the project passport. All scientific identity,
+    # geometry, dataset selection and persisted values stay identical.
+    # The original FITS and Tractor remain byte-identical.
+    passport_before=json.loads(before_passport)
+    passport_after=json.loads(
+        (project.root/"lsbpipe-object.json").read_text(encoding="utf-8"))
+    assert passport_after["last_opened_at"] >= passport_before["last_opened_at"]
+    assert {k:v for k,v in passport_after.items() if k!="last_opened_at"} == {
+        k:v for k,v in passport_before.items() if k!="last_opened_at"}
     assert {key:hashlib.sha256(path.read_bytes()).hexdigest()
             for key,path in source_files.items()}==before
 
