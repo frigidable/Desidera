@@ -229,6 +229,7 @@ def test_science_inspector_docks_to_right_of_remote_viewer(offline_explorer, qtb
 
 
 def test_http_status_abbreviations_keep_original_evidence(offline_explorer):
+    from PySide6.QtWidgets import QCheckBox
     window = offline_explorer
     apply_offline_state(window, "S1")
     row = 0
