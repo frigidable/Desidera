@@ -158,13 +158,33 @@ def test_synthetic_original_fits_full_photometry_gui_route(
                 "Native FITS screenshot has no registered readable system font")
         capture_font=QFont(family,10)
 
-    widget=PhotometryWorkspace()
+    # Enter through the actual galaxy library and its visible actions.
+    # Startup, project selection and stage navigation must not read FITS.
+    # Keep the test offline even if the user's normal preferences request
+    # remote RGB thumbnails or a WebEngine-backed Legacy viewer.
+    monkeypatch.setenv("DESIDERA_DISABLE_WEBENGINE", "1")
+    monkeypatch.setenv("DESIDERA_DISABLE_AUTOMATIC_RGB", "1")
+    from lsbpipe.gui.project_hub import ProjectHub
+    hub = ProjectHub()
+    qtbot.addWidget(hub)
+    hub.resize(1366, 768)
+    hub.show()
+    hub.filter.setText("Synthetic native E2E")
+    assert hub.projects.currentItem() is not None
+    assert hub.galaxy_card.open_button.isEnabled()
+    hub.galaxy_card.open_button.click()
+    assert hub.workspace is not None
+    explorer = hub.workspace
+    assert explorer._object_project.project_id == project.project_id
+    assert explorer.photometry_btn.isVisible()
+    assert explorer.photometry_workspace.scene_editor._loaded is None
+    explorer.resize(1760, 940)
+    explorer.photometry_btn.click()
+    assert explorer.preview_tabs.currentWidget() is explorer.photometry_workspace
+    widget = explorer.photometry_workspace
     if capture_font is not None:
         widget.setFont(capture_font)
-    qtbot.addWidget(widget)
-    widget.resize(1366,768)
-    widget.show()
-    widget.bind_project(project)
+    assert widget._bound_project_id == project.project_id
     scene=widget.scene_editor
     sky=widget.sky_stage
     aperture=widget.aperture_stage
@@ -265,9 +285,12 @@ def test_synthetic_original_fits_full_photometry_gui_route(
             widget.restore_navigation(stage=stage,band="r")
             QApplication.processEvents()
             pix=widget.grab()
+            # The real embedded workspace follows the Galaxy Workspace
+            # splitter; never mislabel its dimensions as a 1366x768 panel.
+            filename=(f"synthetic_native_{stage}_embedded_"
+                      f"{pix.width()}x{pix.height()}.png")
             if pix.isNull() or not pix.save(str(
-                    screenshot_root/f"synthetic_native_{stage}_1366x768.png"),
-                    "PNG"):
+                    screenshot_root/filename), "PNG"):
                 raise AssertionError(f"Cannot capture {stage} fixture")
 
     # A second manual edit immediately invalidates BOTH derived QA views.
@@ -297,9 +320,10 @@ def test_synthetic_original_fits_full_photometry_gui_route(
         widget.restore_navigation(stage="aperture",band="r")
         QApplication.processEvents()
         stale=widget.grab()
+        stale_filename=(f"synthetic_native_aperture_stale_embedded_"
+                        f"{stale.width()}x{stale.height()}.png")
         if stale.isNull() or not stale.save(
-                str(screenshot_root/"synthetic_native_aperture_stale_1366x768.png"),
-                "PNG"):
+                str(screenshot_root/stale_filename), "PNG"):
             raise AssertionError("Cannot capture invalidated aperture")
         (screenshot_root/"synthetic_native_receipt.json").write_text(
             json.dumps({
@@ -319,4 +343,6 @@ def test_synthetic_original_fits_full_photometry_gui_route(
                 "rendered_font_family":widget.font().family(),
                 "renderable_font_families_count":len(font_families),
                 "real_monitor_dpi_tested":False,
+                "launch_path":"PROJECT_HUB_TO_GALAXY_WORKSPACE_TO_PHOTOMETRY",
+                "embedded_photometry_size_px":[widget.width(),widget.height()],
             },indent=2,sort_keys=True),encoding="utf-8")
