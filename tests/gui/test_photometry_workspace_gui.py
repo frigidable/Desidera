@@ -217,3 +217,24 @@ def test_photometry_stage_icons_and_theme_do_not_start_work(qtbot):
     assert widget.scene_editor._future is None
     assert widget.sky_stage._future is None
     assert widget.aperture_stage._future is None
+
+
+def test_observatory_vector_icons_render_full_shapes_not_cropped(qtbot):
+    """HiDPI QPixmap rendering must not double-scale and clip icons."""
+    from PySide6.QtCore import QSize
+    from lsbpipe.gui.visual_theme import icon_for
+    for kind in ("galaxy","folder","plus","back","database","chart",
+                 "download","search","refresh","copy","mask","sky",
+                 "aperture","open","save"):
+        icon=icon_for(kind,color="#215CAA",size=24)
+        assert not icon.isNull(),kind
+        pix=icon.pixmap(QSize(24,24))
+        img=pix.toImage()
+        points=[(x,y) for y in range(img.height())
+                for x in range(img.width())
+                if img.pixelColor(x,y).alpha()>24]
+        assert points,kind
+        xs=[x for x,_ in points]
+        ys=[y for _,y in points]
+        assert max(xs)-min(xs)>img.width()*.40,kind
+        assert max(ys)-min(ys)>img.height()*.40,kind

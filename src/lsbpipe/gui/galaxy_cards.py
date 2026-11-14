@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QSplitter, QVBoxLayout, QWidget,
 )
 
+from .visual_theme import adorn, theme_colors
 from .galaxy_card_model import GalaxyCardSnapshot, snapshots_from_records
 from .catalogue_links import confirmed_name_link
 from lsbpipe.surveys.object_projects import recent_projects
@@ -62,7 +63,31 @@ class GalaxyDetailCard(QFrame):
         self.setObjectName("galaxy_detail_card")
         self.setFrameShape(QFrame.StyledPanel)
         self.setMinimumWidth(300)
-        self.setStyleSheet(_INSPECTOR_STYLE)
+        colors = theme_colors(self)
+        self.setStyleSheet(_INSPECTOR_STYLE + """
+QFrame#galaxy_detail_card {
+    background-color: $SURFACE;
+    border: 1px solid $BORDER;
+    border-radius: 11px;
+}
+QScrollArea#galaxy_card_scroll, QWidget#galaxy_card_content {
+    background-color: $SURFACE;
+    border: 0px;
+}
+QLabel#galaxy_card_section { color: $ACCENT; font-weight: 650; }
+QLabel#galaxy_card_name { color: $TEXT; }
+QLabel#galaxy_card_preview {
+    background-color: $RAISED;
+    color: $MUTED;
+    border: 1px solid $BORDER;
+    border-radius: 7px;
+}
+""".replace("$SURFACE", colors["SURFACE"])
+   .replace("$BORDER", colors["BORDER"])
+   .replace("$ACCENT", colors["ACCENT"])
+   .replace("$TEXT", colors["TEXT"])
+   .replace("$RAISED", colors["RAISED"])
+   .replace("$MUTED", colors["MUTED"]))
         self.snapshot: GalaxyCardSnapshot | None = None
         self._pixmap: QPixmap | None = None
 
@@ -76,6 +101,7 @@ class GalaxyDetailCard(QFrame):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
+        inner.setObjectName("galaxy_card_content")
         body = QVBoxLayout(inner)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(12)
@@ -262,6 +288,7 @@ class GalaxyDetailCard(QFrame):
         container.addWidget(scroll, 1)
         self.open_button = QPushButton("Open project")
         self.open_button.setObjectName("galaxy_card_open")
+        adorn(self.open_button, "open", primary=True)
         self.open_button.setEnabled(False)
         self.open_button.setToolTip(
             "Opens the project offline. Original FITS and previous scientific "

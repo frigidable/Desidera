@@ -242,7 +242,9 @@ def icon_for(name: str, *, color: str = "#215CAA", size: int = 18) -> QIcon:
     painter = QPainter(pixmap)
     try:
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.scale(size / 24.0 * 2.0, size / 24.0 * 2.0)
+        # QPainter already respects the QPixmap 2x device-pixel ratio.
+        # Scaling by 2 again clipped icons to an upper-left fragment.
+        painter.scale(size / 24.0, size / 24.0)
         painter.setPen(QPen(QColor(color), 1.9, Qt.SolidLine,
                             Qt.RoundCap, Qt.RoundJoin))
         painter.setBrush(Qt.NoBrush)

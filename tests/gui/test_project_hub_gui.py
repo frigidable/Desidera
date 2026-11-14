@@ -818,3 +818,17 @@ def test_hub_observatory_visual_theme_has_icons_and_semantic_primary(qtbot):
     assert "QTabBar::tab:selected" in css
     assert "QGraphicsView" not in css
     hub.close()
+
+
+def test_selected_galaxy_card_action_has_a_complete_icon_and_primary_style(qtbot):
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.gui.visual_theme import theme_colors
+    hub=ProjectHub()
+    qtbot.addWidget(hub)
+    button=hub.galaxy_card.open_button
+    assert button.property("visualRole")=="primary"
+    assert not button.icon().isNull()
+    css=hub.galaxy_card.styleSheet()
+    assert theme_colors(hub.galaxy_card)["SURFACE"] in css
+    assert "galaxy_card_content" in css
+    hub.close()
