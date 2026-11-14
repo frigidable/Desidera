@@ -2313,18 +2313,24 @@ class SurveyExplorer(QMainWindow):
                 "exist locally. No network download was attempted.")
             return
         report = summarize_selection(self.manifest["products"], selected)
+        hidden = self._data_controller.hidden_selected_count()
         amount = (f"Known size: {report.known_mib:.1f} MiB" +
                   (f" + {report.unknown_size_files} unknown-sized files."
                    if report.unknown_size_files else "."))
+        hidden_notice = (
+            f"WARNING: {hidden} selected files are hidden by current "
+            "table filters. They WILL also be downloaded.\n\n"
+            if hidden else "")
         text = (
-            f"Download {report.selected_files} science products?\n"
+            f"Download {report.selected_files} selected archive files?\n"
             f"{report.verified_files} HTTP OK, "
             f"{report.missing_files} confirmed missing, "
             f"{report.unknown_files} not verified.\n"
             f"{amount}\n\n"
-            "These are original FITS products and can occupy significant disk space.")
+            + hidden_notice
+            + "Original FITS files can occupy significant disk space.")
         if QMessageBox.question(
-                self, "Confirm science download", text,
+                self, "Confirm archive download", text,
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No) != QMessageBox.Yes:
             return

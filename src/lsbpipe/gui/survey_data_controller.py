@@ -236,21 +236,37 @@ class SurveyDataController(QObject):
             if w.files.cellWidget(row, 0).findChild(QCheckBox).isChecked()
         }
 
+    def hidden_selected_count(self):
+        """Selected files hidden by a current filter still WILL download."""
+        w = self.owner
+        if not w.manifest:
+            return 0
+        return sum(
+            1 for row in range(w.files.rowCount())
+            if w.files.isRowHidden(row)
+            and w.files.cellWidget(row, 0).findChild(QCheckBox).isChecked())
+
     def _update_selection_summary(self, *_):
         w = self.owner
         if not w.manifest:
             w.selected_label.setText("No files selected")
+            w.selected_label.setAccessibleDescription("")
             w.download_btn.setEnabled(False)
+            w.download_btn.setToolTip(
+                "Choose original FITS files explicitly; no automatic download.")
             return
         selected = w._selected()
         report = summarize_selection(w.manifest["products"], selected)
         visible = sum(not w.files.isRowHidden(row)
                       for row in range(w.files.rowCount()))
+        hidden = self.hidden_selected_count()
         sizes = (f"{report.known_mib:.1f} MiB confirmed + unknown"
                  if report.unknown_size_files else
                  f"{report.known_mib:.1f} MiB")
         selection = (
-            f"{report.selected_files} selected · " + sizes
+            f"{report.selected_files} selected"
+            + (f" ({hidden} hidden)" if hidden else "")
+            + " · " + sizes
             if report.selected_files else
             "0 selected · choose a quartet or individual FITS")
         w.selected_label.setText(
@@ -259,11 +275,22 @@ class SurveyDataController(QObject):
         # potentially enormous download: user explicitly chooses a quartet
         # or specific original FITS products.
         w.download_btn.setEnabled(bool(selected) and w.thread is None)
+        hidden_warning = (
+            f"{hidden} selected original files are hidden by the current "
+            "filters but WILL be downloaded unless explicitly unchecked. "
+            "Use Clear all (including hidden) to reset the selection."
+            if hidden else "")
         w.selected_label.setToolTip(
             f"{visible} products currently visible; "
             f"{report.verified_files} URLs HTTP OK; "
             f"{report.unknown_size_files} selected files have unknown sizes; "
-            f"{report.missing_files} known HTTP-missing.")
+            f"{report.missing_files} known HTTP-missing."
+            + (" " + hidden_warning if hidden else ""))
+        w.selected_label.setAccessibleDescription(hidden_warning)
+        w.download_btn.setToolTip(
+            hidden_warning if hidden else
+            "Download only explicitly checked original FITS; confirm "
+            "the file count and size before starting.")
         # A checkbox or bulk-selection action must update next-step guidance
         # in place, without starting downloads or scientific work.
         w._refresh_workflow()

@@ -1160,3 +1160,43 @@ def test_keyboard_does_not_check_hidden_archive_rows(offline_explorer, qtbot):
         w.files.setFocus()
         qtbot.keyClick(w.files, Qt.Key_Space)
         assert not w._selected()
+
+
+def test_filtered_out_selected_fits_remain_explicitly_warned_before_download(
+        offline_explorer, monkeypatch):
+    """An invisible checked file cannot silently join a download batch."""
+    from unittest.mock import patch
+    from lsbpipe.gui import survey_explorer as gui
+
+    w = offline_explorer
+    apply_offline_state(w, "S1")
+    w.bricks.selectRow(0)
+    with patch.object(gui.QInputDialog, "getItem", return_value=("r", True)):
+        w.select_science_quartet()
+    before = w._selected()
+    assert len(before) == 4
+    w.kind_filter.setCurrentText("image")
+    assert w._selected() == before  # a view filter never clears user choices
+    assert w._data_controller.hidden_selected_count() == 3
+    assert "4 selected (3 hidden)" in w.selected_label.text()
+    assert "WILL be downloaded" in w.download_btn.toolTip()
+    assert "hidden" in w.selected_label.accessibleDescription()
+
+    prompts = []
+    def decline(*args):
+        prompts.append(args)
+        return gui.QMessageBox.No
+
+    monkeypatch.setattr(gui.QMessageBox, "question", decline)
+    w.download()
+    assert len(prompts) == 1
+    assert "3 selected files are hidden" in prompts[0][2]
+    assert "Download 4 selected archive files" in prompts[0][2]
+    assert w.thread is None  # No download or FITS mutation on No.
+    w.kind_filter.setCurrentText("All products")
+    assert w._data_controller.hidden_selected_count() == 0
+    assert "hidden" not in w.selected_label.text()
+    assert not w.selected_label.accessibleDescription()
+    w.clear_all_btn.click()
+    assert not w._selected()
+    assert "hidden" not in w.download_btn.toolTip()
