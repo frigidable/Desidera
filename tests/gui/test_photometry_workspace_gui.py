@@ -198,3 +198,22 @@ def test_psf_dispatch_rejects_foreign_project_without_leo_p_message(
     assert "selected galaxy" in panel.protection.toolTip()
     window._returning_to_hub = True
     window.close()
+
+
+def test_photometry_stage_icons_and_theme_do_not_start_work(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    from lsbpipe.gui.visual_theme import theme_colors
+    widget=PhotometryWorkspace()
+    qtbot.addWidget(widget)
+    assert all(not widget.stage_tabs.tabIcon(i).isNull()
+               for i in range(4))
+    assert all(not button.icon().isNull() for button in (
+        widget.back_btn,widget.sources_btn,
+        widget.refresh_btn,widget.copy_project_qa_btn))
+    assert theme_colors(widget)["ACCENT"] in widget.styleSheet()
+    assert widget.stage_tabs.tabBar().accessibleName().startswith(
+        "Photometry stages")
+    assert widget.scene_editor._loaded is None
+    assert widget.scene_editor._future is None
+    assert widget.sky_stage._future is None
+    assert widget.aperture_stage._future is None

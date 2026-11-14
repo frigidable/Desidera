@@ -48,6 +48,7 @@ from lsbpipe.gui.target_controller import TargetController, TargetTextField
 from lsbpipe.gui.survey_data_controller import ArchiveFileTable, SurveyDataController
 from lsbpipe.gui.science_context_controller import ScienceContextController
 from lsbpipe.gui.workflow_ux import workflow_cue
+from lsbpipe.gui.visual_theme import adorn, visual_stylesheet
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -110,6 +111,7 @@ class SurveyExplorer(QMainWindow):
 
     def __init__(self, *, restore_session=True, launch_remote=True):
         super().__init__()
+        self.setObjectName("desidera_survey_explorer")
         self.setWindowTitle("DESIDERA — Legacy Survey Explorer (experimental)")
         self.resize(1460, 880)
         self.hits = []
@@ -174,6 +176,7 @@ class SurveyExplorer(QMainWindow):
             "border: 2px solid palette(highlight); padding-left: 8px; }"
             "QLineEdit[invalid=\"true\"] { border: 2px solid #d56b69; }"
         )
+        self.setStyleSheet(self.styleSheet() + visual_stylesheet(self))
         split = QSplitter(Qt.Horizontal, self)
         left = QWidget()
         left.setObjectName("survey_navigation")
@@ -187,12 +190,14 @@ class SurveyExplorer(QMainWindow):
         navigation_actions.setSpacing(5)
         self.back_to_projects = QPushButton("Projects")
         self.back_to_projects.setObjectName("workspace_back_to_projects")
+        adorn(self.back_to_projects, "back")
         self.back_to_projects.setAccessibleName("Return to galaxy projects")
         self.back_to_projects.clicked.connect(self._go_back_to_projects)
         self.back_to_projects.setVisible(False)
         navigation_actions.addWidget(self.back_to_projects)
         self.dataset_manager_btn = QPushButton("Sources")
         self.dataset_manager_btn.setObjectName("workspace_open_dataset_manager")
+        adorn(self.dataset_manager_btn, "database")
         self.dataset_manager_btn.setToolTip(
             "Inspect all local observational sources, bricks and filters "
             "before configuring scientific analysis. No network requests.")
@@ -202,6 +207,7 @@ class SurveyExplorer(QMainWindow):
         navigation_actions.addWidget(self.dataset_manager_btn)
         self.photometry_btn = QPushButton("Photometry")
         self.photometry_btn.setObjectName("workspace_open_photometry")
+        adorn(self.photometry_btn, "chart")
         self.photometry_btn.setToolTip(
             "Open the separate scientific photometry screen for this galaxy. "
             "No measurements are performed or adopted by navigation.")
@@ -299,6 +305,7 @@ class SurveyExplorer(QMainWindow):
         actions = QHBoxLayout()
         self.search_btn = QPushButton("Find data")
         self.search_btn.setProperty("primaryAction", True)
+        adorn(self.search_btn, "search", primary=True)
         self.search_btn.setToolTip("Discover Legacy archive bricks for this ICRS field")
         self.search_btn.clicked.connect(self.search)
         actions.addWidget(self.search_btn)
@@ -591,6 +598,7 @@ class SurveyExplorer(QMainWindow):
         advanced_files_layout.addWidget(self.save_btn)
         self.download_btn = QPushButton("Download selected")
         self.download_btn.setProperty("primaryAction", True)
+        adorn(self.download_btn, "download", primary=True)
         self.download_btn.setEnabled(False)
         self.download_btn.setToolTip(
             "Select a science quartet or individual files first. Nothing "

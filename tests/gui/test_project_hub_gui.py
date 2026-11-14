@@ -799,3 +799,22 @@ def test_create_dialog_scrolls_high_font_fields_and_pins_footer(
     assert not dialog.create_btn.isEnabled()
     assert "both RA and Dec" in dialog.description.text()
     assert dialog.form_scroll.verticalScrollBar().maximum() > 0
+
+
+def test_hub_observatory_visual_theme_has_icons_and_semantic_primary(qtbot):
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.gui.visual_theme import theme_colors
+    hub=ProjectHub()
+    qtbot.addWidget(hub)
+    assert hub.brand_symbol.pixmap() is not None
+    assert not hub.brand_symbol.pixmap().isNull()
+    assert hub.new_btn.property("visualRole")=="primary"
+    assert hub.continue_btn.property("visualRole")=="primary"
+    assert not hub.new_btn.icon().isNull()
+    assert not hub.import_btn.icon().isNull()
+    assert not hub.tools_menu_btn.icon().isNull()
+    css=hub.styleSheet()
+    assert theme_colors(hub)["ACCENT"] in css
+    assert "QTabBar::tab:selected" in css
+    assert "QGraphicsView" not in css
+    hub.close()

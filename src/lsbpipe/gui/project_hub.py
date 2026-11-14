@@ -26,6 +26,7 @@ from lsbpipe.surveys.object_projects import (
 from lsbpipe.surveys.local_project import open_local_project
 from lsbpipe.gui.target_input import parse_coordinate_pair
 from .survey_explorer import SurveyExplorer
+from .visual_theme import adorn, icon_for, theme_colors, visual_stylesheet
 from .galaxy_cards import GalaxyDetailCard
 from .galaxy_card_model import snapshot_from_record
 from .card_previews import build_local_preview, has_local_image_source
@@ -283,19 +284,33 @@ class ProjectHub(QMainWindow):
         outer.setSpacing(14)
 
         heading = QLabel("DESIDERA")
+        heading.setObjectName("hub_brand_title")
         heading.setStyleSheet("font-size: 26px; font-weight: 700")
         subheading = QLabel(
             "Galaxy projects · local-first scientific workspace")
-        outer.addWidget(heading)
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(10)
+        self.brand_symbol = QLabel()
+        self.brand_symbol.setObjectName("hub_brand_symbol")
+        self.brand_symbol.setAccessibleName("Desidera galaxy orbit mark")
+        self.brand_symbol.setPixmap(icon_for(
+            "galaxy", color=theme_colors(self)["ACCENT"], size=29).pixmap(
+                QSize(29, 29)))
+        brand_row.addWidget(self.brand_symbol)
+        brand_row.addWidget(heading)
+        brand_row.addStretch(1)
+        outer.addLayout(brand_row)
         outer.addWidget(subheading)
 
         actions = QHBoxLayout()
         self.new_btn = QPushButton("New galaxy project")
         self.new_btn.setObjectName("hub_new_project")
+        adorn(self.new_btn, "plus", primary=True)
         self.new_btn.clicked.connect(self._new_project)
         self.new_btn.setToolTip("Create a galaxy project (Ctrl+N); no download")
         self.import_btn = QPushButton("Import existing folder…")
         self.import_btn.setObjectName("hub_import_project")
+        adorn(self.import_btn, "folder")
         self.import_btn.clicked.connect(self._import_dialog)
         actions.addWidget(self.new_btn)
         actions.addWidget(self.import_btn)
@@ -312,6 +327,7 @@ class ProjectHub(QMainWindow):
         actions.addWidget(self.auto_resume)
         self.preview_settings_btn = QPushButton("Preview settings")
         self.preview_settings_btn.setObjectName("hub_preview_preferences")
+        adorn(self.preview_settings_btn, "settings")
         self.preview_settings_btn.setAccessibleName(
             "Display-only image preview preferences")
         self.preview_settings_btn.setToolTip(
@@ -427,6 +443,7 @@ class ProjectHub(QMainWindow):
 
         self.continue_btn = QPushButton("Open project")
         self.continue_btn.setObjectName("hub_continue")
+        adorn(self.continue_btn, "open", primary=True)
         self.continue_btn.clicked.connect(self._open_selected)
         right.addWidget(self.continue_btn)
         self.preview_btn = QPushButton("Regenerate local FITS preview")
@@ -483,6 +500,7 @@ class ProjectHub(QMainWindow):
         menu_row.setSpacing(8)
         self.catalogues_menu_btn = QPushButton("Catalogues")
         self.catalogues_menu_btn.setObjectName("hub_catalogues_menu")
+        adorn(self.catalogues_menu_btn, "database")
         self.catalogues_menu = QMenu(self.catalogues_menu_btn)
         self.simbad_action = self.catalogues_menu.addAction("SIMBAD identity…")
         self.ned_action = self.catalogues_menu.addAction("NED identity…")
@@ -495,6 +513,7 @@ class ProjectHub(QMainWindow):
 
         self.tools_menu_btn = QPushButton("Project tools")
         self.tools_menu_btn.setObjectName("hub_project_tools_menu")
+        adorn(self.tools_menu_btn, "settings")
         self.tools_menu = QMenu(self.tools_menu_btn)
         self.local_preview_action = self.tools_menu.addAction(
             "Regenerate local FITS preview")
@@ -544,6 +563,7 @@ class ProjectHub(QMainWindow):
         self.hint.setWordWrap(True)
         outer.addWidget(self.hint)
         self.setCentralWidget(content)
+        self.setStyleSheet(visual_stylesheet(self))
         self.refresh()
 
     def _focus_project_filter(self):

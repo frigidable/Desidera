@@ -14,7 +14,7 @@ import sys
 
 import numpy as np
 
-from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
+from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice, QSize
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
@@ -29,6 +29,7 @@ from lsbpipe.gui.scene_editor import SceneEditor
 from lsbpipe.gui.sky_workspace import SkyWorkspace
 from lsbpipe.gui.aperture_workspace import ApertureWorkspace
 from lsbpipe.gui.project_qa_bundle import serialize_project_diagnostic_bundle
+from lsbpipe.gui.visual_theme import adorn, icon_for, visual_stylesheet
 
 
 
@@ -60,15 +61,18 @@ class PhotometryWorkspace(QWidget):
         header = QHBoxLayout()
         self.back_btn = QPushButton("← Galaxy Workspace")
         self.back_btn.setObjectName("photometry_back_to_workspace")
+        adorn(self.back_btn, "back")
         self.back_btn.clicked.connect(self.backRequested.emit)
         header.addWidget(self.back_btn)
         header.addStretch(1)
         self.sources_btn = QPushButton("Manage sources")
         self.sources_btn.setObjectName("photometry_manage_sources")
+        adorn(self.sources_btn, "database")
         self.sources_btn.clicked.connect(self.sourcesRequested.emit)
         header.addWidget(self.sources_btn)
         self.refresh_btn = QPushButton("Refresh saved selection")
         self.refresh_btn.setObjectName("photometry_refresh")
+        adorn(self.refresh_btn, "refresh")
         self.refresh_btn.setToolTip(
             "Read project metadata and local file existence, without "
             "opening FITS, connecting to the archive or running analysis.")
@@ -76,6 +80,7 @@ class PhotometryWorkspace(QWidget):
         header.addWidget(self.refresh_btn)
         self.copy_project_qa_btn = QPushButton("Copy QA")
         self.copy_project_qa_btn.setObjectName("photometry_copy_project_qa")
+        adorn(self.copy_project_qa_btn, "copy")
         self.copy_project_qa_btn.setToolTip(
             "Copy a single current-project JSON report: PSF-0 griz, Scene & "
             "Masks, residual background, aperture curves/systematics, stale "
@@ -329,6 +334,14 @@ class PhotometryWorkspace(QWidget):
             self.scene_editor, self.sky_stage, self.stage_tabs)
         self.stage_tabs.addTab(
             self.aperture_stage, "4 · Aperture Photometry")
+        # Color-coded pictograms identify the analysis *kind*, never
+        # imply that an unadopted scientific result passed QA.
+        for idx, (glyph, accent) in enumerate((
+                ("galaxy", "#159C93"), ("mask", "#8071DC"),
+                ("sky", "#C58C39"), ("aperture", "#427DC3"))):
+            self.stage_tabs.setTabIcon(
+                idx, icon_for(glyph, color=accent, size=16))
+        self.stage_tabs.setIconSize(QSize(16, 16))
         self.stage_tabs.setTabToolTip(
             3, "Exact observed finite-aperture fluxes, independent elliptical "
                "annuli and curve-of-growth diagnostics. No adopted total.")
@@ -357,6 +370,7 @@ class PhotometryWorkspace(QWidget):
         self._set_view_mode()
         self._update_band_tab_statuses()
         self._apply_science_reflow()
+        self.setStyleSheet(visual_stylesheet(self))
 
     def current_navigation(self):
         current = self.stage_tabs.currentWidget()
