@@ -345,8 +345,10 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     assert not hasattr(workspace, "workflow_toggle")
     assert not workspace.psf0_panels["g"].inspection_details.isVisible()
     assert not workspace.psf0_panels["g"].advanced_details.isVisible()
-    assert workspace.psf0_panels["g"].kernel_view.isVisible()
-    assert workspace.psf0_panels["g"].profile_view.isVisible()
+    assert not workspace.psf0_panels["g"].kernel_view.isVisible()
+    assert not workspace.psf0_panels["g"].profile_view.isVisible()
+    assert workspace.psf0_panels["g"].status.isVisible()
+    assert not workspace.psf0_panels["g"].inspection_toggle.isVisible()
     assert not workspace.psf0_panels["g"].kernel_view.pixmap()
     assert not workspace.psf0_panels["g"].profile_view.pixmap()
     assert workspace.source_details_toggle.isCheckable()
@@ -356,12 +358,14 @@ def test_photometry_compact_band_tabs_and_on_demand_diagnostics(qtbot):
     g = workspace.psf0_panels["g"]
     r = workspace.psf0_panels["r"]
     g.fwhm.setValue(5.75)
+    workspace.view_mode.setCurrentIndex(
+        workspace.view_mode.findData("research"))
+    assert g.kernel_view.isVisible() and g.profile_view.isVisible()
+    assert g.inspection_toggle.isVisible()
     g.inspection_toggle.click()
     assert g.inspection_details.isVisible()
     assert g.qa.isVisible()
     assert g.stars.isVisible()
-    workspace.view_mode.setCurrentIndex(
-        workspace.view_mode.findData("research"))
     g.advanced_toggle.click()
     assert g.advanced_details.isVisible()
 
@@ -728,3 +732,27 @@ def test_standard_psf_gui_offers_opt_in_full_p15_p20_qa_only_in_advanced(qtbot):
     panel.extended_qa.setChecked(False)
     assert panel._active_exclusions == ("star-0002",)
     assert panel.make_run_request()["extended_research_qa"] is False
+
+
+
+def test_workspace_empty_psf_cards_only_appear_in_explicit_advanced_mode(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    widget = PhotometryWorkspace()
+    qtbot.addWidget(widget)
+    widget.resize(1366, 768)
+    widget.show()
+    g = widget.psf0_panels["g"]
+    assert not g._model_card.isVisible()
+    assert not g._profile_card.isVisible()
+    assert g._result_column.isVisible()
+    assert not g.inspection_toggle.isVisible()
+    assert "NOT ADOPTED" in g.mode_context.text()
+    widget.view_mode.setCurrentIndex(widget.view_mode.findData("research"))
+    assert g._model_card.isVisible()
+    assert g._profile_card.isVisible()
+    assert g.inspection_toggle.isVisible()
+    assert g.mode_context.text().startswith("Advanced methods available")
+    widget.view_mode.setCurrentIndex(widget.view_mode.findData("guided"))
+    assert not g._model_card.isVisible()
+    assert not g._profile_card.isVisible()
+    assert not g.inspection_toggle.isVisible()

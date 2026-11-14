@@ -2158,3 +2158,19 @@ def test_scene_task_switch_prevents_accidental_manual_draw(qtbot):
     w.scene_task_buttons["draw"].click()
     assert w.view.drawing
     assert w.mode.currentData() == "polygon"
+
+
+def test_scene_compact_tasks_have_no_horizontal_scroll_at_laptop_width(qtbot):
+    from lsbpipe.gui.scene_editor import SceneEditor
+    from PySide6.QtWidgets import QScrollArea
+    w = SceneEditor()
+    qtbot.addWidget(w)
+    w.resize(1000, 700)
+    w.show()
+    scroll = w.findChild(QScrollArea, "scene_controls_scroll")
+    assert scroll is not None
+    for task in ("draw", "isophote", "sga"):
+        w.scene_task_buttons[task].click()
+        qtbot.wait(10)
+        assert scroll.horizontalScrollBar().maximum() == 0, task
+        assert w.save_btn.isVisible() and w.copy_scene_qa_btn.isVisible()

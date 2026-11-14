@@ -233,6 +233,12 @@ def capture(output_dir: Path) -> list[dict]:
                 if (not scene.save_btn.isVisible()
                         or not scene.copy_scene_qa_btn.isVisible()):
                     raise AssertionError("Scene task footer is obscured")
+                from PySide6.QtWidgets import QScrollArea
+                controls_scroll = scene.findChild(
+                    QScrollArea, "scene_controls_scroll")
+                if controls_scroll.horizontalScrollBar().maximum() != 0:
+                    raise AssertionError(
+                        "Scene task controls overflow horizontally: " + task)
                 if scene.view.drawing:
                     raise AssertionError(
                         "Scene empty task preview unexpectedly starts drawing")

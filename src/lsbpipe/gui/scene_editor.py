@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
-    QApplication, QPlainTextEdit, QStackedWidget,
+    QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout,
 )
 
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
@@ -1301,15 +1301,12 @@ class SceneEditor(QWidget):
         self.fit_btn = QPushButton("Fit")
         self.fit_btn.clicked.connect(lambda: self.view.fit_image())
         toolbar.addWidget(self.fit_btn)
+        toolbar.addWidget(QLabel("Stretch"))
+        toolbar.addWidget(self.display_mode)
         toolbar.addStretch(1)
         root.addLayout(toolbar)
-        # Keep the narrow-screen minimum width independent of display options.
-        display_row = QHBoxLayout()
-        display_row.addWidget(QLabel("Display stretch"))
-        display_row.addWidget(self.display_mode)
-        display_row.addStretch(1)
-        # Keep the long diagnostic action off the crowded image toolbar:
-        # it must not inflate the entire Photometry tab's minimum width.
+        # QA export is pinned beside Save draft, not a duplicate toolbar
+        # row above the primary science-image canvas.
         self.copy_scene_qa_btn = QPushButton("Copy Scene QA")
         self.copy_scene_qa_btn.setObjectName("scene_copy_complete_qa")
         self.copy_scene_qa_btn.setMaximumWidth(130)
@@ -1319,7 +1316,6 @@ class SceneEditor(QWidget):
             "May include local catalogue paths. No FITS or project writes.")
         self.copy_scene_qa_btn.clicked.connect(self._copy_complete_scene_qa)
         # QA export remains available in a pinned footer beside Save draft.
-        root.addLayout(display_row)
 
         splitter = QSplitter(Qt.Horizontal, self)
         self.graphics = QGraphicsScene(self)
@@ -1378,7 +1374,7 @@ class SceneEditor(QWidget):
         sga_box = QGroupBox("SGA · initial geometry prior (optional)")
         sga_box.setObjectName("scene_sga_prior_group")
         sga_layout = QVBoxLayout(sga_box)
-        self.sga_find = QPushButton("Find SGA-2025 · DESI Viewer")
+        self.sga_find = QPushButton("Find SGA-2025")
         self.sga_find.setObjectName("scene_sga_find_desi")
         self.sga_find.setToolTip(
             "Query the official DESI Legacy Surveys SGA-2025 overlay "
@@ -1388,7 +1384,7 @@ class SceneEditor(QWidget):
         self.sga_find.clicked.connect(self._find_desi_sga2025)
         sga_layout.addWidget(self.sga_find)
         self.sga_parent_find = QPushButton(
-            "Try SGA-2025 Parent · initial geometry")
+            "Try SGA Parent")
         self.sga_parent_find.setObjectName("scene_sga_find_parent")
         self.sga_parent_find.setToolTip(
             "Separate DESI Viewer SGA2025 parent overlay. May provide "
@@ -1397,7 +1393,7 @@ class SceneEditor(QWidget):
         self.sga_parent_find.clicked.connect(
             self._find_desi_sga2025_parent)
         sga_layout.addWidget(self.sga_parent_find)
-        self.sga_load = QPushButton("Or choose local SGA FITS…")
+        self.sga_load = QPushButton("Local SGA FITS…")
         self.sga_load.setObjectName("scene_sga_open_local")
         self.sga_load.setToolTip(
             "Explicit local SGA-2020 or SGA-2025 catalogue. "
@@ -1413,7 +1409,7 @@ class SceneEditor(QWidget):
             self._sga_candidate_changed)
         sga_layout.addWidget(self.sga_candidates)
         self.sga_use_prior = QCheckBox(
-            "Protect selected SGA core against Tractor shredding")
+            "Protect SGA core from shredding")
         self.sga_use_prior.setObjectName("scene_sga_use_protection")
         self.sga_use_prior.setChecked(False)
         self.sga_use_prior.toggled.connect(self._sga_protection_changed)
@@ -1424,7 +1420,7 @@ class SceneEditor(QWidget):
             "the full LSB radius.")
         sga_layout.addWidget(self.sga_use_prior)
         self.sga_use_seed = QCheckBox(
-            "Use SGA centre/q/PA for initial geometry")
+            "Seed centre / q / PA from SGA")
         self.sga_use_seed.setObjectName("scene_sga_use_geometry_seed")
         self.sga_use_seed.setToolTip(
             "Use selected SGA central geometry as an orientation prior. "
@@ -1434,9 +1430,11 @@ class SceneEditor(QWidget):
         self.sga_use_seed.toggled.connect(self._clear_isophote_preview)
         sga_layout.addWidget(self.sga_use_seed)
         self.sga_status = QLabel(
-            "Use Find SGA-2025 to query the DESI Viewer by current target "
-            "coordinates. It returns a provisional central overlay ellipse, "
-            "not a calibrated outer LSB boundary. Source selection is manual.")
+            "SGA is an optional central prior, not an outer LSB isophote.")
+        self.sga_status.setToolTip(
+            "Search the current galaxy position in the DESI Viewer, select "
+            "the correct catalogue match and explicitly choose whether to "
+            "use its central geometry. Nothing is adopted automatically.")
         self.sga_status.setObjectName("scene_sga_status")
         self.sga_status.setWordWrap(True)
         sga_layout.addWidget(self.sga_status)
@@ -1447,8 +1445,10 @@ class SceneEditor(QWidget):
         isogroup = QGroupBox("Suggest galaxy isophote · preliminary")
         isogroup.setObjectName("scene_isophote_group")
         iso_layout = QVBoxLayout(isogroup)
-        settings_row = QHBoxLayout()
-        settings_row.addWidget(QLabel("Contrast"))
+        settings_form = QFormLayout()
+        settings_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        settings_form.setHorizontalSpacing(8)
+        settings_form.setVerticalSpacing(4)
         self.iso_threshold = QDoubleSpinBox()
         self.iso_threshold.setObjectName("scene_isophote_threshold")
         self.iso_threshold.setRange(1., 8.)
@@ -1457,18 +1457,17 @@ class SceneEditor(QWidget):
         self.iso_threshold.setValue(2.2)
         self.iso_threshold.setToolTip(
             "Local smoothed-background contrast, NOT calibrated significance.")
-        settings_row.addWidget(self.iso_threshold)
-        settings_row.addWidget(QLabel("Smooth px"))
+        settings_form.addRow("Contrast", self.iso_threshold)
         self.iso_smooth = QDoubleSpinBox()
         self.iso_smooth.setObjectName("scene_isophote_smoothing")
         self.iso_smooth.setRange(1.,12.)
         self.iso_smooth.setSingleStep(1.)
         self.iso_smooth.setDecimals(1)
         self.iso_smooth.setValue(4.)
-        settings_row.addWidget(self.iso_smooth)
-        iso_layout.addLayout(settings_row)
+        settings_form.addRow("Smooth (px)", self.iso_smooth)
+        iso_layout.addLayout(settings_form)
         self.iso_bridge_guard = QCheckBox(
-            "Conservative contour · suppress thin bridges (2 px)")
+            "Bridge guard (2 px) · conservative contour")
         self.iso_bridge_guard.setObjectName("scene_isophote_bridge_guard")
         self.iso_bridge_guard.setChecked(True)
         self.iso_bridge_guard.setToolTip(
@@ -1476,11 +1475,11 @@ class SceneEditor(QWidget):
             "tidal features. Compare with guard OFF before interpretation.")
         iso_layout.addWidget(self.iso_bridge_guard)
         center_row = QHBoxLayout()
-        self.iso_pick_center = QPushButton("Pick galaxy centre")
+        self.iso_pick_center = QPushButton("Pick centre")
         self.iso_pick_center.setObjectName("scene_isophote_pick_center")
         self.iso_pick_center.clicked.connect(self._pick_isophote_center)
         center_row.addWidget(self.iso_pick_center)
-        self.iso_reset_center = QPushButton("Use target ICRS")
+        self.iso_reset_center = QPushButton("Target ICRS")
         self.iso_reset_center.clicked.connect(self._reset_isophote_center)
         center_row.addWidget(self.iso_reset_center)
         iso_layout.addLayout(center_row)
@@ -1508,6 +1507,7 @@ class SceneEditor(QWidget):
             "remain unvalidated.")
         self.radius_sweep_status.setObjectName("scene_radius_sweep_status")
         self.radius_sweep_status.setWordWrap(True)
+        self.radius_sweep_status.hide()
         iso_layout.addWidget(self.radius_sweep_status)
         self.policy_ablation_btn = QPushButton(
             "Mask policy ablation · fixed 70″")
@@ -1528,9 +1528,10 @@ class SceneEditor(QWidget):
         self.policy_ablation_status.setObjectName(
             "scene_mask_policy_ablation_status")
         self.policy_ablation_status.setWordWrap(True)
+        self.policy_ablation_status.hide()
         iso_layout.addWidget(self.policy_ablation_status)
         self.iso_gaia_inner_preview = QCheckBox(
-            "Include inner Gaia candidates · QA only")
+            "Inner Gaia preview · QA only")
         self.iso_gaia_inner_preview.setObjectName(
             "scene_gaia_inner_mask_preview")
         self.iso_gaia_inner_preview.setToolTip(
@@ -1545,7 +1546,7 @@ class SceneEditor(QWidget):
             self._discard_prepared_masks)
         iso_layout.addWidget(self.iso_gaia_inner_preview)
         self.iso_red_extended_preview = QCheckBox(
-            "Auto-select isolated red extended sources · QA only")
+            "Red extended preview · QA only")
         self.iso_red_extended_preview.setObjectName(
             "scene_red_extended_mask_preview")
         self.iso_red_extended_preview.setToolTip(
@@ -1559,7 +1560,7 @@ class SceneEditor(QWidget):
         self.iso_red_extended_preview.toggled.connect(
             self._discard_prepared_masks)
         iso_layout.addWidget(self.iso_red_extended_preview)
-        self.iso_mask_toggle = QCheckBox("Show proposed contaminant mask")
+        self.iso_mask_toggle = QCheckBox("Show contaminant overlay")
         self.iso_mask_toggle.setObjectName("scene_show_neighbor_mask")
         self.iso_mask_toggle.setChecked(True)
         self.iso_mask_toggle.toggled.connect(self._update_contamination_overlay)
@@ -1574,7 +1575,7 @@ class SceneEditor(QWidget):
         opacity_row.addWidget(self.iso_opacity)
         iso_layout.addLayout(opacity_row)
         self.iso_show_conflicts = QCheckBox(
-            "Show 20 nearest unresolved neighbours")
+            "Show 20 unmasked neighbours")
         self.iso_show_conflicts.setChecked(False)
         self.iso_show_conflicts.setToolTip(
             "Hide clutter by default. Enable to inspect the 20 closest "
@@ -1584,7 +1585,7 @@ class SceneEditor(QWidget):
             self._update_contamination_overlay)
         iso_layout.addWidget(self.iso_show_conflicts)
         self.iso_show_sga_shreds = QCheckBox(
-            "Show masked candidates inside SGA initial ellipse")
+            "Show SGA internal candidates")
         self.iso_show_sga_shreds.setObjectName(
             "scene_sga_initial_shred_candidates")
         self.iso_show_sga_shreds.setChecked(False)
@@ -1602,7 +1603,7 @@ class SceneEditor(QWidget):
         self.iso_mask_status.setWordWrap(True)
         iso_layout.addWidget(self.iso_mask_status)
         self.iso_mask_details_toggle = QToolButton()
-        self.iso_mask_details_toggle.setText("Mask provenance and cautions")
+        self.iso_mask_details_toggle.setText("Mask provenance")
         self.iso_mask_details_toggle.setCheckable(True)
         self.iso_mask_details_toggle.setChecked(False)
         self.iso_mask_details_toggle.setObjectName("scene_mask_details_toggle")
@@ -1619,8 +1620,10 @@ class SceneEditor(QWidget):
         self.source_registry_toggle = QToolButton()
         self.source_registry_toggle.setObjectName(
             "scene_source_inventory_toggle")
-        self.source_registry_toggle.setText(
-            "Source evidence · inspect all protected overlaps")
+        self.source_registry_toggle.setText("Source inventory")
+        self.source_registry_toggle.setToolTip(
+            "Review individual original Tractor sources and protected "
+            "overlaps, preserving all provenance and rejection reasons.")
         self.source_registry_toggle.setCheckable(True)
         self.source_registry_toggle.setChecked(False)
         iso_layout.addWidget(self.source_registry_toggle)
@@ -1745,7 +1748,7 @@ class SceneEditor(QWidget):
             "deliberate confirmation and independent per-band QA.")
         iso_layout.addWidget(self.iso_share_bands)
         self.iso_low_conf_override = QCheckBox(
-            "Allow low-confidence draft after review")
+            "Low-confidence draft override")
         self.iso_low_conf_override.setObjectName(
             "scene_isophote_review_override")
         self.iso_low_conf_override.setChecked(False)
@@ -1777,7 +1780,7 @@ class SceneEditor(QWidget):
         self.iso_sga_summary.setWordWrap(True)
         iso_layout.addWidget(self.iso_sga_summary)
         self.iso_details_toggle = QToolButton()
-        self.iso_details_toggle.setText("Isophote QA and all sensitivity trials")
+        self.iso_details_toggle.setText("Isophote QA details")
         self.iso_details_toggle.setCheckable(True)
         self.iso_details_toggle.setChecked(False)
         self.iso_details_toggle.setObjectName("scene_isophote_details_toggle")
@@ -1796,11 +1799,13 @@ class SceneEditor(QWidget):
         self.scene_task_stack.addWidget(isogroup)
 
         buttons = QHBoxLayout()
-        self.finish_btn = QPushButton("Finish polygon")
+        self.finish_btn = QPushButton("Finish")
+        self.finish_btn.setAccessibleName("Finish drawing polygon")
         self.finish_btn.setObjectName("scene_finish_polygon")
         self.finish_btn.clicked.connect(self.finish_polygon)
         buttons.addWidget(self.finish_btn)
-        self.cancel_btn = QPushButton("Cancel shape")
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setAccessibleName("Cancel unfinished drawing")
         self.cancel_btn.clicked.connect(self._cancel_pending)
         buttons.addWidget(self.cancel_btn)
         manual_layout.addLayout(buttons)
@@ -1810,26 +1815,28 @@ class SceneEditor(QWidget):
         self.edits.setMinimumHeight(95)
         self.edits.currentRowChanged.connect(self._refresh_controls)
         manual_layout.addWidget(self.edits, 1)
-        history = QHBoxLayout()
+        history = QGridLayout()
+        history.setHorizontalSpacing(5)
+        history.setVerticalSpacing(4)
         self.undo_btn = QPushButton("Undo")
         self.undo_btn.setObjectName("scene_undo")
         self.undo_btn.clicked.connect(self.undo)
-        history.addWidget(self.undo_btn)
+        history.addWidget(self.undo_btn, 0, 0)
         self.redo_btn = QPushButton("Redo")
         self.redo_btn.setObjectName("scene_redo")
         self.redo_btn.clicked.connect(self.redo)
-        history.addWidget(self.redo_btn)
+        history.addWidget(self.redo_btn, 0, 1)
         self.edit_btn = QPushButton("Redraw selected")
         self.edit_btn.setObjectName("scene_edit_selected")
         self.edit_btn.setToolTip(
             "Replace the selected outline by drawing it again on the "
             "original image; keeps source/edit identity and undo history.")
         self.edit_btn.clicked.connect(self.edit_selected)
-        history.addWidget(self.edit_btn)
+        history.addWidget(self.edit_btn, 1, 0)
         self.remove_btn = QPushButton("Remove selected")
         self.remove_btn.setObjectName("scene_remove")
         self.remove_btn.clicked.connect(self.remove_selected)
-        history.addWidget(self.remove_btn)
+        history.addWidget(self.remove_btn, 1, 1)
         manual_layout.addLayout(history)
         self.show_hard = QCheckBox("Show native unusable pixels")
         self.show_hard.setChecked(True)
@@ -1851,6 +1858,7 @@ class SceneEditor(QWidget):
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setWidget(controls)
         controls_scroll.setMinimumWidth(220)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scene_task_buttons = {}
         right_panel = QWidget(self)
         right_layout = QVBoxLayout(right_panel)
@@ -2509,15 +2517,19 @@ class SceneEditor(QWidget):
         self._sga_item = item
 
     def _invalidate_radius_sweep(self, *_):
+        had_sweep = self._sweep_result is not None
+        had_policy = self._policy_ablation_result is not None
         self._sweep_result = None
         self._policy_ablation_result = None
         self.policy_ablation_status.setText(
             "Mask policy comparison invalidated by input change.")
         self.radius_sweep_status.setText(
-            "Radius comparison not run for current settings. "
-            "No independent PSF or spatial sky experiment.")
+            "Radius comparison invalidated by input change.")
+        self.radius_sweep_status.setVisible(had_sweep)
+        self.policy_ablation_status.setVisible(had_policy)
 
     def _run_radius_sweep(self):
+        self.radius_sweep_status.show()
         if (self._loaded is None or self._project_root is None or
                 self._draft is None or self._future is not None or
                 self._project_target is None):
@@ -2602,6 +2614,7 @@ class SceneEditor(QWidget):
                else "no SGA radius")
             + f', {row["masked_catalog_sources"]} masked'
             for row in rows]
+        self.radius_sweep_status.show()
         self.radius_sweep_status.setText(
             f"READ-ONLY {good}/{len(rows)} isophotes. "
             "SGA a / masked sources: " + "; ".join(labels)
@@ -2609,6 +2622,7 @@ class SceneEditor(QWidget):
             "PSF/independent sky not tested; NOTHING ADOPTED.")
 
     def _run_mask_policy_ablation(self):
+        self.policy_ablation_status.show()
         if (self._loaded is None or self._project_root is None or
                 self._draft is None or self._future is not None or
                 self._project_target is None):
