@@ -94,6 +94,11 @@ def _write_synthetic_same_brick_tractor(root,wcs):
                     array=[False,False]),
         fits.Column(name="FLUX_R",format="D",array=[80.,120.]),
         fits.Column(name="FLUX_IVAR_R",format="D",array=[4.,4.]),
+        # Gaia bright-halo source-veto evidence must be complete. A known
+        # Gaia ID with absent G magnitude correctly blocks automatic sky
+        # fitting; this is a synthetic 19.4 mag reference, not a query.
+        fits.Column(name="GAIA_PHOT_G_MEAN_MAG",format="D",
+                    array=[np.nan,19.4]),
     ]
     path=root/"dr11"/"south"/"tractor"/"155"/"tractor-1554p180.fits"
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -192,6 +197,12 @@ def test_synthetic_original_fits_full_photometry_gui_route(
     assert sky._result is not None,sky.status.text()
     assert sky._result["catalog_sha256"]==before["tractor"]
     assert sky._result["science_status"]=="UNADOPTED_DIAGNOSTIC_ONLY"
+    assert sky._result["status"]==(
+        "AUTOMATIC_SKY_CANDIDATES_MEASURED_NOT_ADOPTED")
+    assert len(sky._result["methods"])==2
+    assert sky._result["method_comparison"] is not None
+    assert sky._result["automatic_sky_selection_qa"][
+        "bright_gaia_inventory_complete"] is True
     assert not sky._result["sky_model_adopted"]
     assert not sky.readout.isVisible()
     sky.report_toggle.click()
