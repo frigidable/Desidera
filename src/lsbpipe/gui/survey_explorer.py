@@ -472,8 +472,12 @@ class SurveyExplorer(QMainWindow):
         self.files = QTableWidget(0, 4)
         self.files.setAccessibleName(
             "Candidate Legacy FITS files, HTTP evidence and download selections")
-        self.files.setHorizontalHeaderLabels(
-            ["Use", "Product / provenance", "HTTP", "MiB"])
+        # Keep the header readable in 250-px dock viewports; each file row
+        # and its tooltip carry the complete product/source provenance.
+        self.files.setHorizontalHeaderLabels(["Use", "File", "HTTP", "MiB"])
+        self.files.horizontalHeaderItem(1).setToolTip(
+            "Original product kind and band, followed by release, region "
+            "and brick. Hover a file for its full archive URL and evidence.")
         self.files.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.Fixed)
         self.files.horizontalHeader().resizeSection(0, 37)

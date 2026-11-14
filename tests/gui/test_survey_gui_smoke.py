@@ -215,7 +215,8 @@ def test_science_inspector_docks_to_right_of_remote_viewer(offline_explorer, qtb
     qtbot.wait(40)
     assert window.data_drawer.isVisible()
     assert window.files.columnCount() == 4
-    assert window.files.horizontalHeaderItem(1).text() == "Product / provenance"
+    assert window.files.horizontalHeaderItem(1).text() == "File"
+    assert "release, region" in window.files.horizontalHeaderItem(1).toolTip()
     assert window.files.horizontalHeaderItem(2).text() == "HTTP"
     assert window.files.rowCount() == 88
     inspector_x = window.data_drawer.mapTo(window, QPoint(0, 0)).x()
