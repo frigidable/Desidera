@@ -182,7 +182,7 @@ class PSF0Panel(QGroupBox):
         self.get_tractor_btn.setToolTip(
             "Explicitly download the ORIGINAL DR11 south Tractor brick "
             "catalogue from the official Legacy Surveys archive into "
-            "the current Leo P project's data root. No new project.")
+            "the current galaxy project's data root. No new project.")
         catalogue_row.addWidget(self.get_tractor_btn, 0, Qt.AlignLeft)
         form.addRow("Gaia/Tractor source", catalogue_row)
         self.fwhm = QDoubleSpinBox()
@@ -225,7 +225,8 @@ class PSF0Panel(QGroupBox):
         self.experiment.currentIndexChanged.connect(self._band_changed)
         self.experiment.setToolTip(
             "Controlled one-factor comparisons to investigate the actual "
-            "Leo P outer-wing failure. These tests are not scientific PSF "
+            "outer-wing systematics originally investigated for Leo P. "
+            "These tests are not scientific PSF "
             "selection and may change the selected star sample.")
         self.recipe_geometry = QLabel(
             "Recipe geometry will be shown here. The initial FWHM is a "
@@ -246,7 +247,7 @@ class PSF0Panel(QGroupBox):
         self.fwhm.valueChanged.connect(self._show_recipe_geometry)
         self.protection.setSuffix(" arcsec")
         self.protection.setToolTip(
-            "Preliminary exclusion circle around Leo P. Must be reviewed "
+            "Preliminary exclusion circle around the selected galaxy. Review "
             "against diffuse galaxy light before science-quality PSF.")
         form.addRow("Protect target radius", self.protection)
         controls.addLayout(form)
@@ -989,7 +990,7 @@ class PSF0Panel(QGroupBox):
         resolved = self.fwhm.value()
         caveat = (
             " Catalog positions approximate the local PSF prior; not "
-            "a per-pixel seeing measurement at Leo P."
+            "a per-pixel seeing measurement at the selected galaxy."
             if via_tractor else "")
         map_note = seeing.get("native_map_status")
         self.prior_source.setText(

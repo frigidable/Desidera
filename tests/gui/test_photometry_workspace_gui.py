@@ -175,3 +175,26 @@ def test_unbound_psf_feedback_is_galaxy_neutral(qtbot):
     widget.save_full_qa()
     assert "galaxy project" in widget.batch_status.text()
     assert "Leo P" not in widget.batch_status.text()
+
+
+def test_psf_dispatch_rejects_foreign_project_without_leo_p_message(
+        qtbot, tmp_path, monkeypatch):
+    """A foreign project request fails closed without misleading target name."""
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    project = create_object_project(
+        "UGC 2162", tmp_path / "UGC_2162",
+        field=SkyField(40.096208, 1.229250, 5.))
+    with offline_legacy_viewer():
+        window = SurveyExplorer(restore_session=False, launch_remote=False)
+    qtbot.addWidget(window)
+    window.attach_object_project(project)
+    panel = window.photometry_workspace.psf0_panels["r"]
+    window._run_project_psf0({
+        "project_root": str(tmp_path / "foreign"), "band": "r"})
+    assert "Galaxy project identity changed" in panel.qa.toPlainText()
+    assert "Leo P" not in panel.qa.toPlainText()
+    assert window.thread is None
+    assert "current galaxy project" in panel.get_tractor_btn.toolTip()
+    assert "selected galaxy" in panel.protection.toolTip()
+    window._returning_to_hub = True
+    window.close()

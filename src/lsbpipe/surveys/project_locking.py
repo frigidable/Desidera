@@ -52,12 +52,10 @@ def exclusive_metadata_lock(path: str | Path, *, timeout_seconds: float = 10.0):
         visible = file.stat()
         if (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino):
             raise ValueError("Metadata lock path changed during open")
-        # Windows CRT locks a byte range starting at the file offset.
-        # The stable sentinel is not metadata and need not be interpreted.
+        # Windows can lock the first byte even beyond EOF. Do not write
+        # the sentinel BEFORE acquiring the lock: two simultaneous first
+        # openers of an empty sidecar can race and receive PermissionError.
         if os.name == "nt":
-            if opened.st_size == 0:
-                os.lseek(fd, 0, os.SEEK_SET)
-                os.write(fd, b"0")
             import msvcrt
         else:
             import fcntl
@@ -85,6 +83,13 @@ def exclusive_metadata_lock(path: str | Path, *, timeout_seconds: float = 10.0):
         visible = file.stat()
         if (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino):
             raise ValueError("Metadata lock file was replaced during wait")
+        # The sidecar's optional sentinel is initialized ONLY while holding
+        # our own byte-range lock. A simultaneous first-use importer cannot
+        # write to another process's locked byte, avoiding spurious Windows
+        # PermissionError while preserving the permanent lock pathname.
+        if os.name == "nt" and os.fstat(fd).st_size == 0:
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, b"0")
         yield
     finally:
         try:

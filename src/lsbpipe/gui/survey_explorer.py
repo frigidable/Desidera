@@ -1018,7 +1018,7 @@ class SurveyExplorer(QMainWindow):
             self._psf_restore_pending_key = None
 
     def _run_project_psf0(self, request):
-        """Dispatch genuine Leo P native-band ePSF in the existing GUI thread pool."""
+        """Dispatch native-band diagnostic ePSF in the existing GUI thread pool."""
         from dataclasses import replace
         from lsbpipe.photometry.psf_gui_backend import (
             run_gui_psf0, psf0_experiment_recipe,
@@ -1032,7 +1032,7 @@ class SurveyExplorer(QMainWindow):
                                  "Finish or stop it before starting PSF-0.")
             return
         if self._object_project is None or request.get("project_root") != str(self._object_project.root):
-            panel.show_failure("Leo P project identity changed before PSF dispatch")
+            panel.show_failure("Galaxy project identity changed before PSF dispatch")
             return
         try:
             base_config = psf0_experiment_recipe(
@@ -1113,7 +1113,7 @@ class SurveyExplorer(QMainWindow):
             return
         if (self._object_project is None or
                 request.get("project_root") != str(self._object_project.root)):
-            panel.status.setText("Leo P project changed. Reopen Photometry.")
+            panel.status.setText("Galaxy project changed. Reopen Photometry.")
             return
         root = str(self._object_project.root)
         def run(progress):
@@ -1122,7 +1122,7 @@ class SurveyExplorer(QMainWindow):
             panel.show_tractor_acquired(payload)
             self.message.setText(
                 "Original DR11 Tractor/Gaia catalogue verified in current "
-                "Leo P project. PSF has NOT been rebuilt or adopted.")
+                "galaxy project. PSF has NOT been rebuilt or adopted.")
         def failed(message):
             panel.status.setText(
                 "DR11 Tractor/Gaia catalogue unavailable or invalid: "
@@ -1143,7 +1143,7 @@ class SurveyExplorer(QMainWindow):
             return
         if (self._object_project is None or
                 request.get("project_root") != str(self._object_project.root)):
-            panel.status.setText("Leo P project changed. Reopen Photometry.")
+            panel.status.setText("Galaxy project changed. Reopen Photometry.")
             return
         band, root = request["band"], str(self._object_project.root)
         def run(progress):
@@ -1156,7 +1156,7 @@ class SurveyExplorer(QMainWindow):
                 "Local DESI PSFSIZE cannot be verified: " + message
                 + ". Initial FWHM guess unchanged; inspect the exact "
                 "coadd PSFSIZE map or original Tractor PSFSIZE band "
-                "column in the active Leo P project.")
+                "column in the active galaxy project.")
             panel.status.setText(detail)
             panel.prior_source.setText(detail)
         self._start(run, finished, failed, operation_name="psf0-seeing-prior")

@@ -153,3 +153,55 @@ def test_simultaneous_registry_updates_keep_both_project_identities(
             if process is not None and process.poll() is None:
                 process.kill()
                 process.communicate(timeout=12)
+
+
+def test_concurrent_first_use_of_empty_metadata_lock_is_safe(tmp_path):
+    """All processes must serialize on a fresh zero-byte Windows sidecar.
+
+    Previously, the second process sometimes tried to WRITE the sentinel
+    before acquiring the first process's range lock and failed EACCES.
+    No original data or project files are used by this regression.
+    """
+    import time
+
+    lock_path = tmp_path / "fresh-projects.json.lock"
+    lock_path.touch()
+    start = tmp_path / "start"
+    script = (
+        "import pathlib,sys,time\n"
+        "from lsbpipe.surveys.project_locking import exclusive_metadata_lock\n"
+        "lock,ready,start=map(pathlib.Path,sys.argv[1:])\n"
+        "ready.write_text('READY',encoding='utf-8')\n"
+        "deadline=time.monotonic()+20.\n"
+        "while not start.is_file() and time.monotonic()<deadline: time.sleep(.01)\n"
+        "if not start.is_file(): raise RuntimeError('start gate never opened')\n"
+        "with exclusive_metadata_lock(lock,timeout_seconds=10.):\n"
+        "    print('ACQUIRED',flush=True)\n"
+        "    time.sleep(.08)\n"
+    )
+    ready_paths = [tmp_path / f"ready-{i}" for i in range(4)]
+    children = [_child(script, lock_path, marker, start)
+                for marker in ready_paths]
+    try:
+        deadline = time.monotonic() + 20.
+        while not all(p.is_file() for p in ready_paths):
+            if any(p.poll() is not None for p in children):
+                pytest.fail("Child exited before the first-use lock rendezvous")
+            if time.monotonic() >= deadline:
+                pytest.fail("Timed out waiting for four lock participants")
+            time.sleep(.02)
+        start.write_text("GO", encoding="utf-8")
+        for child in children:
+            out, err = child.communicate(timeout=20)
+            assert child.returncode == 0, (child.returncode, out, err)
+            assert out.strip() == "ACQUIRED", (out, err)
+        assert lock_path.is_file()
+        assert lock_path.read_bytes() in (b"", b"0")
+        with exclusive_metadata_lock(lock_path, timeout_seconds=1.):
+            pass
+    finally:
+        start.touch(exist_ok=True)
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+                child.communicate(timeout=10)
