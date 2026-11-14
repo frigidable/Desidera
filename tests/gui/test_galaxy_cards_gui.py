@@ -138,3 +138,17 @@ def test_empty_galaxy_passport_removes_redundant_explanations(qtbot):
     assert "0400p012" in card.dataset.text()
     assert "No local FITS link" in card.fits.text()
     assert card.fits.isVisible()
+
+
+
+def test_passport_switch_never_reuses_previous_catalogue_explanation(qtbot):
+    card=GalaxyDetailCard()
+    qtbot.addWidget(card)
+    card.show()
+    card.set_snapshot(sample("Unmatched galaxy", "a"))
+    assert "Why identify this galaxy?" in card.catalogue.toolTip()
+    card.catalogue_help.setText("OUTDATED_SAVED_DESCRIPTION")
+    # Re-rendering must reset help before computing the new source state.
+    card.set_snapshot(sample("Second galaxy", "b"))
+    assert "OUTDATED_SAVED_DESCRIPTION" not in card.catalogue.toolTip()
+    assert card.catalogue_help.text().startswith("Why identify this galaxy?")

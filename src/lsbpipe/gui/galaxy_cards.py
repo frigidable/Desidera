@@ -351,6 +351,7 @@ class GalaxyDetailCard(QFrame):
         self.literature.hide()
         self.cross_catalogue.hide()
         self.catalogue_help.hide()
+        self.catalogue_help.clear()
         self.next_step_title.hide()
         self.next_step.hide()
         self.observation_explanation.hide()

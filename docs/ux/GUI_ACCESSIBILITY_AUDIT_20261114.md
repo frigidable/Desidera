@@ -297,3 +297,7 @@ Windows GUI run `43542742606`: `292 passed, 1 failed`; scientific `987 passed, 3
 
 **Контроль:** добавлены object-card, production Hub, Photometry GUI тесты. Offline screenshot workflow отдельно снимает Project Hub с 16pt шрифтом на 1366×768 (физический DPI 125/150/200% не моделируется и не заявляется). Полное E1/CI и E2-сравнение последуют после запуска.
 
+
+### GUI acceptance delta после компактной карточки (commit ee46bb1)
+
+На первом exact-head Windows прогоне научная матрица (987 passed) и прочие интеграционные задания успешны, GUI: 298 passed / 2 failed. Две неуспешные проверки были прежними **визуальными контрактами**, не побочным эффектом научного расчёта: `test_no_dataset_is_normal_state_not_error_message` требовал видимый длинный абзац «Why identify», а `test_responsive_preview_remains_square_when_inspector_narrows` ожидал большой 184×184 placeholder даже без реальных пикселей. Тесты теперь проверяют новую семантику: короткий видимый no-dataset + доступные tooltip/accessibleDescription; пустая миниатюра 124 px при любой ширине и 184 px только при реальном QPixmap в просторной карточке. Была также предотвращена миграция неактуальной подсказки при смене объекта — `catalogue_help` очищается на каждом новом snapshot. Регрессия пиксельных/сохранённых данных не ожидается, нужен повторный exact-head E1/E2.
