@@ -5,14 +5,14 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings, QEvent
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QMenu, QCheckBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
-    QInputDialog, QSplitter,
+    QInputDialog, QSplitter, QScrollArea, QSizePolicy,
     QWidget, QDoubleSpinBox, QApplication,
 )
 
@@ -51,7 +51,7 @@ class CreateProjectDialog(QDialog):
     def __init__(self, parent=None, *, default_root: Path | None = None):
         super().__init__(parent)
         self.setWindowTitle("New galaxy project · DESIDERA")
-        self.setMinimumWidth(540)
+        self.setMinimumWidth(420)
         self.resize(620, 510)
         self.project = None
         self.parent_root = default_root or Path.home() / "DESIDERAProjects"
@@ -84,8 +84,21 @@ class CreateProjectDialog(QDialog):
         self.description.setAccessibleName("Project creation summary and input validation")
         self.description.setWordWrap(True)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
+        # Long input/validation text must scroll at large system fonts.
+        # Keep the primary actions in a fixed footer at every dialog size.
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(8)
+        self.form_scroll = QScrollArea(self)
+        self.form_scroll.setObjectName("project_new_body_scroll")
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setFrameShape(QFrame.NoFrame)
+        self.form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.form_scroll.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
+        form_body = QWidget()
+        layout = QVBoxLayout(form_body)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(12)
         title = QLabel("Create galaxy project")
         title.setStyleSheet("font-size: 20px; font-weight: 600")
@@ -123,6 +136,8 @@ class CreateProjectDialog(QDialog):
         layout.addWidget(self.description)
 
         layout.addStretch(1)
+        self.form_scroll.setWidget(form_body)
+        root_layout.addWidget(self.form_scroll, 1)
         buttons = QHBoxLayout()
         self.cancel = QPushButton("Cancel")
         self.cancel.clicked.connect(self.reject)
@@ -133,7 +148,11 @@ class CreateProjectDialog(QDialog):
         buttons.addStretch(1)
         buttons.addWidget(self.cancel)
         buttons.addWidget(self.create_btn)
-        layout.addLayout(buttons)
+        root_layout.addLayout(buttons)
+        self._form_inputs = (
+            self.name, self.ra, self.dec, self.width_arcmin, self.directory)
+        for widget in self._form_inputs:
+            widget.installEventFilter(self)
 
         self.name.textChanged.connect(self._suggest_directory)
         self.name.textChanged.connect(self._update_preview)
@@ -144,6 +163,14 @@ class CreateProjectDialog(QDialog):
         self.directory.textChanged.connect(self._update_preview)
         self._update_preview()
         self.name.setFocus()
+
+    def eventFilter(self, watched, event):
+        if (event.type() == QEvent.FocusIn
+                and watched in self._form_inputs):
+            QTimer.singleShot(
+                0, lambda target=watched:
+                self.form_scroll.ensureWidgetVisible(target, 8, 10))
+        return super().eventFilter(watched, event)
 
     def _suggest_directory(self, _=None):
         if self._directory_user_edited:

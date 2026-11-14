@@ -264,6 +264,29 @@ def main():
                 "scientific_status": "NO_SCIENCE_RESULT",
                 "project_created": False,
             })
+            # High-font scenario tests scroll reachability, not physical
+            # 150/200% Windows monitor DPI (those still need an on-device gate).
+            wizard.setFont(QFont(preferred, 17))
+            wizard.resize(500, 360)
+            wizard.directory.setFocus()
+            for _ in range(8):
+                app.processEvents()
+            wizard.form_scroll.ensureWidgetVisible(wizard.directory, 8, 10)
+            app.processEvents()
+            path = outdir / "hub_new_project_large_font_500x360.png"
+            shot = wizard.grab()
+            if (shot.isNull() or not shot.save(str(path), "PNG")
+                    or (shot.width(), shot.height()) != (500, 360)):
+                raise RuntimeError("High-font project dialog layout failed")
+            reports.append({
+                "state": "H3_new_project_large_font_offline",
+                "screenshot": path.name,
+                "screenshot_px": [shot.width(), shot.height()],
+                "screenshot_bytes": path.stat().st_size,
+                "font_point_size": 17,
+                "network_used": False, "project_created": False,
+                "scientific_status": "NO_SCIENCE_RESULT",
+            })
         finally:
             wizard.close()
         # P0.5b Data Manager: synthetic native WCS headers only.

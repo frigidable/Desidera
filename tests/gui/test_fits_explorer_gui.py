@@ -402,3 +402,50 @@ def test_keyboard_cursor_is_removed_when_source_is_invalidated(explorer, qtbot):
     explorer.set_dataset(synthetic_dataset())
     assert explorer.view._keyboard_pixel is None
     assert not explorer.keyboard_cursor.isVisible()
+
+
+
+def test_pixel_quality_is_readable_without_colour_and_uses_existing_classes(
+        explorer):
+    """The per-pixel text exactly follows current diagnostic QUALITY categories."""
+    data = synthetic_dataset()
+    data["data"]["invvar"][5, 3] = 0.0
+    original = {k: v.copy() for k, v in data["data"].items()}
+    explorer.set_dataset(data)
+    assert "Active display masks: SATUR" in explorer.overlay_summary.text()
+    explorer.inspect_pixel(1.3, 1.3)  # FITS (1,4): clear
+    assert "QUALITY class 0" in explorer.pixel_quality.text()
+    explorer.inspect_pixel(2.3, 0.3)  # FITS (2,5): GALAXY
+    assert "QUALITY class 1" in explorer.pixel_quality.text()
+    assert "not an automatic rejection" in explorer.pixel_quality.text()
+    explorer.inspect_pixel(1.3, 5.3)  # FITS (1,0): SATUR_R
+    assert "QUALITY class 2" in explorer.pixel_quality.text()
+    explorer.inspect_pixel(3.3, 0.3)  # FITS (3,5): zero INVVAR
+    assert "QUALITY class 4" in explorer.pixel_quality.text()
+    explorer.layer.setCurrentIndex(explorer.layer.findData("quality"))
+    assert "overlays are suppressed" in explorer.overlay_summary.text()
+    explorer.layer.setCurrentIndex(explorer.layer.findData("image"))
+    explorer.flags["SATUR"].setChecked(False)
+    assert "SATUR" not in explorer.overlay_summary.text().split(": ", 1)[1].split(".")[0]
+    explorer.inspect_pixel(500, 500)
+    assert "no sample" in explorer.pixel_quality.text()
+    for name, value in original.items():
+        np.testing.assert_array_equal(value, data["data"][name])
+
+
+def test_high_contrast_keyboard_marker_and_focus_contract(explorer, qtbot):
+    explorer.set_dataset(synthetic_dataset())
+    assert explorer.view.focusPolicy() == Qt.StrongFocus
+    assert ":focus" in explorer.view.styleSheet()
+    explorer.view.setFocus()
+    qtbot.keyClick(explorer.view, Qt.Key_Left)
+    assert explorer.keyboard_cursor.isVisible()
+    assert explorer.keyboard_cursor_shadow.isVisible()
+    assert explorer.keyboard_cursor.pos() == explorer.keyboard_cursor_shadow.pos()
+    assert explorer.keyboard_cursor.pen().color().name() == "#ffffff"
+    assert explorer.keyboard_cursor_shadow.pen().color().name() == "#000000"
+    qtbot.keyClick(explorer.view, Qt.Key_Escape)
+    assert not explorer.keyboard_cursor.isVisible()
+    assert not explorer.keyboard_cursor_shadow.isVisible()
+    explorer.clear_data()
+    assert not explorer.keyboard_cursor_shadow.isVisible()

@@ -296,6 +296,13 @@ class FITSExplorer(QWidget):
         self.overlay_toggle.toggled.connect(self.overlay_panel.setVisible)
         layout.addWidget(self.overlay_panel)
         self.overlay_panel.setVisible(False)
+        # Always expose active overlay types in words, not only by hue.
+        self.overlay_summary = QLabel("")
+        self.overlay_summary.setObjectName("fits_active_mask_summary")
+        self.overlay_summary.setAccessibleName(
+            "Currently enabled FITS display mask overlays")
+        self.overlay_summary.setWordWrap(True)
+        layout.addWidget(self.overlay_summary)
         self.color_legend = QLabel(
             "Red: SATUR  ·  Orange: ALLMASK  ·  Purple: BRIGHT  ·  "
             "Amber: MEDIUM  ·  Blue: GALAXY  ·  Magenta: no data. "
@@ -342,6 +349,8 @@ class FITSExplorer(QWidget):
             "native FITS pixels; Shift+arrow moves ten pixels, Escape clears "
             "the cursor. Mouse hover also inspects pixels. No science data "
             "are modified.")
+        self.view.setStyleSheet(
+            "QGraphicsView:focus {border: 2px solid palette(highlight);}")
         self.view.setScene(self.scene)
         self.view.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -361,6 +370,16 @@ class FITSExplorer(QWidget):
         self.pixel_info.setWordWrap(True)
         self.pixel_info.setStyleSheet("font-size: 12px;")
         image_layout.addWidget(self.pixel_info)
+        self.pixel_quality = QLabel(
+            "Pixel quality: inspect a native pixel; diagnostic only.")
+        self.pixel_quality.setObjectName("fits_pixel_quality_text")
+        self.pixel_quality.setAccessibleName(
+            "Diagnostic per-pixel quality class, not an adopted mask")
+        self.pixel_quality.setTextInteractionFlags(
+            Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        self.pixel_quality.setWordWrap(True)
+        self.pixel_quality.setStyleSheet("font-size: 12px;")
+        image_layout.addWidget(self.pixel_quality)
         self.copy_pixel_btn = QPushButton("Copy pixel values")
         self.copy_pixel_btn.setObjectName("fits_copy_pixel_readout")
         self.copy_pixel_btn.setAccessibleName("Copy inspected original FITS pixel values")
@@ -390,6 +409,16 @@ class FITSExplorer(QWidget):
                            (0, -11, 0, -4), (0, 4, 0, 11)):
             cross.moveTo(a, b)
             cross.lineTo(c, d)
+        self.keyboard_cursor_shadow = QGraphicsPathItem(cross)
+        dark_pen = QPen(QColor("#000000"), 5)
+        dark_pen.setCosmetic(True)
+        self.keyboard_cursor_shadow.setPen(dark_pen)
+        self.keyboard_cursor_shadow.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.keyboard_cursor_shadow.setAcceptedMouseButtons(Qt.NoButton)
+        self.keyboard_cursor_shadow.setZValue(10)
+        self.keyboard_cursor_shadow.hide()
+        self.scene.addItem(self.keyboard_cursor_shadow)
         self.keyboard_cursor = QGraphicsPathItem(cross)
         pen = QPen(QColor("#FFFFFF"), 2)
         pen.setCosmetic(True)
@@ -397,7 +426,7 @@ class FITSExplorer(QWidget):
         self.keyboard_cursor.setFlag(
             QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self.keyboard_cursor.setAcceptedMouseButtons(Qt.NoButton)
-        self.keyboard_cursor.setZValue(10)
+        self.keyboard_cursor.setZValue(11)
         self.keyboard_cursor.hide()
         self.scene.addItem(self.keyboard_cursor)
 
@@ -410,18 +439,36 @@ class FITSExplorer(QWidget):
         self.flags["OUTLINES"].toggled.connect(self._toggle_outlines)
         self.view.pointHovered.connect(self._hover_inspect_pixel)
         self.view.keyboardPixelMoved.connect(self._keyboard_inspect_pixel)
+        self._update_overlay_summary()
+
+    def _update_overlay_summary(self):
+        if self.layer.currentData() == "quality":
+            msg = ("QUALITY displays its own categorical map; mask overlays "
+                   "are suppressed. Read the pixel quality below the image.")
+        else:
+            enabled = [key for key in (
+                "SATUR", "ALLMASK", "BRIGHT", "MEDIUM",
+                "GALAXY", "INVALID") if self.flags[key].isChecked()]
+            msg = ("Active display masks: " + (", ".join(enabled) or "none")
+                   + ". Visual only; masks may overlap. "
+                   "Read exact MASKBITS and pixel quality below the image.")
+        self.overlay_summary.setText(msg)
 
     def _hover_inspect_pixel(self, x_scene, y_scene):
         self.view.clear_keyboard_pixel()
         self.keyboard_cursor.hide()
+        self.keyboard_cursor_shadow.hide()
         self.inspect_pixel(x_scene, y_scene)
 
     def _keyboard_inspect_pixel(self, x_scene, y_scene):
         if x_scene < 0 or y_scene < 0 or self._dataset is None:
             self.keyboard_cursor.hide()
+            self.keyboard_cursor_shadow.hide()
             return
         self.keyboard_cursor.setPos(x_scene, y_scene)
+        self.keyboard_cursor_shadow.setPos(x_scene, y_scene)
         self.keyboard_cursor.show()
+        self.keyboard_cursor_shadow.show()
         self.inspect_pixel(x_scene, y_scene)
 
     def _copy_pixel_readout(self):
@@ -440,7 +487,9 @@ class FITSExplorer(QWidget):
         self._dataset = None
         self.view.clear_keyboard_pixel()
         self.keyboard_cursor.hide()
+        self.keyboard_cursor_shadow.hide()
         self.copy_pixel_btn.setEnabled(False)
+        self.pixel_quality.setText("Pixel quality: no native FITS loaded.")
         self.base_item.setPixmap(QPixmap())
         self.overlay_item.setPixmap(QPixmap())
         for item in self._overlays:
@@ -474,6 +523,8 @@ class FITSExplorer(QWidget):
                 "viewer limit; select a narrower field. Tiled mode is pending.")
         self.clear_data()
         self._dataset = dataset
+        self.pixel_quality.setText(
+            "Pixel quality: inspect a native pixel; diagnostic only.")
         self.pixel_info.setText(
             "Hover over the image or focus it and use arrows for original FITS values.")
         self.viewport_hint.setText(
@@ -505,6 +556,7 @@ class FITSExplorer(QWidget):
         return QPixmap.fromImage(image)
 
     def _layer_changed(self, *_):
+        self._update_overlay_summary()
         kind = self.layer.currentData()
         numeric = kind in ("image", "invvar", "nexp")
         self.contrast.setEnabled(kind == "image")
@@ -645,6 +697,7 @@ class FITSExplorer(QWidget):
         self.overlay_item.setTransformationMode(mode)
 
     def _show_overlay(self, *_):
+        self._update_overlay_summary()
         self._request_render()
 
     def _request_render(self):
@@ -846,6 +899,8 @@ class FITSExplorer(QWidget):
             x_scene, y_scene, self._dataset["pixel_shape"])
         if pixel is None:
             self.pixel_info.setText("Outside the original FITS cutout.")
+            self.pixel_quality.setText(
+                "Pixel quality: outside original FITS; no sample.")
             self.copy_pixel_btn.setEnabled(False)
             return
         x, y = pixel
@@ -857,6 +912,22 @@ class FITSExplorer(QWidget):
             if bits & (1 << number)
         ]
         flags = ", ".join(labels) if labels else "none"
+        # Reuse the exact established QUALITY classification on a 1x1
+        # native slice. This is a display diagnostic, never an adopted mask.
+        sample = {name: values[y:y+1, x:x+1]
+                  for name, values in data.items()
+                  if name in ("image", "invvar", "nexp", "maskbits")}
+        category = int(quality_classes(sample, self._dataset["band"])[0, 0])
+        category_text = (
+            "no MASKBITS flags and numerically usable",
+            "other MASKBITS flags; not an automatic rejection",
+            "SATUR in this band; instrumental caution",
+            "ALLMASK in this band; instrumental caution",
+            "numerically unusable (IMAGE, INVVAR or NEXP)",
+        )[category]
+        self.pixel_quality.setText(
+            f"QUALITY class {category}: {category_text}. "
+            "Display diagnostic, not an adopted mask.")
         self.copy_pixel_btn.setEnabled(True)
         self.pixel_info.setText(
             f"Pixel ({x}, {y})  ·  ICRS {ra:.7f}°, {dec:+.7f}°   "

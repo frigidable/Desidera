@@ -767,3 +767,35 @@ def test_empty_hub_does_not_offer_science_evidence_for_no_galaxy(
     hub.filter.setText("unmatched-galaxy-name")
     assert not hub.galaxy_card.details_toggle.isVisible()
     assert not hub.galaxy_card.observation_heading.isVisible()
+
+
+
+def test_create_dialog_scrolls_high_font_fields_and_pins_footer(
+        qtbot, tmp_path):
+    """Large UI fonts must not push Create/Cancel outside a short dialog."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QFont
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.setFont(QFont("Segoe UI", 17))
+    dialog.resize(500, 360)
+    dialog.show()
+    qtbot.wait(60)
+    assert dialog.width() <= 500
+    assert dialog.height() <= 360
+    assert dialog.form_scroll.verticalScrollBar().maximum() > 0
+    assert dialog.create_btn.isVisibleTo(dialog)
+    assert dialog.cancel.isVisibleTo(dialog)
+    end_of_button = dialog.cancel.mapTo(dialog, QPoint(0, 0)).y() + dialog.cancel.height()
+    assert end_of_button <= dialog.height()
+    dialog.name.setText("High DPI research galaxy")
+    dialog.directory.setFocus()
+    qtbot.wait(30)  # Focus-in scroll is deferred until the widget is laid out.
+    top = dialog.directory.mapTo(dialog.form_scroll.viewport(), QPoint(0, 0)).y()
+    assert top >= 0
+    assert top + dialog.directory.height() <= dialog.form_scroll.viewport().height()
+    assert dialog.create_btn.isEnabled()
+    dialog.ra.setText("42.0")
+    assert not dialog.create_btn.isEnabled()
+    assert "both RA and Dec" in dialog.description.text()
+    assert dialog.form_scroll.verticalScrollBar().maximum() > 0
