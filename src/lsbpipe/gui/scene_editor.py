@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
-    QApplication, QPlainTextEdit,
+    QApplication, QPlainTextEdit, QStackedWidget,
 )
 
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
@@ -1259,9 +1259,10 @@ class SceneEditor(QWidget):
         self.heading.setStyleSheet("font-size: 17px; font-weight: 600;")
         root.addWidget(self.heading)
         self.warning = QLabel(
-            "Original native FITS; editable ICRS region drafts only. "
-            "Isophotal galaxy extent, stellar wings, residual sky and "
-            "photometric measurements are NOT validated.")
+            "Original FITS · editable ICRS drafts · NOT validated for science.")
+        self.warning.setToolTip(
+            "Region drafts are not adopted masks. The galaxy isophote, "
+            "stellar PSF wings, residual sky and photometry remain unvalidated.")
         self.warning.setWordWrap(True)
         root.addWidget(self.warning)
 
@@ -1317,7 +1318,7 @@ class SceneEditor(QWidget):
             "every sensitivity trial and all source-evidence metadata as JSON. "
             "May include local catalogue paths. No FITS or project writes.")
         self.copy_scene_qa_btn.clicked.connect(self._copy_complete_scene_qa)
-        display_row.addWidget(self.copy_scene_qa_btn)
+        # QA export remains available in a pinned footer beside Save draft.
         root.addLayout(display_row)
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -1330,7 +1331,15 @@ class SceneEditor(QWidget):
 
         controls = QWidget()
         control_layout = QVBoxLayout(controls)
-        control_layout.setContentsMargins(7, 4, 7, 4)
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        self.scene_task_stack = QStackedWidget(controls)
+        self.scene_task_stack.setObjectName("scene_task_pages")
+        control_layout.addWidget(self.scene_task_stack)
+        self.scene_manual_page = QWidget(self.scene_task_stack)
+        manual_layout = QVBoxLayout(self.scene_manual_page)
+        manual_layout.setContentsMargins(7, 4, 7, 4)
+        manual_layout.setSpacing(6)
+        self.scene_task_stack.addWidget(self.scene_manual_page)
         self.mode = QComboBox()
         self.mode.setObjectName("scene_draw_mode")
         self.mode.addItem("Pan / inspect", "pan")
@@ -1338,31 +1347,31 @@ class SceneEditor(QWidget):
         self.mode.addItem("Ellipse · two clicks", "ellipse")
         self.mode.addItem("Polygon · vertices", "polygon")
         self.mode.currentIndexChanged.connect(self._mode_changed)
-        control_layout.addWidget(QLabel("Tool"))
-        control_layout.addWidget(self.mode)
+        manual_layout.addWidget(QLabel("Tool"))
+        manual_layout.addWidget(self.mode)
         self.purpose = QComboBox()
         self.purpose.setObjectName("scene_mask_purpose")
         for label, purpose in PURPOSE_LABELS:
             self.purpose.addItem(label, purpose)
-        control_layout.addWidget(QLabel("Region meaning"))
-        control_layout.addWidget(self.purpose)
+        manual_layout.addWidget(QLabel("Region meaning"))
+        manual_layout.addWidget(self.purpose)
         self.scope = QComboBox()
         self.scope.addItem("All optical bands (ICRS geometry)", "all")
         self.scope.addItem("This band only", "band")
         self.scope.setObjectName("scene_mask_scope")
-        control_layout.addWidget(self.scope)
+        manual_layout.addWidget(self.scope)
         self.axis_ratio = QDoubleSpinBox()
         self.axis_ratio.setObjectName("scene_ellipse_q")
         self.axis_ratio.setRange(.05, 1.)
         self.axis_ratio.setDecimals(2)
         self.axis_ratio.setSingleStep(.05)
         self.axis_ratio.setValue(.7)
-        control_layout.addWidget(QLabel("Ellipse minor/major axis ratio"))
-        control_layout.addWidget(self.axis_ratio)
+        manual_layout.addWidget(QLabel("Ellipse minor/major axis ratio"))
+        manual_layout.addWidget(self.axis_ratio)
         self.comment = QLineEdit()
         self.comment.setObjectName("scene_edit_comment")
         self.comment.setPlaceholderText("Optional reason / source identity")
-        control_layout.addWidget(self.comment)
+        manual_layout.addWidget(self.comment)
 
         # A SGA ellipse is an externally fitted central-scale PRIOR.
         # It never replaces a native FITS result or an outer LSB contour.
@@ -1431,7 +1440,7 @@ class SceneEditor(QWidget):
         self.sga_status.setObjectName("scene_sga_status")
         self.sga_status.setWordWrap(True)
         sga_layout.addWidget(self.sga_status)
-        control_layout.addWidget(sga_box)
+        self.scene_task_stack.addWidget(sga_box)
 
         # A threshold contour and a moment-ellipse are offered separately.
         # The researcher must inspect and explicitly accept either one.
@@ -1784,7 +1793,7 @@ class SceneEditor(QWidget):
         self.iso_threshold.valueChanged.connect(self._clear_isophote_preview)
         self.iso_smooth.valueChanged.connect(self._clear_isophote_preview)
         self.iso_bridge_guard.toggled.connect(self._clear_isophote_preview)
-        control_layout.addWidget(isogroup)
+        self.scene_task_stack.addWidget(isogroup)
 
         buttons = QHBoxLayout()
         self.finish_btn = QPushButton("Finish polygon")
@@ -1794,13 +1803,13 @@ class SceneEditor(QWidget):
         self.cancel_btn = QPushButton("Cancel shape")
         self.cancel_btn.clicked.connect(self._cancel_pending)
         buttons.addWidget(self.cancel_btn)
-        control_layout.addLayout(buttons)
-        control_layout.addWidget(QLabel("Unadopted edits (click one to remove)"))
+        manual_layout.addLayout(buttons)
+        manual_layout.addWidget(QLabel("Draft regions · select to edit"))
         self.edits = QListWidget()
         self.edits.setObjectName("scene_edits_list")
         self.edits.setMinimumHeight(95)
         self.edits.currentRowChanged.connect(self._refresh_controls)
-        control_layout.addWidget(self.edits, 1)
+        manual_layout.addWidget(self.edits, 1)
         history = QHBoxLayout()
         self.undo_btn = QPushButton("Undo")
         self.undo_btn.setObjectName("scene_undo")
@@ -1821,29 +1830,61 @@ class SceneEditor(QWidget):
         self.remove_btn.setObjectName("scene_remove")
         self.remove_btn.clicked.connect(self.remove_selected)
         history.addWidget(self.remove_btn)
-        control_layout.addLayout(history)
+        manual_layout.addLayout(history)
         self.show_hard = QCheckBox("Show native unusable pixels")
         self.show_hard.setChecked(True)
         self.show_hard.stateChanged.connect(self._update_hard_overlay)
-        control_layout.addWidget(self.show_hard)
+        manual_layout.addWidget(self.show_hard)
         self.save_btn = QPushButton("Save scene draft")
         self.save_btn.setObjectName("scene_save_draft")
         self.save_btn.clicked.connect(self.save_draft)
         self.save_btn.setToolTip(
             "Explicitly save one new immutable project mask-draft revision. "
             "This is NOT scientific approval of segmentation or photometry.")
-        control_layout.addWidget(self.save_btn)
+        
         self.status = QLabel("Open an object project to begin.")
         self.status.setWordWrap(True)
         self.status.setObjectName("scene_status")
-        control_layout.addWidget(self.status)
+        
         controls_scroll = QScrollArea(self)
         controls_scroll.setObjectName("scene_controls_scroll")
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setWidget(controls)
         controls_scroll.setMinimumWidth(220)
+        self.scene_task_buttons = {}
+        right_panel = QWidget(self)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(5)
+        task_row = QHBoxLayout()
+        task_row.setSpacing(4)
+        for task_id, label, description, page in (
+                ("draw", "Draw", "Draw or edit ICRS mask drafts", 0),
+                ("isophote", "Isophote", "Prepare masks and preview isophotes", 2),
+                ("sga", "SGA", "Inspect optional external SGA geometry", 1)):
+            button = QPushButton(label)
+            button.setObjectName("scene_task_" + task_id)
+            button.setAccessibleName(description)
+            button.setToolTip(description + "; no scientific adoption")
+            button.setCheckable(True)
+            button.setStyleSheet(
+                "QPushButton:checked { border: 2px solid palette(highlight); "
+                "font-weight: 600; }")
+            button.clicked.connect(
+                lambda _checked=False, idx=page: self._change_scene_task(idx))
+            self.scene_task_buttons[task_id] = button
+            task_row.addWidget(button, 1)
+        self.scene_task_buttons["draw"].setChecked(True)
+        right_layout.addLayout(task_row)
+        right_layout.addWidget(controls_scroll, 1)
+        footer_actions = QHBoxLayout()
+        footer_actions.addWidget(self.save_btn, 1)
+        self.copy_scene_qa_btn.setText("Copy QA")
+        footer_actions.addWidget(self.copy_scene_qa_btn)
+        right_layout.addLayout(footer_actions)
+        right_layout.addWidget(self.status)
         self.view.setMinimumWidth(0)
-        splitter.addWidget(controls_scroll)
+        splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         splitter.setSizes([920, 345])
@@ -3280,7 +3321,9 @@ class SceneEditor(QWidget):
     def _reset_isophote_center(self):
         self._picking_isophote_center = False
         self._isophote_center_icrs = None
-        self.view.set_drawing(self.mode.currentData() != "pan")
+        self.view.set_drawing(
+            self.scene_task_stack.currentIndex() == 0 and
+            self.mode.currentData() != "pan")
         self._discard_prepared_masks()
         self.iso_details.setText(
             "Detection anchor reset to saved galaxy ICRS coordinates. "
@@ -3296,7 +3339,9 @@ class SceneEditor(QWidget):
                 "Raw-image detection is disabled.")
             return
         self._picking_isophote_center = False
-        self.view.set_drawing(self.mode.currentData() != "pan")
+        self.view.set_drawing(
+            self.scene_task_stack.currentIndex() == 0 and
+            self.mode.currentData() != "pan")
         self._clear_isophote_preview()
         center = (self._isophote_center_icrs
                   if self._isophote_center_icrs is not None
@@ -3678,9 +3723,29 @@ class SceneEditor(QWidget):
             "Undo/Remove/Redraw can revise the annotation. It never "
             "enlarges protect_target, auto-masks or science products.")
 
+    def _change_scene_task(self, index: int):
+        """Change the *visible task*, never its scientific parameters."""
+        if index < 0 or index >= self.scene_task_stack.count():
+            return
+        if index != 0 and self.scene_task_stack.currentIndex() == 0:
+            had_pending = bool(self._pending_world)
+            self._cancel_pending()
+            if had_pending:
+                self.status.setText(
+                    "Unfinished drawing cancelled; saved draft regions unchanged.")
+        if index != 2 and self._picking_isophote_center:
+            self._picking_isophote_center = False
+        self.scene_task_stack.setCurrentIndex(index)
+        for task_id, page in (("draw", 0), ("sga", 1), ("isophote", 2)):
+            self.scene_task_buttons[task_id].setChecked(index == page)
+        self.view.set_drawing(
+            self._picking_isophote_center or
+            (index == 0 and self.mode.currentData() != "pan"))
+
     def _mode_changed(self, *_):
         primitive = self.mode.currentData()
-        self.view.set_drawing(primitive != "pan")
+        self.view.set_drawing(
+            self.scene_task_stack.currentIndex() == 0 and primitive != "pan")
         self.finish_btn.setEnabled(primitive == "polygon")
         self.axis_ratio.setEnabled(primitive == "ellipse")
         self._cancel_pending()
@@ -3720,7 +3785,8 @@ class SceneEditor(QWidget):
         if pixel is None:
             return
         primitive = self.mode.currentData()
-        if primitive == "pan" and not self._picking_isophote_center:
+        if not self._picking_isophote_center and (
+                self.scene_task_stack.currentIndex() != 0 or primitive == "pan"):
             return
         ny = self._loaded["pixel_shape"][0]
         xpix, ypix = float(x_scene)-.5, float(ny)-float(y_scene)-.5
@@ -3731,7 +3797,9 @@ class SceneEditor(QWidget):
         if self._picking_isophote_center:
             self._picking_isophote_center = False
             self._isophote_center_icrs = (float(ra)%360., float(dec))
-            self.view.set_drawing(self.mode.currentData() != "pan")
+            self.view.set_drawing(
+                self.scene_task_stack.currentIndex() == 0 and
+                self.mode.currentData() != "pan")
             self._discard_prepared_masks()
             self.iso_details.setText(
                 f"Galaxy candidate centre: RA {ra%360:.7f}°, "

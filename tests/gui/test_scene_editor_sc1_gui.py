@@ -2109,3 +2109,52 @@ def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
     editor.set_band("r")
     assert editor._foreground_psf_result is None
     assert not editor.psf0_fg_btn.isEnabled()
+
+
+
+def test_scene_three_task_views_preserve_draft_and_direct_edit_access(
+        qtbot, tmp_path, monkeypatch):
+    """One task surface at a time; save/status stay pinned and visible."""
+    from lsbpipe.gui.scene_editor import SceneEditor
+    w = SceneEditor()
+    qtbot.addWidget(w)
+    w.resize(1000, 690)
+    w.show()
+    assert w.scene_task_stack.count() == 3
+    assert w.scene_task_stack.currentWidget() is w.scene_manual_page
+    assert w.scene_task_buttons["draw"].isChecked()
+    assert w.mode.isVisible() and w.edits.isVisible()
+    assert not w.iso_prepare.isVisible()
+    assert not w.sga_find.isVisible()
+    assert w.save_btn.isVisible() and w.copy_scene_qa_btn.isVisible()
+    w.axis_ratio.setValue(0.55)
+    w.scene_task_buttons["isophote"].click()
+    assert w.iso_prepare.isVisible() and not w.mode.isVisible()
+    assert w.scene_task_buttons["isophote"].isChecked()
+    assert w.save_btn.isVisible() and w.status.isVisible()
+    w.scene_task_buttons["sga"].click()
+    assert w.sga_find.isVisible() and not w.iso_prepare.isVisible()
+    w.scene_task_buttons["draw"].click()
+    assert w.mode.isVisible() and w.edits.isVisible()
+    assert w.axis_ratio.value() == pytest.approx(.55)
+    assert not w.view.drawing
+    assert w.draft is None
+
+
+def test_scene_task_switch_prevents_accidental_manual_draw(qtbot):
+    from lsbpipe.gui.scene_editor import SceneEditor
+    w = SceneEditor()
+    qtbot.addWidget(w)
+    w.show()
+    w.mode.setCurrentIndex(w.mode.findData("polygon"))
+    assert w.view.drawing
+    w._pending_world.append((1.0, 2.0))
+    w._pending_scene.append((1., 2.))
+    w.scene_task_buttons["sga"].click()
+    assert not w.view.drawing
+    assert w._pending_world == []
+    assert "Unfinished drawing cancelled" in w.status.text()
+    assert not w.mode.isVisible()
+    w.scene_task_buttons["draw"].click()
+    assert w.view.drawing
+    assert w.mode.currentData() == "polygon"

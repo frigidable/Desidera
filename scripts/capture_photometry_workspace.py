@@ -221,6 +221,37 @@ def capture(output_dir: Path) -> list[dict]:
                 "size_image":[shot04.width(),shot04.height()],
                 "visual_reviewed":False,
             })
+            # Stage 02 task navigation: metadata only, with no FITS read,
+            # no automatic SGA network access or scientific inference.
+            widget.stage_tabs.setCurrentWidget(widget.scene_editor)
+            for task in ("draw", "isophote", "sga"):
+                widget.scene_editor.scene_task_buttons[task].click()
+                widget.resize(1366, 768)
+                widget.show()
+                app.processEvents()
+                scene = widget.scene_editor
+                if (not scene.save_btn.isVisible()
+                        or not scene.copy_scene_qa_btn.isVisible()):
+                    raise AssertionError("Scene task footer is obscured")
+                if scene.view.drawing:
+                    raise AssertionError(
+                        "Scene empty task preview unexpectedly starts drawing")
+                shot = widget.grab()
+                path = output_dir / (
+                    f"photometry_scene_{task}_1366x768.png")
+                if shot.isNull() or not shot.save(str(path), "PNG"):
+                    raise RuntimeError(f"Cannot capture {path}")
+                manifest.append({
+                    "path": str(path),
+                    "state": "stage02_" + task + "_without_native_scene",
+                    "fixture": "SYNTHETIC_NON_FITS_METADATA",
+                    "native_fits_read": False,
+                    "science_adopted": False,
+                    "visible_task": task,
+                    "size_logical": [1366, 768],
+                    "size_image": [shot.width(), shot.height()],
+                    "visual_reviewed": False,
+                })
             widget.restore_navigation(stage="psf0", band="r")
             # Explicitly synthetic gallery: no real Leo P image bytes are
             # accessible to CI. Capture equal-square cutout, PSF and radial
