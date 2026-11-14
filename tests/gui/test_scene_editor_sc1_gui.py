@@ -2339,7 +2339,9 @@ def test_scene_copy_fits_error_report_omits_private_path_and_resets_on_retry(
     assert not report["traceback_included"]
     assert raw_secret not in payload
     assert str(tmp_path) not in payload
-    assert "project_id" not in payload
+    assert "project_id" not in report
+    assert project.project_id not in payload
+    assert report["local_paths_or_project_identifiers_included"] is False
     scene.set_band("r")
     assert scene._fits_load_failure is None
     assert not scene.copy_error_btn.isVisible()
