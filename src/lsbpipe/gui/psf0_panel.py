@@ -79,6 +79,9 @@ class PSF0Panel(QGroupBox):
             raise ValueError("Unsupported PSF-0 fixed band")
         super().__init__("PSF reconstruction", parent)
         self.fixed_band = fixed_band
+        # A standalone PSF inspector with fixed_band must retain its
+        # visual evidence even without an object-bound Photometry tab.
+        self._workspace_band = fixed_band is not None and parent is not None
         self._fwhm_manually_edited = False
         self._latest_seeing_payload = None
         self._last_reported_payload = None
@@ -853,7 +856,7 @@ class PSF0Panel(QGroupBox):
         # oversized placeholder frames to a band with no native quartet.
         # A standalone review or explicit Advanced mode retains all cards.
         show_cards = (
-            self.fixed_band is None or self._research_mode or eligible
+            not self._workspace_band or self._research_mode or eligible
             or self._preview is not None or self._qa_payload is not None)
         self._model_card.setVisible(show_cards)
         self._profile_card.setVisible(show_cards)

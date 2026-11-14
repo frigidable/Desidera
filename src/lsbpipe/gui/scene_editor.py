@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QColor, QPainterPath, QPen, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPathItem,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
     QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout,
+    QSizePolicy,
 )
 
 from lsbpipe.gui.fits_explorer import FITSGraphicsView, FITSExplorer
@@ -1192,6 +1193,19 @@ class SceneDrawingView(FITSGraphicsView):
         super().mousePressEvent(event)
 
 
+class _CurrentSceneTaskStack(QStackedWidget):
+    """Size only the active task; hidden expert tasks cannot widen Draw."""
+
+    def sizeHint(self):
+        current = self.currentWidget()
+        return QSize(0, current.sizeHint().height()) if current else QSize(0, 0)
+
+    def minimumSizeHint(self):
+        current = self.currentWidget()
+        return (QSize(0, current.minimumSizeHint().height())
+                if current else QSize(0, 0))
+
+
 class SceneEditor(QWidget):
     """Real editable scene DRAFT in the same Photometry Workspace.
 
@@ -1326,10 +1340,15 @@ class SceneEditor(QWidget):
         splitter.addWidget(self.view)
 
         controls = QWidget()
+        controls.setMinimumWidth(0)
+        controls.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         control_layout = QVBoxLayout(controls)
         control_layout.setContentsMargins(0, 0, 0, 0)
-        self.scene_task_stack = QStackedWidget(controls)
+        self.scene_task_stack = _CurrentSceneTaskStack(controls)
         self.scene_task_stack.setObjectName("scene_task_pages")
+        self.scene_task_stack.setMinimumWidth(0)
+        self.scene_task_stack.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
         control_layout.addWidget(self.scene_task_stack)
         self.scene_manual_page = QWidget(self.scene_task_stack)
         manual_layout = QVBoxLayout(self.scene_manual_page)
@@ -3750,6 +3769,7 @@ class SceneEditor(QWidget):
         if index != 2 and self._picking_isophote_center:
             self._picking_isophote_center = False
         self.scene_task_stack.setCurrentIndex(index)
+        self.scene_task_stack.updateGeometry()
         for task_id, page in (("draw", 0), ("sga", 1), ("isophote", 2)):
             self.scene_task_buttons[task_id].setChecked(index == page)
         self.view.set_drawing(

@@ -134,7 +134,9 @@ class PhotometryWorkspace(QWidget):
         # standard monitors; inner controls retain their own width limits.
         central.setMaximumWidth(1400)
         central.setMinimumWidth(0)
-        central.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        # Respect a narrow Qt viewport even when a previously wide PSF
+        # layout had a larger cached size hint after hiding empty cards.
+        central.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Maximum)
         body = QVBoxLayout(central)
         body.setContentsMargins(8, 2, 8, 2)
         body.setSpacing(12)
