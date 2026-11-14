@@ -374,8 +374,21 @@ def main():
                         window.show()
                         app.processEvents()
                         window.fits_explorer.view.setFocus()
+                        # The exact same native pixel must be sampled at both
+                        # UI sizes; each capture gets one fresh arrow step.
+                        window.fits_explorer.view.clear_keyboard_pixel()
                         QTest.keyClick(window.fits_explorer.view, Qt.Key_Right)
                         app.processEvents()
+                        width_px = int(
+                            window.fits_explorer.scene.sceneRect().width())
+                        height_px = int(
+                            window.fits_explorer.scene.sceneRect().height())
+                        target_x = (width_px - 1) // 2 + 1
+                        target_y = height_px - 1 - (height_px - 1) // 2
+                        if not window.fits_explorer.pixel_info.text().startswith(
+                                f"Pixel ({target_x}, {target_y})"):
+                            raise AssertionError(
+                                "Window resizing changed the sampled FITS pixel")
                         if not window.fits_explorer.keyboard_cursor.isVisible():
                             raise AssertionError(
                                 "FITS keyboard marker not visible after arrow")
