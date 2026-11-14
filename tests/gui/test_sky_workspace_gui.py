@@ -436,3 +436,46 @@ def test_failure_report_formatter_is_strict_allowlist():
         format_gui_failure_report(
             stage="scene",error_type="ValueError",
             failure_status="RAW_PRIVATE_TRACEBACK")
+
+
+def test_sky_failure_keyboard_copy_shortcut_scoped_and_safe(qtbot,monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    import json
+    stage=SkyWorkspace(SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None))
+    qtbot.addWidget(stage)
+    stage.resize(760,580)
+    stage.setFont(QFont("Arial",16))
+    stage.show()
+    data={"project_id":"p","source":"r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=("p","r","r",draft.digest,"c"*64,id(data),id(mask))
+    monkeypatch.setattr(stage,"_snapshot",lambda:(identity,data,draft,mask))
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    qtbot.wait(20)
+    assert stage.copy_error_btn.isVisible()
+    assert stage.run_btn.isVisible()
+    assert stage._failure_shortcut.context()==Qt.WidgetWithChildrenShortcut
+    assert stage._failure_shortcut.key().toString()=="Ctrl+Shift+E"
+    for button in (stage.run_btn,stage.copy_error_btn):
+        point=button.mapTo(stage,button.rect().center())
+        assert stage.rect().contains(point)
+        assert button.width()>70
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert json.loads(QApplication.clipboard().text())["operation"]=="evaluate_residual_sky"
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert QApplication.clipboard().text()=="sentinel"

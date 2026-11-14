@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 import json
 import traceback
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
     QPushButton, QVBoxLayout, QWidget, QSizePolicy, QTabWidget,
@@ -111,11 +112,15 @@ class SkyWorkspace(QWidget):
         self.copy_error_btn.setAccessibleName(
             "Copy safe residual background failure report")
         self.copy_error_btn.setToolTip(
-            "Share the error category and retry instructions. "
+            "Ctrl+Shift+E · Share the error category and retry instructions. "
             "No traceback, project identifiers or local paths are copied.")
         self.copy_error_btn.clicked.connect(self.copy_failure_report)
         self.copy_error_btn.hide()
         tools.addWidget(self.copy_error_btn)
+        self._failure_shortcut = QShortcut(
+            QKeySequence("Ctrl+Shift+E"), self)
+        self._failure_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._failure_shortcut.activated.connect(self.copy_failure_report)
         tools.addStretch(1)
         root.addLayout(tools)
 

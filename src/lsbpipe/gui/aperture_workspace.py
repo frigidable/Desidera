@@ -14,7 +14,7 @@ import traceback
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, QRectF
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
     QPushButton, QSizePolicy, QVBoxLayout, QWidget, QTabWidget,
@@ -400,11 +400,15 @@ class ApertureWorkspace(QWidget):
         self.copy_error_btn.setAccessibleName(
             "Copy safe aperture photometry failure report")
         self.copy_error_btn.setToolTip(
-            "Copy the failure category and recovery instructions; "
-            "no raw traceback, identifiers or filesystem paths.")
+            "Ctrl+Shift+E · Copy the failure category and recovery "
+            "instructions; no raw traceback, identifiers or filesystem paths.")
         self.copy_error_btn.clicked.connect(self.copy_failure_report)
         self.copy_error_btn.hide()
         buttons.addWidget(self.copy_error_btn)
+        self._failure_shortcut=QShortcut(
+            QKeySequence("Ctrl+Shift+E"),self)
+        self._failure_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._failure_shortcut.activated.connect(self.copy_failure_report)
         buttons.addStretch(1)
         root.addLayout(buttons)
         self.status=QLabel("Not measured.")

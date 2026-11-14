@@ -1343,8 +1343,8 @@ class SceneEditor(QWidget):
         self.copy_error_btn.setAccessibleName(
             "Copy safe FITS loading failure report")
         self.copy_error_btn.setToolTip(
-            "Copy the failure category and recovery action for support. "
-            "No traceback, local paths or project identifiers are included.")
+            "Ctrl+Shift+E · Copy the failure category and recovery action "
+            "for support. No traceback, local paths or project identifiers.")
         self.copy_error_btn.clicked.connect(self.copy_failure_report)
         self.copy_error_btn.hide()
         # QA export remains available in a pinned footer beside Save draft.
@@ -1926,10 +1926,17 @@ class SceneEditor(QWidget):
         self.scene_task_buttons["draw"].setChecked(True)
         right_layout.addLayout(task_row)
         right_layout.addWidget(controls_scroll, 1)
-        footer_actions = QHBoxLayout()
-        footer_actions.addWidget(self.save_btn, 1)
+        footer_actions = QVBoxLayout()
+        footer_actions.setContentsMargins(0, 0, 0, 0)
+        footer_actions.setSpacing(3)
+        regular_footer = QHBoxLayout()
+        regular_footer.addWidget(self.save_btn, 1)
         self.copy_scene_qa_btn.setText("Copy QA")
-        footer_actions.addWidget(self.copy_scene_qa_btn)
+        regular_footer.addWidget(self.copy_scene_qa_btn)
+        footer_actions.addLayout(regular_footer)
+        # In the narrow right-hand inspector, a third button on this
+        # same row clipped QA/Save at larger fonts. Occupy a second row
+        # ONLY while a current FITS failure exists.
         footer_actions.addWidget(self.copy_error_btn)
         right_layout.addLayout(footer_actions)
         right_layout.addWidget(self.status)
@@ -1945,6 +1952,9 @@ class SceneEditor(QWidget):
         root.addWidget(self.pixel_info)
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self.undo)
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.redo)
+        self._failure_shortcut = QShortcut(QKeySequence("Ctrl+Shift+E"), self)
+        self._failure_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._failure_shortcut.activated.connect(self.copy_failure_report)
         QShortcut(QKeySequence("Escape"), self).activated.connect(
             self._cancel_pending)
         # Settings changes invalidate prior sweep readouts, without

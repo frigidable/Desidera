@@ -502,3 +502,46 @@ def test_aperture_copy_failure_report_contains_recovery_not_source_paths(
     stage.refresh_context()
     assert stage._last_failure is None
     assert not stage.copy_error_btn.isVisible()
+
+
+def test_aperture_failure_shortcut_and_narrow_font_actions(qtbot,monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+    from concurrent.futures import Future
+    import json
+    ds,draft,mask=_inputs()
+    stage=ApertureWorkspace(
+        SimpleNamespace(_project_target=None,_source_key=None),
+        SimpleNamespace(_snapshot=lambda:None))
+    qtbot.addWidget(stage)
+    stage.resize(760,580)
+    stage.setFont(QFont("Arial",16))
+    stage.show()
+    identity=("p","r","r",draft.digest,"c"*64)
+    snap=(identity,ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    qtbot.wait(20)
+    assert stage.copy_error_btn.isVisible()
+    assert stage.run_btn.isVisible()
+    assert stage._failure_shortcut.context()==Qt.WidgetWithChildrenShortcut
+    assert stage._failure_shortcut.key().toString()=="Ctrl+Shift+E"
+    for button in (stage.run_btn,stage.copy_error_btn):
+        point=button.mapTo(stage,button.rect().center())
+        assert stage.rect().contains(point)
+        assert button.width()>70
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert json.loads(QApplication.clipboard().text())["operation"]=="build_aperture_curves"
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert QApplication.clipboard().text()=="sentinel"

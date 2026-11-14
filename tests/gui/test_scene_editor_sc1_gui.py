@@ -2347,3 +2347,42 @@ def test_scene_copy_fits_error_report_omits_private_path_and_resets_on_retry(
     assert not scene.copy_error_btn.isVisible()
     assert scene.load_btn.text()=="Load original FITS"
     scene.shutdown()
+
+
+def test_scene_failure_footer_and_keyboard_copy_fit_compact_inspector(
+        qtbot,tmp_path,monkeypatch):
+    """Error action gets its own row rather than clipping Save/Copy QA."""
+    import json
+    from concurrent.futures import Future
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication, QSplitter
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    scene.resize(820,650)
+    scene.setFont(QFont("Arial",16))
+    failure=Future()
+    failure.set_exception(FileNotFoundError("test-only missing IMAGE"))
+    monkeypatch.setattr(scene._executor,"submit",lambda *a,**kw:failure)
+    scene.load_original()
+    scene._poll_load()
+    qtbot.wait(30)
+    assert scene.copy_error_btn.isVisible()
+    assert scene._failure_shortcut.key().toString()=="Ctrl+Shift+E"
+    assert scene._failure_shortcut.context()==Qt.WidgetWithChildrenShortcut
+    # The right inspector must reserve its own row for the error action.
+    error=scene.copy_error_btn
+    qa=scene.copy_scene_qa_btn
+    save=scene.save_btn
+    assert error.y() >= qa.y()+qa.height()-2
+    assert qa.isVisible() and save.isVisible()
+    assert error.width()>0 and qa.width()>0
+    assert error.x()>=0 and error.x()+error.width()<=error.parentWidget().width()
+    QApplication.clipboard().setText("sentinel")
+    scene._failure_shortcut.activated.emit()
+    payload=json.loads(QApplication.clipboard().text())
+    assert payload["operation"]=="load_original_fits"
+    scene.set_band("r")
+    QApplication.clipboard().setText("sentinel")
+    scene._failure_shortcut.activated.emit()
+    assert QApplication.clipboard().text()=="sentinel"
+    scene.shutdown()
