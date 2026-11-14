@@ -48,6 +48,33 @@ Never rely on hue alone for scientific data categories or warnings.
 - Splitter state must be adjustable and recoverable. Scrollable inspectors
   are preferable to hidden controls on a short screen.
 
+## Information density and progressive disclosure
+
+- Default workflow surfaces should display the **current object, relevant
+  science/data state, one primary action and the main visual**. Metadata, log
+  receipts and alternative methods remain accessible from their contextual
+  screen instead of appearing as permanent instructions.
+- A compact form uses short *visible* labels, with explicit units, complete
+  accessible names and contextual help in tooltips. Scientific status such as
+  `DIAGNOSTIC_NOT_ADOPTED` may be shortened visually only when the non-adopted
+  meaning remains legible on the active screen.
+- Avoid cascading disclosure controls within another disclosure. Prefer one
+  named optional-settings section per task; once expanded, show its actual
+  inputs directly instead of requiring a second reveal.
+- Never fill an empty workspace with large panels of disabled batch buttons
+  or repeated placeholders. A concise no-data outcome and an actionable
+  source/workspace navigation should take precedence. Researchers can switch
+  to Advanced mode to review the complete scientific controls.
+- Distinguish **separate workflow stages** (e.g. Scene/Background/Photometry)
+  from redundant nested tabs. Stage navigation remains visible and stable;
+  additional filters/bands are context selectors, not new primary screens.
+- Preserve full error messages, provenance, FITS raw values, masking
+  semantics, units and QA reports through explicit accessible detail actions.
+  Never drop a scientific caveat merely to meet a visual density target.
+- At 1366×768 inspect both default and advanced screen states. Count visible
+  disclosures and duplicated paragraphs, check that keyboard focus finds
+  the advanced evidence and that the image/plot still dominates.
+
 ## Information hierarchy
 Default layout (only when viewport permits):
 1. Compact top row: project/target, release/band, data source, task state.
