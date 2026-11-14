@@ -1823,9 +1823,13 @@ class SceneEditor(QWidget):
         self.finish_btn.setObjectName("scene_finish_polygon")
         self.finish_btn.clicked.connect(self.finish_polygon)
         buttons.addWidget(self.finish_btn)
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setAccessibleName("Cancel unfinished drawing")
-        self.cancel_btn.clicked.connect(self._cancel_pending)
+        self.cancel_btn = QPushButton("Cancel shape")
+        self.cancel_btn.setAccessibleName("Discard unfinished Scene drawing")
+        self.cancel_btn.setToolTip(
+            "Discard only an unfinished region or redraw. Existing draft "
+            "edits, saved masks and FITS pixels remain unchanged. "
+            "This does not stop a FITS-reading or analysis worker.")
+        self.cancel_btn.clicked.connect(self._cancel_drawing)
         buttons.addWidget(self.cancel_btn)
         manual_layout.addLayout(buttons)
         manual_layout.addWidget(QLabel("Draft regions · select to edit"))
@@ -3783,6 +3787,18 @@ class SceneEditor(QWidget):
         self.finish_btn.setEnabled(primitive == "polygon")
         self.axis_ratio.setEnabled(primitive == "ellipse")
         self._cancel_pending()
+
+    def _cancel_drawing(self):
+        """Explicit drawing-only cancellation with actionable feedback."""
+        had_pending = bool(
+            self._pending_world or self._pending_scene
+            or self._replace_index is not None)
+        self._cancel_pending()
+        self.status.setText(
+            "Unfinished drawing discarded; existing Scene draft unchanged. "
+            "FITS and analysis workers are not interrupted."
+            if had_pending else
+            "No unfinished drawing to discard. Existing Scene draft unchanged.")
 
     def _cancel_pending(self):
         self._pending_world.clear()

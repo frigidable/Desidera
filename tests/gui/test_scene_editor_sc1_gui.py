@@ -2174,3 +2174,28 @@ def test_scene_compact_tasks_have_no_horizontal_scroll_at_laptop_width(qtbot):
         qtbot.wait(10)
         assert scroll.horizontalScrollBar().maximum() == 0, task
         assert w.save_btn.isVisible() and w.copy_scene_qa_btn.isVisible()
+
+
+def test_scene_cancel_shape_preserves_draft_and_does_not_claim_worker_stop(
+        qtbot,tmp_path,monkeypatch):
+    """Only unfinished geometry disappears; recorded mask history is intact."""
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    before_digest=scene.draft.digest
+    before_edits=scene.draft.edits
+    scene.mode.setCurrentIndex(scene.mode.findData("polygon"))
+    _click_at_native(scene,42,42)
+    assert len(scene._pending_world)==1
+    assert scene.cancel_btn.text()=="Cancel shape"
+    assert "does not stop" in scene.cancel_btn.toolTip().lower()
+    scene.cancel_btn.click()
+    assert not scene._pending_world
+    assert not scene._pending_scene
+    assert scene._replace_index is None
+    assert scene.draft.digest==before_digest
+    assert scene.draft.edits==before_edits
+    assert "Unfinished drawing discarded" in scene.status.text()
+    assert scene._future is None
+    assert scene._loaded is not None
+    scene.cancel_btn.click()
+    assert "No unfinished drawing" in scene.status.text()
+    assert scene.draft.digest==before_digest
