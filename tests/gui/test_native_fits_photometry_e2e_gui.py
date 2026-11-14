@@ -181,6 +181,8 @@ def test_synthetic_original_fits_full_photometry_gui_route(
     explorer.resize(1760, 940)
     explorer.photometry_btn.click()
     assert explorer.preview_tabs.currentWidget() is explorer.photometry_workspace
+    assert "Leo P" not in explorer.workflow_hint.text()
+    assert "diagnostic" in explorer.workflow_hint.text().lower()
     widget = explorer.photometry_workspace
     if capture_font is not None:
         widget.setFont(capture_font)

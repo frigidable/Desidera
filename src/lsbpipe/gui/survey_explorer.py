@@ -1764,8 +1764,8 @@ class SurveyExplorer(QMainWindow):
         if photometry_active:
             self.workflow_stage.setText("03 / 04 · Photometry")
             self.workflow_hint.setText(
-                "Experimental PSF-0 preview available for saved Leo P FITS; "
-                "no sky, galaxy photometry or science adoption.")
+                "PSF-0, Scene and Masks, Background, Aperture. "
+                "Diagnostics only; no result is adopted for science.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
             else "Files / QA")
