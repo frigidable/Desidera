@@ -129,16 +129,17 @@ def test_workflow_hint_distinguishes_complete_quartet_from_arbitrary_files(qtbot
     with patch.object(gui.QInputDialog, "getItem", return_value=("r", True)):
         w.science_btn.click()
     assert len(w._selected()) == 4
-    assert "R-band science quartet selected" in w.workflow_hint.text()
+    assert "R-band quartet selected" in w.workflow_hint.text()
     assert "check URLs" in w.workflow_hint.text()
+    assert len(w.workflow_hint.text()) < 65
     assert w.thread is None
     w.clear_all_btn.click()
     assert not w._selected()
     assert "Choose the four science FITS" in w.workflow_hint.text()
     w._set_visible_selection(True)
     assert len(w._selected()) > 4
-    assert "archive files selected" in w.workflow_hint.text()
-    assert "science quartet selected" not in w.workflow_hint.text()
+    assert "files selected" in w.workflow_hint.text()
+    assert "quartet selected" not in w.workflow_hint.text()
     assert w.thread is None
 
 

@@ -1801,12 +1801,10 @@ class SurveyExplorer(QMainWindow):
                 if is_quartet:
                     band = next(iter(bands)).upper()
                     self.workflow_hint.setText(
-                        f"{band}-band science quartet selected (4 FITS). "
-                        "Review Archive files and check URLs before download.")
+                        f"{band}-band quartet selected · check URLs, then download.")
                 else:
                     self.workflow_hint.setText(
-                        f"{len(selected_paths)} archive files selected. "
-                        "Review the full selection before downloading.")
+                        f"{len(selected_paths)} files selected · review before download.")
         self.science_btn.setEnabled(
             selected and bool(has_catalog) and self.thread is None)
         # An empty brick grid is not a meaningful default navigation element.
