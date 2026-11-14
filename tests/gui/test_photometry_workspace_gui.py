@@ -238,3 +238,31 @@ def test_observatory_vector_icons_render_full_shapes_not_cropped(qtbot):
         ys=[y for _,y in points]
         assert max(xs)-min(xs)>img.width()*.40,kind
         assert max(ys)-min(ys)>img.height()*.40,kind
+
+
+def test_visual_stylesheet_has_no_unresolved_compound_color_tokens(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    from lsbpipe.gui.visual_theme import visual_stylesheet
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    css=visual_stylesheet(w)
+    assert "$" not in css
+    assert "#215CAA_HOVER" not in css
+    assert "#865313_BG" not in css
+    assert "#A33848_BG" not in css
+
+
+def test_short_stage_labels_preserve_long_scientific_tooltips(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(760,750)
+    w.show()
+    qtbot.wait(40)
+    assert w.width()<=760
+    assert w.stage_tabs.tabText(1)=="2 · Scene"
+    assert w.stage_tabs.tabText(2)=="3 · Sky"
+    assert w.stage_tabs.tabText(3)=="4 · Apertures"
+    assert "Original FITS/WCS" in w.stage_tabs.tabToolTip(1)
+    assert "finite-aperture" in w.stage_tabs.tabToolTip(3)
+    assert all(not w.stage_tabs.tabIcon(i).isNull() for i in range(4))

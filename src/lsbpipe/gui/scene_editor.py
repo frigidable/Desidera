@@ -1286,7 +1286,9 @@ class SceneEditor(QWidget):
         # Two grouped rows can reflow vertically at laptop widths / high
         # font sizes. A fixed single-row toolbar clipped the Retry FITS
         # and cutout-width labels at 760 px and 16 pt.
-        toolbar = QBoxLayout(QBoxLayout.LeftToRight)
+        # Start vertically so a long horizontal minimum-size hint
+        # cannot block the initial narrow-window resizeEvent reflow.
+        toolbar = QBoxLayout(QBoxLayout.TopToBottom)
         self._toolbar = toolbar
         inputs = QHBoxLayout()
         actions = QHBoxLayout()

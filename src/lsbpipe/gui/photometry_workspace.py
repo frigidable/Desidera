@@ -321,19 +321,19 @@ class PhotometryWorkspace(QWidget):
         center_scroll.setWidget(central)
         psf_stage_layout.addWidget(center_scroll, 1)
         self.scene_editor = SceneEditor(self.stage_tabs)
-        self.stage_tabs.addTab(self.scene_editor, "2 · Scene and Masks")
+        self.stage_tabs.addTab(self.scene_editor, "2 · Scene")
         self.stage_tabs.setTabToolTip(
             1, "Original FITS/WCS editor; editable ICRS mask drafts. "
                "No final galaxy segmentation or adopted photometry.")
         self.sky_stage = SkyWorkspace(self.scene_editor, self.stage_tabs)
-        self.stage_tabs.addTab(self.sky_stage, "3 · Background")
+        self.stage_tabs.addTab(self.sky_stage, "3 · Sky")
         self.stage_tabs.setTabToolTip(
             2, "Automatically selected same-project residual-sky controls; "
                "only diagnostic models, no scientific sky adoption.")
         self.aperture_stage = ApertureWorkspace(
             self.scene_editor, self.sky_stage, self.stage_tabs)
         self.stage_tabs.addTab(
-            self.aperture_stage, "4 · Aperture Photometry")
+            self.aperture_stage, "4 · Apertures")
         # Color-coded pictograms identify the analysis *kind*, never
         # imply that an unadopted scientific result passed QA.
         for idx, (glyph, accent) in enumerate((

@@ -222,8 +222,11 @@ QToolTip {
     padding: 4px;
 }
 """
-    for key, color in theme_colors(widget).items():
-        css = css.replace("$" + key, color)
+    # Replace longer tokens first: otherwise $WARN_BG becomes
+    # '#865313_BG' and $ACCENT_HOVER becomes '#215CAA_HOVER'.
+    colors = theme_colors(widget)
+    for key in sorted(colors, key=len, reverse=True):
+        css = css.replace("$" + key, colors[key])
     return css
 
 
