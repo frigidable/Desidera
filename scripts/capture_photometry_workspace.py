@@ -259,6 +259,135 @@ def capture(output_dir: Path) -> list[dict]:
                     "size_image":[image.width(),image.height()],
                     "visual_reviewed":False,
                 })
+
+            # Visible FAILURE states need independent layout evidence.
+            # These are simulated UI-only exceptions: no FITS opened,
+            # worker submitted, remote request, or science QA adopted.
+            from types import SimpleNamespace
+            from PySide6.QtCore import QPoint
+            identity=("SYNTHETIC_PROJECT","NO_FITS_SOURCE","r","d"*64,"c"*64)
+            fake_data={"project_id":"SYNTHETIC_PROJECT",
+                       "source":"NO_FITS_SOURCE","band":"r"}
+            fake_draft=SimpleNamespace(digest="d"*64)
+            fake_mask={"catalog_sha256":"c"*64}
+            for key,label,stage in (
+                    ("sky","background",widget.sky_stage),
+                    ("aperture","aperture",widget.aperture_stage)):
+                prior_snapshot=stage._snapshot
+                try:
+                    if key=="sky":
+                        snap=(identity,fake_data,fake_draft,fake_mask)
+                    else:
+                        snap=(identity,fake_data,fake_draft,fake_mask,
+                              ("dr11","south","synthetic"),
+                              (40.096208,1.22925),None,None)
+                    stage._snapshot=lambda snapshot=snap:snapshot
+                    stage._last_failure={
+                        "status":"WORKER_FAILED_CLOSED",
+                        "error_type":"FileNotFoundError",
+                    }
+                    stage._failure_identity=identity
+                    widget.restore_navigation(stage=key,band="r")
+                    stage.status.setText(
+                        "SIMULATED ERROR · Original FITS missing. "
+                        "Check Stage 02 source and retry. Science HOLD.")
+                    for width,height in ((760,650),(1366,768)):
+                        widget.resize(width,height)
+                        widget.show()
+                        app.processEvents()
+                        if (widget.width()!=width or widget.height()!=height):
+                            raise RuntimeError(
+                                f"Simulated {key} failure window refused "
+                                f"{width}x{height}: {widget.size()}")
+                        if (not stage.copy_error_btn.isVisible()
+                                or not stage.run_btn.isVisible()
+                                or stage.copy_btn.isVisible()):
+                            raise AssertionError(
+                                f"Failure action state wrong in {key}")
+                        for control in (stage.run_btn,stage.copy_error_btn):
+                            center=control.mapTo(widget,control.rect().center())
+                            if not widget.rect().contains(center):
+                                raise AssertionError(
+                                    f"Failure button obscured in {key}: "
+                                    f"{control.objectName()} {width}x{height}")
+                        capture=widget.grab()
+                        dest=output_dir / (
+                            f"photometry_{label}_SIMULATED_FAILURE_"
+                            f"font16_{width}x{height}.png")
+                        if capture.isNull() or not capture.save(str(dest),"PNG"):
+                            raise RuntimeError(f"Cannot capture {dest}")
+                        manifest.append({
+                            "path":str(dest),
+                            "state":f"stage_{key}_synthetic_failure",
+                            "fixture":"SIMULATED_ERROR_NO_FITS_NO_WORKER",
+                            "scientific_status":"UNADOPTED_DIAGNOSTIC_ONLY",
+                            "source_fits_read":False,
+                            "worker_run":False,
+                            "font_points":16,
+                            "real_windows_dpi_verified":False,
+                            "visual_reviewed":False,
+                            "size_logical":[width,height],
+                            "size_image":[capture.width(),capture.height()],
+                        })
+                finally:
+                    del stage.__dict__["_snapshot"]
+                    stage._last_failure=None
+                    stage._failure_identity=None
+                    stage.refresh_context()
+            widget.restore_navigation(stage="scene",band="r")
+            scene=widget.scene_editor
+            scene._fits_load_failure={
+                "status":"FITS_LOAD_FAILED_CLOSED",
+                "error_type":"FileNotFoundError","band":"r"}
+            scene.load_btn.setText("Retry FITS load")
+            scene.copy_error_btn.show()
+            scene.status.setText(
+                "SIMULATED ERROR · Original FITS missing. Check the current "
+                "quartet before retrying. Draft unchanged.")
+            for width,height in ((760,650),(1366,768)):
+                widget.resize(width,height)
+                widget.show()
+                app.processEvents()
+                if (widget.width()!=width or widget.height()!=height):
+                    raise RuntimeError(
+                        f"Simulated Scene window refused {width}x{height}: "
+                        f"{widget.size()}")
+                if not scene.copy_error_btn.isVisible():
+                    raise AssertionError("Scene error report action hidden")
+                focus=scene.copy_error_btn.mapTo(
+                    widget,scene.copy_error_btn.rect().center())
+                if not widget.rect().contains(focus):
+                    raise AssertionError(
+                        f"Scene failure action outside window at {width}x{height}")
+                # Save and Copy QA remain next to each other; the error
+                # action must occupy the second footer row.
+                if (scene.copy_error_btn.y() <
+                        scene.copy_scene_qa_btn.y()
+                        +scene.copy_scene_qa_btn.height()-2):
+                    raise AssertionError(
+                        "Scene error action overlaps Save/QA footer")
+                capture=widget.grab()
+                dest=output_dir / (
+                    f"photometry_scene_SIMULATED_FAILURE_"
+                    f"font16_{width}x{height}.png")
+                if capture.isNull() or not capture.save(str(dest),"PNG"):
+                    raise RuntimeError(f"Cannot capture {dest}")
+                manifest.append({
+                    "path":str(dest),
+                    "state":"stage02_simulated_fits_failure",
+                    "fixture":"SIMULATED_ERROR_NO_FITS_NO_WORKER",
+                    "scientific_status":"UNADOPTED_DIAGNOSTIC_ONLY",
+                    "source_fits_read":False,
+                    "worker_run":False,
+                    "font_points":16,
+                    "real_windows_dpi_verified":False,
+                    "visual_reviewed":False,
+                    "size_logical":[width,height],
+                    "size_image":[capture.width(),capture.height()],
+                })
+            scene._fits_load_failure=None
+            scene.copy_error_btn.hide()
+            scene.load_btn.setText("Load original FITS")
             widget.setFont(app.font())
             # Stage 02 task navigation: metadata only, with no FITS read,
             # no automatic SGA network access or scientific inference.
