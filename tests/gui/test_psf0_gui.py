@@ -520,7 +520,13 @@ def test_photometry_fills_normal_desktop_and_hides_empty_psf_footprint(
         QBoxLayout.LeftToRight, QBoxLayout.TopToBottom)
     w.resize(760, 750)
     qtbot.wait(50)
-    assert column.width() <= 760
+    assert column.width() <= 760, (
+        f"window={w.width()} min={w.minimumSizeHint().width()} "
+        f"tabs={w.stage_tabs.width()}/{w.stage_tabs.minimumSizeHint().width()} "
+        f"scene={w.scene_editor.minimumSizeHint().width()} "
+        f"panel={w.psf0_panels['g'].minimumSizeHint().width()} "
+        f"viewport={scroll.viewport().width()} "
+        f"column_min={column.minimumSizeHint().width()}")
     assert scroll.horizontalScrollBar().maximum() == 0
     assert w.psf0_panels["g"]._science_row.direction() == (
         QBoxLayout.TopToBottom)

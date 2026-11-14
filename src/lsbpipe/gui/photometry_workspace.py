@@ -105,7 +105,15 @@ class PhotometryWorkspace(QWidget):
         # Photometry Workspace, not eight non-executable roadmap cards.
         self.stage_tabs = QTabWidget(self)
         self.stage_tabs.setObjectName("photometry_science_stage_tabs")
+        # Qt's default tab widget minimumSizeHint is the maximum of ALL
+        # child stages, including inactive technical pages. Do not let an
+        # inactive stage force the entire research workspace to 1049 px.
+        # The active stage has its own viewport/scrolling and reflow.
+        self.stage_tabs.setMinimumWidth(0)
+        self.stage_tabs.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Expanding)
         psf_stage = QWidget(self.stage_tabs)
+        psf_stage.setMinimumWidth(0)
         psf_stage.setObjectName("photometry_psf_stage")
         psf_stage_layout = QVBoxLayout(psf_stage)
         psf_stage_layout.setContentsMargins(0, 0, 0, 0)
@@ -125,6 +133,8 @@ class PhotometryWorkspace(QWidget):
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
         center_scroll.setMinimumWidth(0)
+        center_scroll.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Expanding)
         center_scroll.setWidgetResizable(True)
         center_scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         central = QWidget()
