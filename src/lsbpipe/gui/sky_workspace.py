@@ -127,9 +127,18 @@ class SkyWorkspace(QWidget):
         self.report_toggle.hide()
         self.readout.hide()
 
+    def _scene_tabs(self):
+        # QTabWidget reparents each stage to its internal QStackedWidget.
+        # Walk actual Qt ownership, rather than assuming immediate parent.
+        widget = self.parentWidget()
+        while widget is not None and not isinstance(widget, QTabWidget):
+            widget = widget.parentWidget()
+        return widget if (
+            widget is not None and widget.indexOf(self._scene) >= 0) else None
+
     def _open_scene(self):
-        tabs = self.parentWidget()
-        if isinstance(tabs, QTabWidget) and tabs.indexOf(self._scene) >= 0:
+        tabs = self._scene_tabs()
+        if tabs is not None:
             tabs.setCurrentWidget(self._scene)
 
     def _snapshot(self):
@@ -205,10 +214,8 @@ class SkyWorkspace(QWidget):
             self.status.setText("Stale input · evaluate again · science HOLD.")
             self._reset_report_visibility()
         ready = snap is not None
-        tabs = self.parentWidget()
         self.open_scene_btn.setVisible(
-            not ready and isinstance(tabs, QTabWidget)
-            and tabs.indexOf(self._scene) >= 0)
+            not ready and self._scene_tabs() is not None)
         self.run_btn.setVisible(ready)
         self.copy_btn.setVisible(self._result is not None)
         self.run_btn.setEnabled(ready and self._future is None)
