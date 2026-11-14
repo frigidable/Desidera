@@ -132,7 +132,12 @@ def test_archive_screening_controls_fit_narrow_dock_without_horizontal_scroll(
         x = control.mapTo(viewport, QPoint(0, 0)).x()
         assert 0 <= x
         assert x + control.width() <= viewport.width()
-    assert w.data_scroll.horizontalScrollBar().maximum() == 0
+    assert w.data_scroll.horizontalScrollBar().maximum() == 0, (
+        "Archive options still overflow the dock: "
+        f"content={w.data_scroll.widget().width()}px; "
+        f"viewport={viewport.width()}px; "
+        f"profile={w.profile.width()}px; "
+        f"brick_filter={w.brick_filter.width()}px")
     assert w.download_btn.isVisible()
 
 

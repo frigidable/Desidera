@@ -237,6 +237,14 @@ def test_http_status_abbreviations_keep_original_evidence(offline_explorer):
     assert first["brick"] in item.text()
     assert first["release"].upper() in item.text()
     assert first["kind"] in item.text()
+    expected_kind = (
+        f"{first['kind']}-{first['band']}"
+        if first["band"] else first["kind"])
+    assert item.text().startswith(expected_kind + " · ")
+    check = window.files.cellWidget(row, 0).findChild(QCheckBox)
+    assert expected_kind in check.accessibleName()
+    assert first["brick"] in check.accessibleName()
+    assert "download" in check.accessibleName()
     assert first["relative_path"] in item.toolTip()
     assert window.files.item(row, 2).text() == "?"
     r = {first["relative_path"]: {

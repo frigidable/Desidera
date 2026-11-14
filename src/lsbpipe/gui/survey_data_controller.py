@@ -51,7 +51,14 @@ class SurveyDataController(QObject):
         entries = w.manifest["products"] if w.manifest else []
         w.files.setRowCount(len(entries))
         for row, entry in enumerate(entries):
+            suffix = f"{entry['kind']}-{entry['band']}" if entry["band"] else entry["kind"]
+            provenance = (
+                f"{entry['release'].upper()} {entry['region']} {entry['brick']}")
             check = QCheckBox()
+            check.setAccessibleName(
+                f"Select {suffix} for download from {provenance}")
+            check.setToolTip(
+                f"{suffix} · {provenance}. Choose this original archive file.")
             check.setChecked(
                 checked_paths is not None
                 and entry["relative_path"] in checked_paths)
@@ -61,10 +68,9 @@ class SurveyDataController(QObject):
             layout.setContentsMargins(1, 0, 1, 0)
             layout.addWidget(check, alignment=Qt.AlignCenter)
             w.files.setCellWidget(row, 0, holder)
-            suffix = f"{entry['kind']}-{entry['band']}" if entry["band"] else entry["kind"]
-            name = (
-                f"{entry['release'].upper()} {entry['region']} "
-                f"{entry['brick']} · {suffix}")
+            # The narrow inspector must show the FILE TYPE first;
+            # the full release/region/brick and URL stay in the tooltip.
+            name = f"{suffix} · {provenance}"
             detail = entry["relative_path"] + chr(10) + entry["url"]
             values = (
                 (1, name),

@@ -403,6 +403,9 @@ class SurveyExplorer(QMainWindow):
         self.profile.setSizeAdjustPolicy(
             QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.profile.setMinimumContentsLength(13)
+        # Product names can be long; fit the dock, not the longest item.
+        self.profile.setMinimumWidth(0)
+        self.profile.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.profile.currentIndexChanged.connect(self._apply_profile)
         advanced_files_layout.addWidget(self.profile)
         self.verify_btn = QPushButton("Check selected URLs")
@@ -412,10 +415,14 @@ class SurveyExplorer(QMainWindow):
         filters = QHBoxLayout()
         self.brick_filter = QComboBox()
         self.brick_filter.addItem("All bricks")
+        self.brick_filter.setMinimumWidth(0)
+        self.brick_filter.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.brick_filter.currentIndexChanged.connect(self._filter_products)
         filters.addWidget(self.brick_filter, 2)
         self.band_filter = QComboBox()
         self.band_filter.addItems(["All bands", "g", "r", "i", "z"])
+        self.band_filter.setMinimumWidth(0)
+        self.band_filter.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.band_filter.currentIndexChanged.connect(self._filter_products)
         filters.addWidget(self.band_filter, 1)
         advanced_files_layout.addLayout(filters)
@@ -423,6 +430,8 @@ class SurveyExplorer(QMainWindow):
         self.kind_filter.addItems(
             ["All products", "image", "invvar", "maskbits", "nexp",
              "tractor", "psfsize", "depth", "galdepth", "model"])
+        self.kind_filter.setMinimumWidth(0)
+        self.kind_filter.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.kind_filter.currentIndexChanged.connect(self._filter_products)
         advanced_files_layout.addWidget(self.kind_filter)
 
