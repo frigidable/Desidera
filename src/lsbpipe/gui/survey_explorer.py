@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QInputDialog,
     QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget, QHeaderView, QDockWidget, QScrollArea, QSizePolicy,
-    QTabWidget)
+    QTabWidget, QToolButton, QPlainTextEdit)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
 
@@ -90,6 +90,17 @@ class _NoWebEngineSky(QLabel):
     def runJavaScript(self, _script, callback=None):
         if callback is not None:
             callback(None)
+
+
+class _FullStatusLabel(QLabel):
+    """Keep a complete accessible status while the compact footer may wrap."""
+    textUpdated = Signal(str)
+
+    def setText(self, text):
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+        self.textUpdated.emit(text)
 
 
 class SurveyExplorer(QMainWindow):
@@ -171,28 +182,32 @@ class SurveyExplorer(QMainWindow):
         panel.setSpacing(8)
         # Project navigation belongs above the coordinates card, not inside
         # the target parameters and scientific input controls.
-        self.back_to_projects = QPushButton("← All galaxy projects")
+        navigation_actions = QHBoxLayout()
+        navigation_actions.setSpacing(5)
+        self.back_to_projects = QPushButton("Projects")
         self.back_to_projects.setObjectName("workspace_back_to_projects")
         self.back_to_projects.setAccessibleName("Return to galaxy projects")
         self.back_to_projects.clicked.connect(self._go_back_to_projects)
         self.back_to_projects.setVisible(False)
-        panel.addWidget(self.back_to_projects)
-        self.dataset_manager_btn = QPushButton("Data Manager · local sources")
+        navigation_actions.addWidget(self.back_to_projects)
+        self.dataset_manager_btn = QPushButton("Sources")
         self.dataset_manager_btn.setObjectName("workspace_open_dataset_manager")
         self.dataset_manager_btn.setToolTip(
             "Inspect all local observational sources, bricks and filters "
             "before configuring scientific analysis. No network requests.")
         self.dataset_manager_btn.clicked.connect(self._open_dataset_manager)
         self.dataset_manager_btn.setVisible(False)
-        panel.addWidget(self.dataset_manager_btn)
-        self.photometry_btn = QPushButton("Photometry · PSF workspace")
+        self.dataset_manager_btn.setAccessibleName("Open local observational sources manager")
+        navigation_actions.addWidget(self.dataset_manager_btn)
+        self.photometry_btn = QPushButton("Photometry")
         self.photometry_btn.setObjectName("workspace_open_photometry")
         self.photometry_btn.setToolTip(
             "Open the separate scientific photometry screen for this galaxy. "
             "No measurements are performed or adopted by navigation.")
         self.photometry_btn.clicked.connect(self._open_photometry)
         self.photometry_btn.setVisible(False)
-        panel.addWidget(self.photometry_btn)
+        navigation_actions.addWidget(self.photometry_btn)
+        panel.addLayout(navigation_actions)
         self.workflow_stage = QLabel("01 / 03 · Target")
         self.workflow_stage.setObjectName("workflow_stage")
         self.workflow_stage.setStyleSheet(
@@ -230,15 +245,18 @@ class SurveyExplorer(QMainWindow):
             "Default units: arcmin; also accepts deg or arcsec. "
             "The outline is shown in the Legacy Viewer.")
 
-        for label, field in (
-            ("RA · degrees / hh:mm:ss", self.ra),
-            ("Dec · degrees / ±dd:mm:ss", self.dec),
-            ("Search area · side length (arcmin)", self.field_width),
-        ):
-            caption = QLabel(label)
-            caption.setBuddy(field)
-            target_form.addWidget(caption)
-            target_form.addWidget(field)
+        # Three compact form rows replace six stacked label/field rows.
+        # The complete coordinate conventions stay in accessible names,
+        # placeholders and tooltips, not in permanently repeated prose.
+        self.target_compact_form = QFormLayout()
+        self.target_compact_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.target_compact_form.setHorizontalSpacing(7)
+        self.target_compact_form.setVerticalSpacing(7)
+        self.target_compact_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.target_compact_form.addRow("RA", self.ra)
+        self.target_compact_form.addRow("Dec", self.dec)
+        self.target_compact_form.addRow("Field (arcmin)", self.field_width)
+        target_form.addLayout(self.target_compact_form)
 
         self.advanced_target = QWidget()
         self.advanced_target.setObjectName("target_advanced_options")
@@ -259,7 +277,9 @@ class SurveyExplorer(QMainWindow):
         for field in (self.ra, self.dec, self.field_width):
             field.textChanged.connect(self._target_edited)
 
-        target_form.addWidget(QLabel("Data releases · select before Find data"))
+        release_label = QLabel("Releases")
+        release_label.setToolTip("Choose the official survey releases before Find data")
+        target_form.addWidget(release_label)
         releases_container = QWidget()
         releases = QHBoxLayout(releases_container)
         releases.setContentsMargins(0, 0, 0, 0)
@@ -301,7 +321,7 @@ class SurveyExplorer(QMainWindow):
         self.project_status.setObjectName("local_project_status")
         self.project_status.setWordWrap(True)
         self.advanced_target_layout.addWidget(self.project_status)
-        self.target_options = QPushButton("More target options")
+        self.target_options = QPushButton("Target utilities")
         self.target_options.setProperty("disclosureAction", True)
         self.target_options.setObjectName("target_advanced_toggle")
         self.target_options.setCheckable(True)
@@ -324,7 +344,7 @@ class SurveyExplorer(QMainWindow):
         self.view_mode.currentIndexChanged.connect(self.show_viewer)
         viewer_controls.addWidget(self.view_mode, 2)
         self.advanced_target_layout.addLayout(viewer_controls)
-        self.data_toggle = QPushButton("02 · Data files")
+        self.data_toggle = QPushButton("Files / QA")
         self.data_toggle.setAccessibleName("Show or hide file selection and coverage")
         self.data_toggle.setToolTip(
             "Open the download and local FITS coverage workbench")
@@ -456,12 +476,14 @@ class SurveyExplorer(QMainWindow):
 
         # Advanced local FITS coverage parameters are available on demand;
         # they should not permanently hide the file table's rows.
-        self.qa_toggle = QPushButton("Coverage QA settings")
+        self.qa_toggle = QPushButton("Coverage QA settings", self.advanced_files)
+        self.qa_toggle.hide()
         self.qa_toggle.setCheckable(True)
         self.qa_toggle.setChecked(False)
         self.qa_toggle.setToolTip(
-            "Show circular source and sky-ring radii for local FITS diagnostics")
-        advanced_files_layout.addWidget(self.qa_toggle)
+            "Legacy control: coverage radii now appear directly under File options.")
+        # Keep this compatibility control available to integrations, but do
+        # not surface a redundant second disclosure in the active UI.
         self.qa_widget = QWidget()
         qa_layout = QVBoxLayout(self.qa_widget)
         qa_layout.setContentsMargins(0, 0, 0, 0)
@@ -495,8 +517,13 @@ class SurveyExplorer(QMainWindow):
             "Analyse downloaded IMAGE, INVVAR, NEXP and MASKBITS")
         self.qa_btn.clicked.connect(self.inspect_coverage)
         qa_layout.addWidget(self.qa_btn)
+        qa_caption = QLabel("Local FITS screening · arcsec")
+        qa_caption.setToolTip(
+            "Display-only circular source and sky-ring regions; "
+            "not adopted photometric apertures.")
+        advanced_files_layout.addWidget(qa_caption)
         advanced_files_layout.addWidget(self.qa_widget)
-        self.files_options = QPushButton("Advanced file filters and checks")
+        self.files_options = QPushButton("File options")
         self.files_options.setProperty("disclosureAction", True)
         self.files_options.setObjectName("archive_advanced_toggle")
         self.files_options.setCheckable(True)
@@ -510,8 +537,9 @@ class SurveyExplorer(QMainWindow):
         self.advanced_files.setVisible(False)
         # Anchor the short collapsed workbench at top of the inspector.
         data_panel.addStretch(1)
-        self.qa_toggle.toggled.connect(self.qa_widget.setVisible)
-        self.qa_widget.setVisible(False)
+        # Advanced file options contain the three explicit screening radii
+        # directly; no additional "Coverage QA settings" accordion.
+        self.qa_widget.setVisible(True)
 
         bottom = QHBoxLayout()
         self.save_btn = QPushButton("Save manifest")
@@ -584,11 +612,38 @@ class SurveyExplorer(QMainWindow):
         self.progress_widget.setLayout(progress_controls)
         panel.addWidget(self.progress_widget)
         self.progress_widget.setVisible(False)
-        self.message = QLabel("")
+        status_row = QHBoxLayout()
+        self.message = _FullStatusLabel("")
+        self.message.setObjectName("survey_task_status")
+        self.message.setAccessibleName("Current survey operation status")
         self.message.setWordWrap(True)
-        self.message.setStyleSheet("color: palette(text); font-size: 11px;")
-        self.message.setMaximumHeight(58)
-        panel.addWidget(self.message)
+        self.message.setStyleSheet("color: palette(text); font-size: 12px;")
+        self.message.setMaximumHeight(64)
+        status_row.addWidget(self.message, 1)
+        self.message_details_btn = QToolButton()
+        self.message_details_btn.setObjectName("survey_status_details_toggle")
+        self.message_details_btn.setText("Full status")
+        self.message_details_btn.setAccessibleName("Expand complete survey status message")
+        self.message_details_btn.setCheckable(True)
+        self.message_details_btn.setEnabled(False)
+        status_row.addWidget(self.message_details_btn, 0, Qt.AlignTop)
+        panel.addLayout(status_row)
+        self.full_message_box = QPlainTextEdit()
+        self.full_message_box.setObjectName("survey_full_status_text")
+        self.full_message_box.setAccessibleName("Complete selectable survey status message")
+        self.full_message_box.setReadOnly(True)
+        self.full_message_box.setMaximumHeight(130)
+        self.full_message_box.hide()
+        self.message_details_btn.toggled.connect(self.full_message_box.setVisible)
+        panel.addWidget(self.full_message_box)
+        self.message_copy_btn = QPushButton("Copy full status")
+        self.message_copy_btn.setObjectName("survey_copy_full_status")
+        self.message_copy_btn.setToolTip("Copy the entire current status message, including errors")
+        self.message_copy_btn.clicked.connect(self._copy_full_status)
+        self.message_copy_btn.hide()
+        self.message_details_btn.toggled.connect(self.message_copy_btn.setVisible)
+        panel.addWidget(self.message_copy_btn)
+        self.message.textUpdated.connect(self._status_text_updated)
 
         # A/B isolation for recurrent top-left ghost overlays on Windows.
         # This never changes the scientific data path or the user's FITS.
@@ -620,7 +675,7 @@ class SurveyExplorer(QMainWindow):
         self.preview_label.setAccessibleName("Remote image provenance warning")
         heading_row = QHBoxLayout()
         heading_row.addWidget(self.preview_label, 1)
-        self.band_compare_btn = QPushButton("Compare bands · g/r/i/z")
+        self.band_compare_btn = QPushButton("Compare bands")
         self.band_compare_btn.setObjectName("fits_open_band_comparison")
         self.band_compare_btn.setToolTip(
             "Compare original IMAGE in all locally available optical bands "
@@ -628,7 +683,7 @@ class SurveyExplorer(QMainWindow):
             "PSF matching or photometric color measurement.")
         self.band_compare_btn.clicked.connect(self._toggle_multiband)
         heading_row.addWidget(self.band_compare_btn)
-        self.comparison_btn = QPushButton("Inspect data quality · 4 maps")
+        self.comparison_btn = QPushButton("Quality maps")
         self.comparison_btn.setObjectName("fits_open_four_comparison")
         self.comparison_btn.setToolTip(
             "Interactive 2×2 quality viewer for ONE optical band. "
@@ -1656,7 +1711,7 @@ class SurveyExplorer(QMainWindow):
 
     def _drawer_visibility_changed(self, visible):
         self.data_toggle.setText(
-            "Hide files and coverage" if visible else "Files and coverage")
+            "Close files / QA" if visible else "Files / QA")
 
     def _refresh_workflow(self):
         """Presentation only; no auto-selection or science acceptance."""
@@ -1709,11 +1764,11 @@ class SurveyExplorer(QMainWindow):
         if photometry_active:
             self.workflow_stage.setText("03 / 04 · Photometry")
             self.workflow_hint.setText(
-                "Experimental PSF-0 preview available for saved Leo P FITS; "
-                "no sky, galaxy photometry or science adoption.")
+                "PSF-0, Scene and Masks, Background, Aperture. "
+                "Diagnostics only; no result is adopted for science.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
-            else "Data & diagnostics")
+            else "Files / QA")
 
     def _field(self):
         return self._target_controller.field()
@@ -1939,6 +1994,15 @@ class SurveyExplorer(QMainWindow):
             lines.extend(console[-12:] or ["No console messages captured"])
             QMessageBox.information(self, "Legacy Viewer status", chr(10).join(lines))
         self.sky.page().runJavaScript(probe, done)
+
+    def _status_text_updated(self, text):
+        self.full_message_box.setPlainText(text)
+        self.message_details_btn.setEnabled(bool(text))
+        if not text and self.message_details_btn.isChecked():
+            self.message_details_btn.setChecked(False)
+
+    def _copy_full_status(self):
+        QApplication.clipboard().setText(self.message.text())
 
     def _start(self, action, finished, on_error=None, *,
                operation_name="background"):

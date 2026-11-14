@@ -15,14 +15,14 @@ from .raster_cache import BoundedRasterCache
 from .display_transfer import display_range, transfer_settings
 from .quality_map import quality_classes, quality_summary
 
-from PySide6.QtCore import Qt, Signal, QPointF
+from PySide6.QtCore import Qt, Signal, QPointF, QRectF
 from PySide6.QtGui import (
     QImage, QPixmap, QColor, QPainter, QPainterPath, QPen,
 )
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox,
     QPushButton, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
-    QGraphicsPathItem, QSizePolicy, QLineEdit, QSplitter, QScrollArea,
+    QGraphicsPathItem, QGraphicsItem, QSizePolicy, QLineEdit, QSplitter, QScrollArea,
     QGroupBox, QToolButton, QFrame,
 )
 
@@ -34,6 +34,7 @@ from lsbpipe.survey import LEGACY_BITS, maskbits_to_uint
 
 class FITSGraphicsView(QGraphicsView):
     pointHovered = Signal(float, float)
+    keyboardPixelMoved = Signal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,18 +47,76 @@ class FITSGraphicsView(QGraphicsView):
         self.viewport().setMouseTracking(True)
         self.setBackgroundBrush(QColor(22, 26, 34))
         self._relative_zoom = 1.
+        self._keyboard_pixel = None
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def clear_keyboard_pixel(self):
+        self._keyboard_pixel = None
+
+    def keyPressEvent(self, event):
+        """Move one *display pixel* on the native FITS grid, not a scroll bar."""
+        steps = {
+            Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0),
+            Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1),
+        }
+        key = event.key()
+        if (key in steps and event.modifiers() in
+                (Qt.NoModifier, Qt.ShiftModifier) and self.scene() is not None):
+            rect = self.scene().sceneRect()
+            nx, ny = int(rect.width()), int(rect.height())
+            if nx > 0 and ny > 0:
+                x, y = self._keyboard_pixel or ((nx - 1) // 2, (ny - 1) // 2)
+                dx, dy = steps[key]
+                stride = 10 if event.modifiers() == Qt.ShiftModifier else 1
+                x = max(0, min(nx - 1, x + dx * stride))
+                y = max(0, min(ny - 1, y + dy * stride))
+                self._keyboard_pixel = (x, y)
+                self.ensureVisible(QRectF(x, y, 1, 1), 20, 20)
+                self.keyboardPixelMoved.emit(x + .5, y + .5)
+                event.accept()
+                return
+        elif key == Qt.Key_Escape and self._keyboard_pixel is not None:
+            self.clear_keyboard_pixel()
+            self.keyboardPixelMoved.emit(-1., -1.)
+            event.accept()
+            return
+        # The native FITS canvas must be fully usable without a mouse.
+        if event.modifiers() in (Qt.NoModifier, Qt.ShiftModifier):
+            if key in (Qt.Key_Plus, Qt.Key_Equal):
+                self.zoom_by(1.22)
+                event.accept()
+                return
+            if key in (Qt.Key_Minus, Qt.Key_Underscore):
+                self.zoom_by(1 / 1.22)
+                event.accept()
+                return
+            if key in (Qt.Key_0, Qt.Key_F):
+                self.fit_image()
+                event.accept()
+                return
+        super().keyPressEvent(event)
 
     def mouseMoveEvent(self, event):
         point = self.mapToScene(event.position().toPoint())
         self.pointHovered.emit(point.x(), point.y())
         super().mouseMoveEvent(event)
 
-    def wheelEvent(self, event):
-        factor = 1.22 if event.angleDelta().y() > 0 else (1 / 1.22)
+    def zoom_by(self, factor):
+        if self.scene() is None or self.scene().sceneRect().isEmpty():
+            return
         new_zoom = self._relative_zoom * factor
         if 0.20 <= new_zoom <= 24.:
             self._relative_zoom = new_zoom
             self.scale(factor, factor)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if not delta:
+            # Trackpad horizontal/zero-vertical motion must never zoom out.
+            super().wheelEvent(event)
+            return
+        # Keep precision trackpad motion proportional to its angle delta.
+        self.zoom_by(1.22 ** (delta / 120.))
         event.accept()
 
     def fit_image(self):
@@ -134,6 +193,7 @@ class FITSExplorer(QWidget):
         bar.addWidget(QLabel("Layer"))
         self.layer = QComboBox()
         self.layer.setObjectName("fits_layer_selector")
+        self.layer.setAccessibleName("Local FITS data layer")
         for name, kind in (
             ("IMAGE · nanomaggy", "image"),
             ("INVVAR · log weight", "invvar"),
@@ -145,11 +205,13 @@ class FITSExplorer(QWidget):
         bar.addWidget(self.layer)
         self.contrast = QComboBox()
         self.contrast.setObjectName("fits_contrast_selector")
+        self.contrast.setAccessibleName("FITS display stretch preset")
         self.contrast.addItem("Standard", "standard")
         self.contrast.addItem("Faint features", "faint")
         # Transfer controls are assembled below after both selectors exist.
         self.scaling = QComboBox()
         self.scaling.setObjectName("fits_scaling_selector")
+        self.scaling.setAccessibleName("FITS display intensity scaling")
         for name, key in (
                 ("Auto", "auto"), ("Linear", "linear"),
                 ("Asinh", "asinh"), ("Log10", "log")):
@@ -183,12 +245,14 @@ class FITSExplorer(QWidget):
         scale_row.addWidget(QLabel("Min"))
         self.vmin = QLineEdit()
         self.vmin.setObjectName("fits_display_vmin")
+        self.vmin.setAccessibleName("Minimum FITS display value in native units")
         self.vmin.setPlaceholderText("auto")
         self.vmin.setToolTip("Lower display limit in native FITS units")
         scale_row.addWidget(self.vmin, 1)
         scale_row.addWidget(QLabel("Max"))
         self.vmax = QLineEdit()
         self.vmax.setObjectName("fits_display_vmax")
+        self.vmax.setAccessibleName("Maximum FITS display value in native units")
         self.vmax.setPlaceholderText("auto")
         self.vmax.setToolTip("Upper display limit in native FITS units")
         scale_row.addWidget(self.vmax, 1)
@@ -205,6 +269,7 @@ class FITSExplorer(QWidget):
         layout.addLayout(range_actions)
         self.range_info = QLabel("Display limits: automatic · native units")
         self.range_info.setObjectName("fits_display_range_info")
+        self.range_info.setAccessibleName("Current displayed FITS intensity range")
         self.range_info.setWordWrap(True)
         self.scale_bar = QLabel()
         self.scale_bar.setObjectName("fits_numeric_colorbar")
@@ -236,10 +301,13 @@ class FITSExplorer(QWidget):
         layout.addWidget(self.flags["OUTLINES"])
         self.overlay_toggle = QToolButton()
         self.overlay_toggle.setObjectName("fits_toggle_mask_overlays")
-        self.overlay_toggle.setText("Mask overlays")
+        self.overlay_toggle.setText("Display settings and provenance")
         self.overlay_toggle.setCheckable(True)
         self.overlay_toggle.setChecked(False)
         self.overlay_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.overlay_toggle.setToolTip(
+            "Edit display-only mask overlays, inspect native range, "
+            "provenance, render status and the full mask legend.")
         self.overlay_toggle.setArrowType(Qt.RightArrow)
         self.overlay_toggle.toggled.connect(
             lambda expanded: self.overlay_toggle.setArrowType(
@@ -255,6 +323,13 @@ class FITSExplorer(QWidget):
         self.overlay_toggle.toggled.connect(self.overlay_panel.setVisible)
         layout.addWidget(self.overlay_panel)
         self.overlay_panel.setVisible(False)
+        # Always expose active overlay types in words, not only by hue.
+        self.overlay_summary = QLabel("")
+        self.overlay_summary.setObjectName("fits_active_mask_summary")
+        self.overlay_summary.setAccessibleName(
+            "Currently enabled FITS display mask overlays")
+        self.overlay_summary.setWordWrap(True)
+        layout.addWidget(self.overlay_summary)
         self.color_legend = QLabel(
             "Red: SATUR  ·  Orange: ALLMASK  ·  Purple: BRIGHT  ·  "
             "Amber: MEDIUM  ·  Blue: GALAXY  ·  Magenta: no data. "
@@ -270,9 +345,10 @@ class FITSExplorer(QWidget):
         self.render_status = QLabel("Pixel-accurate FITS display · no data loaded.")
         self.render_status.setObjectName("fits_render_status")
         self.render_status.setWordWrap(True)
-        self.detail_toggle = QToolButton()
+        self.detail_toggle = QToolButton(self)
+        self.detail_toggle.hide()
         self.detail_toggle.setObjectName("fits_toggle_diagnostics")
-        self.detail_toggle.setText("Details & provenance")
+        self.detail_toggle.setText("Details and provenance")
         self.detail_toggle.setCheckable(True)
         self.detail_toggle.setChecked(False)
         self.detail_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
@@ -280,7 +356,9 @@ class FITSExplorer(QWidget):
         self.detail_toggle.toggled.connect(
             lambda expanded: self.detail_toggle.setArrowType(
                 Qt.DownArrow if expanded else Qt.RightArrow))
-        layout.addWidget(self.detail_toggle)
+        # Compatibility handle for callers; one visible disclosure now
+        # opens both mask controls and full metadata.
+        self.overlay_toggle.toggled.connect(self.detail_toggle.setChecked)
         self.detail_panel = QWidget()
         detail_layout = QVBoxLayout(self.detail_panel)
         detail_layout.setContentsMargins(0, 0, 0, 0)
@@ -295,6 +373,15 @@ class FITSExplorer(QWidget):
         self.scene = QGraphicsScene(self)
         self.view = FITSGraphicsView()
         self.view.setObjectName("fits_graphics_view")
+        self.view.setAccessibleName("Interactive local FITS pixel image")
+        self.view.setAccessibleDescription(
+            "Display only. Focus the image and use arrow keys to inspect "
+            "native FITS pixels; Shift+arrow moves ten pixels, Escape clears "
+            "the cursor. Plus/minus zoom, 0 or F fits the image. Mouse hover "
+            "also inspects pixels. No science data "
+            "are modified.")
+        self.view.setStyleSheet(
+            "QGraphicsView:focus {border: 2px solid palette(highlight);}")
         self.view.setScene(self.scene)
         self.view.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -308,16 +395,36 @@ class FITSExplorer(QWidget):
         self.pixel_info = QLabel(
             "Hover over the image to inspect ICRS coordinates and raw FITS values.")
         self.pixel_info.setObjectName("fits_pixel_readout")
-        self.pixel_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.pixel_info.setAccessibleName("Original FITS pixel values and ICRS coordinates")
+        self.pixel_info.setTextInteractionFlags(
+            Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         self.pixel_info.setWordWrap(True)
-        self.pixel_info.setStyleSheet("font-size: 11px;")
+        self.pixel_info.setStyleSheet("font-size: 12px;")
         image_layout.addWidget(self.pixel_info)
+        self.pixel_quality = QLabel(
+            "Pixel quality: inspect a native pixel; diagnostic only.")
+        self.pixel_quality.setObjectName("fits_pixel_quality_text")
+        self.pixel_quality.setAccessibleName(
+            "Diagnostic per-pixel quality class, not an adopted mask")
+        self.pixel_quality.setTextInteractionFlags(
+            Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        self.pixel_quality.setWordWrap(True)
+        self.pixel_quality.setStyleSheet("font-size: 12px;")
+        image_layout.addWidget(self.pixel_quality)
+        self.copy_pixel_btn = QPushButton("Copy pixel values")
+        self.copy_pixel_btn.setObjectName("fits_copy_pixel_readout")
+        self.copy_pixel_btn.setAccessibleName("Copy inspected original FITS pixel values")
+        self.copy_pixel_btn.setToolTip(
+            "Copy the current displayed ICRS and raw pixel readout. "
+            "No FITS or analysis product is changed.")
+        self.copy_pixel_btn.setEnabled(False)
+        self.copy_pixel_btn.clicked.connect(self._copy_pixel_readout)
+        image_layout.addWidget(self.copy_pixel_btn, 0, Qt.AlignRight)
 
         self.provenance = QLabel(
             "LOCAL ORIGINAL FITS · DISPLAY ONLY · DIAGNOSTIC_NOT_ADOPTED")
         self.provenance.setObjectName("fits_science_status")
-        self.provenance.setStyleSheet(
-            "color: palette(mid); font-size: 11px;")
+        self.provenance.setStyleSheet("font-size: 12px;")
         detail_layout.addWidget(self.provenance)
         self.base_item = QGraphicsPixmapItem()
         self.base_item.setZValue(0)
@@ -327,6 +434,32 @@ class FITSExplorer(QWidget):
         self.overlay_item.setTransformationMode(Qt.FastTransformation)
         self.scene.addItem(self.base_item)
         self.scene.addItem(self.overlay_item)
+        # Fixed-size visible crosshair; graphics item is UI-only, not a FITS layer.
+        cross = QPainterPath()
+        for a, b, c, d in ((-11, 0, -4, 0), (4, 0, 11, 0),
+                           (0, -11, 0, -4), (0, 4, 0, 11)):
+            cross.moveTo(a, b)
+            cross.lineTo(c, d)
+        self.keyboard_cursor_shadow = QGraphicsPathItem(cross)
+        dark_pen = QPen(QColor("#000000"), 5)
+        dark_pen.setCosmetic(True)
+        self.keyboard_cursor_shadow.setPen(dark_pen)
+        self.keyboard_cursor_shadow.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.keyboard_cursor_shadow.setAcceptedMouseButtons(Qt.NoButton)
+        self.keyboard_cursor_shadow.setZValue(10)
+        self.keyboard_cursor_shadow.hide()
+        self.scene.addItem(self.keyboard_cursor_shadow)
+        self.keyboard_cursor = QGraphicsPathItem(cross)
+        pen = QPen(QColor("#FFFFFF"), 2)
+        pen.setCosmetic(True)
+        self.keyboard_cursor.setPen(pen)
+        self.keyboard_cursor.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.keyboard_cursor.setAcceptedMouseButtons(Qt.NoButton)
+        self.keyboard_cursor.setZValue(11)
+        self.keyboard_cursor.hide()
+        self.scene.addItem(self.keyboard_cursor)
 
         self.layer.currentIndexChanged.connect(self._layer_changed)
         self.contrast.currentIndexChanged.connect(self._show_layer)
@@ -335,7 +468,54 @@ class FITSExplorer(QWidget):
             self.flags[key].toggled.connect(self._show_overlay)
         self.smooth.toggled.connect(self._set_smooth_preview)
         self.flags["OUTLINES"].toggled.connect(self._toggle_outlines)
-        self.view.pointHovered.connect(self.inspect_pixel)
+        self.view.pointHovered.connect(self._hover_inspect_pixel)
+        self.view.keyboardPixelMoved.connect(self._keyboard_inspect_pixel)
+        self._update_overlay_summary()
+
+    def _update_overlay_summary(self):
+        if self.layer.currentData() == "quality":
+            msg = ("QUALITY displays its own categorical map; mask overlays "
+                   "are suppressed. Read the pixel quality below the image.")
+        else:
+            enabled = [key for key in (
+                "SATUR", "ALLMASK", "BRIGHT", "MEDIUM",
+                "GALAXY", "INVALID") if self.flags[key].isChecked()]
+            msg = ("Active display masks: " + (", ".join(enabled) or "none")
+                   + ". Visual only; masks may overlap. "
+                   "Read exact MASKBITS and pixel quality below the image.")
+        self.overlay_summary.setToolTip(msg)
+        if self.layer.currentData() == "quality":
+            self.overlay_summary.setText(
+                "QUALITY categories · mask overlays suppressed · diagnostic")
+        else:
+            enabled_names = [key for key in (
+                "SATUR", "ALLMASK", "BRIGHT", "MEDIUM",
+                "GALAXY", "INVALID") if self.flags[key].isChecked()]
+            self.overlay_summary.setText(
+                "Masks: " + (", ".join(enabled_names) or "none")
+                + " · display only")
+
+    def _hover_inspect_pixel(self, x_scene, y_scene):
+        self.view.clear_keyboard_pixel()
+        self.keyboard_cursor.hide()
+        self.keyboard_cursor_shadow.hide()
+        self.inspect_pixel(x_scene, y_scene)
+
+    def _keyboard_inspect_pixel(self, x_scene, y_scene):
+        if x_scene < 0 or y_scene < 0 or self._dataset is None:
+            self.keyboard_cursor.hide()
+            self.keyboard_cursor_shadow.hide()
+            return
+        self.keyboard_cursor.setPos(x_scene, y_scene)
+        self.keyboard_cursor_shadow.setPos(x_scene, y_scene)
+        self.keyboard_cursor.show()
+        self.keyboard_cursor_shadow.show()
+        self.inspect_pixel(x_scene, y_scene)
+
+    def _copy_pixel_readout(self):
+        if self._dataset is not None and self.copy_pixel_btn.isEnabled():
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(self.pixel_info.text())
 
     def clear_data(self):
         self._render_generation += 1
@@ -346,6 +526,11 @@ class FITSExplorer(QWidget):
         # A running NumPy render is allowed to finish; its generation
         # token makes it impossible to display on a changed FITS dataset.
         self._dataset = None
+        self.view.clear_keyboard_pixel()
+        self.keyboard_cursor.hide()
+        self.keyboard_cursor_shadow.hide()
+        self.copy_pixel_btn.setEnabled(False)
+        self.pixel_quality.setText("Pixel quality: no native FITS loaded.")
         self.base_item.setPixmap(QPixmap())
         self.overlay_item.setPixmap(QPixmap())
         for item in self._overlays:
@@ -379,10 +564,13 @@ class FITSExplorer(QWidget):
                 "viewer limit; select a narrower field. Tiled mode is pending.")
         self.clear_data()
         self._dataset = dataset
+        self.pixel_quality.setText(
+            "Pixel quality: inspect a native pixel; diagnostic only.")
         self.pixel_info.setText(
-            "Hover over the image for ICRS and original FITS pixel values.")
+            "Hover over the image or focus it and use arrows for original FITS values.")
         self.viewport_hint.setText(
-            "Wheel to zoom · drag to pan · hover for original FITS values")
+            "Wheel or +/-: zoom · 0 or F: fit · drag: pan · arrows: inspect · "
+            "Shift+arrows: 10 pixels · Esc: clear cursor")
         ny, nx = shape
         self.scene.setSceneRect(0, 0, nx, ny)
         self.context.setText(
@@ -409,6 +597,7 @@ class FITSExplorer(QWidget):
         return QPixmap.fromImage(image)
 
     def _layer_changed(self, *_):
+        self._update_overlay_summary()
         kind = self.layer.currentData()
         numeric = kind in ("image", "invvar", "nexp")
         self.contrast.setEnabled(kind == "image")
@@ -549,6 +738,7 @@ class FITSExplorer(QWidget):
         self.overlay_item.setTransformationMode(mode)
 
     def _show_overlay(self, *_):
+        self._update_overlay_summary()
         self._request_render()
 
     def _request_render(self):
@@ -750,6 +940,9 @@ class FITSExplorer(QWidget):
             x_scene, y_scene, self._dataset["pixel_shape"])
         if pixel is None:
             self.pixel_info.setText("Outside the original FITS cutout.")
+            self.pixel_quality.setText(
+                "Pixel quality: outside original FITS; no sample.")
+            self.copy_pixel_btn.setEnabled(False)
             return
         x, y = pixel
         data = self._dataset["data"]
@@ -760,6 +953,23 @@ class FITSExplorer(QWidget):
             if bits & (1 << number)
         ]
         flags = ", ".join(labels) if labels else "none"
+        # Reuse the exact established QUALITY classification on a 1x1
+        # native slice. This is a display diagnostic, never an adopted mask.
+        sample = {name: values[y:y+1, x:x+1]
+                  for name, values in data.items()
+                  if name in ("image", "invvar", "nexp", "maskbits")}
+        category = int(quality_classes(sample, self._dataset["band"])[0, 0])
+        category_text = (
+            "no MASKBITS flags and numerically usable",
+            "other MASKBITS flags; not an automatic rejection",
+            "SATUR in this band; instrumental caution",
+            "ALLMASK in this band; instrumental caution",
+            "numerically unusable (IMAGE, INVVAR or NEXP)",
+        )[category]
+        self.pixel_quality.setText(
+            f"QUALITY class {category}: {category_text}. "
+            "Display diagnostic, not an adopted mask.")
+        self.copy_pixel_btn.setEnabled(True)
         self.pixel_info.setText(
             f"Pixel ({x}, {y})  ·  ICRS {ra:.7f}°, {dec:+.7f}°   "
             f"IMAGE {float(data['image'][y,x]):.5g} nanomaggy   "

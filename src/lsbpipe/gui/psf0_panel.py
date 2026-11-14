@@ -79,6 +79,9 @@ class PSF0Panel(QGroupBox):
             raise ValueError("Unsupported PSF-0 fixed band")
         super().__init__("PSF reconstruction", parent)
         self.fixed_band = fixed_band
+        # A standalone PSF inspector with fixed_band must retain its
+        # visual evidence even without an object-bound Photometry tab.
+        self._workspace_band = fixed_band is not None and parent is not None
         self._fwhm_manually_edited = False
         self._latest_seeing_payload = None
         self._last_reported_payload = None
@@ -130,7 +133,7 @@ class PSF0Panel(QGroupBox):
         self._science_row.addWidget(self._profile_card, 5, Qt.AlignTop)
         self._science_row.addWidget(self._result_column, 3, Qt.AlignTop)
         self._work_columns.addLayout(self._science_row)
-        self._controls_column = QGroupBox("PSF reconstruction · settings", self)
+        self._controls_column = QGroupBox("Setup", self)
         self._controls_column.setObjectName("psf0_controls_column")
         controls = QVBoxLayout(self._controls_column)
         controls.setContentsMargins(10, 12, 10, 10)
@@ -346,13 +349,16 @@ class PSF0Panel(QGroupBox):
         self._result_heading.setObjectName("psf0_result_heading")
         self._result_heading.setWordWrap(True)
         result_layout.addWidget(self._result_heading)
+        # The workspace heading already states non-adoption; avoid
+        # repeating the same warning immediately under "PSF quality".
+        self._result_heading.hide()
         self.status = QLabel(
-            "Open saved Leo P project; source bands have not been checked.")
+            "Select a galaxy project and native FITS source to inspect PSF-0.")
         self.status.setObjectName("psf0_status")
         self.status.setWordWrap(True)
         result_layout.addWidget(self.status)
 
-        self.summary = QLabel("No ePSF result. No stellar sample has been verified.")
+        self.summary = QLabel("No fitted PSF yet.")
         self.summary.setObjectName("psf0_summary")
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -541,30 +547,34 @@ class PSF0Panel(QGroupBox):
         self.advanced_details.setVisible(
             self._research_mode and self.advanced_toggle.isChecked())
         self._update_mode_context()
+        self._update_buttons()
 
     def _update_mode_context(self):
         if self._research_mode:
+            scope = ("Full P15–P20 research audit SELECTED."
+                     if self.extended_qa.isChecked()
+                     else "Standard core + holdout QA SELECTED.")
             self.mode_context.setText(
-                "Advanced methods available. The full original-FITS and "
-                "star QA is preserved; science status: NOT ADOPTED. "
-                + ("Full P15–P20 research audit SELECTED."
-                   if self.extended_qa.isChecked()
-                   else "Standard core + holdout QA SELECTED."))
+                "Advanced methods available · " + scope + " NOT ADOPTED")
         else:
             policy = self.catalog_policy.currentData()
             experiment = self.experiment.currentData()
             altered = (policy != "gaia_strict" or
                        experiment != "outer_sky_isolation_footprint")
-            method = ("Non-default experimental configuration is active. "
-                      if altered else "Gaia/Tractor stars · FWHM-scaled sky. ")
+            method = ("Non-default experimental configuration. "
+                      if altered else "Gaia/Tractor · ")
             qa_scope = ("Full P15–P20 research audit ENABLED. "
                         if self.extended_qa.isChecked() else
                         "Core + holdout QA only. ")
             self.mode_context.setText(
                 method + qa_scope +
-                f"Target protected within {self.protection.value():.1f} arcsec. "
-                "Empirical PSF is a diagnostic until validated; original FITS "
-                "remain unchanged.")
+                f"Target protected: {self.protection.value():.1f} arcsec. "
+                "NOT ADOPTED.")
+        self.mode_context.setToolTip(
+            "Original FITS remain unchanged. PSF-0 fitting is experimental, "
+            "not a validated wide-wing or calibrated science PSF. "
+            "Actual recipes, star identities and independent holdouts "
+            "are preserved in complete QA.")
 
     def overview_state(self):
         """Short, honest status for the g/r/i/z tab strip."""
@@ -842,6 +852,21 @@ class PSF0Panel(QGroupBox):
         self.auto_fwhm_btn.setEnabled(eligible and not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
         self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)
+        # In the object-bound Guided workspace, do not allocate three
+        # oversized placeholder frames to a band with no native quartet.
+        # A standalone review or explicit Advanced mode retains all cards.
+        show_cards = (
+            not self._workspace_band or self._research_mode or eligible
+            or self._preview is not None or self._qa_payload is not None)
+        self._model_card.setVisible(show_cards)
+        self._profile_card.setVisible(show_cards)
+        self.summary.setVisible(
+            show_cards or self._qa_payload is not None)
+        evidence_available = (
+            self._research_mode or self._qa_payload is not None)
+        self.inspection_toggle.setVisible(evidence_available)
+        self.inspection_details.setVisible(
+            evidence_available and self.inspection_toggle.isChecked())
         self.overviewChanged.emit()
 
     def set_busy(self, state: bool, message: str = ""):

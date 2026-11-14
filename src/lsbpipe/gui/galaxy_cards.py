@@ -94,6 +94,7 @@ class GalaxyDetailCard(QFrame):
         image_layout.setContentsMargins(0, 0, 0, 0)
         self.preview = QLabel("No preview")
         self.preview.setObjectName("galaxy_card_preview")
+        self.preview.setAccessibleName("Display-only galaxy image preview")
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setTextFormat(Qt.PlainText)
         self.preview.setWordWrap(True)
@@ -163,6 +164,7 @@ class GalaxyDetailCard(QFrame):
 
         observations = QLabel("OBSERVATION DATA")
         observations.setObjectName("galaxy_card_section")
+        self.observation_heading = observations
         body.addWidget(observations)
         self.dataset = _metadata("No dataset selected", selectable=True)
         self.dataset.setObjectName("galaxy_card_dataset")
@@ -198,8 +200,9 @@ class GalaxyDetailCard(QFrame):
         self.next_step_title.hide()
         self.next_step.hide()
 
-        self.details_toggle = QPushButton("Sources & QA details  ▾")
+        self.details_toggle = QPushButton("Show sources and QA details")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
+        self.details_toggle.setAccessibleName("Show or hide catalogue and FITS QA evidence")
         self.details_toggle.setCheckable(True)
         self.details_toggle.setChecked(False)
         body.addWidget(self.details_toggle)
@@ -277,8 +280,8 @@ class GalaxyDetailCard(QFrame):
     def _details_toggled(self, checked: bool):
         self.details_panel.setVisible(checked)
         self.details_toggle.setText(
-            "Hide sources & QA details  ▴" if checked
-            else "Sources & QA details  ▾")
+            "Hide sources and QA details" if checked
+            else "Show sources and QA details")
 
     def _set_preview_side(self, side: int):
         """Square preview, responsive down to the 300 px narrow inspector."""
@@ -295,13 +298,19 @@ class GalaxyDetailCard(QFrame):
         self._pixmap = None
         self.open_button.setEnabled(snapshot is not None)
         if snapshot is None:
+            self.details_toggle.setChecked(False)
+            self.details_toggle.hide()
+            self.observation_heading.hide()
             self.name.setText("Choose a galaxy")
             self.coordinates.setText("Select a project from the list.")
             self.preview.setPixmap(QPixmap())
             self.preview.setText("No galaxy selected")
+            self.preview.setAccessibleDescription("No galaxy selected.")
             self.preview_note.hide()
             self.dataset.clear()
             self.fits.clear()
+            self.fits.hide()
+            self._set_preview_side(124)
             self.aliases.hide()
             self.catalogue.setText("No galaxy selected")
             self.catalogue_provenance.hide()
@@ -321,16 +330,28 @@ class GalaxyDetailCard(QFrame):
             self.note.hide()
             return
 
+        self.observation_heading.show()
+        self.details_toggle.show()
+        self.dataset.show()
+        self.fits.show()
         self.name.setText(snapshot.display_name)
         self.coordinates.setText(snapshot.coordinates)
         if (previous_id != snapshot.project_id
                 and snapshot.knowledge_status != "EVIDENCE_ERROR"):
             self.details_toggle.setChecked(False)
         self.dataset.setText(f"Dataset: {snapshot.dataset}")
+        self.dataset.setToolTip("")
+        self.dataset.setAccessibleDescription("")
+        self.fits.setToolTip("")
+        self.catalogue.setToolTip(
+            "Only user-confirmed catalogue identities. External evidence "
+            "does not change project coordinates or adopt measurements.")
+        self.catalogue.setAccessibleDescription(self.catalogue.toolTip())
         self.literature_heading.hide()
         self.literature.hide()
         self.cross_catalogue.hide()
         self.catalogue_help.hide()
+        self.catalogue_help.clear()
         self.next_step_title.hide()
         self.next_step.hide()
         self.observation_explanation.hide()
@@ -400,15 +421,21 @@ class GalaxyDetailCard(QFrame):
                     "Why identify this galaxy? SIMBAD connects names and "
                     "literature; NED provides published galaxy properties. "
                     "Use Catalogues to confirm a match; no science is adopted.")
-                self.catalogue_help.show()
+                self.catalogue_help.hide()
             elif "SIMBAD" not in providers:
                 self.catalogue_help.setText(
                     "Link SIMBAD for alternative names and literature references.")
-                self.catalogue_help.show()
+                self.catalogue_help.hide()
             elif "NED" not in providers:
                 self.catalogue_help.setText(
                     "Link NED for sourced extragalactic properties.")
-                self.catalogue_help.show()
+                self.catalogue_help.hide()
+            if self.catalogue_help.text():
+                explanation = (
+                    self.catalogue.toolTip() + " " +
+                    self.catalogue_help.text())
+                self.catalogue.setToolTip(explanation)
+                self.catalogue.setAccessibleDescription(explanation)
             ned = next((entry for entry in catalogues
                         if entry.provider == "NED"), None)
             if ned is not None and (ned.object_type or ned.redshift is not None):
@@ -424,7 +451,7 @@ class GalaxyDetailCard(QFrame):
                 self.literature.setText("\n".join(literature))
                 self.literature.setToolTip(
                     "Source: NED ObjectLookup. Measurement/refcode details "
-                    "are in Sources & QA details; redshift is not a "
+                    "are in Sources and QA details; redshift is not a "
                     "distance estimate or adopted DESIDERA result.")
                 self.literature_heading.show()
                 self.literature.show()
@@ -452,6 +479,14 @@ class GalaxyDetailCard(QFrame):
             self.fits.setToolTip(snapshot.readiness.explanation)
             self.observation_explanation.setText(
                 snapshot.readiness.explanation)
+            if snapshot.readiness.code in (
+                    "TARGET_NOT_SET", "DATASET_NOT_SELECTED"):
+                # One actionable line; no second "dataset missing" report.
+                self.dataset.setText(snapshot.readiness.observation_label)
+                self.dataset.setToolTip(snapshot.readiness.explanation)
+                self.dataset.setAccessibleDescription(
+                    snapshot.readiness.explanation)
+                self.fits.hide()
             self.observation_explanation.show()
             self.next_step.setText(snapshot.readiness.next_action_label)
             self.open_button.setText("Open project")
@@ -538,6 +573,10 @@ class GalaxyDetailCard(QFrame):
         if snapshot.thumbnail is None:
             tooltip += " Link local FITS or select a dataset to obtain a preview."
         self.preview.setToolTip(tooltip)
+        self.preview.setAccessibleDescription(tooltip)
+        # Leave larger image space only when real preview pixels exist.
+        self._set_preview_side(
+            124 if self._pixmap is None or self.width() < 540 else 184)
 
     def _update_preview(self) -> None:
         if self._pixmap is not None:
@@ -548,7 +587,8 @@ class GalaxyDetailCard(QFrame):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._set_preview_side(124 if self.width() < 540 else 184)
+        self._set_preview_side(
+            124 if self._pixmap is None or self.width() < 540 else 184)
         self._update_preview()
 
     def _request_open(self) -> None:

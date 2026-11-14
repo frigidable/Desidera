@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGroupBox
 from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.gui.sky_workspace import SkyWorkspace
 import lsbpipe.gui.sky_workspace as sky_module
@@ -28,6 +28,8 @@ def test_stage03_is_real_and_resumable_without_loading_or_running(qtbot):
     assert w.scene_editor._loaded is None
     assert w.sky_stage._future is None
     assert "current" in w.sky_stage.context_label.text().lower()
+    assert w.sky_stage.findChild(QGroupBox).title() == (
+        "Use current Scene and Masks evidence")
     w.restore_navigation(stage="scene",band="i")
     assert w.current_navigation() == ("scene", "i")
     w.restore_navigation(stage="sky",band="i")
@@ -176,3 +178,49 @@ def test_stage03_readout_exposes_synthetic_sky_leakage_not_only_recovery():
     assert "NOT total galaxy light" in displayed
     assert "signal leakage, NOT a sky pedestal" in displayed
     assert "SKY SCIENCE HOLD" in displayed
+
+
+def test_sky_summary_is_compact_and_full_science_report_on_demand(qtbot):
+    from types import SimpleNamespace
+    scene=SimpleNamespace(
+        _band="r",_future=None,_project_root=Path("/not/read"),
+        _project_id="p",_loaded=None,_draft=None,_contamination=None)
+    w=SkyWorkspace(scene)
+    qtbot.addWidget(w)
+    w.resize(1100,700)
+    w.show()
+    assert not w.run_btn.isEnabled()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+    assert w.status.isVisible()
+    assert w.status.text() == "Not evaluated."
+    from PySide6.QtWidgets import QLabel
+    assert any("science HOLD" in label.text()
+               for label in w.findChildren(QLabel))
+    assert "Scene" in w.context_label.text()
+    # A numeric readout remains stored (and can be exported) but is not
+    # a permanently open wall of text in the initial workspace.
+    assert "No background result" in w.readout.toPlainText()
+    w._result={"status":"INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY"}
+    w.report_toggle.show()
+    w.report_toggle.click()
+    assert w.readout.isVisible()
+    w._reset_report_visibility()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+
+
+def test_sky_empty_state_has_one_active_navigation_action(qtbot):
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366,768)
+    w.show()
+    w.restore_navigation(stage="sky",band="g")
+    assert w.sky_stage.open_scene_btn.isVisible()
+    assert w.sky_stage.open_scene_btn.isEnabled()
+    assert not w.sky_stage.run_btn.isVisible()
+    assert not w.sky_stage.copy_btn.isVisible()
+    assert not w.sky_stage.report_toggle.isVisible()
+    w.sky_stage.open_scene_btn.click()
+    assert w.stage_tabs.currentWidget() is w.scene_editor
+    assert w.scene_editor._loaded is None

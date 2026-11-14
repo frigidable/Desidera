@@ -159,3 +159,58 @@ def test_failed_auto_download_is_not_retried_on_selection_or_refresh(
     qtbot.waitUntil(lambda: hub._rgb_future is None and len(seen) == 2,
                     timeout=12000)
     assert len(seen) == 2
+
+def test_remote_rgb_auto_fetch_can_be_disabled_and_restored_from_hub(
+        qtbot, monkeypatch, tmp_path):
+    """A persisted user preference prevents background network requests."""
+    from PySide6.QtCore import QSettings
+    monkeypatch.delenv("DESIDERA_DISABLE_AUTOMATIC_RGB", raising=False)
+    prefs = str(tmp_path / "hub-previews.ini")
+    monkeypatch.setattr(
+        hub_module, "QSettings",
+        lambda *_: QSettings(prefs, QSettings.IniFormat))
+    _project(tmp_path, "Auto RGB toggle galaxy", 155.438012)
+    seen = []
+    monkeypatch.setattr(
+        hub_module, "fetch_remote_rgb_preview",
+        lambda root: seen.append(str(root)))
+    hub = _hub(qtbot)
+    assert hub.preview_settings_btn.isVisible()
+    assert hub.auto_rgb_action.isChecked()  # Preserves existing default.
+    hub.auto_rgb_action.setChecked(False)
+    assert not hub._rgb_auto_timer.isActive()
+    qtbot.wait(800)
+    assert seen == []  # No automatic network action.
+    assert QSettings(prefs, QSettings.IniFormat).value(
+        "previews/automatic_remote_rgb", True, type=bool) is False
+    reopened = _hub(qtbot)
+    assert not reopened.auto_rgb_action.isChecked()
+    assert not reopened._rgb_auto_timer.isActive()
+    qtbot.wait(750)
+    assert seen == []
+    manual_calls = []
+    monkeypatch.setattr(reopened, "_fetch_rgb_preview",
+                        lambda *, manual=True: manual_calls.append(manual))
+    assert reopened.rgb_action.isEnabled()
+    reopened.rgb_action.trigger()
+    assert manual_calls == [True]
+    # Opting in again schedules, but does not immediately perform, a fetch.
+    reopened.auto_rgb_action.setChecked(True)
+    assert reopened._rgb_auto_timer.isActive()
+    reopened.auto_rgb_action.setChecked(False)
+    assert not reopened._rgb_auto_timer.isActive()
+
+
+def test_rgb_environment_override_is_visible_and_prevents_automatic_fetch(
+        qtbot, monkeypatch, tmp_path):
+    from PySide6.QtCore import QSettings
+    prefs = str(tmp_path / "override.ini")
+    monkeypatch.setattr(
+        hub_module, "QSettings",
+        lambda *_: QSettings(prefs, QSettings.IniFormat))
+    monkeypatch.setenv("DESIDERA_DISABLE_AUTOMATIC_RGB", "1")
+    _project(tmp_path, "Environment override target", 155.438012)
+    hub = _hub(qtbot)
+    assert not hub.auto_rgb_action.isEnabled()
+    assert "environment override" in hub.auto_rgb_action.toolTip()
+    assert not hub._rgb_auto_timer.isActive()

@@ -709,3 +709,93 @@ def test_hub_blocks_automatic_resume_of_wrong_project_uuid(
     hub._auto_resume_last_project()
     assert hub.workspace is None
     assert "DIFFERENT galaxy project UUID" in hub.hint.text()
+
+
+def test_create_dialog_validation_is_visible_and_blocks_invalid_submit(
+        qtbot, tmp_path):
+    """Partial or invalid coordinates cannot be submitted via the default button."""
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.name.setText("A faint galaxy")
+    assert dialog.create_btn.isEnabled()  # Coordinate-less objects are allowed.
+    dialog.ra.setText("02:40:23.09")
+    assert not dialog.create_btn.isEnabled()
+    assert "both RA and Dec" in dialog.description.text()
+    assert "Correct" in dialog.create_btn.accessibleDescription()
+    dialog.dec.setText("+95:13:45")
+    assert not dialog.create_btn.isEnabled()
+    assert "Check coordinates" in dialog.description.text()
+    dialog.dec.setText("+01:13:45.3")
+    assert dialog.create_btn.isEnabled()
+    assert "ICRS" in dialog.description.text()
+    assert dialog.ra.accessibleName() and dialog.dec.accessibleName()
+    dialog.dec.clear()
+    dialog.ra.clear()
+    assert dialog.create_btn.isEnabled()  # Still supports unidentified targets.
+
+
+def test_hub_keyboard_search_new_project_and_activation_contract(
+        hub, qtbot, monkeypatch, tmp_path):
+    """Window shortcuts and list activation are usable without a mouse."""
+    create_object_project("Leo P", tmp_path / "leo-p")
+    hub.refresh()
+    assert hub._search_shortcut.key().toString() == "Ctrl+F"
+    assert hub._new_project_shortcut.key().toString() == "Ctrl+N"
+    assert hub.filter.accessibleName() == "Search recent galaxy projects"
+    assert hub.projects.accessibleName() == "Recent galaxy projects"
+    hub.filter.setText("Leo")
+    hub.projects.setFocus()
+    hub._search_shortcut.activated.emit()
+    assert hub.filter.hasFocus()
+    assert hub.filter.selectedText() == "Leo"
+    actions = []
+    monkeypatch.setattr(hub, "_new_project", lambda: actions.append("new"))
+    monkeypatch.setattr(hub, "_open_selected", lambda: actions.append("open"))
+    hub._new_project_shortcut.activated.emit()
+    hub.projects.itemActivated.emit(hub.projects.currentItem())
+    assert actions == ["new", "open"]
+
+def test_empty_hub_does_not_offer_science_evidence_for_no_galaxy(
+        hub, tmp_path):
+    """Only real selected projects expose dataset and QA details."""
+    assert not hub.galaxy_card.details_toggle.isVisible()
+    assert not hub.galaxy_card.observation_heading.isVisible()
+    create_object_project("Leo P", tmp_path / "leo-p-card")
+    hub.refresh()
+    assert hub.galaxy_card.details_toggle.isVisible()
+    assert hub.galaxy_card.observation_heading.isVisible()
+    hub.filter.setText("unmatched-galaxy-name")
+    assert not hub.galaxy_card.details_toggle.isVisible()
+    assert not hub.galaxy_card.observation_heading.isVisible()
+
+
+
+def test_create_dialog_scrolls_high_font_fields_and_pins_footer(
+        qtbot, tmp_path):
+    """Large UI fonts must not push Create/Cancel outside a short dialog."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QFont
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.setFont(QFont("Segoe UI", 17))
+    dialog.resize(500, 360)
+    dialog.show()
+    qtbot.wait(60)
+    assert dialog.width() <= 500
+    assert dialog.height() <= 360
+    assert dialog.form_scroll.verticalScrollBar().maximum() > 0
+    assert dialog.create_btn.isVisibleTo(dialog)
+    assert dialog.cancel.isVisibleTo(dialog)
+    end_of_button = dialog.cancel.mapTo(dialog, QPoint(0, 0)).y() + dialog.cancel.height()
+    assert end_of_button <= dialog.height()
+    dialog.name.setText("High DPI research galaxy")
+    dialog.directory.setFocus()
+    qtbot.wait(30)  # Focus-in scroll is deferred until the widget is laid out.
+    top = dialog.directory.mapTo(dialog.form_scroll.viewport(), QPoint(0, 0)).y()
+    assert top >= 0
+    assert top + dialog.directory.height() <= dialog.form_scroll.viewport().height()
+    assert dialog.create_btn.isEnabled()
+    dialog.ra.setText("42.0")
+    assert not dialog.create_btn.isEnabled()
+    assert "both RA and Dec" in dialog.description.text()
+    assert dialog.form_scroll.verticalScrollBar().maximum() > 0

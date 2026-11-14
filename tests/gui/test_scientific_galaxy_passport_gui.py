@@ -45,11 +45,14 @@ def test_no_dataset_is_normal_state_not_error_message(qtbot, tmp_path):
     card = hub.galaxy_card
     assert card.snapshot.project_id == project.project_id
     assert card.snapshot.readiness.code == "DATASET_NOT_SELECTED"
-    assert "No survey dataset selected" in card.fits.text()
+    assert card.dataset.text() == "No survey dataset selected"
+    assert not card.fits.isVisible()  # no duplicate no-dataset line
+    assert "survey release" in card.dataset.toolTip()
     assert card.open_button.text() == "Open project"
     assert "find data" in card.open_button.toolTip()
+    assert "Why identify this galaxy?" in card.catalogue.toolTip()
     assert "Why identify this galaxy?" in card.catalogue_help.text()
-    assert card.catalogue_help.isVisible()
+    assert not card.catalogue_help.isVisible()
     assert not card.literature.isVisible()
     assert card.preview.text() == "No image yet"
     assert "Traceback" not in card.preview.text()

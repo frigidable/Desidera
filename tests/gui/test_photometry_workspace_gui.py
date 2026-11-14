@@ -57,3 +57,78 @@ def test_manage_sources_from_photometry_opens_real_dataset_manager(workspace):
     assert window.preview_tabs.currentWidget() is window.dataset_manager
     assert window.dataset_manager.tree.topLevelItemCount() == 0
     assert not (project.root / "datasets" / "index.json").exists()
+
+
+
+def test_photometry_initial_status_does_not_repeat_copy_qa_instructions(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.show()
+    assert "no adopted galaxy photometry" in w.subtitle.text()
+    assert not w.project_qa_status.isVisible()
+    assert not w.batch_status.isVisible() or not w.batch_status.text()
+    w.copy_project_qa_btn.click()
+    assert w.project_qa_status.isVisible()
+    assert "Open a saved galaxy project" in w.project_qa_status.text()
+
+
+
+def test_empty_photometry_does_not_show_disabled_multiband_toolbar(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366, 768)
+    w.show()
+    assert not w.batch_box.isVisible()
+    # Hidden until real inputs exist, but project QA and stage navigation remain.
+    assert w.stage_tabs.count() == 4
+    assert w.copy_project_qa_btn.isVisible()
+    assert w.sources_btn.isVisible()
+
+
+def test_advanced_photometry_preserves_multiband_controls_without_fits(qtbot):
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366, 768)
+    w.show()
+    assert not w.batch_box.isVisible()
+    w.view_mode.setCurrentIndex(w.view_mode.findData("research"))
+    assert w.batch_box.isVisible()
+    assert w.save_full_qa_btn.isVisible()
+    assert w.copy_full_qa_btn.isVisible()
+    w.view_mode.setCurrentIndex(w.view_mode.findData("guided"))
+    assert not w.batch_box.isVisible()
+
+
+
+def test_photometry_stage_shortcuts_are_scoped_and_side_effect_free(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QShortcut
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1000,700)
+    w.show()
+    assert w.stage_tabs.count()==4
+    assert len(w._stage_shortcuts)==4
+    assert "Ctrl+2" in w.stage_tabs.tabToolTip(1)
+    assert "Ctrl+4" in w.stage_tabs.tabToolTip(3)
+    assert w.stage_tabs.tabBar().accessibleName().startswith(
+        "Photometry stages; Ctrl+1")
+    for key,expected in enumerate(range(4),start=1):
+        shortcut=w._stage_shortcuts[key]
+        assert isinstance(shortcut,QShortcut)
+        assert shortcut.key().toString()==f"Ctrl+{key}"
+        assert shortcut.context()==Qt.WidgetWithChildrenShortcut
+        shortcut.activated.emit()
+        assert w.stage_tabs.currentIndex()==expected
+        assert w.scene_editor._loaded is None
+        assert w.scene_editor._future is None
+        assert w.sky_stage._future is None
+        assert w.aperture_stage._future is None
+    assert w.current_navigation()==("aperture","g")
+    w._stage_shortcuts[1].activated.emit()
+    assert w.current_navigation()==("psf0","g")

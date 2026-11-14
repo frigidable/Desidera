@@ -136,7 +136,7 @@ class PSFStarReviewDialog(QDialog):
         notice = QLabel(
             "Exclusions affect ONLY the ePSF training sample. Independent "
             "holdout stars stay untouched. Changes apply only after clicking "
-            "Apply & save exclusions + rebuild; current model remains non-adopted.")
+            "Apply, save exclusions and rebuild; current model remains non-adopted.")
         notice.setWordWrap(True)
         root.addWidget(notice)
         self.count_label = QLabel()
@@ -313,7 +313,7 @@ class PSFStarReviewDialog(QDialog):
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         footer.addWidget(self.cancel_button)
-        self.apply_button = QPushButton("Apply, save exclusions & rebuild")
+        self.apply_button = QPushButton("Apply, save exclusions and rebuild")
         self.apply_button.setObjectName("psf0_apply_exclusions")
         self.apply_button.clicked.connect(self.accept)
         footer.addWidget(self.apply_button)

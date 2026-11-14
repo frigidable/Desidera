@@ -123,6 +123,16 @@ def test_responsive_preview_remains_square_when_inspector_narrows(qtbot):
     card.show()
     qtbot.waitUntil(lambda: card.preview.width() == 124)
     assert card.preview.height() == 124
+    # Empty placeholders stay compact even at large window widths.
+    card.resize(760, 650)
+    qtbot.waitUntil(lambda: card.preview.width() == 124)
+    assert card.preview.height() == 124
+    # A real pixel-bearing preview expands to 184 logical pixels.
+    from PySide6.QtGui import QPixmap
+    from PySide6.QtGui import QColor
+    card._pixmap = QPixmap(184, 184)
+    card._pixmap.fill(QColor("#526f91"))
+    card.resize(750, 650)
     card.resize(760, 650)
     qtbot.waitUntil(lambda: card.preview.width() == 184)
     assert card.preview.height() == 184

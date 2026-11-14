@@ -5,13 +5,14 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings, QEvent
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QMenu, QCheckBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
-    QInputDialog, QSplitter,
+    QInputDialog, QSplitter, QScrollArea, QSizePolicy,
     QWidget, QDoubleSpinBox, QApplication,
 )
 
@@ -50,7 +51,7 @@ class CreateProjectDialog(QDialog):
     def __init__(self, parent=None, *, default_root: Path | None = None):
         super().__init__(parent)
         self.setWindowTitle("New galaxy project · DESIDERA")
-        self.setMinimumWidth(540)
+        self.setMinimumWidth(420)
         self.resize(620, 510)
         self.project = None
         self.parent_root = default_root or Path.home() / "DESIDERAProjects"
@@ -58,27 +59,46 @@ class CreateProjectDialog(QDialog):
 
         self.name = QLineEdit()
         self.name.setObjectName("project_new_name")
+        self.name.setAccessibleName("Galaxy project name")
         self.name.setPlaceholderText("e.g. UGC 2162")
         self.ra = QLineEdit()
         self.ra.setObjectName("project_new_ra")
+        self.ra.setAccessibleName("Optional ICRS right ascension, decimal degrees or hours")
         self.ra.setPlaceholderText("Optional · degrees or hh:mm:ss")
         self.dec = QLineEdit()
         self.dec.setObjectName("project_new_dec")
+        self.dec.setAccessibleName("Optional ICRS declination, decimal degrees")
         self.dec.setPlaceholderText("Optional · degrees or ±dd:mm:ss")
         self.width_arcmin = QDoubleSpinBox()
         self.width_arcmin.setObjectName("project_new_width")
+        self.width_arcmin.setAccessibleName("Square search field width in arcminutes")
         self.width_arcmin.setRange(0.1, 120.)
         self.width_arcmin.setValue(5.)
         self.width_arcmin.setSuffix(" arcmin")
         self.directory = QLineEdit()
         self.directory.setObjectName("project_new_root")
+        self.directory.setAccessibleName("Local project directory")
         self.directory.setPlaceholderText("Local folder for this galaxy")
         self.description = QLabel()
         self.description.setObjectName("project_new_summary")
+        self.description.setAccessibleName("Project creation summary and input validation")
         self.description.setWordWrap(True)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
+        # Long input/validation text must scroll at large system fonts.
+        # Keep the primary actions in a fixed footer at every dialog size.
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(12, 12, 12, 12)
+        root_layout.setSpacing(8)
+        self.form_scroll = QScrollArea(self)
+        self.form_scroll.setObjectName("project_new_body_scroll")
+        self.form_scroll.setWidgetResizable(True)
+        self.form_scroll.setFrameShape(QFrame.NoFrame)
+        self.form_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.form_scroll.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
+        form_body = QWidget()
+        layout = QVBoxLayout(form_body)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(12)
         title = QLabel("Create galaxy project")
         title.setStyleSheet("font-size: 20px; font-weight: 600")
@@ -91,10 +111,10 @@ class CreateProjectDialog(QDialog):
 
         identity = QFormLayout()
         identity.setVerticalSpacing(10)
-        identity.addRow("Object / project name", self.name)
-        identity.addRow("RA (ICRS)", self.ra)
-        identity.addRow("Dec (ICRS)", self.dec)
-        identity.addRow("Search field", self.width_arcmin)
+        identity.addRow("&Object / project name", self.name)
+        identity.addRow("&RA (ICRS)", self.ra)
+        identity.addRow("&Dec (ICRS)", self.dec)
+        identity.addRow("&Search field", self.width_arcmin)
         layout.addLayout(identity)
         note = QLabel(
             "Coordinates are optional for an unidentified object. "
@@ -102,7 +122,9 @@ class CreateProjectDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
 
-        layout.addWidget(QLabel("Local project storage"))
+        storage_label = QLabel("&Local project storage")
+        storage_label.setBuddy(self.directory)
+        layout.addWidget(storage_label)
         storage = QHBoxLayout()
         storage.addWidget(self.directory, 1)
         browse = QPushButton("Browse…")
@@ -114,6 +136,8 @@ class CreateProjectDialog(QDialog):
         layout.addWidget(self.description)
 
         layout.addStretch(1)
+        self.form_scroll.setWidget(form_body)
+        root_layout.addWidget(self.form_scroll, 1)
         buttons = QHBoxLayout()
         self.cancel = QPushButton("Cancel")
         self.cancel.clicked.connect(self.reject)
@@ -124,7 +148,11 @@ class CreateProjectDialog(QDialog):
         buttons.addStretch(1)
         buttons.addWidget(self.cancel)
         buttons.addWidget(self.create_btn)
-        layout.addLayout(buttons)
+        root_layout.addLayout(buttons)
+        self._form_inputs = (
+            self.name, self.ra, self.dec, self.width_arcmin, self.directory)
+        for widget in self._form_inputs:
+            widget.installEventFilter(self)
 
         self.name.textChanged.connect(self._suggest_directory)
         self.name.textChanged.connect(self._update_preview)
@@ -135,6 +163,14 @@ class CreateProjectDialog(QDialog):
         self.directory.textChanged.connect(self._update_preview)
         self._update_preview()
         self.name.setFocus()
+
+    def eventFilter(self, watched, event):
+        if (event.type() == QEvent.FocusIn
+                and watched in self._form_inputs):
+            QTimer.singleShot(
+                0, lambda target=watched:
+                self.form_scroll.ensureWidgetVisible(target, 8, 10))
+        return super().eventFilter(watched, event)
 
     def _suggest_directory(self, _=None):
         if self._directory_user_edited:
@@ -170,18 +206,24 @@ class CreateProjectDialog(QDialog):
     def _update_preview(self, *_):
         name = self.name.text().strip()
         directory = self.directory.text().strip()
+        coordinates_valid = True
         try:
             field = self._field()
             position = ("Position: not specified (can be added later)"
                         if field is None else
                         f"ICRS: {field.ra_deg:.8f}°, {field.dec_deg:+.8f}°")
         except ValueError as exc:
+            coordinates_valid = False
             position = f"Check coordinates: {exc}"
         self.description.setText(
             f"{position}\n"
             f"Project directory: {directory or 'not selected'}\n"
             "Creates local metadata only · no network, download or FITS changes.")
-        self.create_btn.setEnabled(bool(name and directory))
+        self.create_btn.setEnabled(bool(name and directory) and coordinates_valid)
+        self.create_btn.setAccessibleDescription(
+            "Correct the ICRS coordinates before creating a project."
+            if not coordinates_valid else
+            "Create local project metadata without downloading science data.")
 
     def _create(self):
         try:
@@ -251,6 +293,7 @@ class ProjectHub(QMainWindow):
         self.new_btn = QPushButton("New galaxy project")
         self.new_btn.setObjectName("hub_new_project")
         self.new_btn.clicked.connect(self._new_project)
+        self.new_btn.setToolTip("Create a galaxy project (Ctrl+N); no download")
         self.import_btn = QPushButton("Import existing folder…")
         self.import_btn.setObjectName("hub_import_project")
         self.import_btn.clicked.connect(self._import_dialog)
@@ -267,6 +310,31 @@ class ProjectHub(QMainWindow):
                 "startup/auto_resume_last", False, type=bool))
         self.auto_resume.toggled.connect(self._save_auto_resume_setting)
         actions.addWidget(self.auto_resume)
+        self.preview_settings_btn = QPushButton("Preview settings")
+        self.preview_settings_btn.setObjectName("hub_preview_preferences")
+        self.preview_settings_btn.setAccessibleName(
+            "Display-only image preview preferences")
+        self.preview_settings_btn.setToolTip(
+            "Control optional remote Legacy RGB display previews. "
+            "No setting changes original science FITS.")
+        self.preview_settings_menu = QMenu(self.preview_settings_btn)
+        self.auto_rgb_action = self.preview_settings_menu.addAction(
+            "Automatically fetch Legacy RGB preview (network)")
+        self.auto_rgb_action.setCheckable(True)
+        self.auto_rgb_action.setChecked(self._startup_settings.value(
+            "previews/automatic_remote_rgb", True, type=bool))
+        self.auto_rgb_action.setToolTip(
+            "When enabled, selection may request a display-only RGB "
+            "preview over the network after a short delay. "
+            "Manual refresh is always separate.")
+        if os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") == "1":
+            self.auto_rgb_action.setEnabled(False)
+            self.auto_rgb_action.setToolTip(
+                "Automatic RGB disabled by DESIDERA_DISABLE_AUTOMATIC_RGB=1. "
+                "This environment override takes precedence.")
+        self.auto_rgb_action.toggled.connect(self._save_auto_rgb_setting)
+        self.preview_settings_btn.setMenu(self.preview_settings_menu)
+        actions.addWidget(self.preview_settings_btn)
         outer.addLayout(actions)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -279,12 +347,18 @@ class ProjectHub(QMainWindow):
         left.addWidget(QLabel("Recent galaxies"))
         self.filter = QLineEdit()
         self.filter.setObjectName("hub_project_filter")
+        self.filter.setAccessibleName("Search recent galaxy projects")
+        self.filter.setToolTip("Filter saved galaxy projects (Ctrl+F)")
         self.filter.setClearButtonEnabled(True)
         self.filter.setPlaceholderText("Search galaxies or folder paths…")
         self.filter.textChanged.connect(self._filter_rows)
         left.addWidget(self.filter)
         self.projects = QListWidget()
         self.projects.setObjectName("hub_project_list")
+        self.projects.setAccessibleName("Recent galaxy projects")
+        self.projects.setAccessibleDescription(
+            "Use arrow keys to select a galaxy. Press Enter to open it "
+            "or relink its folder if missing.")
         self.projects.setWordWrap(True)
         self.projects.setSpacing(5)
         self.projects.setStyleSheet(
@@ -293,8 +367,12 @@ class ProjectHub(QMainWindow):
             "QListWidget::item { padding: 6px; border-radius: 5px; } "
             "QListWidget::item:selected { background: palette(highlight); "
             "color: palette(highlighted-text); }")
-        self.projects.itemDoubleClicked.connect(
-            lambda _: self._open_selected())
+        # Qt itemActivated handles both Enter and double-click without two opens.
+        self.projects.itemActivated.connect(lambda _: self._open_selected())
+        self._search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self._search_shortcut.activated.connect(self._focus_project_filter)
+        self._new_project_shortcut = QShortcut(QKeySequence("Ctrl+N"), self)
+        self._new_project_shortcut.activated.connect(lambda: self._new_project())
         self.projects.itemSelectionChanged.connect(self._selection_changed)
         left.addWidget(self.projects, 1)
         self.empty_panel = QWidget()
@@ -468,6 +546,11 @@ class ProjectHub(QMainWindow):
         self.setCentralWidget(content)
         self.refresh()
 
+    def _focus_project_filter(self):
+        """Find the current galaxy without requiring a mouse."""
+        self.filter.setFocus(Qt.ShortcutFocusReason)
+        self.filter.selectAll()
+
     def refresh(self):
         prior = self.projects.currentItem()
         prior_id = (prior.data(Qt.UserRole).get("project_id")
@@ -638,6 +721,7 @@ class ProjectHub(QMainWindow):
             if (allow_rgb and card.preview_source != "REMOTE_LEGACY_RGB"
                     and key not in self._rgb_attempted
                     and self._rgb_future is None
+                    and self.auto_rgb_action.isChecked()
                     and os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") != "1"):
                 self._rgb_auto_timer.start()
         self.knowledge_btn.setEnabled(
@@ -830,6 +914,7 @@ class ProjectHub(QMainWindow):
         record = self._selected_preview_record()
         key = self._rgb_request_for_record(record)
         if (key is None or key in self._rgb_attempted
+                or not self.auto_rgb_action.isChecked()
                 or self._rgb_future is not None
                 or os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") == "1"):
             return
@@ -1043,6 +1128,17 @@ class ProjectHub(QMainWindow):
             self.refresh()
         except (OSError, ValueError, TypeError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open Galaxy Knowledge", str(exc))
+
+    def _save_auto_rgb_setting(self, enabled):
+        """User-visible preference affects only optional display RGB traffic."""
+        self._startup_settings.setValue(
+            "previews/automatic_remote_rgb", bool(enabled))
+        self._startup_settings.sync()
+        if not enabled:
+            self._rgb_auto_timer.stop()
+        elif os.environ.get("DESIDERA_DISABLE_AUTOMATIC_RGB") != "1":
+            # Re-evaluate only the selected project; remote access stays debounced.
+            self._selection_changed()
 
     def _save_auto_resume_setting(self, enabled):
         self._startup_settings.setValue(
