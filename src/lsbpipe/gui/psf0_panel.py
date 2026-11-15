@@ -131,14 +131,24 @@ class PSF0Panel(QGroupBox):
         result_layout.setSpacing(8)
         self._science_row.addWidget(self._model_card, 3, Qt.AlignTop)
         self._science_row.addWidget(self._profile_card, 5, Qt.AlignTop)
-        self._science_row.addWidget(self._result_column, 3, Qt.AlignTop)
         self._work_columns.addLayout(self._science_row)
+        # On wide desktop windows the model/profile remain the scientific
+        # canvas; quality and controls form one compact right inspector.
+        # On narrow screens both columns reflow vertically without losing
+        # any scientific evidence or changing PSF settings.
+        self._inspector_stack = QBoxLayout(QBoxLayout.TopToBottom)
+        self._inspector_stack.setSpacing(8)
+        self._inspector_stack.addWidget(self._result_column, 0, Qt.AlignTop)
         self._controls_column = QGroupBox("Setup", self)
         self._controls_column.setObjectName("psf0_controls_column")
         controls = QVBoxLayout(self._controls_column)
         controls.setContentsMargins(10, 12, 10, 10)
         controls.setSpacing(9)
-        self._work_columns.addWidget(self._controls_column, 0, Qt.AlignTop)
+        self._inspector_stack.addWidget(
+            self._controls_column, 0, Qt.AlignTop)
+        self._work_columns.addLayout(self._inspector_stack)
+        self._work_columns.setStretch(0, 7)
+        self._work_columns.setStretch(1, 4)
         self._work_columns.setAlignment(Qt.AlignTop)
         layout.addLayout(self._work_columns, 0)
         form = QFormLayout()
@@ -513,12 +523,30 @@ class PSF0Panel(QGroupBox):
             "Sky-subtracted annular medians and signed model differences "
             "are in-sample, NOT independent holdout residuals.")
 
-    def set_narrow_visual_layout(self, narrow: bool):
-        """Reflow before Qt computes a too-wide tab's minimum size."""
-        direction = (QBoxLayout.TopToBottom if narrow else
-                     QBoxLayout.LeftToRight)
-        if self._science_row.direction() != direction:
-            self._science_row.setDirection(direction)
+    def set_narrow_visual_layout(self, narrow: bool, *, available_width=None):
+        """Two-column model+radial / quality+setup workspace on wide windows.
+
+        Only the layout changes: the identical PSF kernel, radial plot,
+        training-star QA and fitting controls remain attached to their
+        original widgets. Never recompute or adopt science during resize.
+        """
+        outer = (QBoxLayout.TopToBottom if narrow else
+                 QBoxLayout.LeftToRight)
+        # At medium widths, model and real radial comparison still fit
+        # side-by-side; collapse them only for very narrow viewports.
+        width = self.width() if available_width is None else available_width
+        inner = (QBoxLayout.TopToBottom if width < 770 else
+                 QBoxLayout.LeftToRight)
+        changed = False
+        if self._work_columns.direction() != outer:
+            self._work_columns.setDirection(outer)
+            self._work_columns.setStretch(0, 0 if narrow else 7)
+            self._work_columns.setStretch(1, 0 if narrow else 4)
+            changed = True
+        if self._science_row.direction() != inner:
+            self._science_row.setDirection(inner)
+            changed = True
+        if changed:
             self.updateGeometry()
 
     def resizeEvent(self, event):
@@ -526,7 +554,7 @@ class PSF0Panel(QGroupBox):
         # viewport width; otherwise an over-wide child can repeatedly
         # restore horizontal orientation before the parent can shrink.
         if self.fixed_band is None and hasattr(self, "_science_row"):
-            self.set_narrow_visual_layout(event.size().width() < 1090)
+            self.set_narrow_visual_layout(event.size().width() < 1180)
         super().resizeEvent(event)
 
     def set_research_mode(self, enabled: bool):

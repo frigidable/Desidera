@@ -455,21 +455,33 @@ def test_photometry_preserves_sidebar_and_original_survey_navigation(
     window.resize(1450, 850)
     window.show()
     assert window.navigation_scroll.isVisible()
-    assert window.preview_tabs.tabBar().isVisible()
+    # One sidebar workspace switcher; existing QTabWidget remains the
+    # actual page host without an additional duplicated visible tab row.
+    assert not window.preview_tabs.tabBar().isVisible()
+    assert window.remote_view_btn.isVisible()
+    assert window.fits_view_btn.isVisible()
+    assert window.remote_view_btn.isChecked()
     window.photometry_btn.click()
     assert window.preview_tabs.currentWidget() is window.photometry_workspace
     assert window.navigation_scroll.isVisible()
-    assert window.preview_tabs.tabBar().isVisible()
+    assert not window.preview_tabs.tabBar().isVisible()
+    assert window.photometry_btn.isChecked()
     assert not window.preview_label.isVisible()  # redundant heading only
+    assert not window.photometry_workspace.back_btn.isVisible()
+    assert not window.photometry_workspace.sources_btn.isVisible()
     assert window.navigation_scroll.width() >= 275
     assert window.photometry_workspace.title.isVisible()
     assert window.photometry_workspace.band_tabs.isVisible()
     assert window.photometry_workspace.findChild(
         QWidget, "photometry_narrow_science_column").maximumWidth() == 1400
-    window.photometry_workspace.back_btn.click()
-    assert window.preview_tabs.currentWidget() is not window.photometry_workspace
+    window.fits_view_btn.click()
+    assert window.preview_tabs.currentWidget() is window.fits_explorer
+    assert window.fits_view_btn.isChecked()
+    window.remote_view_btn.click()
+    assert window.preview_tabs.currentWidget() is window.sky
+    assert window.remote_view_btn.isChecked()
     assert window.navigation_scroll.isVisible()
-    assert window.preview_tabs.tabBar().isVisible()
+    assert not window.preview_tabs.tabBar().isVisible()
     assert window.preview_label.isVisible()
     assert project.field.ra_deg == pytest.approx(155.438012)
 
@@ -762,3 +774,27 @@ def test_workspace_empty_psf_cards_only_appear_in_explicit_advanced_mode(qtbot):
     assert not g._model_card.isVisible()
     assert not g._profile_card.isVisible()
     assert not g.inspection_toggle.isVisible()
+
+
+def test_psf_desktop_two_column_inspector_reflows_without_touching_science(qtbot):
+    """PSF model/profile and the existing QA/setup share desktop viewport."""
+    from PySide6.QtWidgets import QBoxLayout
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1670, 920)
+    w.show()
+    qtbot.wait(20)
+    panel = w.psf0_panels["g"]
+    assert panel._work_columns.direction() == QBoxLayout.LeftToRight
+    assert panel._science_row.direction() == QBoxLayout.LeftToRight
+    assert panel._result_column.parentWidget() is panel
+    assert panel._controls_column.parentWidget() is panel
+    assert panel.overview_state() == w.psf0_panels["g"].overview_state()
+    w.resize(910, 780)
+    qtbot.wait(20)
+    assert panel._work_columns.direction() == QBoxLayout.TopToBottom
+    assert panel._model_card.isVisible()
+    assert panel._profile_card.isVisible()
+    assert not panel.kernel_view.pixmap() or panel.kernel_view.pixmap().isNull()

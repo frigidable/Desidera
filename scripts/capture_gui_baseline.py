@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 from pathlib import Path
 from offline_gui_fixture import (offline_legacy_viewer, apply_offline_state,
                                  make_synthetic_fits_view)
@@ -599,6 +600,47 @@ def main():
         finally:
             window.close()
             app.processEvents()
+    # On-device reports revealed a second duplicated Galaxy Workspace
+    # navigation strip and a long PSF control sheet. Capture the actual
+    # embedded shell, not only the standalone Photometry widget.
+    with tempfile.TemporaryDirectory(prefix="desidera-shell-ci-") as temp_dir:
+        with offline_legacy_viewer():
+            window = SurveyExplorer(restore_session=False, launch_remote=False)
+            try:
+                project = create_object_project(
+                    "Synthetic shell galaxy", Path(temp_dir) / "shell_target",
+                    field=SkyField(40.096208, 1.22925, 5.))
+                window.attach_object_project(project)
+                window.show()
+                for _ in range(5):
+                    app.processEvents()
+                if window.preview_tabs.tabBar().isVisible():
+                    raise AssertionError("Duplicate Galaxy Workspace tabs visible")
+                if not window.remote_view_btn.isChecked():
+                    raise AssertionError("Remote sky view is not the default")
+                window.photometry_btn.click()
+                for _ in range(5):
+                    app.processEvents()
+                if not window.photometry_btn.isChecked():
+                    raise AssertionError("Photometry sidebar selection not active")
+                if window.photometry_workspace.back_btn.isVisible():
+                    raise AssertionError("Embedded duplicate Back action visible")
+                for width, height in SIZES[:2]:
+                    reports.append(_capture(
+                        window, app, outdir, width, height,
+                        "W0_embedded_photometry_SCIENCE_HOLD"))
+                window.photometry_workspace.stage_tabs.setCurrentWidget(
+                    window.photometry_workspace.scene_editor)
+                for _ in range(5):
+                    app.processEvents()
+                for width, height in SIZES[:2]:
+                    reports.append(_capture(
+                        window, app, outdir, width, height,
+                        "W1_embedded_scene_NO_FITS"))
+            finally:
+                window._returning_to_hub = True
+                window.close()
+                app.processEvents()
     # Synthetic three-band comparison at a realistic desktop viewport.
     # This fixture contains NO DESI pixels; it is strictly geometry evidence.
     with offline_legacy_viewer():

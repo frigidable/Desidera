@@ -175,6 +175,13 @@ class SurveyExplorer(QMainWindow):
             "QLineEdit[targetInput=\"true\"]:focus { "
             "border: 2px solid palette(highlight); padding-left: 8px; }"
             "QLineEdit[invalid=\"true\"] { border: 2px solid #d56b69; }"
+            "QLabel#workspace_view_caption { color: palette(mid); "
+            "font-size: 11px; font-weight: 600; padding-top: 6px; } "
+            "QPushButton[workspaceView=\"true\"] { "
+            "min-height: 34px; border-radius: 7px; } "
+            "QPushButton[workspaceView=\"true\"]:checked { "
+            "border: 2px solid palette(highlight); "
+            "background: palette(button); font-weight: 650; } "
         )
         apply_visual_style(self, prefix=self.styleSheet())
         split = QSplitter(Qt.Horizontal, self)
@@ -202,19 +209,60 @@ class SurveyExplorer(QMainWindow):
             "Inspect all local observational sources, bricks and filters "
             "before configuring scientific analysis. No network requests.")
         self.dataset_manager_btn.clicked.connect(self._open_dataset_manager)
+        self.dataset_manager_btn.setCheckable(True)
         self.dataset_manager_btn.setVisible(False)
         self.dataset_manager_btn.setAccessibleName("Open local observational sources manager")
         navigation_actions.addWidget(self.dataset_manager_btn)
+        panel.addLayout(navigation_actions)
+
+        # One visible top-level workspace switcher in the persistent sidebar.
+        # QTabWidget below remains the original content/identity host, but
+        # its redundant visual tab strip is hidden. This is navigation only.
+        self.workspace_view_caption = QLabel("WORKSPACE")
+        self.workspace_view_caption.setObjectName("workspace_view_caption")
+        panel.addWidget(self.workspace_view_caption)
+        workspace_views = QHBoxLayout()
+        workspace_views.setSpacing(5)
+        self.remote_view_btn = QPushButton("Sky")
+        self.remote_view_btn.setObjectName("workspace_view_remote")
+        self.remote_view_btn.setAccessibleName("Show remote sky preview")
+        self.remote_view_btn.setToolTip(
+            "Display the remote Legacy Viewer. Preview tiles are not "
+            "calibrated FITS or adopted photometry.")
+        self.remote_view_btn.setCheckable(True)
+        self.remote_view_btn.setProperty("workspaceView", True)
+        self.remote_view_btn.clicked.connect(
+            lambda _checked=False: self._switch_workspace_view(self.sky))
+        workspace_views.addWidget(self.remote_view_btn, 1)
+        self.fits_view_btn = QPushButton("FITS")
+        self.fits_view_btn.setObjectName("workspace_view_fits")
+        self.fits_view_btn.setAccessibleName("Show original FITS Explorer")
+        self.fits_view_btn.setToolTip(
+            "Show existing local original FITS / WCS data. Navigation never "
+            "downloads images or adopts scientific measurements.")
+        self.fits_view_btn.setCheckable(True)
+        self.fits_view_btn.setProperty("workspaceView", True)
+        self.fits_view_btn.clicked.connect(
+            lambda _checked=False: self._switch_workspace_view(
+                self.fits_explorer))
+        workspace_views.addWidget(self.fits_view_btn, 1)
         self.photometry_btn = QPushButton("Photometry")
         self.photometry_btn.setObjectName("workspace_open_photometry")
         adorn(self.photometry_btn, "chart")
+        self.photometry_btn.setAccessibleName("Open photometry research stages")
         self.photometry_btn.setToolTip(
-            "Open the separate scientific photometry screen for this galaxy. "
-            "No measurements are performed or adopted by navigation.")
+            "PSF, Scene, Sky and Apertures; diagnostics remain unadopted. "
+            "The original project and chosen optical band are preserved.")
+        self.photometry_btn.setCheckable(True)
+        self.photometry_btn.setProperty("workspaceView", True)
         self.photometry_btn.clicked.connect(self._open_photometry)
+        self.photometry_btn.clicked.connect(
+            lambda _checked=False: QTimer.singleShot(
+                0, lambda: self._preview_tab_changed(
+                    self.preview_tabs.currentIndex())))
         self.photometry_btn.setVisible(False)
-        navigation_actions.addWidget(self.photometry_btn)
-        panel.addLayout(navigation_actions)
+        workspace_views.addWidget(self.photometry_btn, 2)
+        panel.addLayout(workspace_views)
         self.workflow_stage = QLabel("01 / 03 · Target")
         self.workflow_stage.setObjectName("workflow_stage")
         self.workflow_stage.setStyleSheet(
@@ -747,6 +795,9 @@ class SurveyExplorer(QMainWindow):
         preview_layout.addLayout(heading_row)
         self.preview_tabs = QTabWidget()
         self.preview_tabs.setObjectName("scientific_preview_tabs")
+        # Keep all native pages, indices and Qt signals (scientific QA and
+        # project resume rely on them); expose exactly one navigation level.
+        self.preview_tabs.tabBar().hide()
         self.preview_tabs.addTab(self.sky, "Remote sky")
         self.fits_explorer = FITSExplorer()
         self.preview_tabs.addTab(self.fits_explorer, "FITS Explorer")
@@ -761,6 +812,7 @@ class SurveyExplorer(QMainWindow):
         self.multiband_comparison = MultibandComparison(self.preview_tabs)
         self.dataset_manager = DatasetManager(self.preview_tabs)
         self.photometry_workspace = PhotometryWorkspace(self.preview_tabs)
+        self.photometry_workspace.set_compact_shell(True)
         for optional_page in (
                 self.four_layer_comparison, self.multiband_comparison,
                 self.dataset_manager, self.photometry_workspace):
@@ -806,6 +858,7 @@ class SurveyExplorer(QMainWindow):
         split.setChildrenCollapsible(False)
         split.setSizes([375, 1085])
         self.setCentralWidget(split)
+        self._preview_tab_changed(self.preview_tabs.currentIndex())
         self.search_btn.setDefault(True)
         # Navigation to a remote web application is deliberately explicit.
         # RA/Dec spinbox edits must not trigger many remote page reloads.
@@ -2493,6 +2546,12 @@ class SurveyExplorer(QMainWindow):
             self._close_multiband()
         self._refresh_workflow()
 
+    def _switch_workspace_view(self, page):
+        """Presentation-only navigation to a previously existing page."""
+        self.preview_tabs.setCurrentWidget(page)
+        # Even reselecting the current page must keep its button highlighted.
+        self._preview_tab_changed(self.preview_tabs.currentIndex())
+
     def _preview_tab_changed(self, tab):
         # The project/coordinates sidebar remains a stable navigation
         # anchor even inside Photometry. Removing it forced the scientific
@@ -2502,7 +2561,17 @@ class SurveyExplorer(QMainWindow):
         photometry_active = (
             self.preview_tabs.currentWidget() is self.photometry_workspace)
         self.navigation_scroll.show()
-        self.preview_tabs.tabBar().show()
+        # A second tab strip duplicates the sidebar switcher and consumes
+        # ~30 px of valuable science-image height.
+        self.preview_tabs.tabBar().hide()
+        current = self.preview_tabs.currentWidget()
+        self.remote_view_btn.setChecked(current is self.sky)
+        self.fits_view_btn.setChecked(current in (
+            self.fits_explorer, self.four_layer_comparison,
+            self.multiband_comparison))
+        self.photometry_btn.setChecked(current is self.photometry_workspace)
+        self.dataset_manager_btn.setChecked(
+            current is self.dataset_manager)
         self.preview_label.setVisible(not photometry_active)
         if tab != 0:
             # Survey downloads and Science QA live in a separate inspector.

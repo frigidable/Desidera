@@ -7,6 +7,45 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Galaxy Workspace navigation and science layout — desktop pilot
+
+The real Leo P Windows session showed THREE overlapping navigational layers:
+sidebar Projects/Sources/Photometry, a second outer `Remote sky / FITS
+Explorer / Photometry` tab bar, and a Photometry-specific Workspace/Sources
+toolbar. This makes it hard to understand which workspace owns the active
+scientific state.
+
+The first Observatory Studio Galaxy Workspace increment keeps the established
+`SurveyExplorer.preview_tabs` as a **nonvisual page host**, preserving its
+object-bound project identity, FITS viewer and existing signals/resume. Its
+visible tab bar is always hidden; a single explicit **Sky / FITS /
+Photometry** switcher lives under Projects/Sources in the persistent sidebar.
+Native Data Manager remains a guarded Sources action; FITS comparison
+workspaces remain accessible through their original buttons. Selected-state
+styling is driven by the actual current page, not a guessed readiness state.
+In embedded mode only, `PhotometryWorkspace` hides redundant Workspace and
+Sources buttons, recovers header height and retains their signals for
+standalone/compatibility behavior. The four PSF/Scene/Sky/Apertures tabs
+are a DIFFERENT (scientific) level and deliberately remain visible.
+
+At desktop widths, `PSF0Panel` now places **model + real radial comparison**
+on the left and **quality + existing controls** in one inspector on the right.
+On narrower viewports it reflows vertically without computing a PSF,
+changing a source band, changing starred exclusions or promoting any result
+to scientific acceptance. The no-model/no-profile placeholders are still
+explicitly empty. Scene Editor preserves the original QGraphicsView/FITS
+canvas and ICRS draft semantics, but has a named contextual inspector
+with bounded width and unchanged Draw/Isophote/SGA task routing.
+
+Test this as layout-only: no new project folders, no backend imports from
+QML, no remote WebEngine loading during offline capture, and no implicit
+read/write of native FITS. CI captures the real embedded Galaxy Workspace
+at 1366×768 and 1600×900, in both PSF and Scene states. The user's
+physical Windows test remains the source of truth for native DPI,
+focus and real science-image presentation.
+
+---
+
 ## Real Windows Project Hub usability review (15 November 2026)
 
 Real on-device screenshots from a five-galaxy library (Leo P, dw

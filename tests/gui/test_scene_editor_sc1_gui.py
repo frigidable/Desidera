@@ -2414,3 +2414,24 @@ def test_scene_fits_failure_visual_tone_is_recovered_with_new_source(
     assert scene.status.property("visualState")=="normal"
     assert scene._fits_load_failure is None
     scene.shutdown()
+
+
+def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
+    """Desktop polish does not replace pixel-accurate QGraphicsView."""
+    from PySide6.QtWidgets import QWidget, QSplitter, QGraphicsView
+    editor = SceneEditor()
+    qtbot.addWidget(editor)
+    editor.resize(1366, 768)
+    editor.show()
+    qtbot.wait(20)
+    inspector = editor.findChild(QWidget, "scene_context_inspector")
+    splitter = editor.findChild(QSplitter, "scene_image_inspector_split")
+    assert inspector is not None
+    assert splitter is not None
+    assert 270 <= inspector.width() <= 420
+    assert inspector.maximumWidth() == 420
+    assert isinstance(splitter.widget(0), QGraphicsView)
+    assert splitter.widget(0) is editor.view
+    assert editor.scene_task_buttons["draw"].isChecked()
+    assert not editor.save_btn.isEnabled()
+    assert editor._loaded is None

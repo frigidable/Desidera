@@ -1372,6 +1372,8 @@ class SceneEditor(QWidget):
         # QA export remains available in a pinned footer beside Save draft.
 
         splitter = QSplitter(Qt.Horizontal, self)
+        splitter.setObjectName("scene_image_inspector_split")
+        splitter.setHandleWidth(6)
         self.graphics = QGraphicsScene(self)
         self.view = SceneDrawingView()
         self.view.setScene(self.graphics)
@@ -1920,6 +1922,8 @@ class SceneEditor(QWidget):
         
         controls_scroll = QScrollArea(self)
         controls_scroll.setObjectName("scene_controls_scroll")
+        controls_scroll.setAccessibleName(
+            "Contextual mask, isophote and SGA parameters")
         self.scene_controls_scroll = controls_scroll
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setWidget(controls)
@@ -1927,9 +1931,22 @@ class SceneEditor(QWidget):
         controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scene_task_buttons = {}
         right_panel = QWidget(self)
+        right_panel.setObjectName("scene_context_inspector")
+        right_panel.setAccessibleName("Scene region and source inspector")
+        right_panel.setMinimumWidth(270)
+        right_panel.setMaximumWidth(420)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(5)
+        inspector_title = QLabel("REGIONS · DRAFT INSPECTOR")
+        inspector_title.setObjectName("scene_inspector_heading")
+        inspector_title.setStyleSheet(
+            "font-size: 11px; font-weight: 600; "
+            "color: palette(mid); padding: 4px 5px;")
+        inspector_title.setToolTip(
+            "Mask drafting and optional geometry suggestions; "
+            "never a scientifically approved galaxy segmentation.")
+        right_layout.addWidget(inspector_title)
         task_row = QHBoxLayout()
         task_row.setSpacing(4)
         for task_id, label, description, page in (

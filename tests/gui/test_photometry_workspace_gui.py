@@ -45,16 +45,21 @@ def test_screen_is_isolated_until_open_and_returns_to_workspace(workspace):
     assert not window.comparison_btn.isVisible()
     assert not window.data_toggle.isEnabled()
     assert not (project.root / "photometry-runs").exists()
-    window.photometry_workspace.back_btn.click()
+    assert not window.photometry_workspace.back_btn.isVisible()
+    assert not window.photometry_workspace.sources_btn.isVisible()
+    window.remote_view_btn.click()
     assert window.preview_tabs.currentWidget() is window.sky
+    assert window.remote_view_btn.isChecked()
     assert window.data_toggle.isEnabled()
 
 
 def test_manage_sources_from_photometry_opens_real_dataset_manager(workspace):
     window, project = workspace
     window.photometry_btn.click()
-    window.photometry_workspace.sources_btn.click()
+    window.dataset_manager_btn.click()
     assert window.preview_tabs.currentWidget() is window.dataset_manager
+    assert window.dataset_manager_btn.isChecked()
+    assert not window.preview_tabs.tabBar().isVisible()
     assert window.dataset_manager.tree.topLevelItemCount() == 0
     assert not (project.root / "datasets" / "index.json").exists()
 
@@ -316,3 +321,23 @@ def test_observatory_explicit_theme_recolors_open_photometry(qtbot):
         else:
             settings.setValue("appearance/theme", prior)
         settings.sync()
+
+
+def test_compact_photometry_shell_preserves_stage_state(qtbot):
+    """Embedded navigation is compact; standalone Photometry is unchanged."""
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    w = PhotometryWorkspace()
+    qtbot.addWidget(w)
+    assert not w._compact_shell
+    assert w._root_layout.contentsMargins().left() == 18
+    w.set_compact_shell(True)
+    assert w._compact_shell
+    assert w.back_btn.isHidden()
+    assert w.sources_btn.isHidden()
+    assert w._root_layout.contentsMargins().left() == 10
+    assert w.stage_tabs.count() == 4
+    w.set_compact_shell(False)
+    assert not w._compact_shell
+    assert not w.back_btn.isHidden()
+    assert not w.sources_btn.isHidden()
+    assert w._root_layout.contentsMargins().left() == 18

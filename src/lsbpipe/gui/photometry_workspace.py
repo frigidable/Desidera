@@ -54,7 +54,9 @@ class PhotometryWorkspace(QWidget):
         self._bound_source_identity = None
         self._suppress_navigation = False
         self._tab_source_identity = None
+        self._compact_shell = False
         root = QVBoxLayout(self)
+        self._root_layout = root
         root.setContentsMargins(18, 14, 18, 14)
         root.setSpacing(12)
 
@@ -380,6 +382,20 @@ class PhotometryWorkspace(QWidget):
         self._apply_science_reflow()
         apply_visual_style(self)
 
+    def set_compact_shell(self, embedded: bool):
+        """Remove duplicate navigation only when hosted by Galaxy Workspace.
+
+        Standalone Photometry retains its own Back/Sources controls.
+        The outer SurveyExplorer's persistent sidebar owns these actions
+        in embedded mode; signals, PSF tasks and saved navigation are intact.
+        """
+        self._compact_shell = bool(embedded)
+        self.back_btn.setVisible(not self._compact_shell)
+        self.sources_btn.setVisible(not self._compact_shell)
+        margin = (10, 8, 10, 8) if self._compact_shell else (18, 14, 18, 14)
+        self._root_layout.setContentsMargins(*margin)
+        self._root_layout.setSpacing(8 if self._compact_shell else 12)
+
     def current_navigation(self):
         current = self.stage_tabs.currentWidget()
         stage = ("scene" if current is self.scene_editor
@@ -454,7 +470,8 @@ class PhotometryWorkspace(QWidget):
             # inner tab attempts to enforce a horizontal minimum width.
             narrow = self.width() < 1140
             for panel in self.psf0_panels.values():
-                panel.set_narrow_visual_layout(narrow)
+                panel.set_narrow_visual_layout(
+                    narrow, available_width=self.width())
 
     def resizeEvent(self, event):
         self._apply_science_reflow()
