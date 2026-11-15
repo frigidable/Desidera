@@ -1184,15 +1184,16 @@ def test_qml_sources_disclosure_keeps_project_identity_and_pinned_actions(
     toggle = inspector.findChild(QObject, "qml_hub_evidence_toggle")
     assert toggle is not None
     assert not inspector.property("detailsExpanded")
-    for mode in (True, False, True, False):
+    # State changes are tested without forcing repeated synchronous
+    # offscreen scene-graph grabs. The dedicated capture script screenshots
+    # each presentation mode once in a fresh deterministic capture process.
+    for mode in (True, False):
         assert inspector.setProperty("detailsExpanded", mode)
-        qtbot.wait(10)
         assert inspector.property("detailsExpanded") is mode
         assert preview.bridge.selectedId == project.project_id
         assert preview.bridge.qaSummary == hub.galaxy_card.qa_status.text()
         assert preview.bridge.nextAction == (
             hub.galaxy_card.snapshot.readiness.next_action_label)
-        assert not preview.grabWindow().isNull()
     # A panel disclosure must never rewrite the on-disk manifest.
     assert (project.root / "lsbpipe-object.json").read_bytes() == passport
     preview.close()
@@ -1210,9 +1211,7 @@ def test_qml_five_galaxies_preserve_selection_and_filtering_at_desktop_size(
     hub._open_qml_preview()
     preview = hub._qml_preview
     preview.resize(1680, 900)
-    qtbot.wait(20)
     assert preview.model.rowCount() == 5
-    assert not preview.grabWindow().isNull()
     preview.bridge.choose(projects[-1].project_id)
     assert preview.bridge.selectedName == "UGC 2162"
     preview.bridge.setFilter("UGC")
