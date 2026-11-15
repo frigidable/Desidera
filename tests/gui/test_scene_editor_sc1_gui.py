@@ -2418,7 +2418,7 @@ def test_scene_fits_failure_visual_tone_is_recovered_with_new_source(
 
 def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
     """Desktop polish does not replace pixel-accurate QGraphicsView."""
-    from PySide6.QtWidgets import QWidget, QSplitter, QGraphicsView
+    from PySide6.QtWidgets import QWidget, QSplitter, QGraphicsView, QBoxLayout
     editor = SceneEditor()
     qtbot.addWidget(editor)
     editor.resize(1366, 768)
@@ -2435,3 +2435,13 @@ def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
     assert editor.scene_task_buttons["draw"].isChecked()
     assert not editor.save_btn.isEnabled()
     assert editor._loaded is None
+    assert editor.band.maximumWidth() == 88
+    assert editor.width.maximumWidth() == 176
+    # Native image deserves one control row at 1366px desktop widths;
+    # the existing 760px large-font configuration still reflows safely.
+    editor.resize(970, 768)
+    qtbot.wait(20)
+    assert editor._toolbar.direction() == QBoxLayout.LeftToRight
+    editor.resize(760, 650)
+    qtbot.wait(20)
+    assert editor._toolbar.direction() == QBoxLayout.TopToBottom

@@ -53,6 +53,16 @@ to scientific acceptance. The no-model/no-profile placeholders are still
 explicitly empty. Scene Editor preserves the original QGraphicsView/FITS
 canvas and ICRS draft semantics, but has a named contextual inspector
 with bounded width and unchanged Draw/Isophote/SGA task routing.
+Actual first embedded 1366×768 offscreen captures showed the Scene input
+toolbar needlessly split into two rows: band and cutout-width selectors
+expanded to hundreds of pixels. Bound the band selector to 88px and native
+view-width input to 176px, align them to the left, and use one toolbar row
+at viewports ≥920px while preserving the original 760px/high-font wrap.
+This recovers image-canvas height without changing stretch, pixels, or
+coordinates. A PSF-0 GUI check initially expected an empty band to show
+model/profile cards; that contradicts the existing fail-closed policy.
+The test now verifies those cards are absent when no original FITS/PSF
+exists and that the QA/setup inspector remains accessible.
 
 Test this as layout-only: no new project folders, no backend imports from
 QML, no remote WebEngine loading during offline capture, and no implicit

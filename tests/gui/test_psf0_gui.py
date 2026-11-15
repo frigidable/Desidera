@@ -795,6 +795,10 @@ def test_psf_desktop_two_column_inspector_reflows_without_touching_science(qtbot
     w.resize(910, 780)
     qtbot.wait(20)
     assert panel._work_columns.direction() == QBoxLayout.TopToBottom
-    assert panel._model_card.isVisible()
-    assert panel._profile_card.isVisible()
+    # No source FITS / fitted PSF: these visual cards are deliberately
+    # hidden in Standard mode, never populated with fabricated plots.
+    assert not panel._model_card.isVisible()
+    assert not panel._profile_card.isVisible()
+    assert panel._result_column.isVisible()
+    assert panel._controls_column.isVisible()
     assert not panel.kernel_view.pixmap() or panel.kernel_view.pixmap().isNull()

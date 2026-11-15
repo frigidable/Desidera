@@ -1300,6 +1300,7 @@ class SceneEditor(QWidget):
         self.band.setObjectName("scene_band")
         for b in "griz":
             self.band.addItem(b.upper(), b)
+        self.band.setMaximumWidth(88)
         self.band.currentIndexChanged.connect(self._band_changed)
         band_caption = QLabel("Band")
         band_caption.setBuddy(self.band)
@@ -1312,6 +1313,7 @@ class SceneEditor(QWidget):
         self.width.setSingleStep(.5)
         self.width.setValue(6.)
         self.width.setSuffix(" arcmin")
+        self.width.setMaximumWidth(176)
         self.width.setToolTip(
             "Only an original native-pixel cutout is rendered. "
             "A larger target may extend beyond this explicit view.")
@@ -1319,6 +1321,9 @@ class SceneEditor(QWidget):
         width_caption.setBuddy(self.width)
         inputs.addWidget(width_caption)
         inputs.addWidget(self.width)
+        # Keep band and cutout width left-aligned instead of stretching
+        # both fields across the entire native image toolbar.
+        inputs.addStretch(1)
         self.load_btn = QPushButton("Load original FITS")
         self.load_btn.setObjectName("scene_load_original")
         adorn(self.load_btn, "folder")
@@ -2035,7 +2040,10 @@ class SceneEditor(QWidget):
 
     def resizeEvent(self, event):
         if hasattr(self, "_toolbar"):
-            narrow = event.size().width() < 1050
+            # The compact band/width inputs now fit beside Load and Stretch
+            # at a 1366px desktop shell; only genuinely narrow viewports
+            # need the second row (including 760px/high-font tests).
+            narrow = event.size().width() < 920
             direction = (
                 QBoxLayout.TopToBottom if narrow else
                 QBoxLayout.LeftToRight)
