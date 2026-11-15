@@ -61,7 +61,13 @@ one toolbar row at viewports ≥920px while preserving the original
 760px/high-font wrap. Do **not** set a hard maximum on the cutout-width
 spinbox: Windows 16pt Arial requires around 240px for the explicit
 "9.0 arcmin" suffix and accessibility checks caught clipping when capped
-at 176px. Its minimum is determined by its actual font metrics.
+at 176px. Its minimum is determined by its actual font metrics. A separate
+wide→narrow regression then showed that Qt latched the horizontal
+toolbar's `minimumSizeHint` as a top-level widget constraint, so
+`resize(760, 650)` could not reach the vertical reflow threshold.
+`SceneEditor` now uses `QLayout.SetNoConstraint` at the outer layout
+while retaining per-control minima and the scrollable inspector; CI
+tests the actual resulting viewport width and both toolbar directions.
 This recovers image-canvas height without changing stretch, pixels, or
 coordinates. A PSF-0 GUI check initially expected an empty band to show
 model/profile cards; that contradicts the existing fail-closed policy.

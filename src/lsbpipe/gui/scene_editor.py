@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
     QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout,
-    QSizePolicy, QBoxLayout,
+    QSizePolicy, QBoxLayout, QLayout,
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
@@ -1270,6 +1270,12 @@ class SceneEditor(QWidget):
         self._work_cache = {}
 
         root = QVBoxLayout(self)
+        # A previously wide, horizontal science toolbar can otherwise
+        # make Qt freeze the widget's minimumSizeHint above 760px,
+        # preventing a subsequent resize back to a narrow viewport and
+        # preventing resizeEvent from switching to vertical controls.
+        # Internal controls still reflow and the right inspector scrolls.
+        root.setSizeConstraint(QLayout.SetNoConstraint)
         root.setContentsMargins(9, 8, 9, 8)
         root.setSpacing(7)
         self.heading = QLabel("Scene and Smart Masks · SC1")

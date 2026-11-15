@@ -2446,4 +2446,7 @@ def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
     assert editor._toolbar.direction() == QBoxLayout.LeftToRight
     editor.resize(760, 650)
     qtbot.wait(20)
+    assert editor.size().width() <= 760, (
+        "A wide horizontal toolbar must not lock the previous minimum "
+        "size and prevent the smaller viewport reflow")
     assert editor._toolbar.direction() == QBoxLayout.TopToBottom
