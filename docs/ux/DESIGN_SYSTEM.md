@@ -7,6 +7,33 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Project Hub catalogue pilot — visual architecture
+
+The first Observatory Studio migration increments the **existing** offline
+Project Hub rather than adding a second launcher or adopting QML before
+a benchmark. Each row is painted by `GalaxyProjectRowDelegate`, a lightweight
+`QStyledItemDelegate` over the same `QListWidget` model. The row's native
+`DisplayRole` text and immutable `UserRole` project record are preserved
+for keyboard access, assistive technology, search, and object-safe relinking.
+The additional `UserRole + 2` carries only the `(name, status, coordinates)`
+presentation tuple. There is no FITS decoding, network request or science
+acceptance in a delegate `paint()` operation.
+
+A list row displays three unambiguous lines: **galaxy name**, **workflow
+state**, and **ICRS coordinates or a missing-data explanation**. Missing
+projects use a warning-color status with ordinary explanatory text, while
+available projects use the interface accent; neither means validated science.
+A two-pixel focus border remains visible independently of selection color.
+The library header shows the number of saved galaxies and filtered matches.
+Empty and no-match states are distinguished and retain keyboard controls.
+
+Three-project synthetic screenshots at 1366×768 and 1600×900 complement
+the established empty and single-object baselines. Keep this phase entirely
+in Qt Widgets. Evaluate a QML alternative only if a measured prototype
+improves layout, accessibility and maintenance without regressing real FITS
+interaction. No new design-specific project registry or directory is needed.
+
+---
 ## Observatory implementation (15 November 2026)
 
 The earlier v0.1 color table below is a **historical proposal**, not the

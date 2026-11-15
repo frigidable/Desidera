@@ -5,15 +5,16 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings, QEvent
-from PySide6.QtGui import QActionGroup, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, Signal, QSize, QRect, QRectF, QTimer, QSettings, QEvent
+from PySide6.QtGui import (QActionGroup, QColor, QFont, QFontMetrics,
+                           QKeySequence, QPainter, QPen, QShortcut)
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QMenu, QCheckBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
     QInputDialog, QSplitter, QScrollArea, QSizePolicy,
-    QWidget, QDoubleSpinBox, QApplication,
+    QWidget, QDoubleSpinBox, QApplication, QStyledItemDelegate, QStyle,
 )
 
 from lsbpipe.surveys.legacy import SkyField
@@ -249,6 +250,69 @@ class CreateProjectDialog(QDialog):
         self.accept()
 
 
+class GalaxyProjectRowDelegate(QStyledItemDelegate):
+    """Paint read-only project rows without widget-per-row overhead.
+
+    Model text and project UUID remain unchanged for keyboard navigation,
+    screen readers, filtering, offline open and safe relinking.
+    """
+
+    def sizeHint(self, option, index):
+        line = QFontMetrics(option.font).height() + 3
+        return QSize(100, max(87, line * 3 + 26))
+
+    def paint(self, painter, option, index):
+        data = index.data(Qt.UserRole + 2)
+        if not isinstance(data, tuple) or len(data) != 3:
+            return super().paint(painter, option, index)
+        name, status, detail = (str(value) for value in data)
+        colors = theme_colors(option.widget or self.parent())
+        selected = bool(option.state & QStyle.State_Selected)
+        focused = bool(option.state & QStyle.State_HasFocus)
+        card = option.rect.adjusted(3, 3, -3, -3)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        background = colors["SOFT_ACCENT"] if selected else colors["SURFACE"]
+        border = colors["ACCENT"] if selected else colors["BORDER"]
+        painter.setBrush(QColor(background))
+        painter.setPen(QPen(QColor(border), 1.5 if selected else 1))
+        painter.drawRoundedRect(QRectF(card), 9, 9)
+        if selected:
+            painter.fillRect(QRect(card.left() + 3, card.top() + 11,
+                                   3, max(1, card.height() - 22)),
+                             QColor(colors["ACCENT"]))
+        if focused:
+            painter.setPen(QPen(QColor(colors["FOCUS"]), 2, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(QRectF(card.adjusted(2, 2, -2, -2)), 7, 7)
+        left = card.left() + 17
+        available_width = max(1, card.width() - 32)
+        y = card.top() + 8
+        line_height = QFontMetrics(option.font).height() + 3
+        font = QFont(option.font)
+        font.setWeight(QFont.DemiBold)
+        painter.setFont(font)
+        painter.setPen(QColor(colors["TEXT"]))
+        metrics = painter.fontMetrics()
+        painter.drawText(QRect(left, y, available_width, line_height),
+                         Qt.AlignVCenter | Qt.AlignLeft,
+                         metrics.elidedText(name, Qt.ElideRight, available_width))
+        painter.setFont(option.font)
+        metrics = painter.fontMetrics()
+        record = index.data(Qt.UserRole)
+        problematic = (isinstance(record, dict) and not record.get("available"))
+        painter.setPen(QColor(colors["WARN"] if problematic else colors["ACCENT"]))
+        painter.drawText(QRect(left, y + line_height,
+                               available_width, line_height),
+                         Qt.AlignVCenter | Qt.AlignLeft,
+                         metrics.elidedText(status, Qt.ElideRight, available_width))
+        painter.setPen(QColor(colors["MUTED"]))
+        painter.drawText(QRect(left, y + 2 * line_height,
+                               available_width, line_height),
+                         Qt.AlignVCenter | Qt.AlignLeft,
+                         metrics.elidedText(detail, Qt.ElideRight, available_width))
+        painter.restore()
+
 class ProjectHub(QMainWindow):
     """Launch surface. Explorer is instantiated only for a selected project."""
     projectOpened = Signal(str)
@@ -381,7 +445,16 @@ class ProjectHub(QMainWindow):
         left = QVBoxLayout(library)
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(10)
-        left.addWidget(QLabel("Recent galaxies"))
+        library_heading = QHBoxLayout()
+        self.library_title = QLabel("Recent galaxies")
+        self.library_title.setObjectName("hub_library_title")
+        library_heading.addWidget(self.library_title)
+        library_heading.addStretch(1)
+        self.library_count = QLabel("0 projects")
+        self.library_count.setObjectName("hub_library_count")
+        self.library_count.setAccessibleName("Project search result count")
+        library_heading.addWidget(self.library_count)
+        left.addLayout(library_heading)
         self.filter = QLineEdit()
         self.filter.setObjectName("hub_project_filter")
         self.filter.setAccessibleName("Search recent galaxy projects")
@@ -397,13 +470,16 @@ class ProjectHub(QMainWindow):
             "Use arrow keys to select a galaxy. Press Enter to open it "
             "or relink its folder if missing.")
         self.projects.setWordWrap(True)
-        self.projects.setSpacing(5)
+        self.projects.setUniformItemSizes(True)
+        self.projects.setSpacing(6)
+        self.projects.setMouseTracking(True)
+        self.projects.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.projects.setItemDelegate(GalaxyProjectRowDelegate(self.projects))
+        # Selection/background are painted by the delegate, not by a
+        # palette(highlight) rule that might wash out the row metadata.
         self.projects.setStyleSheet(
-            "QListWidget { border: 1px solid palette(mid); "
-            "border-radius: 8px; padding: 6px; } "
-            "QListWidget::item { padding: 6px; border-radius: 5px; } "
-            "QListWidget::item:selected { background: palette(highlight); "
-            "color: palette(highlighted-text); }")
+            "QListWidget#hub_project_list { border: none; "
+            "background: transparent; padding: 0px; }")
         # Qt itemActivated handles both Enter and double-click without two opens.
         self.projects.itemActivated.connect(lambda _: self._open_selected())
         self._search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
@@ -415,7 +491,18 @@ class ProjectHub(QMainWindow):
         self.empty_panel = QWidget()
         self.empty_panel.setObjectName("hub_empty_panel")
         empty_layout = QVBoxLayout(self.empty_panel)
+        empty_layout.setContentsMargins(18, 12, 18, 12)
+        empty_layout.setSpacing(10)
         empty_layout.addStretch(1)
+        self.empty_symbol = QLabel()
+        self.empty_symbol.setObjectName("hub_empty_symbol")
+        self.empty_symbol.setAccessibleName("Empty galaxy library")
+        self.empty_symbol.setAlignment(Qt.AlignCenter)
+        empty_layout.addWidget(self.empty_symbol)
+        self.empty_title = QLabel("Your galaxy library is empty")
+        self.empty_title.setObjectName("hub_empty_title")
+        self.empty_title.setAlignment(Qt.AlignCenter)
+        empty_layout.addWidget(self.empty_title)
         self.empty_label = QLabel(
             "No projects yet.\nCreate a galaxy project or import an "
             "existing folder to begin.")
@@ -585,7 +672,15 @@ class ProjectHub(QMainWindow):
         outer.addWidget(self.hint)
         self.setCentralWidget(content)
         apply_visual_style(self)
+        self.refresh_visual_theme()
         self.refresh()
+
+    def refresh_visual_theme(self):
+        """Repaint list cards and empty-state glyph after theme switching."""
+        self.projects.viewport().update()
+        self.empty_symbol.setPixmap(icon_for(
+            "galaxy", color=theme_colors(self)["ACCENT"],
+            size=40).pixmap(QSize(40, 40)))
 
     def _focus_project_filter(self):
         """Find the current galaxy without requiring a mouse."""
@@ -669,8 +764,8 @@ class ProjectHub(QMainWindow):
                     detail = "Project metadata needs attention"
             item = QListWidgetItem(
                 f"{name}  ·  {status}\n{detail}")
-            item.setSizeHint(QSize(100, 64))
             item.setData(Qt.UserRole, record)
+            item.setData(Qt.UserRole + 2, (name, status, detail))
             item.setData(Qt.UserRole + 1, tuple(search_identifiers))
             item.setToolTip(record["root"])
             self.projects.addItem(item)
@@ -701,6 +796,13 @@ class ProjectHub(QMainWindow):
             self.projects.setCurrentRow(visible[0] if visible else -1)
         self.projects.setVisible(bool(visible))
         self.empty_panel.setVisible(not visible)
+        total = self.projects.count()
+        self.library_count.setText(
+            f"{len(visible)} of {total} galaxies" if query
+            else f"{total} galaxy" if total == 1 else f"{total} galaxies")
+        self.empty_title.setText(
+            "No matching galaxies" if query and not visible
+            else "Your galaxy library is empty")
         self.empty_label.setText(
             "No matching galaxies.\nClear the search to see all projects."
             if query and not visible else

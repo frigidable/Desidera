@@ -242,6 +242,36 @@ def main():
                     "screenshot": path.name,
                     "screenshot_bytes": path.stat().st_size,
                     "network_used": False, "scientific_status": "NO_SCIENCE_RESULT"})
+            # Filled-library composition: three explicit synthetic galaxy
+            # projects (metadata only), no downloads or science runs.
+            create_object_project(
+                "Leo P · synthetic library entry",
+                outdir.resolve() / "test-project-leop",
+                field=SkyField(155.438, 18.088, 5.))
+            create_object_project(
+                "KDG 73 · synthetic library entry",
+                outdir.resolve() / "test-project-kdg73",
+                field=SkyField(163.1, 69.1, 5.))
+            hub.refresh()
+            for w, h in SIZES[:2]:
+                hub.resize(w, h)
+                hub.show()
+                for _ in range(5):
+                    app.processEvents()
+                if hub.projects.count() != 3:
+                    raise AssertionError("Multi-object Project Hub lacks three rows")
+                path = outdir / f"hub_catalogue_3_SYNTHETIC_{w}x{h}.png"
+                shot = hub.grab()
+                if shot.isNull() or not shot.save(str(path), "PNG"):
+                    raise RuntimeError(f"Cannot capture {path}")
+                reports.append({
+                    "state": "H6_three_synthetic_galaxy_projects",
+                    "screenshot": path.name,
+                    "screenshot_bytes": path.stat().st_size,
+                    "projects": hub.projects.count(),
+                    "network_used": False,
+                    "scientific_status": "NO_SCIENCE_RESULT",
+                })
             # Explicit light/dark UI render; not a physical OS theme test.
             settings = QSettings("Desidera", "Desidera")
             prior_mode = settings.value("appearance/theme", None)

@@ -873,3 +873,77 @@ def test_hub_theme_choice_repaints_existing_card_without_science(qtbot, tmp_path
         else:
             settings.setValue("appearance/theme", prior)
         settings.sync()
+
+
+def test_project_hub_cards_preserve_keyboard_model_and_search(hub, qtbot, tmp_path):
+    """Card presentation must not replace the selected project identity."""
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    from lsbpipe.gui.project_hub import GalaxyProjectRowDelegate
+
+    first = create_object_project(
+        "Alpha dwarf", tmp_path / "alpha", field=SkyField(40.09, 1.22, 5.))
+    create_object_project("Beta dwarf", tmp_path / "beta")
+    hub.refresh()
+    assert hub.projects.count() == 2
+    assert hub.library_count.text() == "2 galaxies"
+    assert isinstance(hub.projects.itemDelegate(), GalaxyProjectRowDelegate)
+    assert not hub.empty_panel.isVisible()
+    for row in range(2):
+        item = hub.projects.item(row)
+        visible = item.data(Qt.UserRole + 2)
+        assert isinstance(visible, tuple) and len(visible) == 3
+        assert visible[0] in ("Alpha dwarf", "Beta dwarf")
+        assert visible[1] and visible[2]
+        assert item.data(Qt.UserRole)["project_id"]
+        assert visible[0] in item.text()  # native display text stays accessible
+    option = QStyleOptionViewItem()
+    option.font = hub.projects.font()
+    height = hub.projects.itemDelegate().sizeHint(
+        option, hub.projects.model().index(0, 0)).height()
+    assert height >= QFontMetrics(option.font).height() * 3 + 26
+    image = hub.projects.viewport().grab()
+    assert not image.isNull()
+
+    hub.filter.setText("Alpha")
+    assert hub.library_count.text() == "1 of 2 galaxies"
+    assert hub.projects.currentItem().data(Qt.UserRole)["project_id"] == first.project_id
+    hub.filter.setText("nonexistent")
+    assert hub.library_count.text() == "0 of 2 galaxies"
+    assert hub.empty_title.text() == "No matching galaxies"
+    assert hub.empty_panel.isVisible()
+    hub.filter.clear()
+    assert hub.library_count.text() == "2 galaxies"
+    assert not hub.empty_panel.isVisible()
+
+
+def test_project_card_view_repaints_without_modifying_project(hub, tmp_path):
+    """Reading, painting and changing appearance must not touch the passport."""
+    from PySide6.QtCore import QSettings
+    from lsbpipe.gui.visual_theme import refresh_visual_tree
+
+    project = create_object_project(
+        "UGC 2162", tmp_path / "UGC_2162",
+        field=SkyField(40.096208, 1.22925, 5.))
+    passport = project.root / "lsbpipe-object.json"
+    assert passport.is_file()
+    before = passport.read_bytes()
+    hub.refresh()
+    settings = QSettings("Desidera", "Desidera")
+    prior = settings.value("appearance/theme", None)
+    try:
+        for mode in ("light", "dark"):
+            settings.setValue("appearance/theme", mode)
+            settings.sync()
+            refresh_visual_tree(hub)
+            assert not hub.projects.viewport().grab().isNull()
+            assert not hub.empty_symbol.pixmap().isNull()
+            assert passport.read_bytes() == before
+            assert read_object_project(project.root).project_id == project.project_id
+    finally:
+        if prior is None:
+            settings.remove("appearance/theme")
+        else:
+            settings.setValue("appearance/theme", prior)
+        settings.sync()
+        refresh_visual_tree(hub)
