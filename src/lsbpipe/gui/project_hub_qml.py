@@ -18,6 +18,9 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from .visual_theme import theme_colors
 
 
+_QML_STYLE_READY = False
+
+
 class HubProjectListModel(QAbstractListModel):
     """Read-only QML projection of the *existing* Project Hub list roles."""
 
@@ -361,7 +364,10 @@ class QmlProjectHubPreview(QQuickView):
         # Qt's native Windows controls ignore customized background/contentItem.
         # This experimental window owns its QML scene; it never changes
         # Qt Widgets/FITS application palettes or scientific rendering.
-        QQuickStyle.setStyle("Basic")
+        global _QML_STYLE_READY
+        if not _QML_STYLE_READY:
+            QQuickStyle.setStyle("Basic")
+            _QML_STYLE_READY = True
         super().__init__()
         self.setObjectName("desidera_qml_hub_preview")
         self.setTitle("DESIDERA · Observatory Studio · experimental Qt Quick")

@@ -43,11 +43,12 @@ verified. The currently working Widgets interface remains authoritative.
 The first Windows GUI rerun found a test-harness error: children of a
 QML `ScrollView` can have a visual `QQuickItem.childItems()` parent chain
 different from their `QObject.findChild()` chain. The regression now checks
-the visual item hierarchy rather than incorrectly treating those elements
-as missing. Visual inspection also caught a native-style black scrollbar
-in both themes. The pilot sets `QQuickStyle("Basic")` before loading its
-controls and draws a theme-colored ScrollBar explicitly, without touching
-native Qt Widgets/FITS styles.
+the mounted ScrollView, the actual evidence projections and the rendered
+screenshot; its internal QQuickItem hierarchy is an implementation detail,
+not a stable test contract. Visual inspection also caught a black scrollbar
+in both themes. The pilot initializes the Qt Quick `Basic` control style only
+once per process (before its first QML view) and draws a theme-colored
+ScrollBar explicitly, without touching native Qt Widgets/FITS styles.
 
 ---
 
