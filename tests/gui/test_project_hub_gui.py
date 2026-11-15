@@ -947,3 +947,23 @@ def test_project_card_view_repaints_without_modifying_project(hub, tmp_path):
             settings.setValue("appearance/theme", prior)
         settings.sync()
         refresh_visual_tree(hub)
+
+
+def test_card_recommended_next_action_comes_from_saved_readiness(
+        hub, tmp_path):
+    """The expanded overview is metadata-backed, not a fabricated QA pass."""
+    project = create_object_project(
+        "No data target", tmp_path / "target",
+        field=SkyField(40.096208, 1.22925, 5.))
+    hub.refresh()
+    card = hub.galaxy_card
+    assert card.snapshot.project_id == project.project_id
+    assert card.snapshot.readiness is not None
+    assert card.next_step_panel.isVisible()
+    assert card.next_step.isVisible()
+    assert card.next_step.text() == card.snapshot.readiness.next_action_label
+    assert "automatically adopted" in card.next_step_note.text()
+    hub.filter.setText("no such galaxy")
+    assert not card.next_step_panel.isVisible()
+    assert card.snapshot is None
+    assert read_object_project(project.root).project_id == project.project_id

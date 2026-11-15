@@ -26,6 +26,10 @@ available projects use the interface accent; neither means validated science.
 A two-pixel focus border remains visible independently of selection color.
 The library header shows the number of saved galaxies and filtered matches.
 Empty and no-match states are distinguished and retain keyboard controls.
+The selected galaxy passport also reveals the *recommended next step* from
+`snapshot.readiness.next_action_label`; it cannot label a dataset or science
+measurement as validated on file presence alone. An empty selection hides
+the readiness callout.
 
 Three-project synthetic screenshots at 1366×768 and 1600×900 complement
 the established empty and single-object baselines. Keep this phase entirely

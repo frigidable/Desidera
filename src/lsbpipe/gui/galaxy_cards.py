@@ -190,17 +190,28 @@ class GalaxyDetailCard(QFrame):
         self.qa_status.hide()
         self.qa_note.hide()
 
-        next_title = QLabel("NEXT STEP")
+        # An explicit single next step makes a project without local FITS
+        # useful without pretending that diagnostics were ever computed.
+        self.next_step_panel = QFrame()
+        self.next_step_panel.setObjectName("galaxy_card_next_step_panel")
+        next_layout = QVBoxLayout(self.next_step_panel)
+        next_layout.setContentsMargins(13, 12, 13, 11)
+        next_layout.setSpacing(6)
+        next_title = QLabel("RECOMMENDED NEXT STEP")
         next_title.setObjectName("galaxy_card_section")
-        body.addWidget(next_title)
+        next_layout.addWidget(next_title)
         self.next_step_title = next_title
         self.next_step = _metadata("")
         self.next_step.setObjectName("galaxy_card_next_step")
-        body.addWidget(self.next_step)
-        # The contextual primary action already says what to do next.
-        # Keep these compatibility labels but do not render duplicate text.
-        self.next_step_title.hide()
-        self.next_step.hide()
+        self.next_step.setAccessibleName("Next project preparation action")
+        next_layout.addWidget(self.next_step)
+        self.next_step_note = _metadata(
+            "Opens the existing project offline. Original FITS and previous "
+            "diagnostics are not automatically adopted.")
+        self.next_step_note.setObjectName("galaxy_card_next_step_note")
+        next_layout.addWidget(self.next_step_note)
+        body.addWidget(self.next_step_panel)
+        self.next_step_panel.hide()
 
         self.details_toggle = QPushButton("Show sources and QA details")
         self.details_toggle.setObjectName("galaxy_card_details_toggle")
@@ -301,6 +312,13 @@ QLabel#galaxy_card_preview {
     border: 1px solid $BORDER;
     border-radius: 7px;
 }
+QFrame#galaxy_card_next_step_panel {
+    background-color: $RAISED;
+    border: 1px solid $BORDER;
+    border-radius: 9px;
+}
+QLabel#galaxy_card_next_step { color: $TEXT; font-weight: 650; }
+QLabel#galaxy_card_next_step_note { color: $MUTED; }
 """.replace("$SURFACE", colors["SURFACE"])
    .replace("$BORDER", colors["BORDER"])
    .replace("$ACCENT", colors["ACCENT"])
@@ -356,6 +374,7 @@ QLabel#galaxy_card_preview {
             self.audit_receipt_note.hide()
             self.next_step_title.hide()
             self.next_step.hide()
+            self.next_step_panel.hide()
             self.last_opened.hide()
             self.path.clear()
             self.note.hide()
@@ -383,8 +402,9 @@ QLabel#galaxy_card_preview {
         self.cross_catalogue.hide()
         self.catalogue_help.hide()
         self.catalogue_help.clear()
-        self.next_step_title.hide()
-        self.next_step.hide()
+        self.next_step_title.show()
+        self.next_step.show()
+        self.next_step_panel.show()
         self.observation_explanation.hide()
         self.qa_heading.hide()
         self.qa_status.hide()
