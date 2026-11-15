@@ -24,10 +24,13 @@ the earlier three-object CI fixture:
 
 Fix: keep the evidence disclosure control **outside the scroll area**,
 as a permanently visible command above the recommended next action.
-Switch between a concise status summary and a structured **read-only
-source-documentation mode** containing individual catalogue, FITS/WCS QA
-and project-provenance cards. Reset evidence scroll to the top on each
-mode switch; clicking sources must never modify the selected galaxy UUID.
+Switch between a concise status summary and a **read-only
+source-documentation mode** with separated catalogue, FITS/WCS QA and
+project-provenance text sections. Avoid height-coupled nested cards in a
+Qt Quick ScrollView: the first attempt made the offscreen GUI smoke step
+unusually slow, so the source layout was simplified before acceptance.
+Reset evidence scroll to the top on each mode switch; clicking sources
+must never modify the selected galaxy UUID.
 Use selectable, plain-text, line-wrapped source data, with 13px reading
 type rather than the tiny dense receipt block. Enlarge the cached
 display-only thumbnail when available, but keep the ordinary placeholder
