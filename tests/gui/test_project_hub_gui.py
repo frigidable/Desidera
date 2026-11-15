@@ -1089,14 +1089,21 @@ def test_qml_evidence_controls_delegate_to_native_actions(
     hub.refresh()
     hub._open_qml_preview()
     preview = hub._qml_preview
-    assert preview.rootObject().findChild(
-        QObject, "qml_hub_evidence_scroll") is not None
-    assert preview.rootObject().findChild(
-        QObject, "qml_hub_catalogue_summary") is not None
-    assert preview.rootObject().findChild(
-        QObject, "qml_hub_qa_summary") is not None
-    assert preview.rootObject().findChild(
-        QObject, "qml_hub_project_tools") is not None
+    # A ScrollView's visual children live in its Flickable's QQuickItem
+    # tree, which is NOT guaranteed to match QObject parentage.
+    def quick_item_named(root_item, object_name):
+        pending = [root_item]
+        while pending:
+            item = pending.pop()
+            if item.objectName() == object_name:
+                return item
+            pending.extend(item.childItems())
+        return None
+
+    for name in ("qml_hub_evidence_scroll", "qml_hub_catalogue_summary",
+                 "qml_hub_qa_summary", "qml_hub_project_tools",
+                 "qml_hub_evidence_toggle"):
+        assert quick_item_named(preview.rootObject(), name) is not None, name
     assert preview.bridge.selectedId == a.project_id
     assert preview.bridge.catalogueLabel == (
         "No confirmed SIMBAD / NED association")

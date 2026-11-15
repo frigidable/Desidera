@@ -40,6 +40,15 @@ of changed FITS file metadata. QML remains **experimental** until native
 Windows GPU, accessibility, input/navigation and functional parity are
 verified. The currently working Widgets interface remains authoritative.
 
+The first Windows GUI rerun found a test-harness error: children of a
+QML `ScrollView` can have a visual `QQuickItem.childItems()` parent chain
+different from their `QObject.findChild()` chain. The regression now checks
+the visual item hierarchy rather than incorrectly treating those elements
+as missing. Visual inspection also caught a native-style black scrollbar
+in both themes. The pilot sets `QQuickStyle("Basic")` before loading its
+controls and draws a theme-colored ScrollBar explicitly, without touching
+native Qt Widgets/FITS styles.
+
 ---
 
 ## Qt Quick Project Hub A/B experiment (15 November 2026)

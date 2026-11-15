@@ -371,11 +371,20 @@ Rectangle {
             width: inspector.width - 40
             height: Math.max(100, inspector.height - 346)
             clip: true
-            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            ScrollBar.vertical: ScrollBar {
+                policy: ScrollBar.AsNeeded
+                width: 9
+                background: Rectangle { color: "transparent" }
+                contentItem: Rectangle {
+                    implicitWidth: 7
+                    radius: 3
+                    color: root.darkMode ? "#466282" : "#AFBFCE"
+                }
+            }
             Column {
                 id: evidenceColumn
                 width: evidenceScroll.availableWidth - 2
-                spacing: 10
+                spacing: 6
 
                 Text {
                     text: "SAVED PROJECT EVIDENCE"

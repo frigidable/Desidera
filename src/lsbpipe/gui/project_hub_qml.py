@@ -13,6 +13,7 @@ from PySide6.QtCore import (
     QAbstractListModel, QModelIndex, QObject, Property, Qt, QUrl, Signal, Slot,
 )
 from PySide6.QtQuick import QQuickView
+from PySide6.QtQuickControls2 import QQuickStyle
 
 from .visual_theme import theme_colors
 
@@ -357,6 +358,10 @@ class QmlProjectHubPreview(QQuickView):
     """Isolated Qt Quick comparison window; never replaces the real hub."""
 
     def __init__(self, hub):
+        # Qt's native Windows controls ignore customized background/contentItem.
+        # This experimental window owns its QML scene; it never changes
+        # Qt Widgets/FITS application palettes or scientific rendering.
+        QQuickStyle.setStyle("Basic")
         super().__init__()
         self.setObjectName("desidera_qml_hub_preview")
         self.setTitle("DESIDERA · Observatory Studio · experimental Qt Quick")
