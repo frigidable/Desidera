@@ -61,6 +61,7 @@ class PhotometryWorkspace(QWidget):
         root.setSpacing(12)
 
         header = QHBoxLayout()
+        self._header_layout = header
         self.back_btn = QPushButton("Workspace")
         self.back_btn.setObjectName("photometry_back_to_workspace")
         self.back_btn.setAccessibleName("Return to Galaxy Workspace")
@@ -106,6 +107,7 @@ class PhotometryWorkspace(QWidget):
         title_row.addWidget(self.title)
         title_row.addStretch(1)
         title_row.addWidget(self.copy_project_qa_btn)
+        self._title_row = title_row
         root.addLayout(title_row)
         self.subtitle = QLabel(
             "PSF, sky and aperture fluxes are diagnostic only · "
@@ -389,9 +391,21 @@ class PhotometryWorkspace(QWidget):
         The outer SurveyExplorer's persistent sidebar owns these actions
         in embedded mode; signals, PSF tasks and saved navigation are intact.
         """
-        self._compact_shell = bool(embedded)
-        self.back_btn.setVisible(not self._compact_shell)
-        self.sources_btn.setVisible(not self._compact_shell)
+        compact = bool(embedded)
+        if compact == self._compact_shell:
+            return
+        self._compact_shell = compact
+        self.back_btn.setVisible(not compact)
+        self.sources_btn.setVisible(not compact)
+        # In the embedded Galaxy Workspace, the remaining Refresh button
+        # formerly occupied a mostly empty row above the title. Share
+        # one title toolbar with Copy QA; restore standalone layout intact.
+        if compact:
+            self._header_layout.removeWidget(self.refresh_btn)
+            self._title_row.insertWidget(2, self.refresh_btn)
+        else:
+            self._title_row.removeWidget(self.refresh_btn)
+            self._header_layout.addWidget(self.refresh_btn)
         margin = (10, 8, 10, 8) if self._compact_shell else (18, 14, 18, 14)
         self._root_layout.setContentsMargins(*margin)
         self._root_layout.setSpacing(8 if self._compact_shell else 12)

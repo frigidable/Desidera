@@ -7,6 +7,44 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Real Leo P Windows screen review — embedded shell follow-up
+
+The native 1680×900 Leo P screenshots (Project Hub, PSF-0 with restored
+non-adopted QA, and Scene) confirmed the sidebar Sky/FITS/Photometry
+navigation is more coherent but exposed three presentation defects:
+
+* The survey's **interrupted-operation warning** was at the bottom of
+  `survey_navigation` *inside* its QScrollArea and visibly clipped.
+  It is now a separate `survey_pinned_status_footer` below the
+  `survey_scroll`, both inside the same bounded-width sidebar shell.
+  This preserves the complete accessible status, the existing explicit
+  Full status disclosure/copy, and a scrollable controls region on short
+  windows; the 1366×768 GUI regression checks that the footer remains in
+  the viewport even after scrolling the target controls.
+* In embedded Photometry the back/source actions had been hidden, but
+  the isolated header row still contained only `Refresh`, creating a
+  conspicuous empty band above the title. In embedded mode only, move
+  `Refresh` alongside the title and `Copy QA`; restore the standalone
+  header on exit, without replacing the original actions or PSF stages.
+* Scene's `REGIONS · DRAFT INSPECTOR` label used `palette(mid)`,
+  producing extremely low text contrast on the actual dark Windows
+  theme. Use `palette(text)` at 12px; science controls, mask geometry,
+  FITS raster rendering and validation are not changed.
+
+The visible PSF kernel for the selected R band is real saved diagnostic
+evidence, but the radial comparison explicitly reports it is unavailable.
+Do not fabricate a residual plot to occupy the otherwise open image
+area. Similarly, Scene displays no native image until the user explicitly
+chooses **Load original FITS** for the selected filter; switching to
+Isophote must not imply that FITS was loaded or that a mask was approved.
+
+Capture 1366×768 and 1600×900 embedded screenshot states with a
+*synthetic, explicitly labelled* interrupted-operation message to
+regress the pinned footer. This does not create an actual operation,
+perform a science run, write a project manifest or mutate native FITS.
+
+---
+
 ## Windows GUI failure analysis — QML Text property (15 November 2026)
 
 Exact-head Windows baseline `43745395770` proved 988 science tests passed,

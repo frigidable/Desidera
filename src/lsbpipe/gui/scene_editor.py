@@ -1954,8 +1954,8 @@ class SceneEditor(QWidget):
         inspector_title = QLabel("REGIONS · DRAFT INSPECTOR")
         inspector_title.setObjectName("scene_inspector_heading")
         inspector_title.setStyleSheet(
-            "font-size: 11px; font-weight: 600; "
-            "color: palette(mid); padding: 4px 5px;")
+            "font-size: 12px; font-weight: 600; "
+            "color: palette(text); padding: 4px 5px;")
         inspector_title.setToolTip(
             "Mask drafting and optional geometry suggestions; "
             "never a scientifically approved galaxy segmentation.")

@@ -336,8 +336,15 @@ def test_compact_photometry_shell_preserves_stage_state(qtbot):
     assert w.sources_btn.isHidden()
     assert w._root_layout.contentsMargins().left() == 10
     assert w.stage_tabs.count() == 4
+    assert w._title_row.indexOf(w.refresh_btn) >= 0
+    assert w._header_layout.indexOf(w.refresh_btn) == -1
+    w.set_compact_shell(True)  # idempotent; no duplicate toolbar widgets
+    assert w._title_row.indexOf(w.refresh_btn) >= 0
     w.set_compact_shell(False)
     assert not w._compact_shell
     assert not w.back_btn.isHidden()
     assert not w.sources_btn.isHidden()
     assert w._root_layout.contentsMargins().left() == 18
+    assert w._header_layout.indexOf(w.refresh_btn) >= 0
+    assert w._title_row.indexOf(w.refresh_btn) == -1
+    assert w.stage_tabs.count() == 4

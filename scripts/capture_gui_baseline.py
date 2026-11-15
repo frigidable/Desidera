@@ -73,9 +73,18 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
         "coverage_button": window.qa_btn,
         "download_button": window.download_btn,
         "web_viewer_placeholder": window.sky,
+        "pinned_operation_status": window.status_footer,
         "science_qa_tab": window.science_qa,
         "science_qa_result": window.science_qa.result,
     }
+    # The survey operational warning is a pinned footer and must never
+    # disappear below the scrolling navigation controls at laptop sizes.
+    footer = _bounds(window.status_footer, window)
+    if (not footer["visible"] or footer["y"] < 0
+            or footer["y"] + footer["height"] > height):
+        raise AssertionError(
+            f"{state} survey status footer clipped at {width}x{height}: "
+            f"{footer}")
     viewer_share = _bounds(splitter.widget(1), window)["width"] / width
     if viewer_share < 0.55:
         raise AssertionError(
@@ -611,6 +620,11 @@ def main():
                     "Synthetic shell galaxy", Path(temp_dir) / "shell_target",
                     field=SkyField(40.096208, 1.22925, 5.))
                 window.attach_object_project(project)
+                # Explicit synthetic on-screen status exercises the pinned
+                # footer; no journal, local FITS or project file is written.
+                window.message.setText(
+                    "Synthetic prior interrupted operation (GUI capture): "
+                    "inspect original QA before trusting historical outputs.")
                 window.show()
                 for _ in range(5):
                     app.processEvents()

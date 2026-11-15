@@ -712,6 +712,17 @@ class SurveyExplorer(QMainWindow):
         self.progress_widget.setLayout(progress_controls)
         panel.addWidget(self.progress_widget)
         self.progress_widget.setVisible(False)
+        # Keep the full operation status outside the scrolling project
+        # controls. A long warning (including an interrupted-operation
+        # journal) must never disappear below the bottom of the viewport.
+        self.status_footer = QWidget()
+        self.status_footer.setObjectName("survey_pinned_status_footer")
+        footer_layout = QVBoxLayout(self.status_footer)
+        footer_layout.setContentsMargins(10, 6, 10, 7)
+        footer_layout.setSpacing(4)
+        self.status_footer.setStyleSheet(
+            "QWidget#survey_pinned_status_footer { "
+            "border-top: 1px solid palette(mid); }")
         status_row = QHBoxLayout()
         self.message = _FullStatusLabel("")
         self.message.setObjectName("survey_task_status")
@@ -727,7 +738,7 @@ class SurveyExplorer(QMainWindow):
         self.message_details_btn.setCheckable(True)
         self.message_details_btn.setEnabled(False)
         status_row.addWidget(self.message_details_btn, 0, Qt.AlignTop)
-        panel.addLayout(status_row)
+        footer_layout.addLayout(status_row)
         self.full_message_box = QPlainTextEdit()
         self.full_message_box.setObjectName("survey_full_status_text")
         self.full_message_box.setAccessibleName("Complete selectable survey status message")
@@ -735,14 +746,14 @@ class SurveyExplorer(QMainWindow):
         self.full_message_box.setMaximumHeight(130)
         self.full_message_box.hide()
         self.message_details_btn.toggled.connect(self.full_message_box.setVisible)
-        panel.addWidget(self.full_message_box)
+        footer_layout.addWidget(self.full_message_box)
         self.message_copy_btn = QPushButton("Copy full status")
         self.message_copy_btn.setObjectName("survey_copy_full_status")
         self.message_copy_btn.setToolTip("Copy the entire current status message, including errors")
         self.message_copy_btn.clicked.connect(self._copy_full_status)
         self.message_copy_btn.hide()
         self.message_details_btn.toggled.connect(self.message_copy_btn.setVisible)
-        panel.addWidget(self.message_copy_btn)
+        footer_layout.addWidget(self.message_copy_btn)
         self.message.textUpdated.connect(self._status_text_updated)
 
         # A/B isolation for recurrent top-left ghost overlays on Windows.
@@ -767,6 +778,15 @@ class SurveyExplorer(QMainWindow):
         self.navigation_scroll.setWidget(left)
         self.navigation_scroll.setMinimumWidth(275)
         self.navigation_scroll.setMaximumWidth(425)
+        self.sidebar_shell = QWidget()
+        self.sidebar_shell.setObjectName("survey_sidebar_shell")
+        self.sidebar_shell.setMinimumWidth(275)
+        self.sidebar_shell.setMaximumWidth(425)
+        sidebar_layout = QVBoxLayout(self.sidebar_shell)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+        sidebar_layout.addWidget(self.navigation_scroll, 1)
+        sidebar_layout.addWidget(self.status_footer, 0)
         preview_container = QWidget()
         preview_layout = QVBoxLayout(preview_container)
         preview_layout.setContentsMargins(4, 4, 4, 4)
@@ -851,7 +871,7 @@ class SurveyExplorer(QMainWindow):
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
-        split.addWidget(self.navigation_scroll)
+        split.addWidget(self.sidebar_shell)
         split.addWidget(preview_container)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)

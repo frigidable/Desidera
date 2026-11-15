@@ -2426,8 +2426,11 @@ def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
     qtbot.wait(20)
     inspector = editor.findChild(QWidget, "scene_context_inspector")
     splitter = editor.findChild(QSplitter, "scene_image_inspector_split")
+    heading = editor.findChild(QWidget, "scene_inspector_heading")
     assert inspector is not None
     assert splitter is not None
+    assert heading is not None
+    assert "color: palette(text)" in heading.styleSheet()
     assert 270 <= inspector.width() <= 420
     assert inspector.maximumWidth() == 420
     assert isinstance(splitter.widget(0), QGraphicsView)

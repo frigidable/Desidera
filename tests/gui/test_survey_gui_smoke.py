@@ -173,6 +173,35 @@ def test_navigation_scroll_keeps_dense_controls_accessible(offline_explorer, qtb
     assert window.data_toggle.isVisible()
 
 
+def test_survey_status_stays_pinned_below_scrollable_navigation(
+        offline_explorer, qtbot):
+    """Real laptop QA: an unfinished-operation warning must not scroll away."""
+    from PySide6.QtWidgets import QWidget
+    w = offline_explorer
+    w.resize(1366, 768)
+    w.message.setText(
+        "Previous session left unfinished operation records. "
+        "Inspect immutable QA history before adopting results.")
+    qtbot.wait(25)
+    assert isinstance(w.sidebar_shell, QWidget)
+    assert w.status_footer.parentWidget() is w.sidebar_shell
+    assert w.navigation_scroll.parentWidget() is w.sidebar_shell
+    assert w.message.isVisible() and w.message_details_btn.isVisible()
+    assert w.status_footer.geometry().bottom() <= w.sidebar_shell.height()
+    initial_status = w.message.text()
+    scroll = w.navigation_scroll.verticalScrollBar()
+    scroll.setValue(scroll.maximum())
+    qtbot.wait(15)
+    assert w.message.text() == initial_status
+    assert w.message.isVisible()
+    assert w.status_footer.geometry().bottom() <= w.sidebar_shell.height()
+    w.message_details_btn.click()
+    qtbot.wait(15)
+    assert w.full_message_box.isVisible()
+    assert w.full_message_box.toPlainText() == initial_status
+    assert w.status_footer.geometry().bottom() <= w.sidebar_shell.height()
+
+
 def test_selection_can_explicitly_clear_hidden_and_visible_products(offline_explorer):
     window = offline_explorer
     apply_offline_state(window, "S1")
