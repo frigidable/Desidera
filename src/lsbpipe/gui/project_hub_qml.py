@@ -138,6 +138,123 @@ class HubQmlBridge(QObject):
             return snap.readiness.next_action_label
         return "Open the project to inspect its data."
 
+    @Property(str, notify=changed)
+    def openLabel(self):
+        return ("Select a galaxy" if not self.selectedId else
+                self._hub.galaxy_card.open_button.text())
+
+    @Property(str, notify=changed)
+    def catalogueLabel(self):
+        """Only receipt-confirmed identities are named as associations."""
+        snap = self._hub.galaxy_card.snapshot
+        if snap is None:
+            return "No galaxy selected"
+        if snap.knowledge_status == "EVIDENCE_ERROR":
+            return "Catalogue evidence requires inspection"
+        identities = snap.catalogue_identities or (
+            (snap.catalogue_identity,) if snap.catalogue_identity else ())
+        if identities:
+            return "  ·  ".join(
+                f"{entry.provider}: {entry.main_id}" for entry in identities)
+        if snap.knowledge_status == "UNVERIFIED_CANDIDATES_ONLY":
+            return "Unverified candidates · no confirmed identity"
+        return "No confirmed SIMBAD / NED association"
+
+    @Property(str, notify=changed)
+    def catalogueEvidence(self):
+        card = self._hub.galaxy_card
+        snap = card.snapshot
+        if snap is None:
+            return "Select a project to inspect catalogue sources."
+        if snap.knowledge_status == "EVIDENCE_ERROR":
+            return "Stored catalogue evidence unreadable: " + snap.knowledge_error
+        if not card.catalogue_provenance.isHidden():
+            return card.catalogue_provenance.text()
+        return ("No confirmed catalogue identity. Remote queries are opt-in; "
+                "project coordinates remain unchanged.")
+
+    @Property(str, notify=changed)
+    def literatureLabel(self):
+        label = self._hub.galaxy_card.literature
+        return label.text() if not label.isHidden() else ""
+
+    @Property(str, notify=changed)
+    def qaSummary(self):
+        label = self._hub.galaxy_card.qa_status
+        return label.text() if not label.isHidden() else (
+            "No saved FITS/WCS audit for this selection")
+
+    @Property(str, notify=changed)
+    def qaEvidence(self):
+        """Expanded source evidence, independent of the Widgets disclosure."""
+        card = self._hub.galaxy_card
+        snap = card.snapshot
+        if snap is None:
+            return ""
+        lines = []
+        if snap.audit is not None:
+            audit = snap.audit
+            lines.extend((card.qa_status.text() or audit.label,
+                          audit.explanation))
+            if audit.receipt_relative_path:
+                lines.append(
+                    "Saved audit receipt: " + audit.receipt_relative_path
+                    + (" · " + audit.created_utc if audit.created_utc else ""))
+        if snap.readiness is not None:
+            lines.append(snap.readiness.explanation)
+        return "\n".join(line for line in lines if line) or (
+            "No current FITS/WCS diagnostic is documented for this selection.")
+
+    @Property(str, notify=changed)
+    def projectEvidence(self):
+        card = self._hub.galaxy_card
+        if card.snapshot is None:
+            return ""
+        lines = []
+        for label in (card.aliases, card.last_opened, card.path, card.note):
+            if not label.isHidden() and label.text():
+                lines.append(label.text())
+        return "\n".join(lines)
+
+    @Property(str, notify=changed)
+    def previewUrl(self):
+        """A cached display-only preview, never an original FITS path."""
+        snap = self._hub.galaxy_card.snapshot
+        if snap is None or snap.thumbnail is None:
+            return ""
+        return QUrl.fromLocalFile(str(snap.thumbnail)).toString()
+
+    @Property(str, notify=changed)
+    def previewLabel(self):
+        snap = self._hub.galaxy_card.snapshot
+        if snap is None:
+            return "No image selected"
+        if snap.preview_source == "REMOTE_LEGACY_RGB":
+            return "Cached Legacy RGB · display only"
+        if snap.preview_source == "LOCAL_FITS_GRAYSCALE":
+            return "Cached local FITS thumbnail · display only"
+        return "No cached preview · no science result"
+
+    @Property(bool, notify=changed)
+    def canCatalogue(self):
+        return self._hub.catalogues_menu_btn.isEnabled()
+
+    @Property(bool, notify=changed)
+    def canConfigure(self):
+        return self._hub.config_action.isEnabled()
+
+    @Property(bool, notify=changed)
+    def canLocalPreview(self):
+        return self._hub.local_preview_action.isEnabled()
+
+    @Property(bool, notify=changed)
+    def canRemotePreview(self):
+        return self._hub.rgb_action.isEnabled()
+
+    @Property(bool, notify=changed)
+    def canRemove(self):
+        return self._hub.remove_action.isEnabled()
+
     @Property(int, notify=changed)
     def selectedIndex(self):
         """Current visible row, without changing the saved galaxy selection."""
@@ -177,9 +294,45 @@ class HubQmlBridge(QObject):
 
     @Slot()
     def openSelected(self):
-        if not self.selectedId:
+        project_id = self.selectedId
+        if not project_id:
             return
-        self._hub._open_selected()  # Same availability/UUID/relink guards.
+        # Project ID must still match the native current selection.
+        self._hub._open_card_project(project_id)
+
+    @Slot(str)
+    def runTool(self, command):
+        """Route an explicitly requested action through the native guards.
+
+        The experiment must not invent a second network/download flow or
+        bypass UUID, readiness or confirmation checks of Project Hub.
+        """
+        if not self.selectedId or self._hub.workspace is not None:
+            return
+        allowed = {
+            "simbad": (self._hub.simbad_action, self._hub._open_knowledge),
+            "ned": (self._hub.ned_action, self._hub._open_ned),
+            "config": (self._hub.config_action, self._hub._open_configurations),
+            "localPreview": (self._hub.local_preview_action,
+                             self._hub._regenerate_preview),
+            "remotePreview": (self._hub.rgb_action,
+                              self._hub._fetch_rgb_preview),
+            "remove": (self._hub.remove_action, self._hub._remove_selected),
+        }
+        route = allowed.get(command)
+        if route is None or not route[0].isEnabled():
+            return
+        self._window.hide()
+        self._hub.show()
+        self._hub.raise_()
+        try:
+            route[1]()
+        finally:
+            if self._hub.workspace is None:
+                self._window.sync()
+                self._window.show()
+                self._window.raise_()
+                self._window.requestActivate()
 
     @Slot()
     def createProject(self):

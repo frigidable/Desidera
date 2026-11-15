@@ -1037,6 +1037,8 @@ class ProjectHub(QMainWindow):
                 f"{type(exc).__name__}: {exc}")
         if self._selected_preview_record() is not None:
             self._selection_changed()
+        if self._qml_preview is not None:
+            self._qml_preview.bridge.changed.emit()
 
     def _regenerate_preview(self):
         record = self._selected_preview_record()
@@ -1118,6 +1120,8 @@ class ProjectHub(QMainWindow):
         # A different currently selected galaxy may now be queued, never
         # mistaken for the completed task's project or source coordinates.
         self._selection_changed()
+        if self._qml_preview is not None:
+            self._qml_preview.bridge.changed.emit()
 
     def _open_card_project(self, project_id: str):
         """Activate the currently selected original project by immutable ID."""

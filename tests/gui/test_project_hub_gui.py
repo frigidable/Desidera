@@ -1076,3 +1076,88 @@ def test_qml_project_hub_preview_missing_folder_keeps_original_uuid(
     assert "Missing" in preview.bridge.selectedStatus
     assert preview.bridge.datasetLabel != "Verified science"
     preview.close()
+
+
+def test_qml_evidence_controls_delegate_to_native_actions(
+        hub, qtbot, tmp_path, monkeypatch):
+    """No alternative network, catalogue or project mutation route exists."""
+    from PySide6.QtCore import QObject
+
+    a = create_object_project(
+        "QML catalogue test", tmp_path / "catalogue",
+        field=SkyField(40.096208, 1.22925, 5.))
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    assert preview.rootObject().findChild(
+        QObject, "qml_hub_evidence_scroll") is not None
+    assert preview.rootObject().findChild(
+        QObject, "qml_hub_catalogue_summary") is not None
+    assert preview.rootObject().findChild(
+        QObject, "qml_hub_qa_summary") is not None
+    assert preview.rootObject().findChild(
+        QObject, "qml_hub_project_tools") is not None
+    assert preview.bridge.selectedId == a.project_id
+    assert preview.bridge.catalogueLabel == (
+        "No confirmed SIMBAD / NED association")
+    assert "No saved FITS/WCS audit" in preview.bridge.qaEvidence
+    assert not preview.bridge.canLocalPreview
+    assert preview.bridge.canRemotePreview == hub.rgb_action.isEnabled()
+    assert preview.bridge.canCatalogue
+    assert preview.bridge.canConfigure
+    assert preview.bridge.canRemove
+
+    actions = []
+    monkeypatch.setattr(
+        hub, "_open_knowledge", lambda: actions.append("simbad"))
+    monkeypatch.setattr(
+        hub, "_open_ned", lambda: actions.append("ned"))
+    monkeypatch.setattr(
+        hub, "_open_configurations", lambda: actions.append("config"))
+    monkeypatch.setattr(
+        hub, "_fetch_rgb_preview", lambda: actions.append("remote"))
+    monkeypatch.setattr(
+        hub, "_regenerate_preview", lambda: actions.append("local"))
+    monkeypatch.setattr(
+        hub, "_remove_selected", lambda: actions.append("remove"))
+    preview.bridge.runTool("simbad")
+    preview.bridge.runTool("ned")
+    preview.bridge.runTool("config")
+    preview.bridge.runTool("localPreview")  # no local FITS => disabled
+    hub.rgb_action.setEnabled(False)
+    preview.bridge.runTool("remotePreview")  # honor original disabled action
+    preview.bridge.runTool("remove")
+    preview.bridge.runTool("invalid")
+    assert actions == ["simbad", "ned", "config", "remove"]
+    assert hub.projects.currentItem().data(Qt.UserRole)["project_id"] == a.project_id
+    assert read_object_project(a.root).project_id == a.project_id
+    preview.close()
+
+
+def test_qml_unconfirmed_and_unreadable_catalogue_evidence_fail_closed(
+        hub, tmp_path):
+    """The read-only inspector never upgrades candidates to confirmed IDs."""
+    from dataclasses import replace
+
+    project = create_object_project(
+        "No catalogue adoption", tmp_path / "no_catalogue",
+        field=SkyField(40.096208, 1.22925, 5.))
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    original = hub.galaxy_card.snapshot
+    assert original.project_id == project.project_id
+    try:
+        hub.galaxy_card.set_snapshot(replace(
+            original, knowledge_status="UNVERIFIED_CANDIDATES_ONLY"))
+        assert "Unverified candidates" in preview.bridge.catalogueLabel
+        assert "confirmed identity" in preview.bridge.catalogueLabel
+        hub.galaxy_card.set_snapshot(replace(
+            original, knowledge_status="EVIDENCE_ERROR",
+            knowledge_error="Receipt failed project ID check"))
+        assert "requires inspection" in preview.bridge.catalogueLabel
+        assert "Receipt failed" in preview.bridge.catalogueEvidence
+        assert "SCIENCE HOLD" not in preview.bridge.catalogueLabel
+    finally:
+        hub.galaxy_card.set_snapshot(original)
+        preview.close()

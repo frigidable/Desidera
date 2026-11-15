@@ -7,6 +7,41 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Qt Quick scientific-evidence and actions pilot
+
+The optional Qt Quick inspector now exposes the same evidence model as
+`GalaxyDetailCard`: confirmed SIMBAD/NED associations (never unverified
+cone candidates), published NED descriptors marked unadopted, existing
+`qa_status` and receipt-derived `audit.explanation`, the actual project
+root, aliases, and the readiness-derived next action. The QML expanded
+details are independent of whether the *Widgets* disclosure is expanded;
+both read the same immutable `GalaxyCardSnapshot`. Text from catalogues
+and paths must be rendered with `Text.PlainText`, not interpreted as QML
+rich text. A thumbnail, when available, is a previously cached display
+preview; the original science FITS image is never passed to QML.
+
+**Existing user actions are reused exactly** through the native Project
+Hub: SIMBAD identity dialog, NED evidence dialog, analysis configurations,
+local-FITS thumbnail generation, explicit remote-RGB request, and guarded
+removal from the recent-project list. A whitelist in the bridge checks each
+existing `QAction.isEnabled()`; QML cannot enable an unavailable action,
+bypass project UUID guards or launch networking from merely viewing a card.
+The remote-RGB item is explicitly labelled as a network request. During a
+native modal action the experimental window yields focus to Widgets, then
+resynchronizes the same model. Creating or importing a project retains
+the established native dialogs and the one-galaxy project model.
+
+Missing or corrupt receipts fail closed, never as a successful association
+or science validation. A historical FITS/WCS audit describes unchanged
+file *metadata*, not a fresh content-hash verification, PSF readiness or
+scientific acceptance. Tests exercise unverified identities, disabled
+actions, original UUID persistence, audit receipt provenance and detection
+of changed FITS file metadata. QML remains **experimental** until native
+Windows GPU, accessibility, input/navigation and functional parity are
+verified. The currently working Widgets interface remains authoritative.
+
+---
+
 ## Qt Quick Project Hub A/B experiment (15 November 2026)
 
 The first **measured implementation comparison** is opt-in: use

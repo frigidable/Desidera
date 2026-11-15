@@ -297,7 +297,19 @@ Rectangle {
             color: root.raisedColor
             border.width: 1
             border.color: root.borderColor
+            Image {
+                id: cachedGalaxyPreview
+                anchors.fill: parent
+                anchors.margins: 2
+                source: hubBridge.previewUrl
+                sourceSize.width: 180
+                sourceSize.height: 180
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                visible: status === Image.Ready
+            }
             Rectangle {
+                visible: !cachedGalaxyPreview.visible
                 anchors.centerIn: parent
                 width: 44; height: 44; radius: 22
                 color: "transparent"
@@ -339,109 +351,297 @@ Rectangle {
                 font.weight: Font.DemiBold
             }
         }
-        Rectangle {
-            id: separator
-            x: 20; y: 117
-            width: inspector.width - 40; height: 1
-            color: root.borderColor
-        }
-
         Text {
-            x: 22; y: 136
-            text: "PROJECT EVIDENCE"
-            color: root.accentColor
-            font.pixelSize: 11
-            font.weight: Font.DemiBold
-            font.letterSpacing: 1.0
-        }
-        Text {
-            x: 22; y: 167
-            text: "Preparation status"
+            x: 114; y: 100
+            width: inspector.width - 134
+            text: hubBridge.previewLabel
+            textFormat: Text.PlainText
             color: root.mutedColor
-            font.pixelSize: 12
-        }
-        Text {
-            x: 206; y: 167
-            width: inspector.width - 228
-            text: hubBridge.selectedStatus
-            color: root.textColor
-            font.pixelSize: 13
-            font.weight: Font.DemiBold
-            wrapMode: Text.WordWrap
-        }
-        Text {
-            x: 22; y: 216
-            text: "Survey dataset"
-            color: root.mutedColor
-            font.pixelSize: 12
-        }
-        Text {
-            x: 206; y: 216
-            width: inspector.width - 228
-            text: hubBridge.datasetLabel
-            color: root.textColor
-            font.pixelSize: 12
+            font.pixelSize: 10
             elide: Text.ElideRight
         }
-        Text {
-            x: 22; y: 265
-            text: "Original FITS"
-            color: root.mutedColor
-            font.pixelSize: 12
+
+        property bool detailsExpanded: false
+
+        // Scroll evidence, keep the action toolbar and primary Open pinned.
+        ScrollView {
+            id: evidenceScroll
+            objectName: "qml_hub_evidence_scroll"
+            x: 20; y: 119
+            width: inspector.width - 40
+            height: Math.max(100, inspector.height - 346)
+            clip: true
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            Column {
+                id: evidenceColumn
+                width: evidenceScroll.availableWidth - 2
+                spacing: 10
+
+                Text {
+                    text: "SAVED PROJECT EVIDENCE"
+                    color: root.accentColor
+                    font.pixelSize: 11
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 0.9
+                }
+                Text {
+                    width: parent.width
+                    text: "Preparation:  " + hubBridge.selectedStatus
+                    textFormat: Text.PlainText
+                    color: root.textColor
+                    font.pixelSize: 13
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                }
+                Text {
+                    width: parent.width
+                    text: "Dataset:  " + hubBridge.datasetLabel
+                    textFormat: Text.PlainText
+                    color: root.mutedColor
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+                Text {
+                    width: parent.width
+                    text: "FITS:  " + hubBridge.fitsLabel
+                    textFormat: Text.PlainText
+                    color: root.mutedColor
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+                Rectangle {
+                    width: parent.width; height: 1
+                    color: root.borderColor
+                }
+                Text {
+                    text: "CONFIRMED CATALOGUE IDENTITIES"
+                    font.pixelSize: 11
+                    font.letterSpacing: 0.6
+                    font.weight: Font.DemiBold
+                    color: root.accentColor
+                }
+                Text {
+                    objectName: "qml_catalogue_summary"
+                    width: parent.width
+                    text: hubBridge.catalogueLabel
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: root.textColor
+                    font.pixelSize: 13
+                }
+                Text {
+                    width: parent.width
+                    text: hubBridge.literatureLabel
+                    visible: text.length > 0
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: root.mutedColor
+                    font.pixelSize: 12
+                }
+                Rectangle {
+                    width: parent.width; height: 1
+                    color: root.borderColor
+                }
+                Text {
+                    text: "FITS / WCS QA"
+                    font.pixelSize: 11
+                    font.letterSpacing: 0.6
+                    font.weight: Font.DemiBold
+                    color: root.accentColor
+                }
+                Text {
+                    objectName: "qml_qa_summary"
+                    width: parent.width
+                    text: hubBridge.qaSummary
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: root.textColor
+                    font.pixelSize: 13
+                }
+                Text {
+                    width: parent.width
+                    text: "Previous diagnostics are evidence, not accepted measurements."
+                    color: root.mutedColor
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
+                }
+                Button {
+                    id: evidenceToggle
+                    objectName: "qml_hub_evidence_toggle"
+                    width: parent.width
+                    height: 34
+                    enabled: hubBridge.selectedId.length > 0
+                    text: inspector.detailsExpanded
+                        ? "Hide sources and QA details"
+                        : "Show sources and QA details"
+                    onClicked: inspector.detailsExpanded = !inspector.detailsExpanded
+                    background: Rectangle {
+                        radius: 8
+                        color: root.raisedColor
+                        border.width: 1
+                        border.color: root.borderColor
+                    }
+                    contentItem: Text {
+                        text: evidenceToggle.text
+                        font.pixelSize: 12
+                        color: root.accentColor
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                }
+                Text {
+                    objectName: "qml_hub_catalogue_sources"
+                    visible: inspector.detailsExpanded && hubBridge.selectedId.length > 0
+                    width: parent.width
+                    text: "CATALOGUE SOURCES\n" + hubBridge.catalogueEvidence
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: root.mutedColor
+                    font.pixelSize: 12
+                }
+                Text {
+                    objectName: "qml_hub_qa_sources"
+                    visible: inspector.detailsExpanded && hubBridge.selectedId.length > 0
+                    width: parent.width
+                    text: "FITS/WCS AUDIT EVIDENCE\n" + hubBridge.qaEvidence
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: root.mutedColor
+                    font.pixelSize: 12
+                }
+                Text {
+                    objectName: "qml_hub_project_sources"
+                    visible: inspector.detailsExpanded && hubBridge.selectedId.length > 0
+                    width: parent.width
+                    text: "PROJECT INFORMATION\n" + hubBridge.projectEvidence
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: root.mutedColor
+                    font.pixelSize: 12
+                }
+            }
         }
-        Text {
-            x: 206; y: 265
-            width: inspector.width - 228
-            text: hubBridge.fitsLabel
-            color: root.textColor
-            font.pixelSize: 12
-            wrapMode: Text.WordWrap
-        }
-        Rectangle {
-            x: 20; y: 328; width: inspector.width - 40
-            height: 1; color: root.borderColor
-        }
+
         Rectangle {
             id: nextBox
             objectName: "qml_hub_next_action_card"
-            x: 20; y: 351; width: inspector.width - 40
-            height: 147; radius: 10
+            x: 20; y: inspector.height - 216
+            width: inspector.width - 40; height: 100
+            radius: 9
             color: root.raisedColor
             border.width: 1; border.color: root.borderColor
             Text {
-                x: 16; y: 15
+                x: 13; y: 10
                 text: "RECOMMENDED NEXT STEP"
                 color: root.accentColor
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
-                font.letterSpacing: 0.7
             }
             Text {
-                x: 16; y: 43
-                width: nextBox.width - 32
+                x: 13; y: 32
+                width: nextBox.width - 26
+                height: 44
                 text: hubBridge.nextAction
                 color: root.textColor
-                font.pixelSize: 15
+                textFormat: Text.PlainText
+                font.pixelSize: 13
                 font.weight: Font.DemiBold
                 wrapMode: Text.WordWrap
+                elide: Text.ElideRight
             }
             Text {
-                x: 16; y: 104
-                width: nextBox.width - 32
-                text: "Based on saved project state · no science adopted"
+                x: 13; y: 80
+                width: nextBox.width - 26
+                text: "From project readiness · no science adopted"
                 color: root.mutedColor
-                font.pixelSize: 11
-                wrapMode: Text.WordWrap
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+        }
+
+        Button {
+            id: catalogueButton
+            objectName: "qml_hub_catalogue_actions"
+            x: 20; y: inspector.height - 106
+            width: (inspector.width - 49) / 2; height: 35
+            text: "Catalogues"
+            enabled: hubBridge.canCatalogue
+            onClicked: catalogueMenu.open()
+            background: Rectangle {
+                radius: 8; color: root.raisedColor
+                border.width: 1; border.color: root.borderColor
+            }
+            contentItem: Text {
+                text: catalogueButton.text
+                color: catalogueButton.enabled ? root.textColor : root.mutedColor
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            Menu {
+                id: catalogueMenu
+                y: parent.height
+                MenuItem {
+                    text: "SIMBAD · inspect identity…"
+                    onTriggered: hubBridge.runTool("simbad")
+                }
+                MenuItem {
+                    text: "NED · inspect identity…"
+                    onTriggered: hubBridge.runTool("ned")
+                }
+            }
+        }
+        Button {
+            id: projectToolsButton
+            objectName: "qml_hub_project_tools"
+            x: catalogueButton.x + catalogueButton.width + 9
+            y: catalogueButton.y
+            width: inspector.width - x - 20; height: 35
+            text: "Project tools"
+            enabled: hubBridge.canRemove
+            onClicked: projectToolsMenu.open()
+            background: Rectangle {
+                radius: 8; color: root.raisedColor
+                border.width: 1; border.color: root.borderColor
+            }
+            contentItem: Text {
+                text: projectToolsButton.text
+                color: projectToolsButton.enabled ? root.textColor : root.mutedColor
+                font.pixelSize: 12
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+            Menu {
+                id: projectToolsMenu
+                y: parent.height
+                MenuItem {
+                    text: "Analysis configurations…"
+                    enabled: hubBridge.canConfigure
+                    onTriggered: hubBridge.runTool("config")
+                }
+                MenuItem {
+                    text: "Regenerate cached FITS thumbnail"
+                    enabled: hubBridge.canLocalPreview
+                    onTriggered: hubBridge.runTool("localPreview")
+                }
+                MenuItem {
+                    text: "Fetch colour preview (network request)"
+                    enabled: hubBridge.canRemotePreview
+                    onTriggered: hubBridge.runTool("remotePreview")
+                }
+                MenuSeparator {}
+                MenuItem {
+                    text: "Remove from recent list…"
+                    onTriggered: hubBridge.runTool("remove")
+                }
             }
         }
         Button {
             id: openButton
             objectName: "qml_hub_open_project"
-            x: 20; y: inspector.height - 81
-            width: inspector.width - 40; height: 47
-            text: hubBridge.selectedId.length === 0 ? "Select a galaxy"
-                : hubBridge.selectedStatus.indexOf("Missing") >= 0
-                  ? "Relink original project..." : "Open galaxy workspace"
+            x: 20; y: inspector.height - 62
+            width: inspector.width - 40; height: 44
+            text: hubBridge.openLabel
             enabled: hubBridge.selectedId.length !== 0
             onClicked: hubBridge.openSelected()
             background: Rectangle {
