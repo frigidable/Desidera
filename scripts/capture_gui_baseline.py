@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
-from PySide6.QtCore import QPoint, Qt, QSettings
+from PySide6.QtCore import QObject, QPoint, Qt, QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QFont, QFontInfo, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGroupBox, QTableWidget
@@ -317,6 +317,40 @@ def main():
                         "scientific_status": "NO_SCIENCE_RESULT",
                         "physical_windows_gpu_verified": False,
                     })
+                    # Evidence mode is part of the same Project Hub, not a
+                    # second project window. The real on-device screenshot
+                    # exposed hidden headers after disclosure; capture both.
+                    inspector = qml.rootObject().findChild(
+                        QObject, "qml_hub_inspector")
+                    if inspector is None:
+                        raise AssertionError("QML project inspector missing")
+                    inspector.setProperty("detailsExpanded", True)
+                    for _ in range(12):
+                        app.processEvents()
+                    if qml.bridge.selectedId != selected_project_id:
+                        raise AssertionError(
+                            "QML source details changed selected galaxy UUID")
+                    details_image = qml.grabWindow()
+                    if details_image.isNull():
+                        raise RuntimeError("QML evidence mode not rendered")
+                    details_path = outdir / (
+                        f"hub_qml_3_SYNTHETIC_{qml_mode}_sources_1366x768.png")
+                    if not details_image.save(str(details_path), "PNG"):
+                        raise RuntimeError(
+                            f"Cannot capture QML source details: {details_path}")
+                    reports.append({
+                        "state": "H8_qml_scientific_source_documentation",
+                        "appearance": qml_mode,
+                        "screenshot": details_path.name,
+                        "screenshot_bytes": details_path.stat().st_size,
+                        "same_registry_as_widgets": True,
+                        "network_used": False,
+                        "scientific_status": "NO_SCIENCE_RESULT",
+                        "physical_windows_gpu_verified": False,
+                    })
+                    inspector.setProperty("detailsExpanded", False)
+                    for _ in range(4):
+                        app.processEvents()
             finally:
                 qml.close()
                 if earlier_theme is None:

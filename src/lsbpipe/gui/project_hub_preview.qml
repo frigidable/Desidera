@@ -125,7 +125,7 @@ Rectangle {
             width: library.width - 24
             height: library.height - 270
             clip: true
-            spacing: 8
+            spacing: 6
             focus: true
             model: projectModel
             // Never commit a different project on model reset or theme edit.
@@ -163,7 +163,7 @@ Rectangle {
                 required property string projectId
                 required property bool isAvailable
                 width: galaxyList.width
-                height: 93
+                height: 84
                 radius: 9
                 color: hubBridge.selectedId === projectId
                     ? root.selectionColor : root.raisedColor
@@ -283,6 +283,7 @@ Rectangle {
 
     Rectangle {
         id: inspector
+        objectName: "qml_hub_inspector"
         x: library.x + library.width + 16
         y: library.y
         width: root.width - x - 22
@@ -293,7 +294,12 @@ Rectangle {
         border.color: root.borderColor
 
         Rectangle {
-            x: 20; y: 20; width: 76; height: 76; radius: 11
+            id: imageHeader
+            x: 20; y: 20
+            width: hubBridge.previewUrl.length > 0 ? 112 : 76
+            height: width
+            radius: 11
+            clip: true
             color: root.raisedColor
             border.width: 1
             border.color: root.borderColor
@@ -323,8 +329,8 @@ Rectangle {
             }
         }
         Text {
-            x: 114; y: 20
-            width: inspector.width - 260
+            x: imageHeader.x + imageHeader.width + 18; y: 20
+            width: inspector.width - x - 154
             text: hubBridge.selectedName
             elide: Text.ElideRight
             font.pixelSize: 25
@@ -332,8 +338,8 @@ Rectangle {
             color: root.textColor
         }
         Text {
-            x: 114; y: 61
-            width: inspector.width - 146
+            x: imageHeader.x + imageHeader.width + 18; y: 61
+            width: inspector.width - x - 20
             text: hubBridge.selectedCoords
             wrapMode: Text.WordWrap
             font.pixelSize: 12
@@ -352,8 +358,8 @@ Rectangle {
             }
         }
         Text {
-            x: 114; y: 100
-            width: inspector.width - 134
+            x: imageHeader.x + imageHeader.width + 18; y: 100
+            width: inspector.width - x - 20
             text: hubBridge.previewLabel
             textFormat: Text.PlainText
             color: root.mutedColor
@@ -362,14 +368,22 @@ Rectangle {
         }
 
         property bool detailsExpanded: false
+        onDetailsExpandedChanged: {
+            // Never allow a formerly focused disclosure control to scroll the
+            // selected galaxy's identity out of view on content growth.
+            if (evidenceScroll.contentItem)
+                evidenceScroll.contentItem.contentY = 0
+        }
 
-        // Scroll evidence, keep the action toolbar and primary Open pinned.
+        // Only the evidence scrolls. Primary project actions and the
+        // disclosure toggle are stable regardless of the source length.
         ScrollView {
             id: evidenceScroll
             objectName: "qml_hub_evidence_scroll"
-            x: 20; y: 119
+            x: 20
+            y: hubBridge.previewUrl.length > 0 ? 145 : 119
             width: inspector.width - 40
-            height: Math.max(100, inspector.height - 346)
+            height: Math.max(100, inspector.height - 269 - y)
             clip: true
             ScrollBar.vertical: ScrollBar {
                 policy: ScrollBar.AsNeeded
@@ -384,7 +398,14 @@ Rectangle {
             Column {
                 id: evidenceColumn
                 width: evidenceScroll.availableWidth - 2
-                spacing: 6
+                spacing: 0
+
+                Column {
+                    id: summaryEvidence
+                    objectName: "qml_hub_summary_evidence"
+                    width: parent.width
+                    spacing: 8
+                    visible: !inspector.detailsExpanded
 
                 Text {
                     text: "SAVED PROJECT EVIDENCE"
@@ -474,60 +495,154 @@ Rectangle {
                     font.pixelSize: 11
                     wrapMode: Text.WordWrap
                 }
-                Button {
-                    id: evidenceToggle
-                    objectName: "qml_hub_evidence_toggle"
+                } // End normal evidence summary.
+
+                Column {
+                    id: detailedEvidence
+                    objectName: "qml_hub_detailed_evidence"
                     width: parent.width
-                    height: 34
-                    enabled: hubBridge.selectedId.length > 0
-                    text: inspector.detailsExpanded
-                        ? "Hide sources and QA details"
-                        : "Show sources and QA details"
-                    onClicked: inspector.detailsExpanded = !inspector.detailsExpanded
-                    background: Rectangle {
-                        radius: 8
+                    spacing: 14
+                    visible: inspector.detailsExpanded
+
+                    Text {
+                        width: parent.width
+                        text: "SAVED SOURCE DOCUMENTATION"
+                        color: root.accentColor
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 0.7
+                    }
+                    Text {
+                        width: parent.width
+                        text: "Read-only receipts and provenance. No measurements adopted."
+                        color: root.mutedColor
+                        font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+                    Rectangle {
+                        width: parent.width
+                        height: catalogueDetails.implicitHeight + 28
                         color: root.raisedColor
+                        radius: 9
                         border.width: 1
                         border.color: root.borderColor
+                        Column {
+                            id: catalogueDetails
+                            x: 13; y: 14
+                            width: parent.width - 26
+                            spacing: 8
+                            Text {
+                                width: parent.width
+                                text: "01  CATALOGUE SOURCES"
+                                color: root.accentColor
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                            Text {
+                                objectName: "qml_hub_catalogue_sources"
+                                width: parent.width
+                                text: hubBridge.catalogueEvidence
+                                textFormat: Text.PlainText
+                                selectByMouse: true
+                                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                color: root.textColor
+                                font.pixelSize: 13
+                                lineHeight: 1.25
+                            }
+                        }
                     }
-                    contentItem: Text {
-                        text: evidenceToggle.text
-                        font.pixelSize: 12
-                        color: root.accentColor
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: Text.AlignHCenter
+                    Rectangle {
+                        width: parent.width
+                        height: qaDetails.implicitHeight + 28
+                        color: root.raisedColor
+                        radius: 9
+                        border.width: 1
+                        border.color: root.borderColor
+                        Column {
+                            id: qaDetails
+                            x: 13; y: 14
+                            width: parent.width - 26
+                            spacing: 8
+                            Text {
+                                width: parent.width
+                                text: "02  FITS / WCS AUDIT"
+                                color: root.accentColor
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                            Text {
+                                objectName: "qml_hub_qa_sources"
+                                width: parent.width
+                                text: hubBridge.qaEvidence
+                                textFormat: Text.PlainText
+                                selectByMouse: true
+                                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                color: root.textColor
+                                font.pixelSize: 13
+                                lineHeight: 1.25
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: parent.width
+                        height: projectDetails.implicitHeight + 28
+                        color: root.raisedColor
+                        radius: 9
+                        border.width: 1
+                        border.color: root.borderColor
+                        Column {
+                            id: projectDetails
+                            x: 13; y: 14
+                            width: parent.width - 26
+                            spacing: 8
+                            Text {
+                                width: parent.width
+                                text: "03  PROJECT INFORMATION"
+                                color: root.accentColor
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                            }
+                            Text {
+                                objectName: "qml_hub_project_sources"
+                                width: parent.width
+                                text: hubBridge.projectEvidence
+                                textFormat: Text.PlainText
+                                selectByMouse: true
+                                wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+                                color: root.textColor
+                                font.pixelSize: 13
+                                lineHeight: 1.25
+                            }
+                        }
                     }
                 }
-                Text {
-                    objectName: "qml_hub_catalogue_sources"
-                    visible: inspector.detailsExpanded && hubBridge.selectedId.length > 0
-                    width: parent.width
-                    text: "CATALOGUE SOURCES\n" + hubBridge.catalogueEvidence
-                    textFormat: Text.PlainText
-                    wrapMode: Text.WordWrap
-                    color: root.mutedColor
-                    font.pixelSize: 12
-                }
-                Text {
-                    objectName: "qml_hub_qa_sources"
-                    visible: inspector.detailsExpanded && hubBridge.selectedId.length > 0
-                    width: parent.width
-                    text: "FITS/WCS AUDIT EVIDENCE\n" + hubBridge.qaEvidence
-                    textFormat: Text.PlainText
-                    wrapMode: Text.WordWrap
-                    color: root.mutedColor
-                    font.pixelSize: 12
-                }
-                Text {
-                    objectName: "qml_hub_project_sources"
-                    visible: inspector.detailsExpanded && hubBridge.selectedId.length > 0
-                    width: parent.width
-                    text: "PROJECT INFORMATION\n" + hubBridge.projectEvidence
-                    textFormat: Text.PlainText
-                    wrapMode: Text.WordWrap
-                    color: root.mutedColor
-                    font.pixelSize: 12
-                }
+            }
+        }
+
+        Button {
+            id: evidenceToggle
+            objectName: "qml_hub_evidence_toggle"
+            x: 20
+            y: inspector.height - 258
+            width: inspector.width - 40
+            height: 34
+            enabled: hubBridge.selectedId.length > 0
+            text: inspector.detailsExpanded
+                ? "← Back to project overview"
+                : "Show sources and QA details"
+            onClicked: inspector.detailsExpanded = !inspector.detailsExpanded
+            background: Rectangle {
+                radius: 8
+                color: root.raisedColor
+                border.width: 1
+                border.color: root.borderColor
+            }
+            contentItem: Text {
+                text: evidenceToggle.text
+                font.pixelSize: 12
+                color: evidenceToggle.enabled ? root.accentColor : root.mutedColor
+                verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: Text.AlignHCenter
             }
         }
 

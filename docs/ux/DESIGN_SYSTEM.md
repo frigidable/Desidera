@@ -7,6 +7,41 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Real Windows Project Hub usability review (15 November 2026)
+
+Real on-device screenshots from a five-galaxy library (Leo P, dw
+1343+58, KDG 61, KKR 25, UGC 2162) exposed defects not reproduced by
+the earlier three-object CI fixture:
+
+- With the source evidence expanded, the disclosure button lived inside
+  the scrollable evidence column. Qt Quick scrolled to the focused button,
+  clipping the beginning of the passport and forcing the user to read a
+  continuous dense column with weak separation between provider receipts.
+- At a 1680×900 desktop viewport, the fifth galaxy's list card was partly
+  hidden by the pinned New/Import toolbar.
+- The 76px cached RGB preview was too small relative to a wide empty
+  inspector, obscuring its value as a visual identification aid.
+
+Fix: keep the evidence disclosure control **outside the scroll area**,
+as a permanently visible command above the recommended next action.
+Switch between a concise status summary and a structured **read-only
+source-documentation mode** containing individual catalogue, FITS/WCS QA
+and project-provenance cards. Reset evidence scroll to the top on each
+mode switch; clicking sources must never modify the selected galaxy UUID.
+Use selectable, plain-text, line-wrapped source data, with 13px reading
+type rather than the tiny dense receipt block. Enlarge the cached
+display-only thumbnail when available, but keep the ordinary placeholder
+compact when no image is cached. Reduce the 5-row catalogue card height
+to 84px and spacing to 6px; short windows still scroll normally.
+
+These changes affect presentation only. They do not reinterpret the saved
+FITS/WCS diagnostic as new content-hash verification or imply adopted
+surface photometry. Add matched light/dark offscreen captures of *both*
+summary and expanded documentation, and GUI tests exercising disclosure,
+filtering, the selected project UUID and on-disk passport immutability.
+
+---
+
 ## Qt Quick scientific-evidence and actions pilot
 
 The optional Qt Quick inspector now exposes the same evidence model as
