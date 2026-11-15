@@ -7,6 +7,54 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Qt Quick Project Hub A/B experiment (15 November 2026)
+
+The first **measured implementation comparison** is opt-in: use
+**Display settings → Compare Qt Quick Project Hub (experimental)…** to
+open a separate `QQuickView` window. Normal startup and scientific work
+continue to use the existing Qt Widgets Project Hub and QGraphicsView FITS
+renderer. This experiment is not the application's default GUI.
+
+Implementation: `project_hub_qml.py` exposes a `QAbstractListModel` which
+projects the exact **visible items and UUIDs** of the already-existing
+Widgets library. It does not create a second registry or calculate data
+readiness. `project_hub_preview.qml` renders the same name, status,
+coordinates, selected galaxy and readiness-derived next action as the Qt
+Widgets card. Search, selection and open/new/import commands call the
+established Project Hub functions (including strict relink and project
+identity checks). Missing data are labelled as missing; SCIENCE HOLD is
+always explicit. There are no fabricated thumbnails, magnitudes or results.
+
+This is a **standalone QQuickView**, not a QQuickWidget embedded beside
+the FITS canvas. The pilot therefore avoids changing render ownership of
+scientific widgets and allows a meaningful comparison before considering
+a mixed-window shell. The `.qml` resource is included in the Python wheel.
+The preview closes when an object workspace opens; it has no independent
+session state and performs no background work.
+
+Qt CI uses the software scene-graph adaptation in offscreen Windows, and
+captures matched **1366×768, three-object** Widgets and Qt Quick light/dark
+examples. These are comparative screenshots, not proof of real Windows
+125–200% DPI, Fluent material, GPU performance, WebEngine interoperability
+or keyboard/screen-reader acceptance. Treat the prototype as a candidate,
+not a decision.
+
+Before making Qt Quick the default, evaluate with real on-device evidence:
+- Visual hierarchy and readable metadata at 1366×768, 1600×900, 1920×1080,
+  with large fonts; list/inspector search, selection and missing project.
+- Actual Qt keyboard access, screen reader semantics, focus, dialog/return
+  navigation, and error states; no regression of native Widgets actions.
+- Repeated cold and warm launch timings, peak and steady-state RAM, and
+  rendering latency on supported Windows hardware and without the remote
+  viewer. The synthetic CI timings must not be treated as a benchmark.
+- Safe handling of 100+ galaxies, exact UUID preservation and corrupt
+  index recovery. Never infer scientific adoption from file presence.
+- Only then consider the architectural cost of embedding QML and any extra
+  Qt Quick dependencies. Maintain one testable Python project/readiness
+  domain model and no second astronomical pipeline.
+
+---
+
 ## Project Hub catalogue pilot — visual architecture
 
 The first Observatory Studio migration increments the **existing** offline

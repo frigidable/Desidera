@@ -323,6 +323,8 @@ class ProjectHub(QMainWindow):
         self.setWindowTitle("DESIDERA · Galaxy Projects")
         self.resize(1100, 720)
         self.workspace = None
+        # One optional comparison view, never constructed during normal launch.
+        self._qml_preview = None
         self._startup_settings = QSettings("Desidera", "Desidera")
         self._preview_future = None
         self._preview_project_id = None
@@ -434,6 +436,14 @@ class ProjectHub(QMainWindow):
                 lambda checked=False, value=mode:
                     self._save_appearance_setting(value))
             self.appearance_actions[mode] = action
+        self.preview_settings_menu.addSeparator()
+        self.qml_preview_action = self.preview_settings_menu.addAction(
+            "Compare Qt Quick Project Hub (experimental)…")
+        self.qml_preview_action.setToolTip(
+            "Opens a separate QML presentation of the SAME saved projects. "
+            "The current Project Hub and scientific workspaces remain unchanged.")
+        self.qml_preview_action.triggered.connect(
+            lambda checked=False: self._open_qml_preview())
         self.preview_settings_btn.setMenu(self.preview_settings_menu)
         actions.addWidget(self.preview_settings_btn)
         outer.addLayout(actions)
@@ -776,6 +786,8 @@ class ProjectHub(QMainWindow):
         if self.projects.count():
             self.projects.setCurrentRow(selection)
         self._filter_rows()
+        if self._qml_preview is not None:
+            self._qml_preview.sync()
 
     def _filter_rows(self):
         query = self.filter.text().strip().casefold()
@@ -1281,6 +1293,27 @@ class ProjectHub(QMainWindow):
         refresh_visual_tree(self)
         if self.workspace is not None:
             refresh_visual_tree(self.workspace)
+        if self._qml_preview is not None:
+            self._qml_preview.sync()
+
+    def _open_qml_preview(self):
+        """Launch the opt-in Qt Quick pilot with this very same project list.
+
+        No additional scientific backend, project registry, FITS read or
+        network request is created for this comparison.
+        """
+        try:
+            if self._qml_preview is None:
+                from .project_hub_qml import QmlProjectHubPreview
+                self._qml_preview = QmlProjectHubPreview(self)
+            else:
+                self._qml_preview.sync()
+            self._qml_preview.show()
+            self._qml_preview.raise_()
+            self._qml_preview.requestActivate()
+        except (ImportError, RuntimeError) as exc:
+            QMessageBox.warning(
+                self, "Qt Quick preview unavailable", str(exc))
 
     def _save_auto_rgb_setting(self, enabled):
         """User-visible preference affects only optional display RGB traffic."""

@@ -17,6 +17,7 @@ from offline_gui_fixture import (offline_legacy_viewer, apply_offline_state,
 # replacement for real Windows/on-device Qt WebEngine validation.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 from PySide6.QtCore import QPoint, Qt, QSettings
 from PySide6.QtTest import QTest
@@ -272,6 +273,55 @@ def main():
                     "network_used": False,
                     "scientific_status": "NO_SCIENCE_RESULT",
                 })
+            # Matched 3-galaxy baseline in the optional Qt Quick renderer.
+            # The same live Widgets model, selection and status are reused;
+            # no invented FITS imagery, QA or external catalogue evidence.
+            from lsbpipe.gui.project_hub_qml import QmlProjectHubPreview
+            qml = QmlProjectHubPreview(hub)
+            preferences = QSettings("Desidera", "Desidera")
+            earlier_theme = preferences.value("appearance/theme", None)
+            try:
+                for qml_mode in ("light", "dark"):
+                    preferences.setValue("appearance/theme", qml_mode)
+                    preferences.sync()
+                    qml.sync()
+                    qml.resize(1366, 768)
+                    qml.show()
+                    for _ in range(22):
+                        app.processEvents()
+                    if (qml.model.rowCount() != hub.projects.count()
+                            or qml.bridge.visibleCount != 3):
+                        raise AssertionError(
+                            "Qt Quick comparison lost saved project rows")
+                    image = qml.grabWindow()
+                    if image.isNull():
+                        raise RuntimeError("Qt Quick failed to render offscreen")
+                    if (image.width(), image.height()) != (1366, 768):
+                        raise AssertionError(
+                            f"QML viewport differs: {image.size()}")
+                    path = outdir / (
+                        f"hub_qml_3_SYNTHETIC_{qml_mode}_1366x768.png")
+                    if not image.save(str(path), "PNG"):
+                        raise RuntimeError(f"Could not capture {path}")
+                    reports.append({
+                        "state": "H7_qml_3_galaxy_comparison",
+                        "appearance": qml_mode,
+                        "screenshot": path.name,
+                        "screenshot_bytes": path.stat().st_size,
+                        "same_registry_as_widgets": True,
+                        "network_used": False,
+                        "scientific_status": "NO_SCIENCE_RESULT",
+                        "physical_windows_gpu_verified": False,
+                    })
+            finally:
+                qml.close()
+                if earlier_theme is None:
+                    preferences.remove("appearance/theme")
+                else:
+                    preferences.setValue("appearance/theme", earlier_theme)
+                preferences.sync()
+                from lsbpipe.gui.visual_theme import refresh_visual_tree
+                refresh_visual_tree(hub)
             # Explicit light/dark UI render; not a physical OS theme test.
             settings = QSettings("Desidera", "Desidera")
             prior_mode = settings.value("appearance/theme", None)

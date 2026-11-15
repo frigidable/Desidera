@@ -33,6 +33,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
+      QT_QUICK_BACKEND: software # deterministic offscreen QML comparison only
       PYTEST_QT_API: pyside6
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 tag resolved 2026-11-13

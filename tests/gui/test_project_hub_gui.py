@@ -4,7 +4,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6.QtWebEngineWidgets")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import QDialog
 from scripts.offline_gui_fixture import offline_legacy_viewer
 from lsbpipe.gui.project_hub import ProjectHub, CreateProjectDialog
@@ -967,3 +967,89 @@ def test_card_recommended_next_action_comes_from_saved_readiness(
     assert not card.next_step_panel.isVisible()
     assert card.snapshot is None
     assert read_object_project(project.root).project_id == project.project_id
+
+
+def test_qml_project_hub_preview_uses_same_registry_selection_and_actions(
+        hub, qtbot, tmp_path, monkeypatch):
+    """QML is strictly opt-in; its list is a projection of Widgets records."""
+    from PySide6.QtQuick import QQuickView
+    from lsbpipe.gui.project_hub_qml import QmlProjectHubPreview
+
+    assert hub._qml_preview is None
+    a = create_object_project(
+        "Alpha dwarf", tmp_path / "alpha",
+        field=SkyField(40.096208, 1.229250, 5.))
+    b = create_object_project("Beta dwarf", tmp_path / "beta")
+    original = (a.root / "lsbpipe-object.json").read_bytes()
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    assert isinstance(preview, QmlProjectHubPreview)
+    assert preview.status() == QQuickView.Ready
+    assert preview.rootObject().objectName() == "observatory_qml_hub_root"
+    assert preview.model.rowCount() == 2
+    assert preview.bridge.projectCount == hub.projects.count() == 2
+    assert preview.bridge.visibleCount == 2
+    assert preview.rootObject().findChild(
+        QObject, "qml_hub_filter") is not None
+    assert not preview.grabWindow().isNull()
+
+    # Every Qt Quick role comes from an existing native QListWidget record.
+    for row in range(preview.model.rowCount()):
+        identity = preview.model.data(preview.model.index(row, 0),
+                                      preview.model.ProjectId)
+        assert identity in (a.project_id, b.project_id)
+        assert preview.model.data(preview.model.index(row, 0),
+                                  preview.model.StatusText)
+        assert preview.model.data(preview.model.index(row, 0),
+                                  preview.model.Coordinates)
+
+    preview.bridge.setFilter("beta")
+    assert hub.filter.text() == "beta"
+    assert preview.model.rowCount() == 1
+    preview.bridge.choose(b.project_id)
+    assert preview.bridge.selectedId == b.project_id
+    assert hub.projects.currentItem().data(Qt.UserRole)["project_id"] == b.project_id
+    assert preview.bridge.selectedName == "Beta dwarf"
+    assert preview.bridge.nextAction == hub.galaxy_card.snapshot.readiness.next_action_label
+
+    # QML Open delegates to the existing guarded Project Hub action.
+    launched = []
+    monkeypatch.setattr(
+        hub, "_open_selected",
+        lambda: launched.append(preview.bridge.selectedId))
+    preview.bridge.openSelected()
+    assert launched == [b.project_id]
+    preview.bridge.setFilter("missing query")
+    assert preview.model.rowCount() == 0
+    assert not preview.bridge.selectedId
+    preview.bridge.openSelected()
+    assert launched == [b.project_id]
+
+    preview.bridge.setFilter("")
+    assert preview.model.rowCount() == 2
+    assert (a.root / "lsbpipe-object.json").read_bytes() == original
+    preview.close()
+
+
+def test_qml_project_hub_preview_missing_folder_keeps_original_uuid(
+        hub, qtbot, tmp_path):
+    """A missing project has only a relink action, never fake readiness."""
+    from lsbpipe.gui.project_hub_qml import QmlProjectHubPreview
+    project = create_object_project(
+        "Unresolved dwarf", tmp_path / "original",
+        field=SkyField(40.096208, 1.229250, 5.))
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    assert isinstance(preview, QmlProjectHubPreview)
+    root = project.root
+    root.rename(tmp_path / "relocated")
+    hub.refresh()
+    assert preview.model.rowCount() == 1
+    preview.bridge.choose(project.project_id)
+    assert preview.bridge.selectedId == project.project_id
+    assert "Relink" in preview.bridge.nextAction
+    assert "Missing" in preview.bridge.selectedStatus
+    assert preview.bridge.datasetLabel != "Verified science"
+    preview.close()
