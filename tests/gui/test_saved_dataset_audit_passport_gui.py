@@ -84,8 +84,12 @@ def test_no_saved_audit_is_not_qa_approval(qtbot, tmp_path, monkeypatch):
     assert "4/4" in card.fits.text()
     assert "No saved FITS/WCS audit" in card.qa_status.text()
     assert "QA pending" in hub.projects.item(0).text()
-    assert not card.next_step_title.isVisible()
-    assert not card.next_step.isVisible()
+    # The redesigned inspector shows the evidence-backed next action;
+    # displaying it must never promote file presence to QA approval.
+    assert card.next_step_title.isVisible()
+    assert card.next_step.isVisible()
+    assert card.next_step.text() == card.snapshot.readiness.next_action_label
+    assert "automatically adopted" in card.next_step_note.text()
     assert card.open_button.text() == "Open project"
     assert "inspect FITS" in card.open_button.toolTip()
     assert (p.root / "lsbpipe-object.json").read_bytes() == manifest
@@ -135,3 +139,32 @@ def test_changed_original_marks_prior_qa_stale_on_refresh(
     assert "QA needs rerun" in hub.projects.item(0).text()
     assert card.open_button.text() == "Open project"
     assert "rerun dataset QA" in card.open_button.toolTip()
+
+
+def test_qml_inspector_preserves_historical_audit_qualifiers(
+        qtbot, tmp_path, monkeypatch):
+    """The QML evidence panel uses the same unadopted saved QA receipt."""
+    p, products = _make_project(tmp_path, with_receipt=True)
+    manifest = (p.root / "lsbpipe-object.json").read_bytes()
+    hub = _hub(qtbot, monkeypatch)
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    assert preview.bridge.selectedId == p.project_id
+    assert preview.bridge.qaSummary == hub.galaxy_card.qa_status.text()
+    assert "metadata unchanged" in preview.bridge.qaSummary
+    assert "NOT rechecked" in preview.bridge.qaEvidence
+    assert "NOT certified" in preview.bridge.qaEvidence
+    assert "dataset-audits/run123/audit.json" in preview.bridge.qaEvidence
+    assert preview.bridge.nextAction == (
+        hub.galaxy_card.snapshot.readiness.next_action_label)
+    assert "FITS/WCS checked" not in preview.bridge.catalogueLabel
+    assert (p.root / "lsbpipe-object.json").read_bytes() == manifest
+
+    image = p.data_root / products["image"]["relative_path"]
+    image.write_bytes(b"changed content and size")
+    hub.refresh()
+    assert preview.bridge.selectedId == p.project_id
+    assert "needs rerun" in preview.bridge.qaSummary
+    assert "file metadata" in preview.bridge.qaEvidence
+    assert (p.root / "lsbpipe-object.json").read_bytes() == manifest
+    preview.close()

@@ -221,6 +221,266 @@ def capture(output_dir: Path) -> list[dict]:
                 "size_image":[shot04.width(),shot04.height()],
                 "visual_reviewed":False,
             })
+            # Enlarged font fixture: checks text reflow in the actual
+            # Photometry shell. This does NOT emulate hardware Windows DPI.
+            widget.setFont(QFont(family, 16))
+            for stage_key, stage_widget, label in (
+                    ("sky", widget.sky_stage, "background"),
+                    ("aperture", widget.aperture_stage, "aperture")):
+                widget.restore_navigation(stage=stage_key, band="r")
+                widget.resize(1366,768)
+                widget.show()
+                app.processEvents()
+                if (not stage_widget.status.isVisible()
+                        or not stage_widget.context_label.isVisible()
+                        or not stage_widget.open_scene_btn.isVisible()
+                        or stage_widget.run_btn.isVisible()
+                        or stage_widget.copy_btn.isVisible()):
+                    raise AssertionError(
+                        "High-font empty stage has no primary Scene action "
+                        "or shows inactive run/copy controls: " + stage_key)
+                if (stage_widget.readout.isVisible()
+                        or stage_widget.report_toggle.isVisible()):
+                    raise AssertionError(
+                        "High-font empty stage shows unnecessary report")
+                image = widget.grab()
+                target=output_dir / (
+                    f"photometry_{label}_font16_1366x768.png")
+                if image.isNull() or not image.save(str(target),"PNG"):
+                    raise RuntimeError(f"Cannot capture {target}")
+                manifest.append({
+                    "path":str(target),
+                    "state":f"stage_{stage_key}_large_font_no_native_scene",
+                    "fixture":"SYNTHETIC_NON_FITS_METADATA",
+                    "font_points":16,
+                    "real_windows_dpi_verified":False,
+                    "native_fits_read":False,
+                    "size_logical":[1366,768],
+                    "size_image":[image.width(),image.height()],
+                    "visual_reviewed":False,
+                })
+
+            # Visible FAILURE states need independent layout evidence.
+            # These are simulated UI-only exceptions: no FITS opened,
+            # worker submitted, remote request, or science QA adopted.
+            from types import SimpleNamespace
+            from PySide6.QtCore import QPoint
+            identity=("SYNTHETIC_PROJECT","NO_FITS_SOURCE","r","d"*64,"c"*64)
+            fake_data={"project_id":"SYNTHETIC_PROJECT",
+                       "source":"NO_FITS_SOURCE","band":"r"}
+            fake_draft=SimpleNamespace(digest="d"*64)
+            fake_mask={"catalog_sha256":"c"*64}
+            for key,label,stage in (
+                    ("sky","background",widget.sky_stage),
+                    ("aperture","aperture",widget.aperture_stage)):
+                prior_snapshot=stage._snapshot
+                try:
+                    if key=="sky":
+                        snap=(identity,fake_data,fake_draft,fake_mask)
+                    else:
+                        snap=(identity,fake_data,fake_draft,fake_mask,
+                              ("dr11","south","synthetic"),
+                              (40.096208,1.22925),None,None)
+                    stage._snapshot=lambda snapshot=snap:snapshot
+                    stage._last_failure={
+                        "status":"WORKER_FAILED_CLOSED",
+                        "error_type":"FileNotFoundError",
+                    }
+                    stage._failure_identity=identity
+                    widget.restore_navigation(stage=key,band="r")
+                    stage.status.setText(
+                        "SIMULATED ERROR · Original FITS missing. "
+                        "Check Stage 02 source and retry. Science HOLD.")
+                    for width,height in ((760,650),(1366,768)):
+                        widget.resize(width,height)
+                        widget.show()
+                        app.processEvents()
+                        if (widget.width()!=width or widget.height()!=height):
+                            raise RuntimeError(
+                                f"Simulated {key} failure window refused "
+                                f"{width}x{height}: {widget.size()}")
+                        if (not stage.copy_error_btn.isVisible()
+                                or not stage.run_btn.isVisible()
+                                or stage.copy_btn.isVisible()):
+                            raise AssertionError(
+                                f"Failure action state wrong in {key}")
+                        for control in (stage.run_btn,stage.copy_error_btn):
+                            center=control.mapTo(widget,control.rect().center())
+                            if not widget.rect().contains(center):
+                                raise AssertionError(
+                                    f"Failure button obscured in {key}: "
+                                    f"{control.objectName()} {width}x{height}")
+                        capture=widget.grab()
+                        dest=output_dir / (
+                            f"photometry_{label}_SIMULATED_FAILURE_"
+                            f"font16_{width}x{height}.png")
+                        if capture.isNull() or not capture.save(str(dest),"PNG"):
+                            raise RuntimeError(f"Cannot capture {dest}")
+                        manifest.append({
+                            "path":str(dest),
+                            "state":f"stage_{key}_synthetic_failure",
+                            "fixture":"SIMULATED_ERROR_NO_FITS_NO_WORKER",
+                            "scientific_status":"UNADOPTED_DIAGNOSTIC_ONLY",
+                            "source_fits_read":False,
+                            "worker_run":False,
+                            "font_points":16,
+                            "real_windows_dpi_verified":False,
+                            "visual_reviewed":False,
+                            "size_logical":[width,height],
+                            "size_image":[capture.width(),capture.height()],
+                        })
+                finally:
+                    del stage.__dict__["_snapshot"]
+                    stage._last_failure=None
+                    stage._failure_identity=None
+                    stage.refresh_context()
+            widget.restore_navigation(stage="scene",band="r")
+            scene=widget.scene_editor
+            scene._fits_load_failure={
+                "status":"FITS_LOAD_FAILED_CLOSED",
+                "error_type":"FileNotFoundError","band":"r"}
+            scene.load_btn.setText("Retry FITS load")
+            scene.copy_error_btn.show()
+            scene.status.setText(
+                "SIMULATED ERROR · Original FITS missing. Check the current "
+                "quartet before retrying. Draft unchanged.")
+            for width,height in ((760,650),(1366,768)):
+                widget.resize(width,height)
+                widget.show()
+                app.processEvents()
+                if (widget.width()!=width or widget.height()!=height):
+                    raise RuntimeError(
+                        f"Simulated Scene window refused {width}x{height}: "
+                        f"{widget.size()}")
+                if not scene.copy_error_btn.isVisible():
+                    raise AssertionError("Scene error report action hidden")
+                if width==760:
+                    from PySide6.QtWidgets import QBoxLayout
+                    if scene._toolbar.direction()!=QBoxLayout.TopToBottom:
+                        raise AssertionError(
+                            "Narrow Scene FITS toolbar did not reflow")
+                expected=scene.load_btn.fontMetrics().horizontalAdvance(
+                    scene.load_btn.text())+12
+                if scene.load_btn.width()<expected:
+                    raise AssertionError(
+                        "Scene Retry FITS button text clipped: "
+                        f"{scene.load_btn.width()} < {expected}")
+                if (scene.status.parentWidget() is not scene or
+                        scene.status.mapTo(
+                            scene,scene.status.rect().bottomRight()).y()
+                        >= scene.height()):
+                    raise AssertionError(
+                        "Scene status truncated beneath inspector")
+                focus=scene.copy_error_btn.mapTo(
+                    widget,scene.copy_error_btn.rect().center())
+                if not widget.rect().contains(focus):
+                    raise AssertionError(
+                        f"Scene failure action outside window at {width}x{height}")
+                # Save and Copy QA remain next to each other; the error
+                # action must occupy the second footer row.
+                if (scene.copy_error_btn.y() <
+                        scene.copy_scene_qa_btn.y()
+                        +scene.copy_scene_qa_btn.height()-2):
+                    raise AssertionError(
+                        "Scene error action overlaps Save/QA footer")
+                capture=widget.grab()
+                dest=output_dir / (
+                    f"photometry_scene_SIMULATED_FAILURE_"
+                    f"font16_{width}x{height}.png")
+                if capture.isNull() or not capture.save(str(dest),"PNG"):
+                    raise RuntimeError(f"Cannot capture {dest}")
+                manifest.append({
+                    "path":str(dest),
+                    "state":"stage02_simulated_fits_failure",
+                    "fixture":"SIMULATED_ERROR_NO_FITS_NO_WORKER",
+                    "scientific_status":"UNADOPTED_DIAGNOSTIC_ONLY",
+                    "source_fits_read":False,
+                    "worker_run":False,
+                    "font_points":16,
+                    "real_windows_dpi_verified":False,
+                    "visual_reviewed":False,
+                    "size_logical":[width,height],
+                    "size_image":[capture.width(),capture.height()],
+                })
+            scene._fits_load_failure=None
+            scene.copy_error_btn.hide()
+            scene.load_btn.setText("Load original FITS")
+            widget.setFont(app.font())
+            # Stage 02 task navigation: metadata only, with no FITS read,
+            # no automatic SGA network access or scientific inference.
+            widget.stage_tabs.setCurrentWidget(widget.scene_editor)
+            for task in ("draw", "isophote", "sga"):
+                widget.scene_editor.scene_task_buttons[task].click()
+                widget.resize(1366, 768)
+                widget.show()
+                app.processEvents()
+                scene = widget.scene_editor
+                if (not scene.save_btn.isVisible()
+                        or not scene.copy_scene_qa_btn.isVisible()):
+                    raise AssertionError("Scene task footer is obscured")
+                from PySide6.QtWidgets import QScrollArea
+                controls_scroll = scene.findChild(
+                    QScrollArea, "scene_controls_scroll")
+                if controls_scroll.horizontalScrollBar().maximum() != 0:
+                    raise AssertionError(
+                        "Scene task controls overflow horizontally: " + task)
+                if scene.view.drawing:
+                    raise AssertionError(
+                        "Scene empty task preview unexpectedly starts drawing")
+                shot = widget.grab()
+                path = output_dir / (
+                    f"photometry_scene_{task}_1366x768.png")
+                if shot.isNull() or not shot.save(str(path), "PNG"):
+                    raise RuntimeError(f"Cannot capture {path}")
+                manifest.append({
+                    "path": str(path),
+                    "state": "stage02_" + task + "_without_native_scene",
+                    "fixture": "SYNTHETIC_NON_FITS_METADATA",
+                    "native_fits_read": False,
+                    "science_adopted": False,
+                    "visible_task": task,
+                    "size_logical": [1366, 768],
+                    "size_image": [shot.width(), shot.height()],
+                    "visual_reviewed": False,
+                })
+            # Explicit dark appearance of a real Qt Scene task, without FITS.
+            # This does not simulate an operating-system theme transition.
+            from PySide6.QtCore import QSettings
+            from lsbpipe.gui.visual_theme import refresh_visual_tree
+            appearance = QSettings("Desidera", "Desidera")
+            old_theme = appearance.value("appearance/theme", None)
+            try:
+                appearance.setValue("appearance/theme", "dark")
+                appearance.sync()
+                refresh_visual_tree(widget)
+                widget.stage_tabs.setCurrentWidget(widget.scene_editor)
+                widget.scene_editor.scene_task_buttons["draw"].click()
+                widget.resize(1366, 768)
+                widget.show()
+                app.processEvents()
+                path = output_dir / "photometry_scene_draw_DARK_1366x768.png"
+                shot = widget.grab()
+                if shot.isNull() or not shot.save(str(path), "PNG"):
+                    raise RuntimeError(f"Cannot capture {path}")
+                manifest.append({
+                    "path": str(path),
+                    "state": "stage02_dark_appearance_no_native_fits",
+                    "fixture": "SYNTHETIC_NON_FITS_METADATA",
+                    "appearance": "dark",
+                    "physical_dark_os_verified": False,
+                    "science_adopted": False,
+                    "native_fits_read": False,
+                    "size_logical": [1366, 768],
+                    "size_image": [shot.width(), shot.height()],
+                    "visual_reviewed": False,
+                })
+            finally:
+                if old_theme is None:
+                    appearance.remove("appearance/theme")
+                else:
+                    appearance.setValue("appearance/theme", old_theme)
+                appearance.sync()
+                refresh_visual_tree(widget)
             widget.restore_navigation(stage="psf0", band="r")
             # Explicitly synthetic gallery: no real Leo P image bytes are
             # accessible to CI. Capture equal-square cutout, PSF and radial

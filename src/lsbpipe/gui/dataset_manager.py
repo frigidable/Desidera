@@ -472,7 +472,7 @@ class DatasetManager(QWidget):
         self.source_summary.setText(
             f"{len(sources)} source groups · {len(assets)} registered FITS · "
             f"{incomplete_count} incomplete indexed brick/band sets · "
-            "FITS/WCS & LSB suitability NOT certified"
+            "FITS/WCS and LSB suitability NOT certified"
             if sources else
             "No indexed sources. Use Index local FITS folder to register "
             "existing Legacy files without copying or downloading.")

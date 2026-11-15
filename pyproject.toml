@@ -29,6 +29,10 @@ lsbpipe-survey-gui = "lsbpipe.gui.survey_explorer:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Package the opt-in QML comparison alongside its Python entrypoint.
+[tool.setuptools.package-data]
+"lsbpipe.gui" = ["*.qml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--basetemp=.pytest-tmp"

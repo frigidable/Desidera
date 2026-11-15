@@ -9,8 +9,30 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import (
     QCheckBox, QHBoxLayout, QInputDialog, QMessageBox,
-    QTableWidgetItem, QWidget)
+    QTableWidget, QTableWidgetItem, QWidget)
 from lsbpipe.surveys.selection import matching_product, summarize_selection
+
+
+class ArchiveFileTable(QTableWidget):
+    """Keyboard-friendly file choices; selecting rows never starts transfers."""
+
+    def keyPressEvent(self, event):
+        if (event.key() in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter)
+                and event.modifiers() == Qt.NoModifier):
+            row = self.currentRow()
+            if row < 0:
+                row = next((i for i in range(self.rowCount())
+                            if not self.isRowHidden(i)), -1)
+                if row >= 0:
+                    self.setCurrentCell(row, 1)
+            if 0 <= row < self.rowCount() and not self.isRowHidden(row):
+                holder = self.cellWidget(row, 0)
+                check = holder.findChild(QCheckBox) if holder is not None else None
+                if check is not None and check.isEnabled():
+                    check.setChecked(not check.isChecked())
+                    event.accept()
+                    return
+        super().keyPressEvent(event)
 
 
 class SurveyDataController(QObject):
@@ -51,7 +73,17 @@ class SurveyDataController(QObject):
         entries = w.manifest["products"] if w.manifest else []
         w.files.setRowCount(len(entries))
         for row, entry in enumerate(entries):
+            suffix = f"{entry['kind']}-{entry['band']}" if entry["band"] else entry["kind"]
+            provenance = (
+                f"{entry['release'].upper()} {entry['region']} {entry['brick']}")
             check = QCheckBox()
+            # One keyboard tab stop for the table, not for every file.
+            # Space/Enter toggles the highlighted row; mouse remains usable.
+            check.setFocusPolicy(Qt.NoFocus)
+            check.setAccessibleName(
+                f"Select {suffix} for download from {provenance}")
+            check.setToolTip(
+                f"{suffix} · {provenance}. Choose this original archive file.")
             check.setChecked(
                 checked_paths is not None
                 and entry["relative_path"] in checked_paths)
@@ -61,10 +93,9 @@ class SurveyDataController(QObject):
             layout.setContentsMargins(1, 0, 1, 0)
             layout.addWidget(check, alignment=Qt.AlignCenter)
             w.files.setCellWidget(row, 0, holder)
-            suffix = f"{entry['kind']}-{entry['band']}" if entry["band"] else entry["kind"]
-            name = (
-                f"{entry['release'].upper()} {entry['region']} "
-                f"{entry['brick']} · {suffix}")
+            # The narrow inspector must show the FILE TYPE first;
+            # the full release/region/brick and URL stay in the tooltip.
+            name = f"{suffix} · {provenance}"
             detail = entry["relative_path"] + chr(10) + entry["url"]
             values = (
                 (1, name),
@@ -205,21 +236,37 @@ class SurveyDataController(QObject):
             if w.files.cellWidget(row, 0).findChild(QCheckBox).isChecked()
         }
 
+    def hidden_selected_count(self):
+        """Selected files hidden by a current filter still WILL download."""
+        w = self.owner
+        if not w.manifest:
+            return 0
+        return sum(
+            1 for row in range(w.files.rowCount())
+            if w.files.isRowHidden(row)
+            and w.files.cellWidget(row, 0).findChild(QCheckBox).isChecked())
+
     def _update_selection_summary(self, *_):
         w = self.owner
         if not w.manifest:
             w.selected_label.setText("No files selected")
+            w.selected_label.setAccessibleDescription("")
             w.download_btn.setEnabled(False)
+            w.download_btn.setToolTip(
+                "Choose original FITS files explicitly; no automatic download.")
             return
         selected = w._selected()
         report = summarize_selection(w.manifest["products"], selected)
         visible = sum(not w.files.isRowHidden(row)
                       for row in range(w.files.rowCount()))
+        hidden = self.hidden_selected_count()
         sizes = (f"{report.known_mib:.1f} MiB confirmed + unknown"
                  if report.unknown_size_files else
                  f"{report.known_mib:.1f} MiB")
         selection = (
-            f"{report.selected_files} selected · " + sizes
+            f"{report.selected_files} selected"
+            + (f" ({hidden} hidden)" if hidden else "")
+            + " · " + sizes
             if report.selected_files else
             "0 selected · choose a quartet or individual FITS")
         w.selected_label.setText(
@@ -228,11 +275,25 @@ class SurveyDataController(QObject):
         # potentially enormous download: user explicitly chooses a quartet
         # or specific original FITS products.
         w.download_btn.setEnabled(bool(selected) and w.thread is None)
+        hidden_warning = (
+            f"{hidden} selected original files are hidden by the current "
+            "filters but WILL be downloaded unless explicitly unchecked. "
+            "Use Clear all (including hidden) to reset the selection."
+            if hidden else "")
         w.selected_label.setToolTip(
             f"{visible} products currently visible; "
             f"{report.verified_files} URLs HTTP OK; "
             f"{report.unknown_size_files} selected files have unknown sizes; "
-            f"{report.missing_files} known HTTP-missing.")
+            f"{report.missing_files} known HTTP-missing."
+            + (" " + hidden_warning if hidden else ""))
+        w.selected_label.setAccessibleDescription(hidden_warning)
+        w.download_btn.setToolTip(
+            hidden_warning if hidden else
+            "Download only explicitly checked original FITS; confirm "
+            "the file count and size before starting.")
+        # A checkbox or bulk-selection action must update next-step guidance
+        # in place, without starting downloads or scientific work.
+        w._refresh_workflow()
 
     def _apply_profile(self, _=None):
         w = self.owner

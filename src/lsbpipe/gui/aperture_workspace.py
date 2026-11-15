@@ -14,12 +14,14 @@ import traceback
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, QRectF
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPen, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QPushButton, QSizePolicy, QVBoxLayout, QWidget, QTabWidget,
 )
 
+from lsbpipe.gui.workflow_ux import format_gui_failure_report
+from lsbpipe.gui.visual_theme import adorn, set_status_tone
 from lsbpipe.photometry.aperture_flux import (
     ApertureProvenance, ApertureSkyScenario,
 )
@@ -336,6 +338,8 @@ class ApertureWorkspace(QWidget):
         self._result_identity=None
         self._result=None
         self._last_failure=None
+        self._failure_identity=None
+        self._discard_requested=False
         self._timer=QTimer(self)
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._poll_worker)
@@ -346,13 +350,14 @@ class ApertureWorkspace(QWidget):
         title.setObjectName("aperture_stage_title")
         title.setStyleSheet("font-size: 19px; font-weight: 600;")
         root.addWidget(title)
-        note=QLabel(
-            "Direct finite-aperture flux only. No total galaxy magnitude, "
-            "source filling, sky adoption or calibrated noise covariance. "
-            "Original DR11 sky-subtracted pixels are retained.")
+        note=QLabel("Finite-aperture flux · diagnostic only · science HOLD.")
+        note.setToolTip(
+            "Only observed valid-area native pixels are measured. No "
+            "missing-area interpolation, total galaxy magnitude, adopted "
+            "sky or calibrated covariance. DR11 pixels stay unchanged.")
         note.setWordWrap(True)
         root.addWidget(note)
-        setup=QGroupBox("Current native Scene → automatic fixed ellipses")
+        setup=QGroupBox("Current native Scene")
         box=QVBoxLayout(setup)
         self.context_label=QLabel(
             "In Stage 02 load the original FITS and prepare neighbour masks.")
@@ -361,31 +366,70 @@ class ApertureWorkspace(QWidget):
         box.addWidget(self.context_label)
         root.addWidget(setup)
         buttons=QHBoxLayout()
+        self.open_scene_btn=QPushButton("Open Scene and Masks")
+        self.open_scene_btn.setObjectName("aperture_open_scene")
+        adorn(self.open_scene_btn, "mask")
+        self.open_scene_btn.setToolTip(
+            "Open Stage 02 to load native FITS and prepare source masks; "
+            "no aperture measurement is started.")
+        self.open_scene_btn.clicked.connect(self._open_scene)
+        buttons.addWidget(self.open_scene_btn)
         self.run_btn=QPushButton("Build aperture curves")
         self.run_btn.setObjectName("aperture_stage_run")
+        adorn(self.run_btn, "aperture", primary=True)
         self.run_btn.setToolTip(
             "Use project-anchored circles and explicit provisional ellipses "
             "on the current native FITS scene. Worker never reads a new "
             "brick or writes an image. No manual aperture drawing required.")
         self.run_btn.clicked.connect(self.run_diagnostic)
         buttons.addWidget(self.run_btn)
+        self.discard_btn=QPushButton("Discard result")
+        self.discard_btn.setObjectName("aperture_discard_pending_result")
+        adorn(self.discard_btn, "back", caution=True)
+        self.discard_btn.setAccessibleName(
+            "Discard pending aperture-curve diagnostic result")
+        self.discard_btn.setToolTip(
+            "Cancel a queued calculation, or ignore its result after a "
+            "running worker finishes. No forced thread stop or FITS writes.")
+        self.discard_btn.clicked.connect(self.discard_pending_result)
+        self.discard_btn.hide()
+        buttons.addWidget(self.discard_btn)
         self.copy_btn=QPushButton("Copy aperture QA")
         self.copy_btn.setObjectName("aperture_stage_copy_qa")
+        adorn(self.copy_btn, "copy")
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self.copy_qa)
         buttons.addWidget(self.copy_btn)
+        self.copy_error_btn=QPushButton("Copy error report")
+        self.copy_error_btn.setObjectName("aperture_copy_failure_report")
+        adorn(self.copy_error_btn, "copy", caution=True)
+        self.copy_error_btn.setAccessibleName(
+            "Copy safe aperture photometry failure report")
+        self.copy_error_btn.setToolTip(
+            "Ctrl+Shift+E · Copy the failure category and recovery "
+            "instructions; no raw traceback, identifiers or filesystem paths.")
+        self.copy_error_btn.clicked.connect(self.copy_failure_report)
+        self.copy_error_btn.hide()
+        buttons.addWidget(self.copy_error_btn)
+        self._failure_shortcut=QShortcut(
+            QKeySequence("Ctrl+Shift+E"),self)
+        self._failure_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._failure_shortcut.activated.connect(self.copy_failure_report)
         buttons.addStretch(1)
         root.addLayout(buttons)
-        self.status=QLabel("Not measured · science HOLD.")
+        self.status=QLabel("Not measured.")
         self.status.setObjectName("aperture_stage_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        plots=QHBoxLayout()
-        self.plot=ApertureCurvePlot(self,mode="cumulative")
+        self.plots_panel=QWidget(self)
+        plots=QHBoxLayout(self.plots_panel)
+        plots.setContentsMargins(0,0,0,0)
+        self.plot=ApertureCurvePlot(self.plots_panel,mode="cumulative")
         plots.addWidget(self.plot,1)
-        self.annulus_plot=ApertureCurvePlot(self,mode="annular")
+        self.annulus_plot=ApertureCurvePlot(self.plots_panel,mode="annular")
         plots.addWidget(self.annulus_plot,1)
-        root.addLayout(plots)
+        root.addWidget(self.plots_panel,1)
+        self.plots_panel.hide()
         self.readout=QPlainTextEdit(self)
         self.readout.setObjectName("aperture_stage_readout")
         self.readout.setMinimumWidth(0)
@@ -394,8 +438,38 @@ class ApertureWorkspace(QWidget):
         self.readout.setPlainText(
             "No aperture measurement. Open Stage 02, prepare native "
             "source masks, then explicitly build diagnostic curves.")
+        self.report_toggle=QPushButton("Full aperture QA")
+        self.report_toggle.setObjectName("aperture_show_detailed_report")
+        self.report_toggle.setCheckable(True)
+        self.report_toggle.setToolTip(
+            "Show per-geometry numerical aperture and ring measurements, "
+            "all uncertainty/systematics caveats and science HOLD.")
+        self.report_toggle.toggled.connect(
+            lambda checked:self.readout.setVisible(
+                bool(checked) and self._result is not None))
+        root.addWidget(self.report_toggle)
         root.addWidget(self.readout,1)
+        self._reset_report_visibility()
+        root.addStretch(1)
         self.refresh_context()
+
+    def _reset_report_visibility(self):
+        self.report_toggle.setChecked(False)
+        self.report_toggle.hide()
+        self.readout.hide()
+        self.plots_panel.hide()
+
+    def _scene_tabs(self):
+        widget=self.parentWidget()
+        while widget is not None and not isinstance(widget,QTabWidget):
+            widget=widget.parentWidget()
+        return (widget if widget is not None
+                and widget.indexOf(self._scene)>=0 else None)
+
+    def _open_scene(self):
+        tabs=self._scene_tabs()
+        if tabs is not None:
+            tabs.setCurrentWidget(self._scene)
 
     def _snapshot(self):
         # Source and drafts are owned by Stage 02. Stage 03's project
@@ -428,13 +502,19 @@ class ApertureWorkspace(QWidget):
         snap=self._snapshot()
         if snap is None:
             self.context_label.setText(
-                "No current source-bound Scene. Load original native FITS "
-                "and prepare provisional neighbour masks in Stage 02.")
+                "Scene not ready · load native FITS and prepare masks in Stage 02.")
         else:
             self.context_label.setText(
-                f"{snap[1]['source']} · project {snap[1]['project_id']} · "
-                f"draft {snap[2].digest[:12]} · "
-                "same project anchor; no sky subtraction.")
+                f"Band {snap[1]['band'].upper()} · native Scene masks ready "
+                "· zero additional sky correction.")
+            self.context_label.setToolTip(
+                f"Source {snap[1]['source']}; project {snap[1]['project_id']}; "
+                f"draft {snap[2].digest}. Provisional geometry only.")
+        if self._last_failure is not None and (
+                snap is None or self._failure_identity!=snap[0]):
+            self._last_failure=None
+            self._failure_identity=None
+            set_status_tone(self.status,error=False)
         if self._result is not None and (
                 snap is None or self._result_identity!=snap[0]):
             self._result=None
@@ -445,9 +525,20 @@ class ApertureWorkspace(QWidget):
             self.readout.setPlainText(
                 "Previous aperture curves invalidated by project, band, "
                 "Scene draft, source or geometric hypothesis change.")
-            self.status.setText("Stale aperture result · run again.")
-        self.run_btn.setEnabled(snap is not None and self._future is None)
-        return snap is not None
+            self.status.setText("Stale aperture result · run again · science HOLD.")
+            self._reset_report_visibility()
+        ready=snap is not None
+        self.open_scene_btn.setVisible(
+            not ready and self._scene_tabs() is not None)
+        self.run_btn.setVisible(ready)
+        self.copy_btn.setVisible(self._result is not None)
+        self.copy_error_btn.setVisible(
+            self._last_failure is not None and self._future is None)
+        self.discard_btn.setVisible(self._future is not None)
+        self.discard_btn.setEnabled(
+            self._future is not None and not self._discard_requested)
+        self.run_btn.setEnabled(ready and self._future is None)
+        return ready
 
     def run_diagnostic(self):
         if self._future is not None:
@@ -459,22 +550,62 @@ class ApertureWorkspace(QWidget):
             return
         identity,dataset,draft,contamination,triplet,anchor,q,pa=snap
         self._active_identity=identity
+        self._discard_requested=False
         self._result=None
         self._result_identity=None
         self._last_failure=None
+        self._failure_identity=None
+        set_status_tone(self.status,error=False)
+        self.copy_error_btn.hide()
         self.copy_btn.setEnabled(False)
+        self.copy_btn.hide()
         self.plot.set_curves(())
         self.annulus_plot.set_curves(())
-        self._future=self._executor.submit(
-            build_project_aperture_growth,
-            dataset,draft,contamination,
-            source_triplet=triplet,target_icrs=anchor,
-            sga_q=q,sga_pa_deg=pa)
+        self._reset_report_visibility()
+        try:
+            self._future=self._executor.submit(
+                build_project_aperture_growth,
+                dataset,draft,contamination,
+                source_triplet=triplet,target_icrs=anchor,
+                sga_q=q,sga_pa_deg=pa)
+        except (OSError,RuntimeError) as exc:
+            self._active_identity=None
+            self._failure_identity=identity
+            self._last_failure={
+                "error_type":type(exc).__name__,
+                "message":str(exc)[:1600],
+                "scene_identity_at_attempt":list(identity[:5]),
+                "status":"WORKER_START_FAILED_CLOSED",
+            }
+            set_status_tone(self.status,error=True)
+            self.status.setText(
+                f"Aperture worker could not start: {exc}. "
+                "Check the environment, then choose Build aperture curves "
+                "to retry. No flux or Scene edits were adopted.")
+            self.refresh_context()
+            return
         self.run_btn.setEnabled(False)
+        self.discard_btn.setVisible(True)
+        self.discard_btn.setEnabled(True)
         self.status.setText(
             "Integrating exact observed native-pixel ellipses and "
             "independent rings in background…")
         self._timer.start()
+
+    def discard_pending_result(self):
+        """Withdraw a Stage 04 diagnostic; never terminate a running thread."""
+        future=self._future
+        if future is None or self._discard_requested:
+            return
+        self._discard_requested=True
+        self.discard_btn.setEnabled(False)
+        if future.cancel():
+            self._poll_worker()
+        else:
+            self.status.setText(
+                "Aperture result discard requested. Running calculation "
+                "continues, but the result will be ignored. Retry is "
+                "available after it finishes; original FITS unchanged.")
 
     def _poll_worker(self):
         future=self._future
@@ -484,6 +615,25 @@ class ApertureWorkspace(QWidget):
         self._future=None
         identity=self._active_identity
         self._active_identity=None
+        discard=self._discard_requested
+        self._discard_requested=False
+        if discard:
+            self._result=None
+            self._result_identity=None
+            self._last_failure=None
+            self._failure_identity=None
+            set_status_tone(self.status,error=False)
+            self.plot.set_curves(())
+            self.annulus_plot.set_curves(())
+            self.readout.setPlainText(
+                "Aperture result discarded by user; no flux measurement "
+                "accepted, exported or adopted.")
+            self.status.setText(
+                "Aperture result discarded by user · ready to retry "
+                "with current Scene evidence · science HOLD.")
+            self._reset_report_visibility()
+            self.refresh_context()
+            return
         snap=self._snapshot()
         if snap is None or snap[0]!=identity:
             self.status.setText(
@@ -495,6 +645,7 @@ class ApertureWorkspace(QWidget):
             result=future.result()
         except (OSError,ValueError,KeyError,TypeError,ArithmeticError,
                 RuntimeError,ImportError) as exc:
+            self._failure_identity=identity
             self._last_failure={
                 "error_type":type(exc).__name__,
                 "message":str(exc)[:1600],
@@ -503,10 +654,14 @@ class ApertureWorkspace(QWidget):
                 "scene_identity_at_attempt":list(identity[:5]),
                 "status":"WORKER_FAILED_CLOSED",
             }
-            self.status.setText(f"Aperture diagnostic refused: {exc}")
+            set_status_tone(self.status,error=True)
+            self.status.setText(
+                f"Aperture diagnostic refused: {exc}. "
+                "Review Stage 02 inputs and geometry, then choose Build "
+                "aperture curves to retry. No photometry was adopted.")
             self.readout.setPlainText(
-                "No adopted photometry. Review original Scene, "
-                "native FITS/WCS and exact Photutils dependency.")
+                "No adopted photometry. Review original Scene, native "
+                "FITS/WCS, masks and Photutils dependency before retry.")
             self.refresh_context()
             return
         if (result.get("project_id")!=identity[0]
@@ -524,10 +679,13 @@ class ApertureWorkspace(QWidget):
         self.plot.set_curves(result["curves"])
         self.annulus_plot.set_curves(result["curves"])
         self.readout.setPlainText(self._format_readout(result))
+        self.report_toggle.show()
+        usable=int(result.get("n_measurable_geometry_hypotheses",0))
+        self.plots_panel.setVisible(usable>0)
         self.status.setText(
-            f"{len(result['curves'])} fixed-geometry curves on "
-            f"{result['band'].upper()} · direct valid-area flux · "
-            "UNADOPTED. Original FITS unchanged.")
+            f"Band {result['band'].upper()} · {usable}/"
+            f"{len(result['curves'])} usable geometries · "
+            "direct native flux · UNADOPTED.")
         self.refresh_context()
 
     @staticmethod
@@ -619,6 +777,19 @@ class ApertureWorkspace(QWidget):
             "and mask provenance.",
         ]
         return "\n".join(lines)
+
+    def copy_failure_report(self):
+        self.refresh_context()
+        if (self._last_failure is None or self._future is not None
+                or self._failure_identity is None):
+            return
+        QApplication.clipboard().setText(format_gui_failure_report(
+            stage="aperture", error_type=self._last_failure["error_type"],
+            failure_status=self._last_failure["status"],
+            band=self._failure_identity[2]))
+        self.status.setText(
+            "Aperture failure report copied without local paths or "
+            "traceback. Review Stage 02 evidence, then retry.")
 
     def copy_qa(self):
         snap=self._snapshot()

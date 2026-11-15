@@ -48,7 +48,7 @@ def test_aperture_fourth_tab_restore_no_automatic_fits_work(qtbot):
     widget=PhotometryWorkspace()
     qtbot.addWidget(widget)
     assert widget.stage_tabs.count()==4
-    assert widget.stage_tabs.tabText(3)=="4 · Aperture Photometry"
+    assert widget.stage_tabs.tabText(3)=="4 · Apertures"
     assert widget.aperture_stage._future is None
     assert widget.aperture_stage._result is None
     assert not widget.aperture_stage.run_btn.isEnabled()
@@ -229,6 +229,10 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     sky=SimpleNamespace(_snapshot=sky_snapshot)
     w=ApertureWorkspace(scene,sky)
     qtbot.addWidget(w)
+    w.resize(1100,750)
+    w.show()
+    assert not w.plots_panel.isVisible()
+    assert not w.report_toggle.isVisible()
     assert w.run_btn.isEnabled()
     assert not w.copy_btn.isEnabled()
     assert w._future is None
@@ -241,6 +245,11 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     assert "UNADOPTED" in w.readout.toPlainText()
     assert "04.3 · Conditional uncertainty diagnostics" in w.readout.toPlainText()
     assert len(w.plot._curves)==3
+    assert w.plots_panel.isVisible()
+    assert w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+    w.report_toggle.click()
+    assert w.readout.isVisible()
     w.copy_qa()
     copied=QApplication.clipboard().text()
     assert "DIRECT_FINITE_APERTURE_DIAGNOSTICS_NOT_ADOPTED" in copied
@@ -256,6 +265,9 @@ def test_aperture_gui_worker_copy_and_invalidate(qtbot):
     assert w._result is None
     assert not w.copy_btn.isEnabled()
     assert not w.plot._curves
+    assert not w.plots_panel.isVisible()
+    assert not w.readout.isVisible()
+    assert not w.report_toggle.isVisible()
 
 
 def test_sga_aperture_geometry_uses_seed_not_protection(qtbot):
@@ -285,3 +297,277 @@ def test_sga_aperture_geometry_uses_seed_not_protection(qtbot):
     snapshot2 = w._snapshot()
     assert snapshot2[-2:] == (None, None)
     assert snapshot2[0] != snapshot[0]
+
+
+def test_aperture_empty_stage_hides_duplicate_graphs_and_report(qtbot):
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    w=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(w)
+    w.resize(1100,700)
+    w.show()
+    assert not w.run_btn.isEnabled()
+    assert not w.plots_panel.isVisible()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+    assert w.status.isVisible()
+    assert w.status.text() == "Not measured."
+    from PySide6.QtWidgets import QLabel
+    assert any("science HOLD" in label.text()
+               for label in w.findChildren(QLabel))
+    assert "No aperture measurement" in w.readout.toPlainText()
+
+
+def test_aperture_empty_state_navigates_to_scene_without_starting_work(qtbot):
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366,768)
+    w.show()
+    w.restore_navigation(stage="aperture",band="r")
+    assert w.aperture_stage.open_scene_btn.isVisible()
+    assert w.aperture_stage.open_scene_btn.isEnabled()
+    assert not w.aperture_stage.run_btn.isVisible()
+    assert not w.aperture_stage.copy_btn.isVisible()
+    assert not w.aperture_stage.plots_panel.isVisible()
+    w.aperture_stage.open_scene_btn.click()
+    assert w.stage_tabs.currentWidget() is w.scene_editor
+    assert w.aperture_stage._future is None
+    assert w.scene_editor._loaded is None
+
+
+def test_stage04_user_discard_prevents_running_result_and_recovers(qtbot,monkeypatch):
+    """No stale plots, cached QA or adoption after an explicit discard."""
+    from concurrent.futures import Future
+
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    identity=("p","native","r",draft.digest,"a"*64)
+    snap=(identity,ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    assert future.set_running_or_notify_cancel()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    assert stage.discard_btn.isVisible()
+    stage.discard_btn.click()
+    assert not stage.discard_btn.isEnabled()
+    assert "continues" in stage.status.text()
+    assert not stage.run_btn.isEnabled()
+    future.set_result({"status":"SHOULD_NEVER_RENDER"})
+    stage._poll_worker()
+    assert stage._future is None
+    assert stage._result is None
+    assert stage._result_identity is None
+    assert not stage.plot._curves
+    assert not stage.annulus_plot._curves
+    assert not stage.plots_panel.isVisible()
+    assert not stage.copy_btn.isEnabled()
+    assert stage.run_btn.isEnabled()
+    assert "discarded by user" in stage.status.text()
+    assert not stage._timer.isActive()
+
+
+def test_stage04_user_can_cancel_queued_future_immediately(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    snap=(("p","native","r",draft.digest,"a"*64),
+          ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage.discard_btn.click()
+    assert future.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+    assert not stage.discard_btn.isVisible()
+
+
+def test_aperture_worker_failure_recovers_with_same_original_pixels(
+        qtbot,monkeypatch):
+    """A failed attempt must leave the measured input arrays unchanged."""
+    from concurrent.futures import Future
+    ds,draft,mask=_inputs()
+    original=ds["data"]["image"].copy()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    identity=("p","native-r","r",draft.digest,"c"*64)
+    snap=(identity,ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only bad aperture geometry"))
+    retry=Future()
+    tasks=[failed,retry]
+    monkeypatch.setattr(stage._executor,"submit",lambda *args,**kw:tasks.pop(0))
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage._result is None
+    assert stage._last_failure["status"]=="WORKER_FAILED_CLOSED"
+    assert "test-only bad aperture geometry" in stage.status.text()
+    assert "Build aperture curves to retry" in stage.status.text()
+    assert stage.run_btn.isEnabled()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.plots_panel.isVisible()
+    assert np.array_equal(ds["data"]["image"],original)
+    assert draft.digest==snap[0][3]
+    stage.run_diagnostic()
+    assert stage._future is retry
+    assert stage._last_failure is None
+    stage.discard_pending_result()
+    assert retry.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+    assert np.array_equal(ds["data"]["image"],original)
+
+
+def test_aperture_pool_start_failure_is_closed_and_retryable(qtbot,monkeypatch):
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    snap=(("p","native-r","r",draft.digest,"c"*64),
+          ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    monkeypatch.setattr(
+        stage._executor,"submit",
+        lambda *args,**kw:(_ for _ in ()).throw(
+            RuntimeError("test-only thread pool unavailable")))
+    stage.refresh_context()
+    stage.run_diagnostic()
+    assert stage._future is None
+    assert stage._active_identity is None
+    assert stage.run_btn.isEnabled()
+    assert stage._last_failure["status"]=="WORKER_START_FAILED_CLOSED"
+    assert "test-only thread pool unavailable" in stage.status.text()
+    assert "to retry" in stage.status.text()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.plots_panel.isVisible()
+
+
+def test_aperture_copy_failure_report_contains_recovery_not_source_paths(
+        qtbot,monkeypatch):
+    import json
+    from concurrent.futures import Future
+    from PySide6.QtWidgets import QApplication
+    ds,draft,mask=_inputs()
+    scene=SimpleNamespace(_project_target=None,_source_key=None)
+    sky=SimpleNamespace(_snapshot=lambda:None)
+    stage=ApertureWorkspace(scene,sky)
+    qtbot.addWidget(stage)
+    stage.show()
+    identity=("private-uuid","sensitive-local-path","r",draft.digest,
+              "c"*64)
+    snapshot=(identity,ds,draft,mask,("dr11","south","1554p180"),
+              (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snapshot)
+    stage.refresh_context()
+    future=Future()
+    future.set_exception(OSError(
+        r"C:\\Users\\private\\galaxy.fits failed access"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage.copy_error_btn.isVisible()
+    assert not stage.copy_btn.isVisible()
+    stage.copy_error_btn.click()
+    text=QApplication.clipboard().text()
+    report=json.loads(text)
+    assert report["operation"]=="build_aperture_curves"
+    assert report["error_type"]=="OSError"
+    assert report["status"]=="WORKER_FAILED_CLOSED"
+    assert "Build aperture curves" in report["recommended_action"]
+    assert "private" not in text
+    assert "1554p180" not in text
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    assert stage._last_failure is None
+    assert not stage.copy_error_btn.isVisible()
+
+
+def test_aperture_failure_shortcut_and_narrow_font_actions(qtbot,monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+    from concurrent.futures import Future
+    import json
+    ds,draft,mask=_inputs()
+    stage=ApertureWorkspace(
+        SimpleNamespace(_project_target=None,_source_key=None),
+        SimpleNamespace(_snapshot=lambda:None))
+    qtbot.addWidget(stage)
+    stage.resize(760,580)
+    stage.setFont(QFont("Arial",16))
+    stage.show()
+    identity=("p","r","r",draft.digest,"c"*64)
+    snap=(identity,ds,draft,mask,("dr11","south","1554p180"),
+          (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    qtbot.wait(20)
+    assert stage.copy_error_btn.isVisible()
+    assert stage.run_btn.isVisible()
+    assert stage._failure_shortcut.context()==Qt.WidgetWithChildrenShortcut
+    assert stage._failure_shortcut.key().toString()=="Ctrl+Shift+E"
+    for button in (stage.run_btn,stage.copy_error_btn):
+        point=button.mapTo(stage,button.rect().center())
+        assert stage.rect().contains(point)
+        assert button.width()>70
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert json.loads(QApplication.clipboard().text())["operation"]=="build_aperture_curves"
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert QApplication.clipboard().text()=="sentinel"
+
+
+def test_aperture_visual_error_tone_cannot_promote_flux(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    ds,draft,mask=_inputs()
+    stage=ApertureWorkspace(
+        SimpleNamespace(_project_target=None,_source_key=None),
+        SimpleNamespace(_snapshot=lambda:None))
+    qtbot.addWidget(stage)
+    identity=("p","r","r",draft.digest,"c"*64)
+    snapshot=(identity,ds,draft,mask,("dr11","south","1554p180"),
+              (155.4,18.),None,None)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snapshot)
+    failed=Future()
+    failed.set_exception(ValueError("test-only aperture failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**k:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage.status.property("visualState")=="error"
+    assert stage.run_btn.property("visualRole")=="primary"
+    assert not stage.copy_error_btn.icon().isNull()
+    assert stage._result is None
+    assert not stage.copy_btn.isEnabled()
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    assert stage.status.property("visualState")=="normal"

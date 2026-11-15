@@ -213,9 +213,9 @@ def test_scene_is_real_second_stage_without_auto_loading_fits(
     view.bind_project(p)
     assert view.stage_tabs.count()==4
     assert view.stage_tabs.tabText(0)=="1 · PSF-0"
-    assert view.stage_tabs.tabText(1)=="2 · Scene & Masks"
-    assert view.stage_tabs.tabText(2)=="3 · Background"
-    assert view.stage_tabs.tabText(3)=="4 · Aperture Photometry"
+    assert view.stage_tabs.tabText(1)=="2 · Scene"
+    assert view.stage_tabs.tabText(2)=="3 · Sky"
+    assert view.stage_tabs.tabText(3)=="4 · Apertures"
     assert view.aperture_stage._result is None
     assert view.sky_stage._result is None
     assert view.scene_editor._project_id==p.project_id
@@ -2109,3 +2109,347 @@ def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
     editor.set_band("r")
     assert editor._foreground_psf_result is None
     assert not editor.psf0_fg_btn.isEnabled()
+
+
+
+def test_scene_three_task_views_preserve_draft_and_direct_edit_access(
+        qtbot, tmp_path, monkeypatch):
+    """One task surface at a time; save/status stay pinned and visible."""
+    from lsbpipe.gui.scene_editor import SceneEditor
+    w = SceneEditor()
+    qtbot.addWidget(w)
+    w.resize(1000, 690)
+    w.show()
+    assert w.scene_task_stack.count() == 3
+    assert w.scene_task_stack.currentWidget() is w.scene_manual_page
+    assert w.scene_task_buttons["draw"].isChecked()
+    assert w.mode.isVisible() and w.edits.isVisible()
+    assert not w.iso_prepare.isVisible()
+    assert not w.sga_find.isVisible()
+    assert w.save_btn.isVisible() and w.copy_scene_qa_btn.isVisible()
+    w.axis_ratio.setValue(0.55)
+    w.scene_task_buttons["isophote"].click()
+    assert w.iso_prepare.isVisible() and not w.mode.isVisible()
+    assert w.scene_task_buttons["isophote"].isChecked()
+    assert w.save_btn.isVisible() and w.status.isVisible()
+    w.scene_task_buttons["sga"].click()
+    assert w.sga_find.isVisible() and not w.iso_prepare.isVisible()
+    w.scene_task_buttons["draw"].click()
+    assert w.mode.isVisible() and w.edits.isVisible()
+    assert w.axis_ratio.value() == pytest.approx(.55)
+    assert not w.view.drawing
+    assert w.draft is None
+
+
+def test_scene_task_switch_prevents_accidental_manual_draw(qtbot):
+    from lsbpipe.gui.scene_editor import SceneEditor
+    w = SceneEditor()
+    qtbot.addWidget(w)
+    w.show()
+    w.mode.setCurrentIndex(w.mode.findData("polygon"))
+    assert w.view.drawing
+    w._pending_world.append((1.0, 2.0))
+    w._pending_scene.append((1., 2.))
+    w.scene_task_buttons["sga"].click()
+    assert not w.view.drawing
+    assert w._pending_world == []
+    assert "Unfinished drawing cancelled" in w.status.text()
+    assert not w.mode.isVisible()
+    w.scene_task_buttons["draw"].click()
+    assert w.view.drawing
+    assert w.mode.currentData() == "polygon"
+
+
+def test_scene_compact_tasks_have_no_horizontal_scroll_at_laptop_width(qtbot):
+    from lsbpipe.gui.scene_editor import SceneEditor
+    from PySide6.QtWidgets import QScrollArea
+    w = SceneEditor()
+    qtbot.addWidget(w)
+    w.resize(1000, 700)
+    w.show()
+    scroll = w.findChild(QScrollArea, "scene_controls_scroll")
+    assert scroll is not None
+    for task in ("draw", "isophote", "sga"):
+        w.scene_task_buttons[task].click()
+        qtbot.wait(10)
+        assert scroll.horizontalScrollBar().maximum() == 0, task
+        assert w.save_btn.isVisible() and w.copy_scene_qa_btn.isVisible()
+
+
+def test_scene_cancel_shape_preserves_draft_and_does_not_claim_worker_stop(
+        qtbot,tmp_path,monkeypatch):
+    """Only unfinished geometry disappears; recorded mask history is intact."""
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    before_digest=scene.draft.digest
+    before_edits=scene.draft.edits
+    scene.mode.setCurrentIndex(scene.mode.findData("polygon"))
+    _click_at_native(scene,42,42)
+    assert len(scene._pending_world)==1
+    assert scene.cancel_btn.text()=="Cancel shape"
+    assert "does not stop" in scene.cancel_btn.toolTip().lower()
+    scene.cancel_btn.click()
+    assert not scene._pending_world
+    assert not scene._pending_scene
+    assert scene._replace_index is None
+    assert scene.draft.digest==before_digest
+    assert scene.draft.edits==before_edits
+    assert "Unfinished drawing discarded" in scene.status.text()
+    assert scene._future is None
+    assert scene._loaded is not None
+    scene.cancel_btn.click()
+    assert "No unfinished drawing" in scene.status.text()
+    assert scene.draft.digest==before_digest
+
+
+def test_scene_failed_fits_load_preserves_draft_and_supports_retry(
+        qtbot,tmp_path,monkeypatch):
+    """A recoverable read failure never erases saved/manual regions."""
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    scene.mode.setCurrentIndex(scene.mode.findData("circle"))
+    _click_at_native(scene,40,40)
+    _click_at_native(scene,49,40)
+    assert len(scene.draft.edits)==1
+    draft=scene.draft
+    digest=draft.digest
+    failed=Future()
+    failed.set_exception(OSError("test-only missing original INVVAR"))
+    recovered=Future()
+    recovered.set_result(_data(project.project_id))
+    futures=[failed,recovered]
+    monkeypatch.setattr(
+        scene._executor,"submit",lambda *args,**kwargs:futures.pop(0))
+    scene.load_original()
+    assert scene._loaded is None
+    assert scene._future is failed
+    assert not scene.load_btn.isEnabled()
+    scene._poll_load()
+    assert scene._future is None
+    assert scene.load_btn.isEnabled()
+    assert scene.load_btn.text()=="Retry FITS load"
+    assert "test-only missing original INVVAR" in scene.status.text()
+    assert "draft regions remain unchanged" in scene.status.text()
+    assert scene.draft is draft
+    assert scene.draft.digest==digest
+    scene.load_original()
+    assert scene._future is recovered
+    scene._poll_load()
+    assert scene._loaded is not None
+    assert scene.load_btn.text()=="Load original FITS"
+    assert scene.draft.digest==digest
+    assert scene.draft.edits==draft.edits
+    assert not futures
+    scene.shutdown()
+
+
+def test_scene_prevents_reload_that_would_discard_unfinished_geometry(
+        qtbot,tmp_path,monkeypatch):
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    scene.mode.setCurrentIndex(scene.mode.findData("polygon"))
+    _click_at_native(scene,35,35)
+    assert len(scene._pending_world)==1
+    pending=tuple(scene._pending_world)
+    source=scene._loaded
+    draft=scene.draft
+    calls=[]
+    monkeypatch.setattr(
+        scene._executor,"submit",
+        lambda *args,**kwargs:calls.append(args) or Future())
+    scene.load_original()
+    assert scene._loaded is source
+    assert scene.draft is draft
+    assert tuple(scene._pending_world)==pending
+    assert "Finish the shape" in scene.status.text()
+    assert not calls
+    scene.cancel_btn.click()
+    assert not scene._pending_world
+    assert scene.draft is draft
+    scene.shutdown()
+
+
+def test_scene_completed_future_is_not_replaceable_before_gui_delivery(
+        qtbot,tmp_path,monkeypatch):
+    """Future.done() must not re-enable load before _poll_load has run."""
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    previous=Future()
+    previous.set_exception(OSError("test-only prior task failure"))
+    scene._future=previous
+    scene._work_kind="load"
+    scene._active_generation=scene._load_generation
+    calls=[]
+    monkeypatch.setattr(
+        scene._executor,"submit",
+        lambda *args,**kw:calls.append(args) or Future())
+    scene._refresh_controls()
+    assert not scene.load_btn.isEnabled()
+    scene.load_original()
+    assert scene._future is previous
+    assert not calls
+    assert "being finalized" in scene.status.text()
+    scene._poll_load()
+    assert scene._future is None
+    assert scene.load_btn.isEnabled()
+    assert scene.load_btn.text()=="Retry FITS load"
+    scene.shutdown()
+
+
+def test_scene_executor_start_failure_is_recoverable_without_losing_mask(
+        qtbot,tmp_path,monkeypatch):
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    draft=scene.draft
+    monkeypatch.setattr(
+        scene._executor,"submit",
+        lambda *args,**kw:(_ for _ in ()).throw(
+            RuntimeError("test-only worker closed")))
+    scene.load_original()
+    assert scene._future is None
+    assert scene.load_btn.isEnabled()
+    assert scene.load_btn.text()=="Retry FITS load"
+    assert "test-only worker closed" in scene.status.text()
+    assert scene.draft is draft
+    scene.shutdown()
+
+
+def test_scene_copy_fits_error_report_omits_private_path_and_resets_on_retry(
+        qtbot,tmp_path,monkeypatch):
+    """Support clipboard must not disclose absolute local FITS paths."""
+    import json
+    from concurrent.futures import Future
+    from PySide6.QtWidgets import QApplication
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    raw_secret=r"C:\\Users\\private\\Documents\\PhD\\galaxy-source.fits.fz"
+    prior=Future()
+    prior.set_exception(FileNotFoundError(raw_secret))
+    monkeypatch.setattr(scene._executor,"submit",lambda *args,**kw:prior)
+    scene.load_original()
+    scene._poll_load()
+    assert scene.load_btn.text()=="Retry FITS load"
+    assert scene.copy_error_btn.isVisible()
+    scene.copy_error_btn.click()
+    payload=QApplication.clipboard().text()
+    report=json.loads(payload)
+    assert report["report_format"]=="DESIDERA_GUI_FAILURE_REPORT_V1"
+    assert report["operation"]=="load_original_fits"
+    assert report["error_type"]=="FileNotFoundError"
+    assert report["status"]=="FITS_LOAD_FAILED_CLOSED"
+    assert report["band"]=="g"
+    assert "Retry FITS load" in report["recommended_action"]
+    assert not report["traceback_included"]
+    assert raw_secret not in payload
+    assert str(tmp_path) not in payload
+    assert "project_id" not in report
+    assert project.project_id not in payload
+    assert report["local_paths_or_project_identifiers_included"] is False
+    scene.set_band("r")
+    assert scene._fits_load_failure is None
+    assert not scene.copy_error_btn.isVisible()
+    assert scene.load_btn.text()=="Load original FITS"
+    scene.shutdown()
+
+
+def test_scene_failure_footer_and_keyboard_copy_fit_compact_inspector(
+        qtbot,tmp_path,monkeypatch):
+    """Error action gets its own row rather than clipping Save/Copy QA."""
+    import json
+    from concurrent.futures import Future
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication, QSplitter
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    scene.resize(820,650)
+    scene.setFont(QFont("Arial",16))
+    failure=Future()
+    failure.set_exception(FileNotFoundError("test-only missing IMAGE"))
+    monkeypatch.setattr(scene._executor,"submit",lambda *a,**kw:failure)
+    scene.load_original()
+    scene._poll_load()
+    qtbot.wait(30)
+    assert scene.copy_error_btn.isVisible()
+    assert scene._failure_shortcut.key().toString()=="Ctrl+Shift+E"
+    assert scene._failure_shortcut.context()==Qt.WidgetWithChildrenShortcut
+    # The right inspector must reserve its own row for the error action.
+    error=scene.copy_error_btn
+    qa=scene.copy_scene_qa_btn
+    save=scene.save_btn
+    assert error.y() >= qa.y()+qa.height()-2
+    assert qa.isVisible() and save.isVisible()
+    assert error.width()>0 and qa.width()>0
+    assert error.x()>=0 and error.x()+error.width()<=error.parentWidget().width()
+    from PySide6.QtWidgets import QBoxLayout
+    assert scene._toolbar.direction()==QBoxLayout.TopToBottom
+    assert scene.load_btn.width() >= (
+        scene.load_btn.fontMetrics().horizontalAdvance(
+            scene.load_btn.text()) + 12)
+    assert scene.width.width() >= (
+        scene.width.fontMetrics().horizontalAdvance("9.0 arcmin") + 30)
+    assert scene.status.parentWidget() is scene
+    assert scene.status.mapTo(scene,scene.status.rect().bottomRight()).y() < (
+        scene.height())
+    QApplication.clipboard().setText("sentinel")
+    scene._failure_shortcut.activated.emit()
+    payload=json.loads(QApplication.clipboard().text())
+    assert payload["operation"]=="load_original_fits"
+    scene.set_band("r")
+    QApplication.clipboard().setText("sentinel")
+    scene._failure_shortcut.activated.emit()
+    assert QApplication.clipboard().text()=="sentinel"
+    scene.shutdown()
+
+
+def test_scene_fits_failure_visual_tone_is_recovered_with_new_source(
+        qtbot,tmp_path,monkeypatch):
+    from concurrent.futures import Future
+    scene,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    future=Future()
+    future.set_exception(FileNotFoundError("test-only missing FITS"))
+    monkeypatch.setattr(scene._executor,"submit",lambda *a,**k:future)
+    scene.load_original()
+    scene._poll_load()
+    assert scene.status.property("visualState")=="error"
+    assert not scene.copy_error_btn.icon().isNull()
+    assert scene.save_btn.property("visualRole")=="primary"
+    scene.set_band("r")
+    assert scene.status.property("visualState")=="normal"
+    assert scene._fits_load_failure is None
+    scene.shutdown()
+
+
+def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
+    """Desktop polish does not replace pixel-accurate QGraphicsView."""
+    from PySide6.QtWidgets import QWidget, QSplitter, QGraphicsView, QBoxLayout
+    editor = SceneEditor()
+    qtbot.addWidget(editor)
+    editor.resize(1366, 768)
+    editor.show()
+    qtbot.wait(20)
+    inspector = editor.findChild(QWidget, "scene_context_inspector")
+    splitter = editor.findChild(QSplitter, "scene_image_inspector_split")
+    heading = editor.findChild(QWidget, "scene_inspector_heading")
+    assert inspector is not None
+    assert splitter is not None
+    assert heading is not None
+    assert "color: palette(text)" in heading.styleSheet()
+    assert 270 <= inspector.width() <= 420
+    assert inspector.maximumWidth() == 420
+    assert isinstance(splitter.widget(0), QGraphicsView)
+    assert splitter.widget(0) is editor.view
+    assert editor.scene_task_buttons["draw"].isChecked()
+    assert not editor.save_btn.isEnabled()
+    assert editor._loaded is None
+    assert editor.band.maximumWidth() == 88
+    assert editor.width.minimumWidth() >= 112
+    # The field can expand with font metrics; a fixed maximum clips
+    # "9.0 arcmin" at the supported 16-pt accessibility setting.
+    # Native image deserves one control row at 1366px desktop widths;
+    # the existing 760px large-font configuration still reflows safely.
+    editor.resize(970, 768)
+    qtbot.wait(20)
+    assert editor._toolbar.direction() == QBoxLayout.LeftToRight
+    editor.resize(760, 650)
+    qtbot.wait(20)
+    assert editor.size().width() <= 760, (
+        "A wide horizontal toolbar must not lock the previous minimum "
+        "size and prevent the smaller viewport reflow")
+    assert editor._toolbar.direction() == QBoxLayout.TopToBottom
