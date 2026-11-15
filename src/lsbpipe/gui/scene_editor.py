@@ -1380,6 +1380,7 @@ class SceneEditor(QWidget):
         splitter.addWidget(self.view)
 
         controls = QWidget()
+        controls.setObjectName("scene_controls_content")
         controls.setMinimumWidth(0)
         controls.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         control_layout = QVBoxLayout(controls)
@@ -1919,6 +1920,7 @@ class SceneEditor(QWidget):
         
         controls_scroll = QScrollArea(self)
         controls_scroll.setObjectName("scene_controls_scroll")
+        self.scene_controls_scroll = controls_scroll
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setWidget(controls)
         controls_scroll.setMinimumWidth(220)
@@ -1996,6 +1998,23 @@ class SceneEditor(QWidget):
             self._invalidate_radius_sweep)
         self._mode_changed()
         self._refresh_controls()
+        self.refresh_visual_theme()
+
+    def refresh_visual_theme(self) -> None:
+        """Keep the Scene settings viewport legible in dark appearance.
+
+        Qt's native QScrollArea viewport otherwise retains a white Base
+        brush while descendant labels inherit the Observatory light text.
+        This modifies presentation widgets only, never FITS pixel views.
+        """
+        if not hasattr(self, "scene_controls_scroll"):
+            return
+        background = theme_colors(self)["SURFACE"]
+        viewport = self.scene_controls_scroll.viewport()
+        viewport.setStyleSheet("background-color: " + background + ";")
+        self.scene_controls_scroll.widget().setStyleSheet(
+            "QWidget#scene_controls_content { background-color: "
+            + background + "; }")
 
     def resizeEvent(self, event):
         if hasattr(self, "_toolbar"):

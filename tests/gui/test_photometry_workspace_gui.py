@@ -297,6 +297,10 @@ def test_observatory_explicit_theme_recolors_open_photometry(qtbot):
         assert current_theme_mode() == "dark"
         assert theme_colors(widget)["ACCENT"] == "#65B8FA"
         assert "#65B8FA" in widget.styleSheet()
+        assert "background-color: #172238" in (
+            widget.scene_editor.scene_controls_scroll.viewport().styleSheet())
+        assert "#172238" in (
+            widget.scene_editor.scene_controls_scroll.widget().styleSheet())
         assert len(widget._stage_shortcuts) == 4
         assert widget.scene_editor._loaded is None
         assert widget.scene_editor._future is None
