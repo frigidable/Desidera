@@ -443,6 +443,44 @@ def capture(output_dir: Path) -> list[dict]:
                     "size_image": [shot.width(), shot.height()],
                     "visual_reviewed": False,
                 })
+            # Explicit dark appearance of a real Qt Scene task, without FITS.
+            # This does not simulate an operating-system theme transition.
+            from PySide6.QtCore import QSettings
+            from lsbpipe.gui.visual_theme import refresh_visual_tree
+            appearance = QSettings("Desidera", "Desidera")
+            old_theme = appearance.value("appearance/theme", None)
+            try:
+                appearance.setValue("appearance/theme", "dark")
+                appearance.sync()
+                refresh_visual_tree(widget)
+                widget.stage_tabs.setCurrentWidget(widget.scene_editor)
+                widget.scene_editor.scene_task_buttons["draw"].click()
+                widget.resize(1366, 768)
+                widget.show()
+                app.processEvents()
+                path = output_dir / "photometry_scene_draw_DARK_1366x768.png"
+                shot = widget.grab()
+                if shot.isNull() or not shot.save(str(path), "PNG"):
+                    raise RuntimeError(f"Cannot capture {path}")
+                manifest.append({
+                    "path": str(path),
+                    "state": "stage02_dark_appearance_no_native_fits",
+                    "fixture": "SYNTHETIC_NON_FITS_METADATA",
+                    "appearance": "dark",
+                    "physical_dark_os_verified": False,
+                    "science_adopted": False,
+                    "native_fits_read": False,
+                    "size_logical": [1366, 768],
+                    "size_image": [shot.width(), shot.height()],
+                    "visual_reviewed": False,
+                })
+            finally:
+                if old_theme is None:
+                    appearance.remove("appearance/theme")
+                else:
+                    appearance.setValue("appearance/theme", old_theme)
+                appearance.sync()
+                refresh_visual_tree(widget)
             widget.restore_navigation(stage="psf0", band="r")
             # Explicitly synthetic gallery: no real Leo P image bytes are
             # accessible to CI. Capture equal-square cutout, PSF and radial

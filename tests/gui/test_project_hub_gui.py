@@ -857,6 +857,8 @@ def test_hub_theme_choice_repaints_existing_card_without_science(qtbot, tmp_path
             assert current_theme_mode() == mode
             assert hub.appearance_actions[mode].isChecked()
             assert theme_colors(hub)["BG"] in hub.styleSheet()
+            assert "QCheckBox, QRadioButton" in hub.styleSheet()
+            assert f"color: {theme_colors(hub)['TEXT']};" in hub.styleSheet()
             assert theme_colors(hub.galaxy_card)["SURFACE"] in (
                 hub.galaxy_card.styleSheet())
             assert not hub.new_btn.icon().isNull()

@@ -85,6 +85,11 @@ QFrame#hub_project_details {
     border-radius: 12px;
 }
 QLabel { color: $TEXT; }
+QCheckBox, QRadioButton {
+    color: $TEXT;
+    spacing: 7px;
+}
+QCheckBox:disabled, QRadioButton:disabled { color: $MUTED; }
 QLabel#hub_brand_title, QLabel#photometry_heading {
     color: $ACCENT;
     font-weight: 700;
