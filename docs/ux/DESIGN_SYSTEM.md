@@ -32,6 +32,15 @@ a mixed-window shell. The `.qml` resource is included in the Python wheel.
 The preview closes when an object workspace opens; it has no independent
 session state and performs no background work.
 
+Visual review of the initial actual QML renders exposed two concrete
+problems: the placeholder orbit glyph was unavailable in the runner's font,
+and resetting the QML list to apply a theme accidentally selected a different
+galaxy. Both are release-blocking. The QML pilot now draws vector orbit marks
+from Qt Quick shapes, and its list mirrors the existing Hub selection without
+writing it during model resets. Arrow navigation is an explicit user action
+which alone changes the selected UUID. A regression test and the screenshot
+script assert the exact project ID survives light/dark transitions.
+
 Qt CI uses the software scene-graph adaptation in offscreen Windows, and
 captures matched **1366×768, three-object** Widgets and Qt Quick light/dark
 examples. These are comparative screenshots, not proof of real Windows

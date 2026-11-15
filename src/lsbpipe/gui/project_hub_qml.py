@@ -139,6 +139,19 @@ class HubQmlBridge(QObject):
         return "Open the project to inspect its data."
 
     @Property(int, notify=changed)
+    def selectedIndex(self):
+        """Current visible row, without changing the saved galaxy selection."""
+        selected = self.selectedId
+        return next((i for i, row in enumerate(self._model._rows)
+                     if row["projectId"] == selected), -1)
+
+    @Slot(int, result=str)
+    def idAt(self, row):
+        if not 0 <= row < self._model.rowCount():
+            return ""
+        return self._model._rows[row]["projectId"]
+
+    @Property(int, notify=changed)
     def projectCount(self):
         return self._hub.projects.count()
 

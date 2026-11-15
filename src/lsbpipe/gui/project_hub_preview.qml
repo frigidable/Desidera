@@ -26,9 +26,21 @@ Rectangle {
         x: 22; y: 18; width: root.width - 44; height: 64
         radius: 12; color: root.surfaceColor
         border.width: 1; border.color: root.borderColor
+        // Vector orbit mark instead of a font-dependent Unicode glyph.
+        Rectangle {
+            x: 20; y: 18; width: 27; height: 27; radius: 14
+            color: "transparent"
+            border.width: 2
+            border.color: root.accentColor
+            Rectangle {
+                anchors.centerIn: parent
+                width: 8; height: 8; radius: 4
+                color: root.accentColor
+            }
+        }
         Text {
-            x: 20; y: 15
-            text: "◉  DESIDERA"
+            x: 60; y: 15
+            text: "DESIDERA"
             font.pixelSize: 21
             font.weight: Font.DemiBold
             color: root.textColor
@@ -116,10 +128,30 @@ Rectangle {
             spacing: 8
             focus: true
             model: projectModel
-            keyNavigationEnabled: true
-            onCurrentItemChanged: {
-                if (currentItem && activeFocus)
-                    hubBridge.choose(currentItem.projectId)
+            // Never commit a different project on model reset or theme edit.
+            keyNavigationEnabled: false
+            Component.onCompleted: currentIndex = hubBridge.selectedIndex
+            Connections {
+                target: hubBridge
+                function onChanged() {
+                    galaxyList.currentIndex = hubBridge.selectedIndex
+                }
+            }
+            Keys.onDownPressed: {
+                if (galaxyList.count > 0) {
+                    galaxyList.currentIndex = Math.min(
+                        galaxyList.count - 1, galaxyList.currentIndex + 1)
+                    hubBridge.choose(hubBridge.idAt(galaxyList.currentIndex))
+                }
+                event.accepted = true
+            }
+            Keys.onUpPressed: {
+                if (galaxyList.count > 0) {
+                    galaxyList.currentIndex = Math.max(
+                        0, galaxyList.currentIndex - 1)
+                    hubBridge.choose(hubBridge.idAt(galaxyList.currentIndex))
+                }
+                event.accepted = true
             }
             Keys.onReturnPressed: hubBridge.openSelected()
             Keys.onEnterPressed: hubBridge.openSelected()
@@ -141,11 +173,17 @@ Rectangle {
                 Rectangle {
                     x: 13; y: 16; width: 40; height: 40; radius: 9
                     color: root.darkMode ? "#253955" : "#D9E8F6"
-                    Text {
+                    Rectangle {
                         anchors.centerIn: parent
-                        text: "◉"
-                        font.pixelSize: 25
-                        color: root.accentColor
+                        width: 24; height: 24; radius: 12
+                        color: "transparent"
+                        border.width: 2
+                        border.color: root.accentColor
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 7; height: 7; radius: 4
+                            color: root.accentColor
+                        }
                     }
                 }
                 Text {
@@ -259,11 +297,17 @@ Rectangle {
             color: root.raisedColor
             border.width: 1
             border.color: root.borderColor
-            Text {
+            Rectangle {
                 anchors.centerIn: parent
-                text: "◉"
-                font.pixelSize: 37
-                color: root.accentColor
+                width: 44; height: 44; radius: 22
+                color: "transparent"
+                border.width: 3
+                border.color: root.accentColor
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 12; height: 12; radius: 6
+                    color: root.accentColor
+                }
             }
         }
         Text {

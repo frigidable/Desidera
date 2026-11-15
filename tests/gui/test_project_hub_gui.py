@@ -990,6 +990,29 @@ def test_qml_project_hub_preview_uses_same_registry_selection_and_actions(
     assert preview.model.rowCount() == 2
     assert preview.bridge.projectCount == hub.projects.count() == 2
     assert preview.bridge.visibleCount == 2
+    assert preview.bridge.selectedIndex >= 0
+    assert preview.bridge.idAt(preview.bridge.selectedIndex) == preview.bridge.selectedId
+    # The look of a QML list must never change which galaxy is selected.
+    from PySide6.QtCore import QSettings
+    settings = QSettings("Desidera", "Desidera")
+    prior_theme = settings.value("appearance/theme", None)
+    selected_before = preview.bridge.selectedId
+    try:
+        for mode in ("light", "dark", "light"):
+            settings.setValue("appearance/theme", mode)
+            settings.sync()
+            preview.sync()
+            assert preview.bridge.selectedId == selected_before
+            assert (hub.projects.currentItem().data(Qt.UserRole)["project_id"]
+                    == selected_before)
+            assert preview.bridge.selectedIndex >= 0
+    finally:
+        if prior_theme is None:
+            settings.remove("appearance/theme")
+        else:
+            settings.setValue("appearance/theme", prior_theme)
+        settings.sync()
+        preview.sync()
     assert preview.rootObject().findChild(
         QObject, "qml_hub_filter") is not None
     assert not preview.grabWindow().isNull()

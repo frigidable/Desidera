@@ -278,6 +278,7 @@ def main():
             # no invented FITS imagery, QA or external catalogue evidence.
             from lsbpipe.gui.project_hub_qml import QmlProjectHubPreview
             qml = QmlProjectHubPreview(hub)
+            selected_project_id = qml.bridge.selectedId
             preferences = QSettings("Desidera", "Desidera")
             earlier_theme = preferences.value("appearance/theme", None)
             try:
@@ -285,6 +286,9 @@ def main():
                     preferences.setValue("appearance/theme", qml_mode)
                     preferences.sync()
                     qml.sync()
+                    if qml.bridge.selectedId != selected_project_id:
+                        raise AssertionError(
+                            "QML appearance switched selected galaxy UUID")
                     qml.resize(1366, 768)
                     qml.show()
                     for _ in range(22):
