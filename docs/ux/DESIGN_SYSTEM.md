@@ -7,6 +7,23 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Windows GUI failure analysis — QML Text property (15 November 2026)
+
+Exact-head Windows baseline `43745395770` proved 988 science tests passed,
+but timed out within the GUI suite after reaching the Project Hub tests.
+The `if: always()` screenshot stage supplied an actionable QML load error:
+`project_hub_preview.qml:510: Cannot assign to non-existent property
+"selectByMouse"`. Three expanded-science-source `Text` items
+incorrectly used a `TextField`/`TextEdit`-only property. Fixed the
+three declarations before continuing the Observatory Studio Workspace
+acceptance; retain `selectByMouse` on the actual search `TextField`.
+Add an early isolated QML hub preflight and verbose GUI test names with
+pytest faulthandler timeouts so a QML component construction failure
+cannot silently absorb the entire 20-minute Windows screenshot budget.
+This was a **GUI** defect, not proof of a PSF or WCS failure.
+
+---
+
 ## Galaxy Workspace navigation and science layout — desktop pilot
 
 The real Leo P Windows session showed THREE overlapping navigational layers:
@@ -70,8 +87,12 @@ Qt Quick ScrollView: the first attempt made the offscreen GUI smoke step
 unusually slow, so the source layout was simplified before acceptance.
 Reset evidence scroll to the top on each mode switch; clicking sources
 must never modify the selected galaxy UUID.
-Use selectable, plain-text, line-wrapped source data, with 13px reading
-type rather than the tiny dense receipt block. Enlarge the cached
+Use read-only, plain-text, line-wrapped source data with 13px reading
+type rather than the tiny dense receipt block. Standard QML `Text` does
+not support `selectByMouse` on this PySide6 runner: unlike `TextField`,
+it must not declare that property. Direct text selection/copy is a later
+design requirement, to implement with a supported read-only `TextEdit`
+or a dedicated Copy provenance control, tested on Windows. Enlarge the cached
 display-only thumbnail when available, but keep the ordinary placeholder
 compact when no image is cached. Reduce the 5-row catalogue card height
 to 84px and spacing to 6px; short windows still scroll normally.

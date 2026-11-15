@@ -507,7 +507,8 @@ Rectangle {
                     text: "01  CATALOGUE SOURCES\n" + hubBridge.catalogueEvidence
                     textFormat: Text.PlainText
                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                    selectByMouse: true
+                    // Qt Quick Text is read-only and does not expose
+                    // selectByMouse (unlike Qt Quick TextEdit/TextField).
                     color: root.textColor
                     font.pixelSize: 13
                     lineHeight: 1.25
@@ -524,7 +525,8 @@ Rectangle {
                     text: "02  FITS/WCS AUDIT EVIDENCE\n" + hubBridge.qaEvidence
                     textFormat: Text.PlainText
                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                    selectByMouse: true
+                    // Qt Quick Text is read-only and does not expose
+                    // selectByMouse (unlike Qt Quick TextEdit/TextField).
                     color: root.textColor
                     font.pixelSize: 13
                     lineHeight: 1.25
@@ -541,7 +543,8 @@ Rectangle {
                     text: "03  PROJECT INFORMATION\n" + hubBridge.projectEvidence
                     textFormat: Text.PlainText
                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
-                    selectByMouse: true
+                    // Qt Quick Text is read-only and does not expose
+                    // selectByMouse (unlike Qt Quick TextEdit/TextField).
                     color: root.textColor
                     font.pixelSize: 13
                     lineHeight: 1.25
