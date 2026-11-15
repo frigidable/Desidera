@@ -55,9 +55,13 @@ canvas and ICRS draft semantics, but has a named contextual inspector
 with bounded width and unchanged Draw/Isophote/SGA task routing.
 Actual first embedded 1366×768 offscreen captures showed the Scene input
 toolbar needlessly split into two rows: band and cutout-width selectors
-expanded to hundreds of pixels. Bound the band selector to 88px and native
-view-width input to 176px, align them to the left, and use one toolbar row
-at viewports ≥920px while preserving the original 760px/high-font wrap.
+expanded to hundreds of pixels. Bound the band selector to 88px,
+align the cutout-width field to the left using a flexible spacer, and use
+one toolbar row at viewports ≥920px while preserving the original
+760px/high-font wrap. Do **not** set a hard maximum on the cutout-width
+spinbox: Windows 16pt Arial requires around 240px for the explicit
+"9.0 arcmin" suffix and accessibility checks caught clipping when capped
+at 176px. Its minimum is determined by its actual font metrics.
 This recovers image-canvas height without changing stretch, pixels, or
 coordinates. A PSF-0 GUI check initially expected an empty band to show
 model/profile cards; that contradicts the existing fail-closed policy.

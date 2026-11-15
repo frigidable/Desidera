@@ -2436,7 +2436,9 @@ def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
     assert not editor.save_btn.isEnabled()
     assert editor._loaded is None
     assert editor.band.maximumWidth() == 88
-    assert editor.width.maximumWidth() == 176
+    assert editor.width.minimumWidth() >= 112
+    # The field can expand with font metrics; a fixed maximum clips
+    # "9.0 arcmin" at the supported 16-pt accessibility setting.
     # Native image deserves one control row at 1366px desktop widths;
     # the existing 760px large-font configuration still reflows safely.
     editor.resize(970, 768)

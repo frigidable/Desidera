@@ -1313,7 +1313,9 @@ class SceneEditor(QWidget):
         self.width.setSingleStep(.5)
         self.width.setValue(6.)
         self.width.setSuffix(" arcmin")
-        self.width.setMaximumWidth(176)
+        # Do not hard-cap the spinbox width: a 16-pt Windows font needs
+        # over 230px for "9.0 arcmin". Left-aligned layout stretch keeps
+        # the field compact at ordinary font sizes without clipping it.
         self.width.setToolTip(
             "Only an original native-pixel cutout is rendered. "
             "A larger target may extend beyond this explicit view.")
