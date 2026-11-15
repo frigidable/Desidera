@@ -84,8 +84,12 @@ def test_no_saved_audit_is_not_qa_approval(qtbot, tmp_path, monkeypatch):
     assert "4/4" in card.fits.text()
     assert "No saved FITS/WCS audit" in card.qa_status.text()
     assert "QA pending" in hub.projects.item(0).text()
-    assert not card.next_step_title.isVisible()
-    assert not card.next_step.isVisible()
+    # The redesigned inspector shows the evidence-backed next action;
+    # displaying it must never promote file presence to QA approval.
+    assert card.next_step_title.isVisible()
+    assert card.next_step.isVisible()
+    assert card.next_step.text() == card.snapshot.readiness.next_action_label
+    assert "automatically adopted" in card.next_step_note.text()
     assert card.open_button.text() == "Open project"
     assert "inspect FITS" in card.open_button.toolTip()
     assert (p.root / "lsbpipe-object.json").read_bytes() == manifest
