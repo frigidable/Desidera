@@ -6,13 +6,29 @@ Keep semantic status text: color is supplemental, never science acceptance.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QSettings
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget
+
+
+_THEME_KEY = "appearance/theme"
+_THEME_MODES = ("system", "light", "dark")
+
+
+def current_theme_mode() -> str:
+    """Read a display-only preference; unknown values fall back to system."""
+    mode = str(QSettings("Desidera", "Desidera").value(
+        _THEME_KEY, "system")).lower()
+    return mode if mode in _THEME_MODES else "system"
 
 
 def theme_colors(widget) -> dict[str, str]:
-    """Two legible palettes selected from the current OS Window role."""
-    dark = widget.palette().color(QPalette.Window).lightness() < 128
+    """Resolve effective theme independently of earlier widget styling."""
+    mode = current_theme_mode()
+    app = QApplication.instance()
+    palette = app.palette() if app is not None else widget.palette()
+    dark = mode == "dark" or (mode == "system" and
+                              palette.color(QPalette.Window).lightness() < 128)
     if dark:
         return {
             "BG": "#0C1424",
@@ -215,6 +231,44 @@ QProgressBar::chunk {
     background-color: $ACCENT;
     border-radius: 4px;
 }
+QMenu {
+    background-color: $SURFACE;
+    color: $TEXT;
+    border: 1px solid $BORDER;
+    padding: 4px;
+}
+QMenu::item { padding: 7px 20px 7px 10px; }
+QMenu::item:selected {
+    background-color: $SOFT_ACCENT;
+    color: $TEXT;
+}
+QMenu::separator {
+    height: 1px;
+    background-color: $BORDER;
+    margin: 4px 8px;
+}
+QListWidget::item:selected {
+    background-color: $SOFT_ACCENT;
+    color: $TEXT;
+    border-left: 3px solid $ACCENT;
+}
+QScrollBar:vertical {
+    background-color: $BG;
+    width: 12px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background-color: $BORDER;
+    border-radius: 5px;
+    min-height: 24px;
+    margin: 2px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QLineEdit[invalid="true"] {
+    border: 2px solid $ERROR;
+}
 QToolTip {
     background-color: $SURFACE;
     color: $TEXT;
@@ -361,6 +415,7 @@ def adorn(button, icon_name: str, *, primary: bool = False,
     tokens = theme_colors(button)
     color = (tokens["PRIMARY_TEXT"] if primary else
              tokens["WARN"] if caution else tokens["ACCENT"])
+    button.setProperty("desideraIcon", icon_name)
     button.setIcon(icon_for(icon_name, color=color))
     button.setIconSize(QSize(18, 18))
     if primary:
@@ -379,3 +434,41 @@ def set_status_tone(label, *, error: bool) -> None:
     style.unpolish(label)
     style.polish(label)
     label.update()
+
+
+def apply_visual_style(widget, *, prefix: str | None = None) -> None:
+    """Attach restylable Observatory QSS while preserving local styling."""
+    if prefix is not None:
+        widget._desidera_style_prefix = prefix
+    elif not hasattr(widget, "_desidera_style_prefix"):
+        widget._desidera_style_prefix = ""
+    widget.setStyleSheet(widget._desidera_style_prefix + visual_stylesheet(widget))
+
+
+def refresh_visual_tree(root: QWidget) -> None:
+    """Repaint open workbench controls without reading FITS or running work."""
+    widgets = [root, *root.findChildren(QWidget)]
+    for widget in widgets:
+        if hasattr(widget, "_desidera_style_prefix"):
+            apply_visual_style(widget)
+        refresh_card = getattr(widget, "refresh_visual_theme", None)
+        if callable(refresh_card):
+            refresh_card()
+    for button in root.findChildren(QPushButton):
+        glyph = button.property("desideraIcon")
+        if glyph:
+            role = button.property("visualRole")
+            adorn(button, str(glyph), primary=role == "primary",
+                  caution=role == "caution")
+    for widget in widgets:
+        if hasattr(widget, "brand_symbol"):
+            widget.brand_symbol.setPixmap(icon_for(
+                "galaxy", color=theme_colors(widget)["ACCENT"],
+                size=29).pixmap(QSize(29, 29)))
+        task_buttons = getattr(widget, "scene_task_buttons", None)
+        if task_buttons:
+            accent = theme_colors(widget)["ACCENT"]
+            for button in task_buttons.values():
+                button.setStyleSheet(
+                    "QPushButton:checked { border: 2px solid " + accent +
+                    "; font-weight: 650; }")

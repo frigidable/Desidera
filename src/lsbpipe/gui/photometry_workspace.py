@@ -29,7 +29,7 @@ from lsbpipe.gui.scene_editor import SceneEditor
 from lsbpipe.gui.sky_workspace import SkyWorkspace
 from lsbpipe.gui.aperture_workspace import ApertureWorkspace
 from lsbpipe.gui.project_qa_bundle import serialize_project_diagnostic_bundle
-from lsbpipe.gui.visual_theme import adorn, icon_for, visual_stylesheet
+from lsbpipe.gui.visual_theme import adorn, apply_visual_style, icon_for
 
 
 
@@ -378,7 +378,7 @@ class PhotometryWorkspace(QWidget):
         self._set_view_mode()
         self._update_band_tab_statuses()
         self._apply_science_reflow()
-        self.setStyleSheet(visual_stylesheet(self))
+        apply_visual_style(self)
 
     def current_navigation(self):
         current = self.stage_tabs.currentWidget()

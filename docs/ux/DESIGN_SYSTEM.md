@@ -7,6 +7,43 @@ as implemented or visually approved.
 Implemented Qt widgets must be measured against actual screenshot evidence
 before this becomes a visual-regression baseline.
 
+## Observatory implementation (15 November 2026)
+
+The earlier v0.1 color table below is a **historical proposal**, not the
+active implementation. The current Qt Widgets palette is defined in
+`src/lsbpipe/gui/visual_theme.py`. Project Hub now exposes:
+**Display settings → Interface appearance → Follow system / Light / Dark**.
+The exclusive choice is stored in Qt `QSettings` as `appearance/theme`,
+outside the galaxy project and all scientific FITS/QA products.
+Invalid stored values revert to Follow system.
+
+| Active token | Light | Dark |
+| --- | --- | --- |
+| Background | #F2F5FA | #0C1424 |
+| Surface | #FFFFFF | #172238 |
+| Raised panel | #E9F0FA | #1D2C46 |
+| Primary text | #1A2B45 | #E9F1FD |
+| Secondary text | #4D617A | #AABAD1 |
+| Primary action | #215CAA | #65B8FA |
+| Focus outline | #117F8C | #74D8D1 |
+| Warning text | #865313 | #EEC47A |
+| Error text | #A33848 | #F3A0A5 |
+| Border | #CED9E8 | #344862 |
+
+Changing appearance refreshes open Qt workbench surfaces, including
+the selected galaxy card, semantic actions, vector icons and Scene task
+selection. It never fetches data, opens FITS, runs a worker or changes
+scientific adoption status. The four colored Photometry stage icons
+identify *methods*, not evidence quality. FITS pixels, display colormaps
+and remote QtWebEngine content remain outside Observatory QSS.
+
+GUI CI now exercises the explicit theme selection and captures separate
+light/dark Project Hub screenshots at 1366×768. These are controlled
+offscreen Qt appearances, **not** tests of actual dark OS settings,
+Windows high contrast, NVDA, monitor DPI or authentic survey observations.
+Those E3/E4 acceptance gates remain open. Scientific HOLD is unchanged.
+
+---
 ## Visual intent
 A precise scientific workstation rather than a marketing dashboard.
 The FITS canvas and evidence occupy primary visual attention. Quiet,

@@ -48,7 +48,7 @@ from lsbpipe.gui.target_controller import TargetController, TargetTextField
 from lsbpipe.gui.survey_data_controller import ArchiveFileTable, SurveyDataController
 from lsbpipe.gui.science_context_controller import ScienceContextController
 from lsbpipe.gui.workflow_ux import workflow_cue
-from lsbpipe.gui.visual_theme import adorn, visual_stylesheet
+from lsbpipe.gui.visual_theme import adorn, apply_visual_style
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -176,7 +176,7 @@ class SurveyExplorer(QMainWindow):
             "border: 2px solid palette(highlight); padding-left: 8px; }"
             "QLineEdit[invalid=\"true\"] { border: 2px solid #d56b69; }"
         )
-        self.setStyleSheet(self.styleSheet() + visual_stylesheet(self))
+        apply_visual_style(self, prefix=self.styleSheet())
         split = QSplitter(Qt.Horizontal, self)
         left = QWidget()
         left.setObjectName("survey_navigation")

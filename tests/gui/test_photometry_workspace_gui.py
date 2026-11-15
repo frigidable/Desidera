@@ -272,3 +272,43 @@ def test_short_stage_labels_preserve_long_scientific_tooltips(qtbot):
     assert "Original FITS/WCS" in w.stage_tabs.tabToolTip(1)
     assert "finite-aperture" in w.stage_tabs.tabToolTip(3)
     assert all(not w.stage_tabs.tabIcon(i).isNull() for i in range(4))
+
+
+def test_observatory_explicit_theme_recolors_open_photometry(qtbot):
+    """Theme edits must preserve staged analyses and existing image state."""
+    from PySide6.QtCore import QSettings
+    from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
+    from lsbpipe.gui.visual_theme import (
+        current_theme_mode, refresh_visual_tree, theme_colors)
+
+    settings = QSettings("Desidera", "Desidera")
+    prior = settings.value("appearance/theme", None)
+    widget = None
+    try:
+        settings.setValue("appearance/theme", "light")
+        settings.sync()
+        widget = PhotometryWorkspace()
+        qtbot.addWidget(widget)
+        assert theme_colors(widget)["ACCENT"] == "#215CAA"
+        assert "#215CAA" in widget.styleSheet()
+        settings.setValue("appearance/theme", "dark")
+        settings.sync()
+        refresh_visual_tree(widget)
+        assert current_theme_mode() == "dark"
+        assert theme_colors(widget)["ACCENT"] == "#65B8FA"
+        assert "#65B8FA" in widget.styleSheet()
+        assert len(widget._stage_shortcuts) == 4
+        assert widget.scene_editor._loaded is None
+        assert widget.scene_editor._future is None
+        assert widget.sky_stage._future is None
+        assert widget.aperture_stage._future is None
+        assert all(not widget.stage_tabs.tabIcon(i).isNull()
+                   for i in range(4))
+    finally:
+        if widget is not None:
+            widget.close()
+        if prior is None:
+            settings.remove("appearance/theme")
+        else:
+            settings.setValue("appearance/theme", prior)
+        settings.sync()

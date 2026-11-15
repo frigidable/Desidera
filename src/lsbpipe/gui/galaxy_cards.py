@@ -63,31 +63,7 @@ class GalaxyDetailCard(QFrame):
         self.setObjectName("galaxy_detail_card")
         self.setFrameShape(QFrame.StyledPanel)
         self.setMinimumWidth(300)
-        colors = theme_colors(self)
-        self.setStyleSheet(_INSPECTOR_STYLE + """
-QFrame#galaxy_detail_card {
-    background-color: $SURFACE;
-    border: 1px solid $BORDER;
-    border-radius: 11px;
-}
-QScrollArea#galaxy_card_scroll, QWidget#galaxy_card_content {
-    background-color: $SURFACE;
-    border: 0px;
-}
-QLabel#galaxy_card_section { color: $ACCENT; font-weight: 650; }
-QLabel#galaxy_card_name { color: $TEXT; }
-QLabel#galaxy_card_preview {
-    background-color: $RAISED;
-    color: $MUTED;
-    border: 1px solid $BORDER;
-    border-radius: 7px;
-}
-""".replace("$SURFACE", colors["SURFACE"])
-   .replace("$BORDER", colors["BORDER"])
-   .replace("$ACCENT", colors["ACCENT"])
-   .replace("$TEXT", colors["TEXT"])
-   .replace("$RAISED", colors["RAISED"])
-   .replace("$MUTED", colors["MUTED"]))
+        self.refresh_visual_theme()
         self.snapshot: GalaxyCardSnapshot | None = None
         self._pixmap: QPixmap | None = None
 
@@ -303,6 +279,34 @@ QLabel#galaxy_card_preview {
         self.safety.hide()
         self._set_preview_side(184)
         self.set_snapshot(None)
+
+    def refresh_visual_theme(self) -> None:
+        """Restyle this inspector without changing its scientific snapshot."""
+        colors = theme_colors(self)
+        self.setStyleSheet(_INSPECTOR_STYLE + """
+QFrame#galaxy_detail_card {
+    background-color: $SURFACE;
+    border: 1px solid $BORDER;
+    border-radius: 11px;
+}
+QScrollArea#galaxy_card_scroll, QWidget#galaxy_card_content {
+    background-color: $SURFACE;
+    border: 0px;
+}
+QLabel#galaxy_card_section { color: $ACCENT; font-weight: 650; }
+QLabel#galaxy_card_name { color: $TEXT; }
+QLabel#galaxy_card_preview {
+    background-color: $RAISED;
+    color: $MUTED;
+    border: 1px solid $BORDER;
+    border-radius: 7px;
+}
+""".replace("$SURFACE", colors["SURFACE"])
+   .replace("$BORDER", colors["BORDER"])
+   .replace("$ACCENT", colors["ACCENT"])
+   .replace("$TEXT", colors["TEXT"])
+   .replace("$RAISED", colors["RAISED"])
+   .replace("$MUTED", colors["MUTED"]))
 
     def _details_toggled(self, checked: bool):
         self.details_panel.setVisible(checked)

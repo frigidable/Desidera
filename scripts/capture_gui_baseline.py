@@ -18,7 +18,7 @@ from offline_gui_fixture import (offline_legacy_viewer, apply_offline_state,
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtGui import QFont, QFontInfo, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGroupBox, QTableWidget
@@ -242,6 +242,40 @@ def main():
                     "screenshot": path.name,
                     "screenshot_bytes": path.stat().st_size,
                     "network_used": False, "scientific_status": "NO_SCIENCE_RESULT"})
+            # Explicit light/dark UI render; not a physical OS theme test.
+            settings = QSettings("Desidera", "Desidera")
+            prior_mode = settings.value("appearance/theme", None)
+            try:
+                for mode in ("light", "dark"):
+                    hub.appearance_actions[mode].trigger()
+                    hub.resize(1366, 768)
+                    hub.show()
+                    for _ in range(5):
+                        app.processEvents()
+                    from lsbpipe.gui.visual_theme import theme_colors
+                    if theme_colors(hub)["BG"] not in hub.styleSheet():
+                        raise AssertionError("Theme CSS was not applied")
+                    path = outdir / f"hub_recent_{mode}_theme_1366x768.png"
+                    shot = hub.grab()
+                    if shot.isNull() or not shot.save(str(path), "PNG"):
+                        raise RuntimeError(f"Could not capture {path}")
+                    reports.append({
+                        "state": f"H5_recent_{mode}_theme_offline",
+                        "screenshot": path.name,
+                        "screenshot_bytes": path.stat().st_size,
+                        "appearance": mode,
+                        "physical_system_theme_tested": False,
+                        "network_used": False,
+                        "scientific_status": "NO_SCIENCE_RESULT",
+                    })
+            finally:
+                if prior_mode is None:
+                    settings.remove("appearance/theme")
+                else:
+                    settings.setValue("appearance/theme", prior_mode)
+                settings.sync()
+                from lsbpipe.gui.visual_theme import refresh_visual_tree
+                refresh_visual_tree(hub)
             # Verify the real Project Hub remains readable with larger UI
             # text, without pretending to emulate physical monitor DPI.
             hub.setFont(QFont(preferred, 16))

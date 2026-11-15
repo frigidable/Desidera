@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QSettings, QEvent
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QActionGroup, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
     QMenu, QCheckBox,
@@ -26,7 +26,8 @@ from lsbpipe.surveys.object_projects import (
 from lsbpipe.surveys.local_project import open_local_project
 from lsbpipe.gui.target_input import parse_coordinate_pair
 from .survey_explorer import SurveyExplorer
-from .visual_theme import adorn, icon_for, theme_colors, visual_stylesheet
+from .visual_theme import (adorn, apply_visual_style, current_theme_mode,
+                           icon_for, refresh_visual_tree, theme_colors)
 from .galaxy_cards import GalaxyDetailCard
 from .galaxy_card_model import snapshot_from_record
 from .card_previews import build_local_preview, has_local_image_source
@@ -325,14 +326,14 @@ class ProjectHub(QMainWindow):
                 "startup/auto_resume_last", False, type=bool))
         self.auto_resume.toggled.connect(self._save_auto_resume_setting)
         actions.addWidget(self.auto_resume)
-        self.preview_settings_btn = QPushButton("Preview settings")
+        self.preview_settings_btn = QPushButton("Display settings")
         self.preview_settings_btn.setObjectName("hub_preview_preferences")
         adorn(self.preview_settings_btn, "settings")
         self.preview_settings_btn.setAccessibleName(
-            "Display-only image preview preferences")
+            "Interface appearance and display-only image preview preferences")
         self.preview_settings_btn.setToolTip(
-            "Control optional remote Legacy RGB display previews. "
-            "No setting changes original science FITS.")
+            "Choose interface appearance and optional remote Legacy RGB "
+            "previews. Neither changes original science FITS.")
         self.preview_settings_menu = QMenu(self.preview_settings_btn)
         self.auto_rgb_action = self.preview_settings_menu.addAction(
             "Automatically fetch Legacy RGB preview (network)")
@@ -349,6 +350,26 @@ class ProjectHub(QMainWindow):
                 "Automatic RGB disabled by DESIDERA_DISABLE_AUTOMATIC_RGB=1. "
                 "This environment override takes precedence.")
         self.auto_rgb_action.toggled.connect(self._save_auto_rgb_setting)
+        self.preview_settings_menu.addSeparator()
+        self.appearance_menu = self.preview_settings_menu.addMenu(
+            "Interface appearance")
+        self.appearance_menu.setToolTipsVisible(True)
+        self.appearance_group = QActionGroup(self.appearance_menu)
+        self.appearance_group.setExclusive(True)
+        self.appearance_actions = {}
+        for mode, caption in (
+                ("system", "Follow system"),
+                ("light", "Light"), ("dark", "Dark")):
+            action = self.appearance_menu.addAction(caption)
+            action.setCheckable(True)
+            self.appearance_group.addAction(action)
+            action.setChecked(mode == current_theme_mode())
+            action.setToolTip(
+                "Presentation only: no scientific image or FITS changes.")
+            action.triggered.connect(
+                lambda checked=False, value=mode:
+                    self._save_appearance_setting(value))
+            self.appearance_actions[mode] = action
         self.preview_settings_btn.setMenu(self.preview_settings_menu)
         actions.addWidget(self.preview_settings_btn)
         outer.addLayout(actions)
@@ -563,7 +584,7 @@ class ProjectHub(QMainWindow):
         self.hint.setWordWrap(True)
         outer.addWidget(self.hint)
         self.setCentralWidget(content)
-        self.setStyleSheet(visual_stylesheet(self))
+        apply_visual_style(self)
         self.refresh()
 
     def _focus_project_filter(self):
@@ -1148,6 +1169,16 @@ class ProjectHub(QMainWindow):
             self.refresh()
         except (OSError, ValueError, TypeError, KeyError) as exc:
             QMessageBox.warning(self, "Cannot open Galaxy Knowledge", str(exc))
+
+    def _save_appearance_setting(self, mode: str) -> None:
+        """Refresh Qt presentation without altering data or scientific QA."""
+        if mode not in self.appearance_actions:
+            return
+        self._startup_settings.setValue("appearance/theme", mode)
+        self._startup_settings.sync()
+        refresh_visual_tree(self)
+        if self.workspace is not None:
+            refresh_visual_tree(self.workspace)
 
     def _save_auto_rgb_setting(self, enabled):
         """User-visible preference affects only optional display RGB traffic."""

@@ -832,3 +832,42 @@ def test_selected_galaxy_card_action_has_a_complete_icon_and_primary_style(qtbot
     assert theme_colors(hub.galaxy_card)["SURFACE"] in css
     assert "galaxy_card_content" in css
     hub.close()
+
+
+def test_hub_theme_choice_repaints_existing_card_without_science(qtbot, tmp_path, monkeypatch):
+    """Light/dark/system changes are immediate and only update presentation."""
+    from PySide6.QtCore import QSettings
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.gui.visual_theme import current_theme_mode, theme_colors
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    monkeypatch.setenv("DESIDERA_DISABLE_AUTOMATIC_RGB", "1")
+    settings = QSettings("Desidera", "Desidera")
+    prior = settings.value("appearance/theme", None)
+    hub = None
+    try:
+        settings.setValue("appearance/theme", "system")
+        settings.sync()
+        hub = ProjectHub()
+        qtbot.addWidget(hub)
+        assert hub.appearance_actions["system"].isChecked()
+        assert hub.preview_settings_btn.text() == "Display settings"
+        for mode in ("dark", "light", "system"):
+            hub.appearance_actions[mode].trigger()
+            assert current_theme_mode() == mode
+            assert hub.appearance_actions[mode].isChecked()
+            assert theme_colors(hub)["BG"] in hub.styleSheet()
+            assert theme_colors(hub.galaxy_card)["SURFACE"] in (
+                hub.galaxy_card.styleSheet())
+            assert not hub.new_btn.icon().isNull()
+            assert not hub.galaxy_card.open_button.icon().isNull()
+            assert not hub.brand_symbol.pixmap().isNull()
+        assert not list(tmp_path.glob("**/*.fits"))
+    finally:
+        if hub is not None:
+            hub.close()
+        if prior is None:
+            settings.remove("appearance/theme")
+        else:
+            settings.setValue("appearance/theme", prior)
+        settings.sync()
