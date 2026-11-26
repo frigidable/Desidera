@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
     QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout, QDialog,
-    QSizePolicy, QBoxLayout, QLayout,
+    QSizePolicy, QBoxLayout, QLayout, QTabWidget,
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
@@ -673,8 +673,15 @@ def run_scene_psf0_foreground_probe(
             preview["grid_fingerprint"]=original_scene["grid_fingerprint"]
             preview["draft_digest"]=original_masks["draft_digest"]
             preview["effective_source_mask_sha256"]=original_masks["effective_source_mask_sha256"]
+            if preview["status"]=="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED":
+                from lsbpipe.photometry.stellar_halo_sectors import sector_diagnostics
+                preview["sh1d"]=sector_diagnostics(preview,result["sh1b_model_comparison"],
+                    owcs,original_masks["source_inventory"]["entries"])
         return dict(output,status=result["status"],sh1_sector_measurement=result,
                     sh1c_preview=preview,
+                    sh1d_policy={k:original_masks.get(k) for k in (
+                        "anchor_icrs","sga_prior_id","sga_prior_sha256","gaia_inner_preview_enabled",
+                        "gaia_inner_skipped_objids_for_qa","red_extended_preview_enabled")},
                     draft_digest=scene_masks["draft_digest"],
                     grid_fingerprint=dataset.get("grid_fingerprint"),
                     original_scene_grid_fingerprint=original_scene.get("grid_fingerprint"),
@@ -1333,6 +1340,7 @@ class SceneEditor(QWidget):
         self._sweep_result = None
         self._policy_ablation_result = None
         self._foreground_psf_result = None
+        self._sh1d_session = {}
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -2294,6 +2302,8 @@ class SceneEditor(QWidget):
         self._redraw_outlines()
 
     def _switch_source(self, key, dataset):
+        if key != self._source_key:
+            self._sh1d_session.clear()
         self._load_generation += 1
         self._fits_load_failure = None
         self.copy_error_btn.hide()
@@ -3114,6 +3124,17 @@ class SceneEditor(QWidget):
                     result.get("original_fits_sha256_local")!=self._loaded.get("original_fits_sha256_local")):
                 raise ValueError("Stale SH1-B2 original FITS/grid evidence")
             self._foreground_psf_result = result
+            preview=result.get("sh1c_preview") or {}
+            if self._band in ("g","r") and preview.get("sh1d") is not None:
+                self._sh1d_session[self._band]=result
+                if set(self._sh1d_session)=={"g","r"}:
+                    from lsbpipe.photometry.stellar_halo_sectors import paired_sector_diagnostics
+                    try:
+                        result["sh1d_paired"]=paired_sector_diagnostics(
+                            self._sh1d_session["g"],self._sh1d_session["r"],self._loaded["wcs"])
+                    except ValueError as exc:
+                        result["sh1d_paired"]={"status":"SH1D_PAIR_BLOCKED","reason":str(exc),
+                                             "science_adopted":False}
             rows = result["sh1_sector_measurement"]["rows"]
             count = sum(r["adequate_for_descriptive_comparison"]
                         for r in rows if r["role"] == "AWAY_TRAIN_CANDIDATE")
@@ -3186,6 +3207,9 @@ class SceneEditor(QWidget):
                           ("Halo model range width","halo_model_spread"),("Sky model range width","sky_model_spread")):
             selector.addItem(label,key)
         layout.addWidget(selector)
+        overlay=QCheckBox("Show Tractor centres within 49 arcsec · review only")
+        overlay.setEnabled(bool(p.get("sh1d",{}).get("sources")))
+        layout.addWidget(overlay)
         graphics=QGraphicsScene(dialog)
         view=QGraphicsView(graphics)
         view.setObjectName("sh1c_image_view")
@@ -3195,7 +3219,7 @@ class SceneEditor(QWidget):
         layout.addWidget(caption)
         table=QPlainTextEdit()
         table.setReadOnly(True)
-        table.setMaximumHeight(140)
+        table.setMinimumHeight(120)
         lines=["Radius | support / valid | raw matched | halo corrected range | halo+sky range (nMgy)"]
         def fmt(v):
             return "—" if v is None else f"{v:.4g}"
@@ -3206,7 +3230,38 @@ class SceneEditor(QWidget):
                          f"{fmt(a['raw_matched_flux_nMgy'])} | {rng(a['halo_corrected_flux_nMgy_range'])} | "
                          f"{rng(a['halo_sky_residual_flux_nMgy_range'])}")
         table.setPlainText("\n".join(lines))
-        layout.addWidget(table)
+        tabs=QTabWidget()
+        tabs.setMinimumHeight(150)
+        tabs.addTab(table,"Growth curves")
+        def add_text_tab(name,lines):
+            widget=QPlainTextEdit()
+            widget.setReadOnly(True)
+            widget.setPlainText("\n".join(lines))
+            tabs.addTab(widget,name)
+        d=p.get("sh1d") or {}
+        if d:
+            def sector_lines(rows):
+                lines=["Ring (arcsec) | sector | pixels | reference flux (nMgy) | mean range (nMgy/arcsec²)"]
+                for a in rows:
+                    lines.append(f"{a['r_inner_arcsec']:g}–{a['r_outer_arcsec']:g} | {a['sector']} | "
+                        f"{a['used_pixels']}/{a['in_frame_pixels']} | {fmt(a['reference_residual_flux_nMgy'])} | "
+                        f"{rng(a['mean_intensity_range_nMgy_arcsec2'])}")
+                return lines
+            add_text_tab("Sector profiles",sector_lines(d["rows"]))
+            source_lines=["One source at a time; removed flux includes unknown galaxy light.",
+                          "OBJID | mask radius | aperture | removed pixels | baseline → excluded (nMgy)"]
+            for a in d["individual_source_exclusion_trials"]:
+                source_lines.append(f"{a['objid']} | {a['mask_radius_arcsec']:g} | {a['aperture_radius_arcsec']:g} | "
+                     f"{a['removed_pixels']} | {fmt(a['baseline_reference_flux_nMgy'])} → {fmt(a['excluded_reference_flux_nMgy'])}")
+            add_text_tab("Source mask trials",source_lines)
+            pair=result.get("sh1d_paired")
+            if pair and pair.get("bands"):
+                add_text_tab("Matched g",sector_lines(pair["bands"]["g"]["rows"]))
+                add_text_tab("Matched r",sector_lines(pair["bands"]["r"]["rows"]))
+            else:
+                add_text_tab("Matched g/r",[pair.get("reason","Run both g and r for the same star and draft in this session.") if pair else
+                    "Run both g and r for the same star and draft in this session."])
+        layout.addWidget(tabs)
         close=QPushButton("Close")
         close.clicked.connect(dialog.accept)
         layout.addWidget(close)
@@ -3226,12 +3281,22 @@ class SceneEditor(QWidget):
             graphics.clear()
             item=graphics.addPixmap(FITSExplorer._pixmap(rgb))
             graphics.setSceneRect(item.boundingRect())
+            if overlay.isChecked():
+                pen=QPen(QColor("#70dbe0"))
+                pen.setCosmetic(True)
+                for e in p.get("sh1d",{}).get("sources",[]):
+                    x=e["x"]+.5; y=a.shape[0]-e["y"]-.5
+                    graphics.addEllipse(x-5,y-5,10,10,pen)
+                    t=graphics.addSimpleText(str(e["objid"]))
+                    t.setBrush(QColor("#70dbe0"))
+                    t.setPos(x+5,y-8)
             view.fitInView(item,Qt.KeepAspectRatio)
             caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
                             f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} "
                             "(minimum side residual, display only)")
         selector.currentIndexChanged.connect(render)
-        dialog.resize(900,740)
+        overlay.toggled.connect(render)
+        dialog.resize(1000,780)
         render()
         QTimer.singleShot(0,render)
         dialog.exec()
