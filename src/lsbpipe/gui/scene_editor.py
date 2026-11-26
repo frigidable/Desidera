@@ -3215,7 +3215,8 @@ class SceneEditor(QWidget):
             selector.addItem(label,key)
         spike=p.get("sh1e") or {}
         extent=spike.get("adaptive_extent") or {}
-        all_layers=dict(p["layers"],**spike.get("layers",{}),**extent.get("layers",{}))
+        decay=spike.get("decay_extent") or {}
+        all_layers=dict(p["layers"],**spike.get("layers",{}),**extent.get("layers",{}),**decay.get("layers",{}))
         for width in (2,4):
             for label,suffix in (("Refit radial residual","refit_residual"),("Spike masked residual","masked_residual"),
                                  ("Mirrored spike model","model"),("Halo + spike model","halo_plus_spike"),
@@ -3225,6 +3226,10 @@ class SceneEditor(QWidget):
                     selector.addItem(f"{label} · ±{width} arcsec · conditional",key)
         for label,key in (("Adaptive spike model · truncated hypothesis","adaptive_spike_model"),
                           ("Adaptive spike residual · conditional","adaptive_spike_corrected")):
+            if key in all_layers:
+                selector.addItem(label,key)
+        for label,key in (("Decay spike model · conditional","decay_spike_model"),
+                          ("Decay spike residual · conditional","decay_spike_corrected")):
             if key in all_layers:
                 selector.addItem(label,key)
         layout.addWidget(selector)
@@ -3313,6 +3318,20 @@ class SceneEditor(QWidget):
                     elines.append(f"{row['outer_arcsec']:g} | {row['template_supported_pixels']} | "
                         f"{fmt(row['refit_template_matched_flux_nMgy'])} / {fmt(row['spike_corrected_flux_nMgy'])}")
             add_text_tab("Spike extent",elines)
+        if decay:
+            fit=decay.get("fit") or {}
+            best=fit.get("best") or {}
+            dlines=["SH1-E3 · fixed native vertical · NOT ADOPTED",decay["status"],
+                f"Measured blocks: {fit.get('block_count',0)} | matched controls: {decay.get('usable_control_count',0)}",
+                f"E-folding scale: {fmt(best.get('length_arcsec'))} arcsec | near-best range: {rng(fit.get('near_best_length_range_arcsec'))}",
+                f"Transverse sigma: {fmt(best.get('sigma_arcsec'))} arcsec | near-best range: {rng(fit.get('near_best_sigma_range_arcsec'))}",
+                "Grid sensitivity ranges, NOT confidence intervals or physical endpoints.",
+                f"Positive blocked CV: {decay.get('positive_cv',False)}",
+                "Injected length / sigma -> recovered length / sigma (arcsec):"]
+            for v in decay.get("injections",[]):
+                dlines.append(f"{v['injected_length_arcsec']:g}/{v['injected_sigma_arcsec']:g} -> "
+                    f"{v['recovered']['length_arcsec']:g}/{v['recovered']['sigma_arcsec']:g}")
+            add_text_tab("Spike decay",dlines)
         layout.addWidget(tabs)
         close=QPushButton("Close")
         close.clicked.connect(dialog.accept)
@@ -3326,7 +3345,7 @@ class SceneEditor(QWidget):
             values=a[np.isfinite(a)]
             shared=key in ("original","halo_corrected","residual") or key.endswith(("_residual","_corrected"))
             lim=limits if shared else tuple(np.quantile(values,[.01,.99])) if values.size else (0.,1.)
-            if (key.startswith("spike_") and key.endswith("_model") and "halo_plus" not in key) or key=="adaptive_spike_model":
+            if (key.startswith("spike_") and key.endswith("_model") and "halo_plus" not in key) or key in ("adaptive_spike_model","decay_spike_model"):
                 positive=values[values>0]
                 lim=(0.,float(np.quantile(positive,.99))) if positive.size else (0.,1.)
             if lim[1]<=lim[0]:
@@ -3347,7 +3366,8 @@ class SceneEditor(QWidget):
                     t.setPos(x+5,y-8)
             view.fitInView(item,Qt.KeepAspectRatio)
             caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
-                            + ("SH1-E2 truncated hypothesis · not an upper limit" if key.startswith("adaptive_")
+                            + ("SH1-E3 decay hypothesis · not adopted" if key.startswith("decay_")
+                               else "SH1-E2 truncated hypothesis · not an upper limit" if key.startswith("adaptive_")
                                else "SH1-E matched reference · conditional transfer" if key.startswith("spike_")
                              else f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} (minimum side residual, display only)"))
         selector.currentIndexChanged.connect(render)
