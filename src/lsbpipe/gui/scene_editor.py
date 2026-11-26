@@ -686,6 +686,12 @@ def run_scene_psf0_foreground_probe(
                     baseline_comparison=result["sh1b_model_comparison"],original_preview=preview)
                 from lsbpipe.photometry.galaxy_geometry_diagnostic import geometry_diagnostics
                 preview["geo1"]=geometry_diagnostics(preview,result["sh1b_model_comparison"],owcs)
+                from lsbpipe.photometry.residual_sky_diagnostic import sky_diagnostics
+                preview["sky1"]=sky_diagnostics(dataset["data"]["image"],dataset["data"]["invvar"],
+                    dataset["native_hard"],source_xy=(sx,sy),target_xy=(tx,ty),
+                    scale=result["pixel_scale_arcsec"],source_mask=scene_masks["mask"],
+                    protected=scene_masks["protected"],veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],
+                    neighbours=neighbors,comparison=result["sh1b_model_comparison"],preview=preview,wcs=owcs)
         return dict(output,status=result["status"],sh1_sector_measurement=result,
                     sh1c_preview=preview,
                     sh1d_policy={k:original_masks.get(k) for k in (
@@ -3226,7 +3232,8 @@ class SceneEditor(QWidget):
         spike=p.get("sh1e") or {}
         extent=spike.get("adaptive_extent") or {}
         decay=spike.get("decay_extent") or {}
-        all_layers=dict(p["layers"],**spike.get("layers",{}),**extent.get("layers",{}),**decay.get("layers",{}))
+        sky=p.get("sky1") or {}
+        all_layers=dict(p["layers"],**spike.get("layers",{}),**extent.get("layers",{}),**decay.get("layers",{}),**sky.get("layers",{}))
         for width in (2,4):
             for label,suffix in (("Refit radial residual","refit_residual"),("Spike masked residual","masked_residual"),
                                  ("Mirrored spike model","model"),("Halo + spike model","halo_plus_spike"),
@@ -3242,6 +3249,11 @@ class SceneEditor(QWidget):
                           ("Decay spike residual · conditional","decay_spike_corrected")):
             if key in all_layers:
                 selector.addItem(label,key)
+        for method in ("constant","plane","quadratic"):
+            for suffix,label in (("model","Additional sky"),("corrected","Sky-corrected residual")):
+                key=f"sky1_{method}_{suffix}"
+                if key in all_layers:
+                    selector.addItem(f"SKY-1 {label} · {method} · 60 arcsec / 32 px",key)
         layout.addWidget(selector)
         overlay=QCheckBox("Show Tractor centres within 49 arcsec · review only")
         overlay.setEnabled(bool(p.get("sh1d",{}).get("sources")))
@@ -3378,6 +3390,29 @@ class SceneEditor(QWidget):
                         plines.append(f"{a['inner_arcsec']:g}–{a['outer_arcsec']:g} | {a['sector']} | {name} | "
                             f"{a['used_pixels']}/{a['in_frame_pixels']} | {fmt(v['mean_nMgy_arcsec2'])} | {fmt(v['cumulative_flux_nMgy'])}")
             add_text_tab("GEO profiles",plines)
+        if sky:
+            sklines=["SKY-1 · expanded off-target field · NOT ADOPTED",
+                "Holdout excludes this sky fit only, not prior halo training. Quadratic = stress test.",
+                "Halo | guard / tile | model | B0 (nMgy/px) | CV MAE | status"]
+            for t in sky.get("trials",[]):
+                for c in t["candidates"]:
+                    f=c.get("fit") or {}
+                    b=f.get("coefficients_nMgy_pix",[None])[0]
+                    sklines.append(f"{t['halo_scenario']} | {t['target_guard_arcsec']:g}/{t['tile_size_pix']} | "
+                        f"{c['method']} | {fmt(b)} | {fmt(c.get('cv_equal_quadrant_mae_nMgy_pix'))} | {c['status']}")
+                    if t["target_guard_arcsec"]==60 and t["tile_size_pix"]==32:
+                        for v in c.get("empty_apertures",[]):
+                            sklines.append(f"  Empty R={v['radius_arcsec']:g} arcsec: N={v['count']}, "
+                                f"MAD sigma={fmt(v['mad_sigma_nMgy'])} nMgy (uncalibrated)")
+                        f=c.get("geometry_fixed_zero_background") or {}
+                        if f:
+                            sklines.append(f"  Fixed-zero sky geometry: {f['status']} | q={fmt(f.get('q'))} | PA={fmt(f.get('pa_deg'))}")
+                        for v in c.get("fixed_geometry_profiles",[]):
+                            if v["sector"]=="ALL" and v["outer_arcsec"] in (30.,35.,40.):
+                                sklines.append(f"  a={v['outer_arcsec']:g}: "
+                                    f"{fmt(v['scenarios']['baseline']['cumulative_flux_nMgy'])} -> "
+                                    f"{fmt(v['scenarios']['corrected']['cumulative_flux_nMgy'])} nMgy")
+            add_text_tab("SKY-1",sklines)
         layout.addWidget(tabs)
         close=QPushButton("Close")
         close.clicked.connect(dialog.accept)
@@ -3421,7 +3456,8 @@ class SceneEditor(QWidget):
                 graphics.addPath(path,pen)
             view.fitInView(item,Qt.KeepAspectRatio)
             caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
-                            + ("SH1-E3 decay hypothesis · not adopted" if key.startswith("decay_")
+                            + ("SKY-1 additional residual model · not adopted" if key.startswith("sky1_")
+                               else "SH1-E3 decay hypothesis · not adopted" if key.startswith("decay_")
                                else "SH1-E2 truncated hypothesis · not an upper limit" if key.startswith("adaptive_")
                                else "SH1-E matched reference · conditional transfer" if key.startswith("spike_")
                              else f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} (minimum side residual, display only)"))

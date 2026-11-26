@@ -95,7 +95,7 @@ def _model(par,e,n):
     return np.exp(log_a)*np.exp(-np.log(2)*(r/np.exp(log_h))**(1/index))+bg
 
 
-def fit_geometry(design,image,g,noise=None,seed=None):
+def fit_geometry(design,image,g,noise=None,seed=None,*,fixed_background_nMgy_pix=None):
     d=design
     info={k:d[k] for k in ("radius","inner","strip","block_count","used_pixels","domain_pixels","mask_sha256","coverage")}
     if d["block_count"]<40 or d["used_pixels"]<.5*d["domain_pixels"] or min(d["coverage"])<.25:
@@ -129,8 +129,15 @@ def fit_geometry(design,image,g,noise=None,seed=None):
             seed["nuisance_constant_nMgy_pix"]/norm])]+starts[:1]
     candidates=[]
     for start in starts:
-        f=least_squares(lambda par:_model(par,e,n)-z,np.clip(start,lower+1e-8,upper-1e-8),
-            bounds=(lower,upper),loss="soft_l1",f_scale=noise,x_scale="jac",max_nfev=120)
+        if fixed_background_nMgy_pix is None:
+            f=least_squares(lambda par:_model(par,e,n)-z,np.clip(start,lower+1e-8,upper-1e-8),
+                bounds=(lower,upper),loss="soft_l1",f_scale=noise,x_scale="jac",max_nfev=120)
+        else:
+            fixed=float(fixed_background_nMgy_pix)/norm
+            f=least_squares(lambda par:_model(np.r_[par,fixed],e,n)-z,
+                np.clip(start[:-1],lower[:-1]+1e-8,upper[:-1]-1e-8),
+                bounds=(lower[:-1],upper[:-1]),loss="soft_l1",f_scale=noise,x_scale="jac",max_nfev=120)
+            f.x=np.r_[f.x,fixed]
         if f.success and np.isfinite(f.x).all() and np.isfinite(f.cost):
             candidates.append(f)
     if not candidates: return dict(info,status="GEO1_OPTIMIZER_UNCONVERGED")
@@ -162,7 +169,7 @@ def fit_geometry(design,image,g,noise=None,seed=None):
         nuisance_half_intensity_radius_arcsec=float(np.exp(lh)),nuisance_index=float(index),
         nuisance_constant_nMgy_pix=float(bg*norm),robust_loss_scale_nMgy_pix=float(noise*norm),
         relative_robust_loss_improvement=float(improvement),converged_starts=len(candidates),
-        flags=flags)
+        flags=flags,fixed_background_nMgy_pix=fixed_background_nMgy_pix)
 
 
 def fitted(f):

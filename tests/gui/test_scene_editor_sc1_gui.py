@@ -2513,6 +2513,7 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
                      "adaptive_extent":{"status":"NO_AXIS_SUPPORT","axis_scan":[],"layers":{}},
                      "decay_extent":{"status":"SH1E3_INSUFFICIENT_PREDICTIVE_OR_CONTROL_EVIDENCE","layers":{}}}
     preview["geo1"]={"trials":[],"ensemble_geometry":[],"overlay_35arcsec_native_xy":[[40.,40.],[50.,50.],[40.,40.]]}
+    preview["sky1"]={"trials":[],"layers":{"sky1_plane_model":a,"sky1_plane_corrected":a}}
     editor._foreground_psf_result["sh1c_preview"]=preview
     editor._refresh_controls()
     assert editor.sh1c_preview_btn.isEnabled()
@@ -2545,8 +2546,8 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
             dialog.accept()
     QTimer.singleShot(50,inspect_dialog)
     editor.sh1c_preview_btn.click()
-    assert len(observed)==9 and all(n==1 for _,n in observed)
-    assert overlay_observed==[3,1,2,1,["Growth curves · SH1-C","Sector profiles","Source mask trials","Matched g/r","Spike trials","Spike extent","Spike decay","GEO-1","GEO profiles"]]
+    assert len(observed)==11 and all(n==1 for _,n in observed)
+    assert overlay_observed==[3,1,2,1,["Growth curves · SH1-C","Sector profiles","Source mask trials","Matched g/r","Spike trials","Spike extent","Spike decay","GEO-1","GEO profiles","SKY-1"]]
     qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]["sh1c_preview"]
     assert qa["layers"]["original"]["pixel_array_omitted"]
     editor.set_band("r")
