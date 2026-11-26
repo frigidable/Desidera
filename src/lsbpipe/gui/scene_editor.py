@@ -547,7 +547,8 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
 
 def run_scene_psf0_foreground_probe(
         dataset, project_root, source_entry, source_inventory,
-        center_icrs, component_indices=None, *, scene_masks=None):
+        center_icrs, component_indices=None, *, scene_masks=None, scene_draft=None,
+        sga_prior=None):
     """Inspect a saved finite PSF, or independently measure saturated-star sectors.
 
     Only the original native cutout and immutable restored ePSF are
@@ -598,11 +599,51 @@ def run_scene_psf0_foreground_probe(
                 scene_masks.get("dataset_source") != source or
                 scene_masks.get("catalog_sha256") != source_inventory.get("catalog_sha256")):
             raise ValueError("SH1 scene mask provenance mismatch")
+        original_scene=dataset
+        original_masks=scene_masks
         wcs = dataset["wcs"]
         sx,sy = map(float,wcs.all_world2pix(
             float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
         if math.hypot(sx-float(source_entry["x"]),sy-float(source_entry["y"])) > .75:
             raise ValueError("SH1 source WCS mismatch")
+        expanded_window=None
+        if scene_draft is not None:
+            from lsbpipe.photometry.native_fits import load_native_legacy_quartet
+            from lsbpipe.photometry.stellar_halo_scene import expanded_halo_cutout
+            from lsbpipe.gui.science_workflows import science_data_root
+            if (scene_draft.digest!=scene_masks["draft_digest"] or
+                    tuple(center_icrs)!=tuple(scene_masks["anchor_icrs"]) or
+                    scene_masks["sga_prior_id"]!=(sga_prior.sga_id if sga_prior else None) or
+                    scene_masks["sga_prior_sha256"]!=(sga_prior.source_sha256 if sga_prior else None)):
+                raise ValueError("SH1-B2 stale scene draft or protection policy")
+            release,region,brick=project.selected_dataset[:3]
+            hit=BrickHit(release,region,brick,0.,0.,0.,0.,{band:1})
+            root=science_data_root(project.data_root,hit=hit,band=band)
+            frame=load_native_legacy_quartet(root,release=release,region=region,
+                        brick=brick,band=band,require_explicit_bunit=True,hash_inputs=True)
+            dataset,expanded_window=expanded_halo_cutout(
+                frame,original_scene,(float(source_entry["ra_deg"]),float(source_entry["dec_deg"])))
+            del frame
+            scene_masks=prepare_scene_contamination(
+                dataset,project,scene_draft,center_icrs,sga_prior=sga_prior,
+                gaia_inner_preview=original_masks["gaia_inner_preview_enabled"],
+                red_extended_preview=original_masks["red_extended_preview_enabled"],
+                gaia_inner_skip_objids=original_masks.get("gaia_inner_skipped_objids_for_qa",()))
+            if scene_masks["catalog_sha256"]!=output["tractor_catalog_sha256"]:
+                raise ValueError("SH1-B2 original Tractor hash changed")
+            source_inventory=scene_masks["source_inventory"]
+            matches=[e for e in source_inventory["entries"] if e["source_id"]==output["source_id"]]
+            if (len(matches)!=1 or str(matches[0]["gaia_dr3_source_id"])!=output["gaia_dr3_source_id"]
+                    or f"SATUR_{band.upper()}" not in matches[0]["maskbits_names"]):
+                raise ValueError("SH1-B2 source identity changed in expanded inventory")
+            wcs=dataset["wcs"]
+            sx,sy=map(float,wcs.all_world2pix(float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
+            if math.hypot(sx-float(matches[0]["x"]),sy-float(matches[0]["y"]))>.75:
+                raise ValueError("SH1-B2 expanded source WCS mismatch")
+            expanded_window["mask_stats"]=scene_masks["stats"]
+            expanded_window["effective_source_mask_sha256"]=scene_masks["effective_source_mask_sha256"]
+            expanded_window["manual_exclude_mask_sha256"]=scene_masks["manual_exclude_mask_sha256"]
+            expanded_window["sky_veto_sha256"]=scene_masks["unresolved_target_overlap_sky_veto_sha256"]
         tx,ty = map(float,wcs.all_world2pix(*map(float,center_icrs),0))
         scales = np.asarray(proj_plane_pixel_scales(wcs.celestial))*3600.
         if scales.shape != (2,) or not np.isfinite(scales).all() or np.min(scales)<=0 or np.max(scales)/np.min(scales)>1.01:
@@ -616,10 +657,13 @@ def run_scene_psf0_foreground_probe(
             pixel_scale_arcsec=float(np.sqrt(np.prod(scales))),
             source_mask=scene_masks["mask"],protected=scene_masks["protected"],
             unresolved_sky_veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],
-            neighbor_centres=neighbors, compare_models=True)
+            neighbor_centres=neighbors, compare_models=True,
+            expanded=expanded_window is not None)
         return dict(output,status=result["status"],sh1_sector_measurement=result,
                     draft_digest=scene_masks["draft_digest"],
                     grid_fingerprint=dataset.get("grid_fingerprint"),
+                    original_scene_grid_fingerprint=original_scene.get("grid_fingerprint"),
+                    sh1b2_native_window=expanded_window,
                     original_fits_sha256_local=dataset.get("original_fits_sha256_local"),
                     source_maskbits=source_entry.get("maskbits"),
                     source_maskbits_names=source_entry.get("maskbits_names"))
@@ -3015,12 +3059,15 @@ class SceneEditor(QWidget):
             run_scene_psf0_foreground_probe,
             self._loaded, str(self._project_root), dict(entry),
             self._source_registry, centre, indices,
-            scene_masks=self._contamination)
+            scene_masks=self._contamination,
+            **({"scene_draft":self._draft,
+                "sga_prior":self._sga_candidate if self.sga_use_prior.isChecked() else None}
+               if f"SATUR_{self._band.upper()}" in (entry.get("maskbits_names") or ()) else {}))
         self._work_kind = "psf_foreground"
         self._active_generation = self._load_generation
         self.psf0_fg_status.setText(
-            f"Checking stored PSF-0 hashes and native pixels for "
-            f"OBJID {entry['objid']} in the background… "
+            f"Checking original FITS and native pixels for "
+            f"OBJID {entry['objid']} (saturated: expanded halo window; otherwise saved PSF-0)… "
             "No image, draft or science model changes.")
         self._poll_timer.start()
         self._refresh_controls()
@@ -3043,11 +3090,16 @@ class SceneEditor(QWidget):
         if status == "SH1_SECTORS_MEASURED_NOT_ADOPTED":
             if result.get("draft_digest") != self._draft.digest:
                 raise ValueError("Stale SH1 scene revision")
+            if result.get("sh1b2_native_window") is not None and (
+                    result.get("original_scene_grid_fingerprint")!=self._loaded.get("grid_fingerprint") or
+                    result.get("original_fits_sha256_local")!=self._loaded.get("original_fits_sha256_local")):
+                raise ValueError("Stale SH1-B2 original FITS/grid evidence")
             rows = result["sh1_sector_measurement"]["rows"]
             count = sum(r["adequate_for_descriptive_comparison"]
                         for r in rows if r["role"] == "AWAY_TRAIN_CANDIDATE")
             comparison = result["sh1_sector_measurement"].get("sh1b_model_comparison")
-            note = (f"SH1-B: {len(comparison['candidates'])} diagnostic hypotheses; "
+            label = "SH1-B2 expanded native window" if result.get("sh1b2_native_window") else "SH1-B"
+            note = (f"{label}: {len(comparison['candidates'])} diagnostic hypotheses; "
                     if comparison is not None else "no sky or halo fit; ")
             self.psf0_fg_status.setText(
                 f"OBJID {result['source_objid']} · SH1 saturated-star sectors: "

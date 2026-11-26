@@ -2472,7 +2472,8 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
     editor.source_registry_list.addItem("OBJID 360")
     editor.source_registry_list.setCurrentRow(0)
     editor.source_registry_list.blockSignals(False)
-    def fake_probe(dataset,root,source,inventory,centre,indices,*,scene_masks):
+    def fake_probe(dataset,root,source,inventory,centre,indices,*,scene_masks,scene_draft,sga_prior):
+        assert scene_draft.digest==editor.draft.digest and sga_prior is None
         assert source["maskbits_names"]==["SATUR_G"]
         return {"status":"SH1_SECTORS_MEASURED_NOT_ADOPTED",
                 "project_id":project.project_id,"source_id":candidate["source_id"],

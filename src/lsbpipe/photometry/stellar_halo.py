@@ -11,6 +11,8 @@ import numpy as np
 from scipy.ndimage import binary_dilation
 
 EDGES_ARCSEC = (12., 16., 20., 25., 30., 40., 50., 60., 70., 85., 100., 115.)
+EXPANDED_EDGES_ARCSEC = EDGES_ARCSEC + (130., 145., 160., 180.)
+EXPANDED_ANCHORS_ARCSEC = (70., 85., 100., 120., 150.)
 MIN_PIXELS = 100
 MIN_COVERAGE = .25
 
@@ -29,7 +31,8 @@ def _stats(image, select):
 
 def measure_saturated_halo_sectors(image, invvar, native_hard, *,
         source_xy, target_xy, pixel_scale_arcsec, source_mask, protected,
-        unresolved_sky_veto, neighbor_centres=(), compare_models=False):
+        unresolved_sky_veto, neighbor_centres=(), compare_models=False,
+        expanded=False):
     a = np.asarray(image, dtype=float)
     iv = np.asarray(invvar, dtype=float)
     masks = [np.asarray(m, dtype=bool) for m in
@@ -73,8 +76,9 @@ def measure_saturated_halo_sectors(image, invvar, native_hard, *,
         n_neighbours += 1
     descriptive = native_valid & ~source & ~cores
     train_valid = descriptive & ~protection & ~veto
+    edges = EXPANDED_EDGES_ARCSEC if expanded else EDGES_ARCSEC
     rows=[]
-    for lo,hi in zip(EDGES_ARCSEC[:-1], EDGES_ARCSEC[1:]):
+    for lo,hi in zip(edges[:-1], edges[1:]):
         annulus = (distance >= lo) & (distance < hi)
         nominal = math.pi*(hi**2-lo**2)/(8*scale**2)
         for k in range(8):
@@ -96,14 +100,19 @@ def measure_saturated_halo_sectors(image, invvar, native_hard, *,
                          "adequate_for_descriptive_comparison":
                              safe["n"] >= MIN_PIXELS and fraction >= MIN_COVERAGE})
     comparison = (_compare_block_models(a, train_valid, distance, sector, rows,
-                  sx=sx, sy=sy, scale=scale, target_distance=math.hypot(tx-sx,ty-sy)*scale)
+                  sx=sx, sy=sy, scale=scale, target_distance=math.hypot(tx-sx,ty-sy)*scale,
+                  edges=edges, expanded=expanded)
                   if compare_models else None)
+    if expanded and comparison is not None:
+        comparison["diagnostic_tile_map"] = _diagnostic_tile_map(
+            a, descriptive, protection, distance, sx=sx,sy=sy,scale=scale,
+            candidates=comparison["candidates"])
     return {"schema":"desidera.sh1-saturated-halo-sector-measurement/1",
             "status":"SH1_SECTORS_MEASURED_NOT_ADOPTED",
             "source_xy_native_pix":[sx,sy],"target_xy_native_pix":[tx,ty],
             "pixel_scale_arcsec":scale,"star_target_distance_arcsec":
                 math.hypot(tx-sx,ty-sy)*scale,
-            "radial_edges_arcsec":list(EDGES_ARCSEC),
+            "radial_edges_arcsec":list(edges),"expanded_radial_experiment":bool(expanded),
             "native_invalid_guard_pix":3,"catalogue_core_radius_arcsec":4.,
             "catalogue_neighbour_count":n_neighbours,
             "min_pixels":MIN_PIXELS,"min_full_sector_fraction_approx":MIN_COVERAGE,
@@ -115,7 +124,7 @@ def measure_saturated_halo_sectors(image, invvar, native_hard, *,
             "warning":"Signed coadd medians include unknown sky; coverage and MAD are descriptive, not calibrated uncertainties. Target-facing values may include galaxy light. No adopted halo amplitude or galaxy correction inferred."}
 
 
-def _spatial_blocks(image, valid, distance, sector, rows, *, sx, sy, scale, step):
+def _spatial_blocks(image, valid, distance, sector, rows, *, sx, sy, scale, step, edges=EDGES_ARCSEC):
     """Disjoint native tiles; only accepted sector/ring combinations enter.
     Within a tile, aggregate each ring/sector subset separately. Side subsets
     sharing a tile with ANY training subset are not independent holdouts.
@@ -132,13 +141,13 @@ def _spatial_blocks(image, valid, distance, sector, rows, *, sx, sy, scale, step
                 continue
             x=x+x0; y=y+y0
             radii=distance[y,x]; sectors=sector[y,x]
-            rings=np.searchsorted(EDGES_ARCSEC,radii,side="right")-1
+            rings=np.searchsorted(edges,radii,side="right")-1
             group=8*rings+sectors
             for code in np.unique(group):
                 ring,k=divmod(int(code),8)
-                if not 0<=ring<len(EDGES_ARCSEC)-1:
+                if not 0<=ring<len(edges)-1:
                     continue
-                lo=EDGES_ARCSEC[ring]
+                lo=edges[ring]
                 if (lo,k) not in allowed:
                     continue
                 q=group==code
@@ -173,7 +182,8 @@ def _block_design(blocks, knots, plane):
     return np.column_stack(cols)
 
 
-def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,target_distance):
+def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,target_distance,
+                          edges=EDGES_ARCSEC, expanded=False):
     """Hypothesis/sensitivity comparison, never an adopted correction.
     The additive halo/sky degeneracy is exposed via several outer anchors.
     Equal spatial-subset weights, signed block medians, robust residual loss.
@@ -181,12 +191,12 @@ def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,t
     from scipy.optimize import least_squares
     candidates=[]; rejected=[]; block_sets=[]
     for step in (24,40):
-        blocks=_spatial_blocks(image,valid,distance,sector,rows,sx=sx,sy=sy,scale=scale,step=step)
+        blocks=_spatial_blocks(image,valid,distance,sector,rows,sx=sx,sy=sy,scale=scale,step=step,edges=edges)
         train=[b for b in blocks if b["role"]=="TRAIN"]
         side=[b for b in blocks if b["role"]=="SIDE_HOLDOUT"]
         block_sets.append({"tile_size_pix":step,"blocks":blocks,
                            "n_training":len(train),"n_side_holdout":len(side)})
-        for anchor in (70.,85.,100.):
+        for anchor in (EXPANDED_ANCHORS_ARCSEC if expanded else (70.,85.,100.)):
             for plane in (False,True):
                 meta={"tile_size_pix":step,"assumed_zero_halo_radius_arcsec":anchor,
                       "sky_model":"plane" if plane else "constant"}
@@ -198,7 +208,8 @@ def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,t
                     continue
                 rmin=min(b["r_arcsec"] for b in train)
                 rmax=max(b["r_arcsec"] for b in train)
-                knots=np.array([rmin]+[k for k in (16.,20.,25.,30.,40.,50.,60.,70.,85.) if rmin+2.<k<anchor]+[anchor])
+                interior = (16.,20.,25.,30.,40.,50.,60.,70.,85.,100.,115.,130.,145.) if expanded else (16.,20.,25.,30.,40.,50.,60.,70.,85.)
+                knots=np.array([rmin]+[k for k in interior if rmin+2.<k<anchor]+[anchor])
                 X=_block_design(train,knots,plane)
                 y=np.array([b["intensity_nMgy_pix"] for b in train])*1000.
                 if np.linalg.matrix_rank(X)<X.shape[1] or len(train)<3*X.shape[1]:
@@ -219,11 +230,12 @@ def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,t
                 p=fit.x/1000.
                 residual=X@p-y/1000.
                 controls=[b for b in side if rmin<=b["r_arcsec"]<=rmax]
-                if len(controls)<6:
+                if len(controls)<6 or (expanded and any(
+                        sum(b['sector']==k for b in controls)<3 for k in (2,6))):
                     rejected.append(dict(meta,reason="INSUFFICIENT_IN_RANGE_HOLDOUT"))
                     continue
                 sr=_block_design(controls,knots,plane)@p-np.array([b["intensity_nMgy_pix"] for b in controls])
-                radii=[float(r) for r in (12,16,20,25,30,40,50,target_distance,60,70,85,100,115) if rmin<=r<=rmax]
+                radii=sorted({float(r) for r in (*edges,target_distance) if rmin<=r<=rmax})
                 profile=[{"radius_arcsec":r,"halo_nMgy_pix":float(_radial_basis(r,knots)@p[:nd])} for r in radii]
                 target=(float(_radial_basis(target_distance,knots)@p[:nd])
                         if rmin<=target_distance<=rmax else None)
@@ -241,6 +253,12 @@ def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,t
                         "signed_median_residual_nMgy_pix":float(np.median(v)),
                         "median_abs_residual_nMgy_pix":float(np.median(np.abs(v)))}
                         for k in (2,6) if (v:=sr[np.array([b["sector"]==k for b in controls])]).size],
+                    side_radial_residuals=[{"sector":k,"r_inner_arcsec":lo,
+                        "n":len(v),"observed_minus_model_median_nMgy_pix":float(-np.median(v)),
+                        "median_abs_residual_nMgy_pix":float(np.median(np.abs(v)))}
+                        for k in (2,6) for lo in edges[:-1]
+                        if (v:=sr[np.array([b["sector"]==k and b["r_inner_arcsec"]==lo
+                                            for b in controls],dtype=bool)]).size],
                     halo_at_target_distance_nMgy_pix=target,profile=profile))
     values=[c["halo_at_target_distance_nMgy_pix"] for c in candidates
             if c["halo_at_target_distance_nMgy_pix"] is not None]
@@ -251,3 +269,49 @@ def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,t
             "science_adopted":False,"source_light_subtracted":False,
             "outer_zero_is_assumption":True,"uncertainty_calibrated":False,
             "warning":"No unique halo/sky separation. Outer zero anchors are unverified hypotheses, not measurements. Block medians use median coordinates and equal weights; coadd covariance is not calibrated. Side sectors are disjoint-tile checks, not independent exposures. No model selected, extrapolated correction, or pixels modified."}
+
+
+def _diagnostic_tile_map(image, valid, protected, distance, *, sx,sy,scale,candidates):
+    """Native-pixel evaluation aggregated to 48px tiles, not a science FITS.
+    Every entry uses common radial training support of ALL candidates.
+    Spread is the range of conditional hypotheses, not a calibrated error.
+    """
+    step=48
+    out={"schema":"desidera.sh1b2-diagnostic-tile-map/1","tile_size_pix":step,
+         "native_shape":list(image.shape),"common_training_radius_arcsec":None,
+         "cells":[],"science_adopted":False,"source_light_subtracted":False,
+         "warning":"Tile summaries, not a corrected image. Target-facing residuals include galaxy light. Hypothesis spread is not a confidence interval; no extrapolation outside common radial support."}
+    if not candidates:
+        return out
+    lo=max(c["training_r_range_arcsec"][0] for c in candidates)
+    hi=min(c["training_r_range_arcsec"][1] for c in candidates)
+    if hi<=lo:
+        return out
+    out["common_training_radius_arcsec"]=[lo,hi]
+    for y0 in range(0,image.shape[0],step):
+        for x0 in range(0,image.shape[1],step):
+            sl=np.s_[y0:y0+step,x0:x0+step]
+            rr=distance[sl]
+            good=valid[sl] & (rr>=lo) & (rr<=hi)
+            n=int(good.sum())
+            if n<max(32,.15*good.size):
+                continue
+            y,x=np.nonzero(good)
+            r=rr[good]; x=(x+x0-sx)*scale; y=(y+y0-sy)*scale
+            values=image[sl][good]
+            halo=[]; sky=[]; residual=[]
+            for c in candidates:
+                h=np.interp(r,c["radial_knots_arcsec"],c["halo_at_knots_nMgy_pix"],right=0.)
+                b=c["sky_constant_nMgy_pix"]+x*c["sky_x_nMgy_pix_per_arcsec"]+y*c["sky_y_nMgy_pix_per_arcsec"]
+                halo.append(float(np.median(h)))
+                sky.append(float(np.median(b)))
+                residual.append(float(np.median(values-h-b)))
+            out["cells"].append({"x0":x0,"y0":y0,"n":n,
+                "valid_fraction":n/good.size,
+                "protected_fraction_of_used":float(protected[sl][good].mean()),
+                "observed_median_nMgy_pix":float(np.median(values)),
+                "halo_median_range_nMgy_pix":[min(halo),max(halo)],
+                "sky_median_range_nMgy_pix":[min(sky),max(sky)],
+                "residual_median_range_nMgy_pix":[min(residual),max(residual)],
+                "residual_median_across_hypotheses_nMgy_pix":float(np.median(residual))})
+    return out

@@ -77,3 +77,60 @@ def test_sh1b_block_hypotheses_exclude_target_light_and_keep_disjoint_tiles():
         assert h[-1]==0
     assert any(c["sky_model"]=="plane" for c in result["candidates"])
     assert result["target_distance_hypothesis_range_nMgy_pix"] is not None
+
+
+def test_sh1b2_extends_radial_support_and_emits_nonadopted_tile_map():
+    n=741
+    yy,xx=np.indices((n,n))
+    sx,sy=370.,370.
+    r=np.hypot(xx-sx,yy-sy)*.5
+    image=.01*np.clip(1-r/120.,0,1)-.0002
+    zero=np.zeros_like(image,dtype=bool)
+    protected=(xx-370)**2+(yy-480)**2<60**2
+    result=measure_saturated_halo_sectors(image,np.ones_like(image),r<12.,
+        source_xy=(sx,sy),target_xy=(370,480),pixel_scale_arcsec=.5,
+        source_mask=zero,protected=protected,unresolved_sky_veto=zero,
+        compare_models=True,expanded=True)
+    assert result["radial_edges_arcsec"][-1]==180.
+    assert len(result["rows"])==120
+    comp=result["sh1b_model_comparison"]
+    assert any(c["assumed_zero_halo_radius_arcsec"]==150. for c in comp["candidates"])
+    assert all(c["training_r_range_arcsec"][1]>160. for c in comp["candidates"])
+    m=comp["diagnostic_tile_map"]
+    assert m["cells"] and not m["science_adopted"]
+    assert any(c["protected_fraction_of_used"]>0 for c in m["cells"])
+    assert all(c["halo_median_range_nMgy_pix"][0]>=0 for c in m["cells"])
+
+
+def test_expanded_halo_crop_clips_without_padding_and_preserves_wcs():
+    from astropy.wcs import WCS
+    from types import SimpleNamespace
+    from lsbpipe.photometry.stellar_halo_scene import expanded_halo_cutout
+    from lsbpipe.scene import grid_fingerprint
+    wcs=WCS(naxis=2)
+    wcs.wcs.crpix=[501.,501.]
+    wcs.wcs.cdelt=[-.262/3600,.262/3600]
+    wcs.wcs.crval=[96.,78.]
+    wcs.wcs.ctype=["RA---TAN","DEC--TAN"]
+    a=np.ones((1000,1000))
+    hashes={k:"a"*64 for k in ("image","invvar","nexp","maskbits")}
+    hdus={k:1 for k in hashes}
+    frame=SimpleNamespace(dataset_id="dr11/north/0965p780/r",wcs=wcs,
+        shape=a.shape,image_nMgy=a,invvar_nMgy2=a,nexp=a,maskbits=np.zeros(a.shape,dtype=np.uint32),
+        source_evidence={"local_hashes":hashes,"hdu_indices":hdus})
+    cut=wcs.slice(np.s_[200:800,400:900])
+    scene={"source_quartet_key":["dr11","north","0965p780","r"],
+           "original_fits_sha256_local":hashes,"hdu_indices":hdus,
+           "wcs":cut,"pixel_shape":(600,500),"source":"native",
+           "project_id":"p","grid_fingerprint":grid_fingerprint(cut,(600,500))}
+    star=tuple(wcs.all_pix2world(850.,500.,0))
+    expanded,qa=expanded_halo_cutout(frame,scene,star)
+    assert qa["clipped_by_brick"] and qa["actual_bounds_xyxy_exclusive"][2]==1000
+    assert qa["scene_origin_full_brick_xy"]==[400,200]
+    assert qa["original_scene_grid_fingerprint"]==scene["grid_fingerprint"]
+    assert expanded["data"]["image"].shape==tuple(qa["native_shape"])
+    assert not expanded["data"]["image"].flags.writeable
+    assert not expanded["native_hard"].any()
+    assert not np.shares_memory(a,expanded["data"]["image"])
+    with pytest.raises(ValueError,match="hashes differ"):
+        expanded_halo_cutout(frame,dict(scene,original_fits_sha256_local={}),star)
