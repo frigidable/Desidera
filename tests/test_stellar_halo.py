@@ -42,3 +42,38 @@ def test_saturated_sector_rejects_unaligned_masks():
         measure_saturated_halo_sectors(a,a,a,source_xy=(1,1),target_xy=(5,5),
             pixel_scale_arcsec=.262,source_mask=a,protected=a[:2],
             unresolved_sky_veto=a)
+
+
+def test_sh1b_block_hypotheses_exclude_target_light_and_keep_disjoint_tiles():
+    n=801
+    yy,xx=np.indices((n,n))
+    sx,sy=400.,400.
+    r=np.hypot(xx-sx,yy-sy)*.262
+    halo=.012*np.clip(1-r/70.,0,1)
+    image=halo-.0003+2e-6*(xx-sx)
+    hard=r<10
+    protected=(xx-400)**2+(yy-610)**2<100**2
+    source=np.zeros_like(hard)
+    def run(a):
+        return measure_saturated_halo_sectors(a,np.ones_like(a),hard,
+            source_xy=(sx,sy),target_xy=(400,610),pixel_scale_arcsec=.262,
+            source_mask=source,protected=protected,unresolved_sky_veto=source,
+            compare_models=True)["sh1b_model_comparison"]
+    result=run(image)
+    injected=image.copy(); injected[protected]+=10.
+    other=run(injected)
+    assert result["candidates"]
+    assert result["candidates"]==other["candidates"]
+    assert not result["science_adopted"] and not result["source_light_subtracted"]
+    for group in result["block_sets"]:
+        train={tuple(b["tile"]) for b in group["blocks"] if b["role"]=="TRAIN"}
+        side={tuple(b["tile"]) for b in group["blocks"] if b["role"]=="SIDE_HOLDOUT"}
+        assert train.isdisjoint(side)
+        assert all(b["sector"] in (3,4,5) for b in group["blocks"] if b["role"]=="TRAIN")
+    for c in result["candidates"]:
+        h=c["halo_at_knots_nMgy_pix"]
+        assert all(x>=0 for x in h)
+        assert all(a>=b for a,b in zip(h,h[1:]))
+        assert h[-1]==0
+    assert any(c["sky_model"]=="plane" for c in result["candidates"])
+    assert result["target_distance_hypothesis_range_nMgy_pix"] is not None

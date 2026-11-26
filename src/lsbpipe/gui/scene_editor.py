@@ -616,7 +616,7 @@ def run_scene_psf0_foreground_probe(
             pixel_scale_arcsec=float(np.sqrt(np.prod(scales))),
             source_mask=scene_masks["mask"],protected=scene_masks["protected"],
             unresolved_sky_veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],
-            neighbor_centres=neighbors)
+            neighbor_centres=neighbors, compare_models=True)
         return dict(output,status=result["status"],sh1_sector_measurement=result,
                     draft_digest=scene_masks["draft_digest"],
                     grid_fingerprint=dataset.get("grid_fingerprint"),
@@ -3046,10 +3046,13 @@ class SceneEditor(QWidget):
             rows = result["sh1_sector_measurement"]["rows"]
             count = sum(r["adequate_for_descriptive_comparison"]
                         for r in rows if r["role"] == "AWAY_TRAIN_CANDIDATE")
+            comparison = result["sh1_sector_measurement"].get("sh1b_model_comparison")
+            note = (f"SH1-B: {len(comparison['candidates'])} diagnostic hypotheses; "
+                    if comparison is not None else "no sky or halo fit; ")
             self.psf0_fg_status.setText(
                 f"OBJID {result['source_objid']} · SH1 saturated-star sectors: "
-                f"{count} usable away-sector radial bins. Signed original pixels; "
-                "no sky or halo fit, no subtraction. Copy Scene QA for profiles.")
+                f"{count} usable away-sector radial bins. {note}"
+                "no subtraction. Copy Scene QA for profiles and model sensitivity.")
             return
         if status != "FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED":
             self.psf0_fg_status.setText(
