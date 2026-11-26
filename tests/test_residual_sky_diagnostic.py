@@ -32,3 +32,13 @@ def test_quadratic_and_missing_quadrants():
     assert predict(f["fit"],np.array([0.,25.]),np.array([0.,10.]))==pytest.approx([.0003,.00030125],abs=1e-10)
     blocked=candidate([r for r in rows if r["quadrant"]!=0],"plane",[],300.,300.,.5)
     assert blocked["status"]=="SKY1_INSUFFICIENT_SPATIAL_SUPPORT"
+
+
+def test_larger_required_target_disk_blocks_extrapolation():
+    y,x=np.indices((401,401)); dx=(x-200.)*.5; dy=(y-200.)*.5
+    a=.0003+1e-6*dx
+    safe=np.hypot(dx,dy)>=55.
+    rows=tile_rows(a,safe,200.,200.,.5,32)
+    f=candidate(rows,"plane",[],200.,200.,.5,required_radius_arcsec=110.)
+    assert f["status"]=="SKY1_VALIDATION_OR_HULL_BLOCKED"
+    assert not f["target_region_inside_training_hull"]

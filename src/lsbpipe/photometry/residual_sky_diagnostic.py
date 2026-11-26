@@ -110,10 +110,11 @@ def summarize_apertures(samples,folds):
     return rows
 
 
-def candidate(rows,method,samples,tx,ty,scale):
+def candidate(rows,method,samples,tx,ty,scale,required_radius_arcsec=48.):
     q=np.asarray([r["quadrant"] for r in rows],dtype=int)
     counts=[int((q==i).sum()) for i in range(4)]
-    out=dict(method=method,quadrant_block_counts=counts,status="SKY1_INSUFFICIENT_SPATIAL_SUPPORT")
+    out=dict(method=method,quadrant_block_counts=counts,required_target_support_radius_arcsec=float(required_radius_arcsec),
+             status="SKY1_INSUFFICIENT_SPATIAL_SUPPORT")
     if min(counts)<3: return out
     f=fit_blocks(rows,method)
     if f is None: return dict(out,status="SKY1_FIT_FAILED")
@@ -124,7 +125,9 @@ def candidate(rows,method,samples,tx,ty,scale):
         # extrapolated beyond its exterior. Interior interpolation is
         # still an unvalidated assumption across the protected region.
         theta=np.linspace(0,2*np.pi,32,endpoint=False)
-        test=np.vstack(([0.,0.],48*np.column_stack((np.cos(theta),np.sin(theta)))))
+        # Circumscribed polygon: its interior contains the entire required disk.
+        radius=required_radius_arcsec/np.cos(np.pi/32)
+        test=np.vstack(([0.,0.],radius*np.column_stack((np.cos(theta),np.sin(theta)))))
         inside=bool(np.all(hull.find_simplex(test)>=0))
     except QhullError:
         inside=False
@@ -140,7 +143,7 @@ def candidate(rows,method,samples,tx,ty,scale):
         cv.append(dict(quadrant=i,training_blocks=len(train),heldout_blocks=len(test),
             median_nMgy_pix=float(np.median(d)),mae_nMgy_pix=float(np.mean(abs(d))),
             rms_nMgy_pix=float(np.sqrt(np.mean(d*d))),fit=ff))
-    out.update(fit=f,target_48arcsec_inside_training_hull=inside,heldout_quadrants=cv,
+    out.update(fit=f,target_region_inside_training_hull=inside,heldout_quadrants=cv,
         empty_apertures=summarize_apertures(samples,folds))
     if len(cv)==4:
         out["cv_equal_quadrant_mae_nMgy_pix"]=float(np.mean([r["mae_nMgy_pix"] for r in cv]))
@@ -183,7 +186,12 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
     g=local_grid(p,wcs)
     native={name:im[g["sl"]] for name,(c,im) in variants.items()}
     valid=np.logical_and.reduce([np.isfinite(im) for im in native.values()])
+    valid &= np.isfinite(p["layers"]["original"][g["sl"]])
     refgeo=(p.get("geo1") or {}).get("reference") or {}
+    # A 40 arcsec ellipse around the fitted centre fits inside this disk.
+    # Also cover the fixed 35 arcsec geometry fit window about the anchor.
+    shift=float(np.hypot(refgeo["east_offset_arcsec"],refgeo["north_offset_arcsec"])) if fitted(refgeo) else 0.
+    required=max(48.,40.+shift+1.)
     d=block_design(g,valid,35.,3.)
     out=dict(schema="desidera.sky1-expanded-residual/1",status="SKY1_NOT_ADOPTED",science_adopted=False,
         original_pixels_modified=False,scene_mask_modified=False,expanded_shape=list(a.shape),
@@ -191,7 +199,7 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
         shared_safe_mask_sha256=native_boolean_mask_sha256(safe),
         shared_original_crop_mask_sha256=native_boolean_mask_sha256(valid),
         shared_original_crop_origin_xy=[int(g["x"][0,0]),int(g["y"][0,0])],
-        trials=[],layers={},reference_geometry=refgeo,
+        trials=[],layers={},reference_geometry=refgeo,required_target_support_radius_arcsec=required,
         warning="Residual correction on top of SH1 sky, not upstream sky. Holdout quadrants exclude this fit's training only; prior halo fit may overlap. No missing-pixel filling or calibrated uncertainty; quadratic is a stress scenario. Masked target interior is interpolation, not observed sky.")
     # Compute profiles on the fixed GEO-1 ellipse before optional geometry refit.
     for guard in GUARDS:
@@ -205,7 +213,7 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
                     safe_pixels=int(m.sum()),safe_mask_sha256=native_boolean_mask_sha256(m),
                     blocks=rows,candidates=[])
                 for method in METHODS:
-                    c=candidate(rows,method,samples,tx,ty,scale)
+                    c=candidate(rows,method,samples,tx,ty,scale,required_radius_arcsec=required)
                     trial["candidates"].append(c)
                     if c["status"]!="SKY1_CONDITIONAL_NOT_ADOPTED": continue
                     # Evaluate sky only in the local geometry crop. Full
