@@ -113,6 +113,47 @@ def key(c):
     return (c["tile_size_pix"],c["assumed_zero_halo_radius_arcsec"],c["sky_model"])
 
 
+def ensemble_refit_deltas(p,baseline,refits,width):
+    """Common pixels for ALL matched hypotheses, including both model supports."""
+    pairs=[(c,refits[key(c)]) for c in baseline if key(c) in refits]
+    if not pairs: return []
+    image=p["layers"]["original"]; base=p["layers"]["residual"]
+    sx,sy=p["source_xy_native_pix"]; tx,ty=p["target_xy_native_pix"]
+    scale=p["pixel_scale_arcsec"]
+    yy,xx=np.ogrid[:image.shape[0],:image.shape[1]]
+    rt=np.hypot(xx-tx,yy-ty)*scale; rs=np.hypot(xx-sx,yy-sy)*scale
+    lo=max(c["training_r_range_arcsec"][0] for pair in pairs for c in pair)
+    hi=min(c["training_r_range_arcsec"][1] for pair in pairs for c in pair)
+    valid=np.isfinite(image)&np.isfinite(base)&(rs>=lo)&(rs<=hi)&(rt<=45.)
+    y,x=np.nonzero(valid); r=rs[y,x]; radius=rt[y,x]
+    dx=(x-sx)*scale; dy=(y-sy)*scale
+    off=np.abs(dx)>=width; values=image[y,x]
+    rows=[]; selections=[]
+    for ap in (20.,30.,35.,40.,45.):
+        for region,mask in (("ALL",radius<=ap),("OFF_STRIP",(radius<=ap)&off)):
+            selections.append(mask)
+            rows.append(dict(aperture_arcsec=ap,region=region,used_pixels=int(mask.sum()),
+                common_radial_support_arcsec=[lo,hi],matched_hypotheses=[]))
+    def residual(c):
+        h=np.interp(r,c["radial_knots_arcsec"],c["halo_at_knots_nMgy_pix"],left=np.nan,right=0.)
+        b=c["sky_constant_nMgy_pix"]+dx*c["sky_x_nMgy_pix_per_arcsec"]+dy*c["sky_y_nMgy_pix_per_arcsec"]
+        return values-h-b
+    for c,d in pairs:
+        b=residual(c); f=residual(d)
+        if not (np.isfinite(b).all() and np.isfinite(f).all()):
+            raise ValueError("SH1-E ensemble support mismatch")
+        for row,m in zip(rows,selections):
+            row["matched_hypotheses"].append(dict(hypothesis=list(key(c)),
+                baseline_flux_nMgy=float(b[m].sum()) if m.any() else None,
+                refit_flux_nMgy=float(f[m].sum()) if m.any() else None,
+                refit_minus_baseline_nMgy=float((f[m]-b[m]).sum()) if m.any() else None))
+    for row in rows:
+        vals=[v["refit_minus_baseline_nMgy"] for v in row["matched_hypotheses"]
+              if v["refit_minus_baseline_nMgy"] is not None]
+        row["refit_delta_range_nMgy"]=[min(vals),max(vals)] if vals else None
+    return rows
+
+
 def directional_halo_experiment(image,iv,hard,*,source_xy,target_xy,scale,
         source_mask,protected,veto,neighbours,baseline_comparison,original_preview):
     a=np.asarray(image,dtype=float); iv=np.asarray(iv,dtype=float)
@@ -148,9 +189,11 @@ def directional_halo_experiment(image,iv,hard,*,source_xy,target_xy,scale,
             baseline_side_residual_nMgy_pix=c["side_median_abs_residual_nMgy_pix"],
             refit_side_residual_nMgy_pix=by_key[key(c)]["side_median_abs_residual_nMgy_pix"])
             for c in candidates if key(c) in by_key]
-        trial=dict(half_width_arcsec=width,excluded_safe_training_pixels=int((safe&strip).sum()),
+        trial=dict(half_width_arcsec=width,excluded_safe_pixels_all_window=int((safe&strip).sum()),
             candidate_count=len(comp["candidates"]),matched_hypotheses=matches,
-            rejected=comp["rejected"],refit_candidates=comp["candidates"])
+            rejected=comp["rejected"],refit_candidates=comp["candidates"],
+            ensemble_refit_aperture_deltas=ensemble_refit_deltas(p,candidates,by_key,width),
+            control_residuals_same_holdout_pixels=False)
         c=by_key.get(key(ref))
         if c is None:
             trial["status"]="SH1E_MATCHED_REFERENCE_REFIT_UNAVAILABLE"; trials.append(trial); continue
@@ -162,10 +205,17 @@ def directional_halo_experiment(image,iv,hard,*,source_xy,target_xy,scale,
         spike=np.where(common,mirrored_template(ot,oq,width,rows),np.nan)
         masked=np.where(np.abs(oq)<width,np.nan,res)
         prefix=f"spike_{int(width)}"
-        for name,val in (("refit_residual",res),("masked_residual",masked),("model",spike),
-                         ("halo_plus_spike",np.where(common,oh+spike,np.nan)),("corrected",res-spike)):
+        yy,xx=np.ogrid[:original.shape[0],:original.shape[1]]
+        inside=np.hypot(xx-p["target_xy_native_pix"][0],yy-p["target_xy_native_pix"][1])*scale<=45.
+        supported_target=int((inside&common&(np.abs(oq)<width)&np.isfinite(spike)).sum())
+        trial["template_supported_in_strip_pixels_within_45arcsec"]=supported_target
+        output_layers=[("refit_residual",res),("masked_residual",masked)]
+        if supported_target:
+            output_layers += [("model",spike),("halo_plus_spike",np.where(common,oh+spike,np.nan)),("corrected",res-spike)]
+        for name,val in output_layers:
             val.setflags(write=False); layers[prefix+"_"+name]=val
-        trial.update(status="SH1E_CONDITIONAL_REFIT_NOT_ADOPTED",reference_hypothesis=list(key(ref)),
+        trial.update(status=("SH1E_CONDITIONAL_REFIT_NOT_ADOPTED" if supported_target else
+                            "SH1E_REFIT_ONLY_NO_TARGET_STRIP_SUPPORT"),reference_hypothesis=list(key(ref)),
             transverse_rows=rows,template_supported_cell_count=sum(r["template_supported"] for r in rows),
             aperture_and_ring_sums=scenario_sums(original,base,res,spike,np.abs(oq)<width,p["target_xy_native_pix"],scale))
         trials.append(trial)
