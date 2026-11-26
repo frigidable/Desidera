@@ -2491,5 +2491,42 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
     assert "no subtraction" in editor.psf0_fg_status.text()
     qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]
     assert not qa["science_adopted"] and not qa["sh1_sector_measurement"]["halo_fitted"]
+    assert not editor.sh1c_preview_btn.isEnabled()
+
+    # Mount a synthetic diagnostic result without running another fit.
+    # Exercise the actual dialog, all seven raster modes and invalidation.
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication,QComboBox,QGraphicsView
+    a=np.zeros(editor._loaded["pixel_shape"],dtype=float)
+    a[0,0]=np.nan
+    preview={"status":"SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED",
+        "grid_fingerprint":editor._loaded.get("grid_fingerprint"),
+        "draft_digest":editor.draft.digest,
+        "effective_source_mask_sha256":editor._contamination.get("effective_source_mask_sha256"),
+        "reference_candidate_index":0,"candidate_count":2,"apertures":[],
+        "layers":{k:a for k in ("original","halo_model","halo_corrected","sky_model",
+                                 "residual","halo_model_spread","sky_model_spread")}}
+    editor._foreground_psf_result["sh1c_preview"]=preview
+    editor._refresh_controls()
+    assert editor.sh1c_preview_btn.isEnabled()
+    observed=[]
+    def inspect_dialog():
+        dialog=QApplication.activeModalWidget()
+        if dialog is None:
+            return
+        try:
+            selector=dialog.findChild(QComboBox,"sh1c_layer_selector")
+            view=dialog.findChild(QGraphicsView,"sh1c_image_view")
+            for i in range(selector.count()):
+                selector.setCurrentIndex(i)
+                observed.append((selector.currentData(),len(view.scene().items())))
+        finally:
+            dialog.accept()
+    QTimer.singleShot(50,inspect_dialog)
+    editor.sh1c_preview_btn.click()
+    assert len(observed)==7 and all(n==1 for _,n in observed)
+    qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]["sh1c_preview"]
+    assert qa["layers"]["original"]["pixel_array_omitted"]
     editor.set_band("r")
     assert editor._foreground_psf_result is None
+    assert not editor.sh1c_preview_btn.isEnabled()
