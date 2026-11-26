@@ -37,6 +37,23 @@ qualification must be unambiguous. Do not score this away.
 density, typography, alignment and iconography. Record actual
 screenshots and independently review them before acceptance.
 
+## Cognitive-load acceptance criteria
+
+A visual review of a GUI change must record (a) the primary next action,
+(b) count and depth of nested disclosures on the active workflow, (c) whether
+disabled/no-data panels dominate the viewport, (d) duplicate explanation
+lines and (e) whether warnings, masks and original FITS provenance remain
+reachable **without color identification**. A new accordion is not a default
+fix for a crowded screen: first consider removing duplication, shortening
+labels while preserving accessible details, or regrouping controls.
+
+The researcher must be able to operate the default task without expanding
+multiple nested panels. Advanced/research-specific controls may be
+separately available but must retain their exact scientific meaning and
+functional behavior. Evaluate this in the 1366×768 and high-font fixture,
+in addition to the established screenshot and regression requirements.
+Static source review alone never certifies this gate.
+
 ## Evidence levels
 - E0: source reviewed. No visual claims.
 - E1: local/CI tests executed; no screenshot examined.

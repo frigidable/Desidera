@@ -17,8 +17,9 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QLineEdit,
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QInputDialog,
     QProgressBar, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget, QHeaderView, QDockWidget, QScrollArea, QSizePolicy,
-    QTabWidget)
+    QVBoxLayout, QWidget, QHeaderView, QDockWidget, QScrollArea, QSizePolicy, QLayout,
+    QAbstractItemView,
+    QTabWidget, QToolButton, QPlainTextEdit)
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEnginePage
 
@@ -44,9 +45,10 @@ from lsbpipe.gui.qa_records import ScienceContext
 from lsbpipe.gui.task_execution import (
     TaskWorker, TaskDispatch, TaskToken, WorkspaceTaskController)
 from lsbpipe.gui.target_controller import TargetController, TargetTextField
-from lsbpipe.gui.survey_data_controller import SurveyDataController
+from lsbpipe.gui.survey_data_controller import ArchiveFileTable, SurveyDataController
 from lsbpipe.gui.science_context_controller import ScienceContextController
 from lsbpipe.gui.workflow_ux import workflow_cue
+from lsbpipe.gui.visual_theme import adorn, apply_visual_style
 
 
 class _DiagnosticWebPage(QWebEnginePage):
@@ -92,12 +94,24 @@ class _NoWebEngineSky(QLabel):
             callback(None)
 
 
+class _FullStatusLabel(QLabel):
+    """Keep a complete accessible status while the compact footer may wrap."""
+    textUpdated = Signal(str)
+
+    def setText(self, text):
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+        self.textUpdated.emit(text)
+
+
 class SurveyExplorer(QMainWindow):
     """Object-bound Legacy FITS workspace; may also run in legacy standalone mode."""
     returnToProjects = Signal()
 
     def __init__(self, *, restore_session=True, launch_remote=True):
         super().__init__()
+        self.setObjectName("desidera_survey_explorer")
         self.setWindowTitle("DESIDERA — Legacy Survey Explorer (experimental)")
         self.resize(1460, 880)
         self.hits = []
@@ -161,7 +175,15 @@ class SurveyExplorer(QMainWindow):
             "QLineEdit[targetInput=\"true\"]:focus { "
             "border: 2px solid palette(highlight); padding-left: 8px; }"
             "QLineEdit[invalid=\"true\"] { border: 2px solid #d56b69; }"
+            "QLabel#workspace_view_caption { color: palette(mid); "
+            "font-size: 11px; font-weight: 600; padding-top: 6px; } "
+            "QPushButton[workspaceView=\"true\"] { "
+            "min-height: 34px; border-radius: 7px; } "
+            "QPushButton[workspaceView=\"true\"]:checked { "
+            "border: 2px solid palette(highlight); "
+            "background: palette(button); font-weight: 650; } "
         )
+        apply_visual_style(self, prefix=self.styleSheet())
         split = QSplitter(Qt.Horizontal, self)
         left = QWidget()
         left.setObjectName("survey_navigation")
@@ -171,28 +193,76 @@ class SurveyExplorer(QMainWindow):
         panel.setSpacing(8)
         # Project navigation belongs above the coordinates card, not inside
         # the target parameters and scientific input controls.
-        self.back_to_projects = QPushButton("← All galaxy projects")
+        navigation_actions = QHBoxLayout()
+        navigation_actions.setSpacing(5)
+        self.back_to_projects = QPushButton("Projects")
         self.back_to_projects.setObjectName("workspace_back_to_projects")
+        adorn(self.back_to_projects, "back")
         self.back_to_projects.setAccessibleName("Return to galaxy projects")
         self.back_to_projects.clicked.connect(self._go_back_to_projects)
         self.back_to_projects.setVisible(False)
-        panel.addWidget(self.back_to_projects)
-        self.dataset_manager_btn = QPushButton("Data Manager · local sources")
+        navigation_actions.addWidget(self.back_to_projects)
+        self.dataset_manager_btn = QPushButton("Sources")
         self.dataset_manager_btn.setObjectName("workspace_open_dataset_manager")
+        adorn(self.dataset_manager_btn, "database")
         self.dataset_manager_btn.setToolTip(
             "Inspect all local observational sources, bricks and filters "
             "before configuring scientific analysis. No network requests.")
         self.dataset_manager_btn.clicked.connect(self._open_dataset_manager)
+        self.dataset_manager_btn.setCheckable(True)
         self.dataset_manager_btn.setVisible(False)
-        panel.addWidget(self.dataset_manager_btn)
-        self.photometry_btn = QPushButton("Photometry · PSF workspace")
+        self.dataset_manager_btn.setAccessibleName("Open local observational sources manager")
+        navigation_actions.addWidget(self.dataset_manager_btn)
+        panel.addLayout(navigation_actions)
+
+        # One visible top-level workspace switcher in the persistent sidebar.
+        # QTabWidget below remains the original content/identity host, but
+        # its redundant visual tab strip is hidden. This is navigation only.
+        self.workspace_view_caption = QLabel("WORKSPACE")
+        self.workspace_view_caption.setObjectName("workspace_view_caption")
+        panel.addWidget(self.workspace_view_caption)
+        workspace_views = QHBoxLayout()
+        workspace_views.setSpacing(5)
+        self.remote_view_btn = QPushButton("Sky")
+        self.remote_view_btn.setObjectName("workspace_view_remote")
+        self.remote_view_btn.setAccessibleName("Show remote sky preview")
+        self.remote_view_btn.setToolTip(
+            "Display the remote Legacy Viewer. Preview tiles are not "
+            "calibrated FITS or adopted photometry.")
+        self.remote_view_btn.setCheckable(True)
+        self.remote_view_btn.setProperty("workspaceView", True)
+        self.remote_view_btn.clicked.connect(
+            lambda _checked=False: self._switch_workspace_view(self.sky))
+        workspace_views.addWidget(self.remote_view_btn, 1)
+        self.fits_view_btn = QPushButton("FITS")
+        self.fits_view_btn.setObjectName("workspace_view_fits")
+        self.fits_view_btn.setAccessibleName("Show original FITS Explorer")
+        self.fits_view_btn.setToolTip(
+            "Show existing local original FITS / WCS data. Navigation never "
+            "downloads images or adopts scientific measurements.")
+        self.fits_view_btn.setCheckable(True)
+        self.fits_view_btn.setProperty("workspaceView", True)
+        self.fits_view_btn.clicked.connect(
+            lambda _checked=False: self._switch_workspace_view(
+                self.fits_explorer))
+        workspace_views.addWidget(self.fits_view_btn, 1)
+        self.photometry_btn = QPushButton("Photometry")
         self.photometry_btn.setObjectName("workspace_open_photometry")
+        adorn(self.photometry_btn, "chart")
+        self.photometry_btn.setAccessibleName("Open photometry research stages")
         self.photometry_btn.setToolTip(
-            "Open the separate scientific photometry screen for this galaxy. "
-            "No measurements are performed or adopted by navigation.")
+            "PSF, Scene, Sky and Apertures; diagnostics remain unadopted. "
+            "The original project and chosen optical band are preserved.")
+        self.photometry_btn.setCheckable(True)
+        self.photometry_btn.setProperty("workspaceView", True)
         self.photometry_btn.clicked.connect(self._open_photometry)
+        self.photometry_btn.clicked.connect(
+            lambda _checked=False: QTimer.singleShot(
+                0, lambda: self._preview_tab_changed(
+                    self.preview_tabs.currentIndex())))
         self.photometry_btn.setVisible(False)
-        panel.addWidget(self.photometry_btn)
+        workspace_views.addWidget(self.photometry_btn, 2)
+        panel.addLayout(workspace_views)
         self.workflow_stage = QLabel("01 / 03 · Target")
         self.workflow_stage.setObjectName("workflow_stage")
         self.workflow_stage.setStyleSheet(
@@ -230,15 +300,18 @@ class SurveyExplorer(QMainWindow):
             "Default units: arcmin; also accepts deg or arcsec. "
             "The outline is shown in the Legacy Viewer.")
 
-        for label, field in (
-            ("RA · degrees / hh:mm:ss", self.ra),
-            ("Dec · degrees / ±dd:mm:ss", self.dec),
-            ("Search area · side length (arcmin)", self.field_width),
-        ):
-            caption = QLabel(label)
-            caption.setBuddy(field)
-            target_form.addWidget(caption)
-            target_form.addWidget(field)
+        # Three compact form rows replace six stacked label/field rows.
+        # The complete coordinate conventions stay in accessible names,
+        # placeholders and tooltips, not in permanently repeated prose.
+        self.target_compact_form = QFormLayout()
+        self.target_compact_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.target_compact_form.setHorizontalSpacing(7)
+        self.target_compact_form.setVerticalSpacing(7)
+        self.target_compact_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        self.target_compact_form.addRow("RA", self.ra)
+        self.target_compact_form.addRow("Dec", self.dec)
+        self.target_compact_form.addRow("Field (arcmin)", self.field_width)
+        target_form.addLayout(self.target_compact_form)
 
         self.advanced_target = QWidget()
         self.advanced_target.setObjectName("target_advanced_options")
@@ -259,7 +332,9 @@ class SurveyExplorer(QMainWindow):
         for field in (self.ra, self.dec, self.field_width):
             field.textChanged.connect(self._target_edited)
 
-        target_form.addWidget(QLabel("Data releases · select before Find data"))
+        release_label = QLabel("Releases")
+        release_label.setToolTip("Choose the official survey releases before Find data")
+        target_form.addWidget(release_label)
         releases_container = QWidget()
         releases = QHBoxLayout(releases_container)
         releases.setContentsMargins(0, 0, 0, 0)
@@ -278,6 +353,7 @@ class SurveyExplorer(QMainWindow):
         actions = QHBoxLayout()
         self.search_btn = QPushButton("Find data")
         self.search_btn.setProperty("primaryAction", True)
+        adorn(self.search_btn, "search", primary=True)
         self.search_btn.setToolTip("Discover Legacy archive bricks for this ICRS field")
         self.search_btn.clicked.connect(self.search)
         actions.addWidget(self.search_btn)
@@ -301,7 +377,7 @@ class SurveyExplorer(QMainWindow):
         self.project_status.setObjectName("local_project_status")
         self.project_status.setWordWrap(True)
         self.advanced_target_layout.addWidget(self.project_status)
-        self.target_options = QPushButton("More target options")
+        self.target_options = QPushButton("Target utilities")
         self.target_options.setProperty("disclosureAction", True)
         self.target_options.setObjectName("target_advanced_toggle")
         self.target_options.setCheckable(True)
@@ -324,7 +400,7 @@ class SurveyExplorer(QMainWindow):
         self.view_mode.currentIndexChanged.connect(self.show_viewer)
         viewer_controls.addWidget(self.view_mode, 2)
         self.advanced_target_layout.addLayout(viewer_controls)
-        self.data_toggle = QPushButton("02 · Data files")
+        self.data_toggle = QPushButton("Files / QA")
         self.data_toggle.setAccessibleName("Show or hide file selection and coverage")
         self.data_toggle.setToolTip(
             "Open the download and local FITS coverage workbench")
@@ -333,6 +409,10 @@ class SurveyExplorer(QMainWindow):
 
         self.bricks = QTableWidget(0, 4)
         self.bricks.setAccessibleName("Release bricks and median exposure diagnostics")
+        self.bricks.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.bricks.setAccessibleDescription(
+            "Use arrow keys to choose a brick or double-click to preview. "
+            "Selecting a row never downloads original FITS.")
         self.bricks.setHorizontalHeaderLabels(["DR", "Region", "Brick", "NEXP g/r/i/z"])
         # Avoid giving narrow DR/region columns the same width as NEXP.
         for column in (0, 1, 2):
@@ -353,6 +433,7 @@ class SurveyExplorer(QMainWindow):
         self.bricks.viewport().installEventFilter(self)
         self.bricks.cellEntered.connect(self._hover_brick_row)
         self.bricks_help = QLabel("Select a brick to work with its files.")
+        self.bricks_help.setAccessibleName("Current survey brick and next action")
         self.bricks_help.setStyleSheet("color: palette(text);")
         self.bricks_help.setWordWrap(True)
         panel.addWidget(self.bricks_help)
@@ -365,6 +446,12 @@ class SurveyExplorer(QMainWindow):
         # They no longer set a 900+ px minimum width on the survey navigation.
         data_container = QWidget()
         data_panel = QVBoxLayout(data_container)
+        # Prevent one long option or table header from setting the scroll
+        # widget's minimum width above the narrow dock viewport.
+        data_panel.setSizeConstraint(QLayout.SetNoConstraint)
+        data_container.setMinimumWidth(0)
+        data_container.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
         data_panel.setContentsMargins(10, 8, 10, 8)
         data_panel.setSpacing(6)
 
@@ -373,6 +460,10 @@ class SurveyExplorer(QMainWindow):
         self.advanced_files = QWidget()
         self.advanced_files.setObjectName("archive_advanced_options")
         advanced_files_layout = QVBoxLayout(self.advanced_files)
+        advanced_files_layout.setSizeConstraint(QLayout.SetNoConstraint)
+        self.advanced_files.setMinimumWidth(0)
+        self.advanced_files.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
         advanced_files_layout.setContentsMargins(0, 4, 0, 4)
         advanced_files_layout.setSpacing(6)
         self.profile = QComboBox()
@@ -382,6 +473,9 @@ class SurveyExplorer(QMainWindow):
         self.profile.setSizeAdjustPolicy(
             QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.profile.setMinimumContentsLength(13)
+        # Product names can be long; fit the dock, not the longest item.
+        self.profile.setMinimumWidth(0)
+        self.profile.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.profile.currentIndexChanged.connect(self._apply_profile)
         advanced_files_layout.addWidget(self.profile)
         self.verify_btn = QPushButton("Check selected URLs")
@@ -391,10 +485,14 @@ class SurveyExplorer(QMainWindow):
         filters = QHBoxLayout()
         self.brick_filter = QComboBox()
         self.brick_filter.addItem("All bricks")
+        self.brick_filter.setMinimumWidth(0)
+        self.brick_filter.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.brick_filter.currentIndexChanged.connect(self._filter_products)
         filters.addWidget(self.brick_filter, 2)
         self.band_filter = QComboBox()
         self.band_filter.addItems(["All bands", "g", "r", "i", "z"])
+        self.band_filter.setMinimumWidth(0)
+        self.band_filter.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.band_filter.currentIndexChanged.connect(self._filter_products)
         filters.addWidget(self.band_filter, 1)
         advanced_files_layout.addLayout(filters)
@@ -402,6 +500,8 @@ class SurveyExplorer(QMainWindow):
         self.kind_filter.addItems(
             ["All products", "image", "invvar", "maskbits", "nexp",
              "tractor", "psfsize", "depth", "galdepth", "model"])
+        self.kind_filter.setMinimumWidth(0)
+        self.kind_filter.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.kind_filter.currentIndexChanged.connect(self._filter_products)
         advanced_files_layout.addWidget(self.kind_filter)
 
@@ -429,11 +529,19 @@ class SurveyExplorer(QMainWindow):
         self.clear_all_btn.clicked.connect(self._clear_all_selection)
         advanced_files_layout.addWidget(self.clear_all_btn)
 
-        self.files = QTableWidget(0, 4)
+        self.files = ArchiveFileTable(0, 4)
         self.files.setAccessibleName(
             "Candidate Legacy FITS files, HTTP evidence and download selections")
-        self.files.setHorizontalHeaderLabels(
-            ["Use", "Product / provenance", "HTTP", "MiB"])
+        self.files.setAccessibleDescription(
+            "Use arrow keys to navigate archive files. Press Space or Enter "
+            "to check or uncheck the highlighted file. No automatic download.")
+        self.files.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # Keep the header readable in 250-px dock viewports; each file row
+        # and its tooltip carry the complete product/source provenance.
+        self.files.setHorizontalHeaderLabels(["Use", "File", "HTTP", "MiB"])
+        self.files.horizontalHeaderItem(1).setToolTip(
+            "Original product kind and band, followed by release, region "
+            "and brick. Hover a file for its full archive URL and evidence.")
         self.files.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.Fixed)
         self.files.horizontalHeader().resizeSection(0, 37)
@@ -447,6 +555,9 @@ class SurveyExplorer(QMainWindow):
         self.files.horizontalHeader().resizeSection(3, 43)
         self.files.setTextElideMode(Qt.ElideMiddle)
         self.files.setAlternatingRowColors(True)
+        self.files.setMinimumWidth(0)
+        self.files.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.files.setMinimumHeight(160)
         self.files.verticalHeader().setVisible(False)
         # Candidate files are primary workflow content, not an advanced option.
@@ -456,14 +567,20 @@ class SurveyExplorer(QMainWindow):
 
         # Advanced local FITS coverage parameters are available on demand;
         # they should not permanently hide the file table's rows.
-        self.qa_toggle = QPushButton("Coverage QA settings")
+        self.qa_toggle = QPushButton("Coverage QA settings", self.advanced_files)
+        self.qa_toggle.hide()
         self.qa_toggle.setCheckable(True)
         self.qa_toggle.setChecked(False)
         self.qa_toggle.setToolTip(
-            "Show circular source and sky-ring radii for local FITS diagnostics")
-        advanced_files_layout.addWidget(self.qa_toggle)
+            "Legacy control: coverage radii now appear directly under File options.")
+        # Keep this compatibility control available to integrations, but do
+        # not surface a redundant second disclosure in the active UI.
         self.qa_widget = QWidget()
         qa_layout = QVBoxLayout(self.qa_widget)
+        qa_layout.setSizeConstraint(QLayout.SetNoConstraint)
+        self.qa_widget.setMinimumWidth(0)
+        self.qa_widget.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
         qa_layout.setContentsMargins(0, 0, 0, 0)
         qa_layout.setSpacing(4)
         self.target_radius = QDoubleSpinBox()
@@ -482,21 +599,30 @@ class SurveyExplorer(QMainWindow):
         self.sky_outer.setDecimals(1)
         self.sky_outer.setValue(180.)
         self.sky_outer.setToolTip("Outer radius of diagnostic sky ring")
+        # Narrow dock inspectors must not force a horizontal scrollbar:
+        # each screening radius is a full-width labelled control.
         for label, control in (
                 ("Object radius (arcsec)", self.target_radius),
                 ("Sky inner (arcsec)", self.sky_inner),
                 ("Sky outer (arcsec)", self.sky_outer)):
-            line = QHBoxLayout()
-            line.addWidget(QLabel(label))
-            line.addWidget(control)
-            qa_layout.addLayout(line)
+            caption = QLabel(label)
+            caption.setWordWrap(True)
+            caption.setBuddy(control)
+            qa_layout.addWidget(caption)
+            control.setMinimumWidth(0)
+            qa_layout.addWidget(control)
         self.qa_btn = QPushButton("Inspect local FITS")
         self.qa_btn.setToolTip(
             "Analyse downloaded IMAGE, INVVAR, NEXP and MASKBITS")
         self.qa_btn.clicked.connect(self.inspect_coverage)
         qa_layout.addWidget(self.qa_btn)
+        qa_caption = QLabel("Local FITS screening · arcsec")
+        qa_caption.setToolTip(
+            "Display-only circular source and sky-ring regions; "
+            "not adopted photometric apertures.")
+        advanced_files_layout.addWidget(qa_caption)
         advanced_files_layout.addWidget(self.qa_widget)
-        self.files_options = QPushButton("Advanced file filters and checks")
+        self.files_options = QPushButton("File options")
         self.files_options.setProperty("disclosureAction", True)
         self.files_options.setObjectName("archive_advanced_toggle")
         self.files_options.setCheckable(True)
@@ -510,8 +636,9 @@ class SurveyExplorer(QMainWindow):
         self.advanced_files.setVisible(False)
         # Anchor the short collapsed workbench at top of the inspector.
         data_panel.addStretch(1)
-        self.qa_toggle.toggled.connect(self.qa_widget.setVisible)
-        self.qa_widget.setVisible(False)
+        # Advanced file options contain the three explicit screening radii
+        # directly; no additional "Coverage QA settings" accordion.
+        self.qa_widget.setVisible(True)
 
         bottom = QHBoxLayout()
         self.save_btn = QPushButton("Save manifest")
@@ -519,6 +646,7 @@ class SurveyExplorer(QMainWindow):
         advanced_files_layout.addWidget(self.save_btn)
         self.download_btn = QPushButton("Download selected")
         self.download_btn.setProperty("primaryAction", True)
+        adorn(self.download_btn, "download", primary=True)
         self.download_btn.setEnabled(False)
         self.download_btn.setToolTip(
             "Select a science quartet or individual files first. Nothing "
@@ -584,11 +712,49 @@ class SurveyExplorer(QMainWindow):
         self.progress_widget.setLayout(progress_controls)
         panel.addWidget(self.progress_widget)
         self.progress_widget.setVisible(False)
-        self.message = QLabel("")
+        # Keep the full operation status outside the scrolling project
+        # controls. A long warning (including an interrupted-operation
+        # journal) must never disappear below the bottom of the viewport.
+        self.status_footer = QWidget()
+        self.status_footer.setObjectName("survey_pinned_status_footer")
+        footer_layout = QVBoxLayout(self.status_footer)
+        footer_layout.setContentsMargins(10, 6, 10, 7)
+        footer_layout.setSpacing(4)
+        self.status_footer.setStyleSheet(
+            "QWidget#survey_pinned_status_footer { "
+            "border-top: 1px solid palette(mid); }")
+        status_row = QHBoxLayout()
+        self.message = _FullStatusLabel("")
+        self.message.setObjectName("survey_task_status")
+        self.message.setAccessibleName("Current survey operation status")
         self.message.setWordWrap(True)
-        self.message.setStyleSheet("color: palette(text); font-size: 11px;")
-        self.message.setMaximumHeight(58)
-        panel.addWidget(self.message)
+        self.message.setStyleSheet("color: palette(text); font-size: 12px;")
+        self.message.setMaximumHeight(64)
+        status_row.addWidget(self.message, 1)
+        self.message_details_btn = QToolButton()
+        self.message_details_btn.setObjectName("survey_status_details_toggle")
+        self.message_details_btn.setText("Full status")
+        self.message_details_btn.setAccessibleName("Expand complete survey status message")
+        self.message_details_btn.setCheckable(True)
+        self.message_details_btn.setEnabled(False)
+        status_row.addWidget(self.message_details_btn, 0, Qt.AlignTop)
+        footer_layout.addLayout(status_row)
+        self.full_message_box = QPlainTextEdit()
+        self.full_message_box.setObjectName("survey_full_status_text")
+        self.full_message_box.setAccessibleName("Complete selectable survey status message")
+        self.full_message_box.setReadOnly(True)
+        self.full_message_box.setMaximumHeight(130)
+        self.full_message_box.hide()
+        self.message_details_btn.toggled.connect(self.full_message_box.setVisible)
+        footer_layout.addWidget(self.full_message_box)
+        self.message_copy_btn = QPushButton("Copy full status")
+        self.message_copy_btn.setObjectName("survey_copy_full_status")
+        self.message_copy_btn.setToolTip("Copy the entire current status message, including errors")
+        self.message_copy_btn.clicked.connect(self._copy_full_status)
+        self.message_copy_btn.hide()
+        self.message_details_btn.toggled.connect(self.message_copy_btn.setVisible)
+        footer_layout.addWidget(self.message_copy_btn)
+        self.message.textUpdated.connect(self._status_text_updated)
 
         # A/B isolation for recurrent top-left ghost overlays on Windows.
         # This never changes the scientific data path or the user's FITS.
@@ -612,6 +778,15 @@ class SurveyExplorer(QMainWindow):
         self.navigation_scroll.setWidget(left)
         self.navigation_scroll.setMinimumWidth(275)
         self.navigation_scroll.setMaximumWidth(425)
+        self.sidebar_shell = QWidget()
+        self.sidebar_shell.setObjectName("survey_sidebar_shell")
+        self.sidebar_shell.setMinimumWidth(275)
+        self.sidebar_shell.setMaximumWidth(425)
+        sidebar_layout = QVBoxLayout(self.sidebar_shell)
+        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setSpacing(0)
+        sidebar_layout.addWidget(self.navigation_scroll, 1)
+        sidebar_layout.addWidget(self.status_footer, 0)
         preview_container = QWidget()
         preview_layout = QVBoxLayout(preview_container)
         preview_layout.setContentsMargins(4, 4, 4, 4)
@@ -620,7 +795,7 @@ class SurveyExplorer(QMainWindow):
         self.preview_label.setAccessibleName("Remote image provenance warning")
         heading_row = QHBoxLayout()
         heading_row.addWidget(self.preview_label, 1)
-        self.band_compare_btn = QPushButton("Compare bands · g/r/i/z")
+        self.band_compare_btn = QPushButton("Compare bands")
         self.band_compare_btn.setObjectName("fits_open_band_comparison")
         self.band_compare_btn.setToolTip(
             "Compare original IMAGE in all locally available optical bands "
@@ -628,7 +803,7 @@ class SurveyExplorer(QMainWindow):
             "PSF matching or photometric color measurement.")
         self.band_compare_btn.clicked.connect(self._toggle_multiband)
         heading_row.addWidget(self.band_compare_btn)
-        self.comparison_btn = QPushButton("Inspect data quality · 4 maps")
+        self.comparison_btn = QPushButton("Quality maps")
         self.comparison_btn.setObjectName("fits_open_four_comparison")
         self.comparison_btn.setToolTip(
             "Interactive 2×2 quality viewer for ONE optical band. "
@@ -640,6 +815,9 @@ class SurveyExplorer(QMainWindow):
         preview_layout.addLayout(heading_row)
         self.preview_tabs = QTabWidget()
         self.preview_tabs.setObjectName("scientific_preview_tabs")
+        # Keep all native pages, indices and Qt signals (scientific QA and
+        # project resume rely on them); expose exactly one navigation level.
+        self.preview_tabs.tabBar().hide()
         self.preview_tabs.addTab(self.sky, "Remote sky")
         self.fits_explorer = FITSExplorer()
         self.preview_tabs.addTab(self.fits_explorer, "FITS Explorer")
@@ -654,6 +832,7 @@ class SurveyExplorer(QMainWindow):
         self.multiband_comparison = MultibandComparison(self.preview_tabs)
         self.dataset_manager = DatasetManager(self.preview_tabs)
         self.photometry_workspace = PhotometryWorkspace(self.preview_tabs)
+        self.photometry_workspace.set_compact_shell(True)
         for optional_page in (
                 self.four_layer_comparison, self.multiband_comparison,
                 self.dataset_manager, self.photometry_workspace):
@@ -692,13 +871,14 @@ class SurveyExplorer(QMainWindow):
         self.preview_tabs.currentChanged.connect(self._preview_tab_changed)
         preview_layout.addWidget(self.preview_tabs, 1)
         self.workspace_split = split
-        split.addWidget(self.navigation_scroll)
+        split.addWidget(self.sidebar_shell)
         split.addWidget(preview_container)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setChildrenCollapsible(False)
         split.setSizes([375, 1085])
         self.setCentralWidget(split)
+        self._preview_tab_changed(self.preview_tabs.currentIndex())
         self.search_btn.setDefault(True)
         # Navigation to a remote web application is deliberately explicit.
         # RA/Dec spinbox edits must not trigger many remote page reloads.
@@ -919,7 +1099,7 @@ class SurveyExplorer(QMainWindow):
             self._psf_restore_pending_key = None
 
     def _run_project_psf0(self, request):
-        """Dispatch genuine Leo P native-band ePSF in the existing GUI thread pool."""
+        """Dispatch native-band diagnostic ePSF in the existing GUI thread pool."""
         from dataclasses import replace
         from lsbpipe.photometry.psf_gui_backend import (
             run_gui_psf0, psf0_experiment_recipe,
@@ -933,7 +1113,7 @@ class SurveyExplorer(QMainWindow):
                                  "Finish or stop it before starting PSF-0.")
             return
         if self._object_project is None or request.get("project_root") != str(self._object_project.root):
-            panel.show_failure("Leo P project identity changed before PSF dispatch")
+            panel.show_failure("Galaxy project identity changed before PSF dispatch")
             return
         try:
             base_config = psf0_experiment_recipe(
@@ -1014,7 +1194,7 @@ class SurveyExplorer(QMainWindow):
             return
         if (self._object_project is None or
                 request.get("project_root") != str(self._object_project.root)):
-            panel.status.setText("Leo P project changed. Reopen Photometry.")
+            panel.status.setText("Galaxy project changed. Reopen Photometry.")
             return
         root = str(self._object_project.root)
         def run(progress):
@@ -1023,7 +1203,7 @@ class SurveyExplorer(QMainWindow):
             panel.show_tractor_acquired(payload)
             self.message.setText(
                 "Original DR11 Tractor/Gaia catalogue verified in current "
-                "Leo P project. PSF has NOT been rebuilt or adopted.")
+                "galaxy project. PSF has NOT been rebuilt or adopted.")
         def failed(message):
             panel.status.setText(
                 "DR11 Tractor/Gaia catalogue unavailable or invalid: "
@@ -1044,7 +1224,7 @@ class SurveyExplorer(QMainWindow):
             return
         if (self._object_project is None or
                 request.get("project_root") != str(self._object_project.root)):
-            panel.status.setText("Leo P project changed. Reopen Photometry.")
+            panel.status.setText("Galaxy project changed. Reopen Photometry.")
             return
         band, root = request["band"], str(self._object_project.root)
         def run(progress):
@@ -1057,7 +1237,7 @@ class SurveyExplorer(QMainWindow):
                 "Local DESI PSFSIZE cannot be verified: " + message
                 + ". Initial FWHM guess unchanged; inspect the exact "
                 "coadd PSFSIZE map or original Tractor PSFSIZE band "
-                "column in the active Leo P project.")
+                "column in the active galaxy project.")
             panel.status.setText(detail)
             panel.prior_source.setText(detail)
         self._start(run, finished, failed, operation_name="psf0-seeing-prior")
@@ -1656,7 +1836,7 @@ class SurveyExplorer(QMainWindow):
 
     def _drawer_visibility_changed(self, visible):
         self.data_toggle.setText(
-            "Hide files and coverage" if visible else "Files and coverage")
+            "Close files / QA" if visible else "Files / QA")
 
     def _refresh_workflow(self):
         """Presentation only; no auto-selection or science acceptance."""
@@ -1684,10 +1864,54 @@ class SurveyExplorer(QMainWindow):
             has_interactive_image=image_ready)
         self.workflow_stage.setText(cue.title)
         self.workflow_hint.setText(cue.instruction)
+        if has_catalog and selected and not local_available:
+            # Reflect EXPLICIT download selections. A selected native quartet
+            # must no longer be described as "choose four files"; an arbitrary
+            # selection must never be misrepresented as a science quartet.
+            selected_paths = self._selected()
+            if selected_paths:
+                hit = self.hits[row]
+                entries = [
+                    item for item in self.manifest["products"]
+                    if item["relative_path"] in selected_paths]
+                same_brick = all(
+                    (item["release"], item["region"], item["brick"]) ==
+                    (hit.release, hit.region, hit.name)
+                    for item in entries)
+                bands = {
+                    item["band"] for item in entries
+                    if item["kind"] != "maskbits"}
+                is_quartet = (
+                    len(selected_paths) == len(entries) == 4
+                    and same_brick
+                    and {item["kind"] for item in entries} ==
+                    {"image", "invvar", "nexp", "maskbits"}
+                    and len(bands) == 1
+                    and next(iter(bands)) in ("g", "r", "i", "z"))
+                if is_quartet:
+                    band = next(iter(bands)).upper()
+                    self.workflow_hint.setText(
+                        f"{band}-band quartet selected · check URLs, then download.")
+                else:
+                    self.workflow_hint.setText(
+                        f"{len(selected_paths)} files selected · review before download.")
         self.science_btn.setEnabled(
             selected and bool(has_catalog) and self.thread is None)
         # An empty brick grid is not a meaningful default navigation element.
         has_bricks = bool(self.hits)
+        if has_bricks and selected and has_catalog:
+            hit = self.hits[row]
+            self.bricks_help.setText(
+                f"Selected · {hit.release.upper()} {hit.region} {hit.name}")
+            details = (
+                "Use Archive files on the right to choose or inspect "
+                "original products. Selecting a brick never downloads data.")
+            self.bricks_help.setToolTip(details)
+            self.bricks_help.setAccessibleDescription(details)
+        else:
+            self.bricks_help.setText("Select a brick to work with its files.")
+            self.bricks_help.setToolTip("")
+            self.bricks_help.setAccessibleDescription("")
         for widget in (self.bricks, self.bricks_heading, self.bricks_help):
             widget.setVisible(has_bricks)
         self.comparison_btn.setVisible(bool(local_available or image_ready))
@@ -1709,11 +1933,11 @@ class SurveyExplorer(QMainWindow):
         if photometry_active:
             self.workflow_stage.setText("03 / 04 · Photometry")
             self.workflow_hint.setText(
-                "Experimental PSF-0 preview available for saved Leo P FITS; "
-                "no sky, galaxy photometry or science adoption.")
+                "PSF-0, Scene and Masks, Background, Aperture. "
+                "Diagnostics only; no result is adopted for science.")
         self.data_toggle.setText(
             "02 · Get original FITS" if has_catalog and not local_available
-            else "Data & diagnostics")
+            else "Files / QA")
 
     def _field(self):
         return self._target_controller.field()
@@ -1940,6 +2164,15 @@ class SurveyExplorer(QMainWindow):
             QMessageBox.information(self, "Legacy Viewer status", chr(10).join(lines))
         self.sky.page().runJavaScript(probe, done)
 
+    def _status_text_updated(self, text):
+        self.full_message_box.setPlainText(text)
+        self.message_details_btn.setEnabled(bool(text))
+        if not text and self.message_details_btn.isChecked():
+            self.message_details_btn.setChecked(False)
+
+    def _copy_full_status(self):
+        QApplication.clipboard().setText(self.message.text())
+
     def _start(self, action, finished, on_error=None, *,
                operation_name="background"):
         """Compatibility wrapper; worker lifecycle belongs to controller."""
@@ -2161,18 +2394,24 @@ class SurveyExplorer(QMainWindow):
                 "exist locally. No network download was attempted.")
             return
         report = summarize_selection(self.manifest["products"], selected)
+        hidden = self._data_controller.hidden_selected_count()
         amount = (f"Known size: {report.known_mib:.1f} MiB" +
                   (f" + {report.unknown_size_files} unknown-sized files."
                    if report.unknown_size_files else "."))
+        hidden_notice = (
+            f"WARNING: {hidden} selected files are hidden by current "
+            "table filters. They WILL also be downloaded.\n\n"
+            if hidden else "")
         text = (
-            f"Download {report.selected_files} science products?\n"
+            f"Download {report.selected_files} selected archive files?\n"
             f"{report.verified_files} HTTP OK, "
             f"{report.missing_files} confirmed missing, "
             f"{report.unknown_files} not verified.\n"
             f"{amount}\n\n"
-            "These are original FITS products and can occupy significant disk space.")
+            + hidden_notice
+            + "Original FITS files can occupy significant disk space.")
         if QMessageBox.question(
-                self, "Confirm science download", text,
+                self, "Confirm archive download", text,
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No) != QMessageBox.Yes:
             return
@@ -2327,6 +2566,12 @@ class SurveyExplorer(QMainWindow):
             self._close_multiband()
         self._refresh_workflow()
 
+    def _switch_workspace_view(self, page):
+        """Presentation-only navigation to a previously existing page."""
+        self.preview_tabs.setCurrentWidget(page)
+        # Even reselecting the current page must keep its button highlighted.
+        self._preview_tab_changed(self.preview_tabs.currentIndex())
+
     def _preview_tab_changed(self, tab):
         # The project/coordinates sidebar remains a stable navigation
         # anchor even inside Photometry. Removing it forced the scientific
@@ -2336,7 +2581,17 @@ class SurveyExplorer(QMainWindow):
         photometry_active = (
             self.preview_tabs.currentWidget() is self.photometry_workspace)
         self.navigation_scroll.show()
-        self.preview_tabs.tabBar().show()
+        # A second tab strip duplicates the sidebar switcher and consumes
+        # ~30 px of valuable science-image height.
+        self.preview_tabs.tabBar().hide()
+        current = self.preview_tabs.currentWidget()
+        self.remote_view_btn.setChecked(current is self.sky)
+        self.fits_view_btn.setChecked(current in (
+            self.fits_explorer, self.four_layer_comparison,
+            self.multiband_comparison))
+        self.photometry_btn.setChecked(current is self.photometry_workspace)
+        self.dataset_manager_btn.setChecked(
+            current is self.dataset_manager)
         self.preview_label.setVisible(not photometry_active)
         if tab != 0:
             # Survey downloads and Science QA live in a separate inspector.

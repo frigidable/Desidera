@@ -9,11 +9,13 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 import platform
+import re
 import sys
 
 import numpy as np
 
-from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice
+from PySide6.QtCore import Qt, Signal, QSaveFile, QIODevice, QSize
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QGroupBox, QHBoxLayout,
     QComboBox, QHeaderView, QLabel, QPushButton, QScrollArea, QTabBar, QTabWidget, QTableWidget,
@@ -27,6 +29,7 @@ from lsbpipe.gui.scene_editor import SceneEditor
 from lsbpipe.gui.sky_workspace import SkyWorkspace
 from lsbpipe.gui.aperture_workspace import ApertureWorkspace
 from lsbpipe.gui.project_qa_bundle import serialize_project_diagnostic_bundle
+from lsbpipe.gui.visual_theme import adorn, apply_visual_style, icon_for
 
 
 
@@ -47,25 +50,40 @@ class PhotometryWorkspace(QWidget):
         self.setObjectName("photometry_workspace")
         self._project_root = None
         self._bound_project_id = None
+        self._project_display_name = None
         self._bound_source_identity = None
         self._suppress_navigation = False
         self._tab_source_identity = None
+        self._compact_shell = False
         root = QVBoxLayout(self)
+        self._root_layout = root
         root.setContentsMargins(18, 14, 18, 14)
         root.setSpacing(12)
 
         header = QHBoxLayout()
-        self.back_btn = QPushButton("← Galaxy Workspace")
+        self._header_layout = header
+        self.back_btn = QPushButton("Workspace")
         self.back_btn.setObjectName("photometry_back_to_workspace")
+        self.back_btn.setAccessibleName("Return to Galaxy Workspace")
+        self.back_btn.setToolTip(
+            "Return to the galaxy's data workspace without running analysis.")
+        adorn(self.back_btn, "back")
         self.back_btn.clicked.connect(self.backRequested.emit)
         header.addWidget(self.back_btn)
         header.addStretch(1)
-        self.sources_btn = QPushButton("Manage sources")
+        self.sources_btn = QPushButton("Sources")
         self.sources_btn.setObjectName("photometry_manage_sources")
+        self.sources_btn.setAccessibleName("Manage observational sources")
+        self.sources_btn.setToolTip(
+            "Inspect linked local FITS and catalogues; no science is run.")
+        adorn(self.sources_btn, "database")
         self.sources_btn.clicked.connect(self.sourcesRequested.emit)
         header.addWidget(self.sources_btn)
-        self.refresh_btn = QPushButton("Refresh saved selection")
+        self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setObjectName("photometry_refresh")
+        self.refresh_btn.setAccessibleName(
+            "Refresh saved observational selection")
+        adorn(self.refresh_btn, "refresh")
         self.refresh_btn.setToolTip(
             "Read project metadata and local file existence, without "
             "opening FITS, connecting to the archive or running analysis.")
@@ -73,6 +91,7 @@ class PhotometryWorkspace(QWidget):
         header.addWidget(self.refresh_btn)
         self.copy_project_qa_btn = QPushButton("Copy QA")
         self.copy_project_qa_btn.setObjectName("photometry_copy_project_qa")
+        adorn(self.copy_project_qa_btn, "copy")
         self.copy_project_qa_btn.setToolTip(
             "Copy a single current-project JSON report: PSF-0 griz, Scene & "
             "Masks, residual background, aperture curves/systematics, stale "
@@ -88,25 +107,33 @@ class PhotometryWorkspace(QWidget):
         title_row.addWidget(self.title)
         title_row.addStretch(1)
         title_row.addWidget(self.copy_project_qa_btn)
+        self._title_row = title_row
         root.addLayout(title_row)
         self.subtitle = QLabel(
-            "PSF, residual sky and aperture fluxes are diagnostic only · "
+            "PSF, sky and aperture fluxes are diagnostic only · "
             "no adopted galaxy photometry")
         self.subtitle.setObjectName("photometry_not_adopted")
         self.subtitle.setWordWrap(True)
         root.addWidget(self.subtitle)
-        self.project_qa_status = QLabel(
-            "One-click project QA is read-only. Run each stage as needed; "
-            "not-run or stale stages are reported explicitly.")
+        self.project_qa_status = QLabel("")
         self.project_qa_status.setObjectName("photometry_project_qa_status")
         self.project_qa_status.setWordWrap(True)
         root.addWidget(self.project_qa_status)
+        self.project_qa_status.hide()
 
         # These are two real user workflows in ONE object-bound
         # Photometry Workspace, not eight non-executable roadmap cards.
         self.stage_tabs = QTabWidget(self)
         self.stage_tabs.setObjectName("photometry_science_stage_tabs")
+        # Qt's default tab widget minimumSizeHint is the maximum of ALL
+        # child stages, including inactive technical pages. Do not let an
+        # inactive stage force the entire research workspace to 1049 px.
+        # The active stage has its own viewport/scrolling and reflow.
+        self.stage_tabs.setMinimumWidth(0)
+        self.stage_tabs.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Expanding)
         psf_stage = QWidget(self.stage_tabs)
+        psf_stage.setMinimumWidth(0)
         psf_stage.setObjectName("photometry_psf_stage")
         psf_stage_layout = QVBoxLayout(psf_stage)
         psf_stage_layout.setContentsMargins(0, 0, 0, 0)
@@ -126,6 +153,8 @@ class PhotometryWorkspace(QWidget):
         center_scroll = QScrollArea()
         center_scroll.setFrameShape(QScrollArea.NoFrame)
         center_scroll.setMinimumWidth(0)
+        center_scroll.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Expanding)
         center_scroll.setWidgetResizable(True)
         center_scroll.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
         central = QWidget()
@@ -135,7 +164,9 @@ class PhotometryWorkspace(QWidget):
         # standard monitors; inner controls retain their own width limits.
         central.setMaximumWidth(1400)
         central.setMinimumWidth(0)
-        central.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        # Respect a narrow Qt viewport even when a previously wide PSF
+        # layout had a larger cached size hint after hiding empty cards.
+        central.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Maximum)
         body = QVBoxLayout(central)
         body.setContentsMargins(8, 2, 8, 2)
         body.setSpacing(12)
@@ -204,16 +235,22 @@ class PhotometryWorkspace(QWidget):
         # with another band, and batch runs still visit all four.
 
         batch = QGroupBox("Multi-band PSF diagnostics")
+        self.batch_box = batch
         batch.setObjectName("psf0_four_band_toolbar")
         batch_layout = QVBoxLayout(batch)
         batch_note = QLabel(
-            "Process available bands with independent QA. Original FITS "
-            "are never modified; results are not adopted automatically.")
+            "Independent per-band PSF diagnostics · not adopted")
+        batch_note.setToolTip(
+            "Runs one diagnostic for each available band. Original FITS "
+            "are never modified and results are never adopted automatically.")
         batch_note.setWordWrap(True)
         batch_layout.addWidget(batch_note)
         batch_buttons = QHBoxLayout()
         self.build_all_psfs_btn = QPushButton("Build PSF for available bands")
         self.build_all_psfs_btn.setObjectName("psf0_build_all_bands")
+        # Disabled before source binding; refresh() enables only when an
+        # actual native FITS + catalogue PSF operation can run.
+        self.build_all_psfs_btn.setEnabled(False)
         self.build_all_psfs_btn.setToolTip(
             "Runs one real native FITS/Tractor PSF-0 diagnostic for each "
             "available band, sequentially, in the existing background "
@@ -239,7 +276,7 @@ class PhotometryWorkspace(QWidget):
         batch_buttons.addWidget(self.save_full_qa_btn)
         batch_buttons.addStretch(1)
         batch_layout.addLayout(batch_buttons)
-        self.batch_status = QLabel("No batch run started. Original FITS unchanged.")
+        self.batch_status = QLabel("")
         self.batch_status.setObjectName("psf0_griz_batch_status")
         self.batch_status.setWordWrap(True)
         batch_layout.addWidget(self.batch_status)
@@ -276,6 +313,9 @@ class PhotometryWorkspace(QWidget):
             self.band_selector.setCurrentIndex)
         body.addWidget(self.band_tabs)
         body.addWidget(batch)
+        # No empty multi-band action block when the selected galaxy has
+        # no usable local PSF inputs. It reappears as soon as data exist.
+        self.batch_box.setVisible(False)
         self.view_mode.currentIndexChanged.connect(
             self._set_view_mode)
         # Compatibility alias for older callers; resolves to the first
@@ -293,19 +333,27 @@ class PhotometryWorkspace(QWidget):
         center_scroll.setWidget(central)
         psf_stage_layout.addWidget(center_scroll, 1)
         self.scene_editor = SceneEditor(self.stage_tabs)
-        self.stage_tabs.addTab(self.scene_editor, "2 · Scene & Masks")
+        self.stage_tabs.addTab(self.scene_editor, "2 · Scene")
         self.stage_tabs.setTabToolTip(
             1, "Original FITS/WCS editor; editable ICRS mask drafts. "
                "No final galaxy segmentation or adopted photometry.")
         self.sky_stage = SkyWorkspace(self.scene_editor, self.stage_tabs)
-        self.stage_tabs.addTab(self.sky_stage, "3 · Background")
+        self.stage_tabs.addTab(self.sky_stage, "3 · Sky")
         self.stage_tabs.setTabToolTip(
             2, "Automatically selected same-project residual-sky controls; "
                "only diagnostic models, no scientific sky adoption.")
         self.aperture_stage = ApertureWorkspace(
             self.scene_editor, self.sky_stage, self.stage_tabs)
         self.stage_tabs.addTab(
-            self.aperture_stage, "4 · Aperture Photometry")
+            self.aperture_stage, "4 · Apertures")
+        # Color-coded pictograms identify the analysis *kind*, never
+        # imply that an unadopted scientific result passed QA.
+        for idx, (glyph, accent) in enumerate((
+                ("galaxy", "#159C93"), ("mask", "#8071DC"),
+                ("sky", "#C58C39"), ("aperture", "#427DC3"))):
+            self.stage_tabs.setTabIcon(
+                idx, icon_for(glyph, color=accent, size=16))
+        self.stage_tabs.setIconSize(QSize(16, 16))
         self.stage_tabs.setTabToolTip(
             3, "Exact observed finite-aperture fluxes, independent elliptical "
                "annuli and curve-of-growth diagnostics. No adopted total.")
@@ -315,9 +363,52 @@ class PhotometryWorkspace(QWidget):
         self.stage_tabs.currentChanged.connect(self._emit_navigation)
         self.band_tabs.currentChanged.connect(self._emit_navigation)
         self.scene_editor.band.currentIndexChanged.connect(self._emit_navigation)
+        # Direct task navigation is active only when focus belongs to this
+        # workspace; hidden project pages must never intercept shortcuts.
+        self.stage_tabs.tabBar().setAccessibleName(
+            "Photometry stages; Ctrl+1 PSF, Ctrl+2 Scene, "
+            "Ctrl+3 Background, Ctrl+4 Aperture")
+        self._stage_shortcuts = {}
+        for index in range(self.stage_tabs.count()):
+            combination = f"Ctrl+{index+1}"
+            self.stage_tabs.setTabToolTip(
+                index, self.stage_tabs.tabToolTip(index)
+                + f" Keyboard shortcut: {combination}.")
+            shortcut = QShortcut(QKeySequence(combination), self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(
+                lambda idx=index: self.stage_tabs.setCurrentIndex(idx))
+            self._stage_shortcuts[index+1] = shortcut
         self._set_view_mode()
         self._update_band_tab_statuses()
         self._apply_science_reflow()
+        apply_visual_style(self)
+
+    def set_compact_shell(self, embedded: bool):
+        """Remove duplicate navigation only when hosted by Galaxy Workspace.
+
+        Standalone Photometry retains its own Back/Sources controls.
+        The outer SurveyExplorer's persistent sidebar owns these actions
+        in embedded mode; signals, PSF tasks and saved navigation are intact.
+        """
+        compact = bool(embedded)
+        if compact == self._compact_shell:
+            return
+        self._compact_shell = compact
+        self.back_btn.setVisible(not compact)
+        self.sources_btn.setVisible(not compact)
+        # In the embedded Galaxy Workspace, the remaining Refresh button
+        # formerly occupied a mostly empty row above the title. Share
+        # one title toolbar with Copy QA; restore standalone layout intact.
+        if compact:
+            self._header_layout.removeWidget(self.refresh_btn)
+            self._title_row.insertWidget(2, self.refresh_btn)
+        else:
+            self._title_row.removeWidget(self.refresh_btn)
+            self._header_layout.addWidget(self.refresh_btn)
+        margin = (10, 8, 10, 8) if self._compact_shell else (18, 14, 18, 14)
+        self._root_layout.setContentsMargins(*margin)
+        self._root_layout.setSpacing(8 if self._compact_shell else 12)
 
     def current_navigation(self):
         current = self.stage_tabs.currentWidget()
@@ -393,7 +484,8 @@ class PhotometryWorkspace(QWidget):
             # inner tab attempts to enforce a horizontal minimum width.
             narrow = self.width() < 1140
             for panel in self.psf0_panels.values():
-                panel.set_narrow_visual_layout(narrow)
+                panel.set_narrow_visual_layout(
+                    narrow, available_width=self.width())
 
     def resizeEvent(self, event):
         self._apply_science_reflow()
@@ -410,6 +502,11 @@ class PhotometryWorkspace(QWidget):
         self.source_box.setVisible(
             research and self.source_details_toggle.isChecked())
         self.copy_full_qa_btn.setVisible(research)
+        # Scientific controls remain inspectable in explicit research mode,
+        # including before any local FITS can be used.
+        self.batch_box.setVisible(
+            research or self.build_all_psfs_btn.isEnabled()
+            or bool(self.batch_status.text().strip()))
         # Complete JSON export remains accessible in Guided mode.
         self._update_band_tab_statuses()
 
@@ -439,7 +536,7 @@ class PhotometryWorkspace(QWidget):
 
     def _request_all_psfs(self):
         if self._project_root is None:
-            self.batch_status.setText("Open Leo P in Galaxy Projects first.")
+            self.batch_status.setText("Open a galaxy project first.")
             return
         requests, skipped = [], []
         for band, panel in self.psf0_panels.items():
@@ -472,6 +569,7 @@ class PhotometryWorkspace(QWidget):
         if self._project_root is None or self._bound_project_id is None:
             self.project_qa_status.setText(
                 "Open a saved galaxy project before copying project QA.")
+            self.project_qa_status.show()
             return
         try:
             content = serialize_project_diagnostic_bundle(self)
@@ -480,12 +578,14 @@ class PhotometryWorkspace(QWidget):
             self.project_qa_status.setText(
                 f"Project QA collection failed ({type(exc).__name__}): "
                 f"{exc}. Clipboard not changed.")
+            self.project_qa_status.show()
             return
         QApplication.clipboard().setText(content)
         self.project_qa_status.setText(
             f"Copied all-stage project QA: {len(content):,} JSON characters. "
             "Paste into ChatGPT or save the clipboard as UTF-8 .json. "
             "No worker, FITS or draft changed. NOT_RUN is not a pass.")
+        self.project_qa_status.show()
 
     def full_qa_report(self):
         from lsbpipe.photometry.psf_gui_backend import (
@@ -543,7 +643,7 @@ class PhotometryWorkspace(QWidget):
     def save_full_qa(self):
         """Explicit atomic JSON export, not a scientific PSF product."""
         if self._project_root is None:
-            self.batch_status.setText("Open Leo P first; no QA file written.")
+            self.batch_status.setText("Open a galaxy project first; no QA file written.")
             return
         try:
             content = self._serialize_full_qa()
@@ -552,8 +652,14 @@ class PhotometryWorkspace(QWidget):
                 f"Cannot serialize complete QA: {exc}. No file written.")
             return
         suffix = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        # Portable filename: reflect the bound galaxy, not a fixed Leo P
+        # example. The input is a validated project display name; strip
+        # reserved punctuation and cap the component length.
+        galaxy = re.sub(
+            r"[^\w-]+", "_", self._project_display_name or "galaxy"
+        ).strip("_")[:48].rstrip("_") or "galaxy"
         proposed = self._project_root / (
-            f"Desidera_LeoP_PSF0_griz_debug_{suffix}.json")
+            f"Desidera_{galaxy}_PSF0_griz_debug_{suffix}.json")
         selected, _ = QFileDialog.getSaveFileName(
             self, "Save non-adopted PSF-0 griz QA", str(proposed),
             "JSON diagnostic report (*.json)")
@@ -599,6 +705,7 @@ class PhotometryWorkspace(QWidget):
         self._project_root = Path(saved.root)
         self.scene_editor.bind_project(self._project_root)
         self._bound_project_id = saved.project_id
+        self._project_display_name = saved.display_name
         self._bound_source_identity = identity
         # A new UUID, release/region/brick or data root invalidates PSFs.
         # Changing only the saved default band does NOT change the four
@@ -642,6 +749,10 @@ class PhotometryWorkspace(QWidget):
             self._tab_source_identity = source_key
         self.build_all_psfs_btn.setEnabled(any(
             panel.run_btn.isEnabled() for panel in self.psf0_panels.values()))
+        self.batch_box.setVisible(
+            self.view_mode.currentData() == "research"
+            or self.build_all_psfs_btn.isEnabled()
+            or bool(self.batch_status.text().strip()))
         self._update_band_tab_statuses()
         if self._project_root is None:
             self.title.setText("Photometry")

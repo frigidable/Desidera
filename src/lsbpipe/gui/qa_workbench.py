@@ -70,7 +70,7 @@ class ScienceQAControls(QWidget):
         self.directory.setToolTip(
             "Choose the folder that contains dr9/.../coadd, or its pilot "
             "parent containing a data/ subfolder. FITS are never modified.")
-        self.dataset_audit = QPushButton("Audit all local datasets & footprint")
+        self.dataset_audit = QPushButton("Audit all local datasets and footprint")
         self.dataset_audit.setObjectName("science_action_dataset_audit")
         self.dataset_audit.setToolTip(
             "Read-only, offline IMAGE/INVVAR/NEXP/MASKBITS integrity and "
@@ -190,7 +190,7 @@ class ScienceQAControls(QWidget):
         self.result_summary.setObjectName("science_result_summary")
         self.result_summary.setWordWrap(True)
         layout.addWidget(self.result_summary)
-        self.result_toggle = QPushButton("Report details & history")
+        self.result_toggle = QPushButton("Report details and history")
         self.result_toggle.setObjectName("science_report_toggle")
         self.result_toggle.setCheckable(True)
         self.result_toggle.setChecked(False)

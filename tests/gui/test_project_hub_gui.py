@@ -4,7 +4,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6.QtWebEngineWidgets")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtWidgets import QDialog
 from scripts.offline_gui_fixture import offline_legacy_viewer
 from lsbpipe.gui.project_hub import ProjectHub, CreateProjectDialog
@@ -709,3 +709,453 @@ def test_hub_blocks_automatic_resume_of_wrong_project_uuid(
     hub._auto_resume_last_project()
     assert hub.workspace is None
     assert "DIFFERENT galaxy project UUID" in hub.hint.text()
+
+
+def test_create_dialog_validation_is_visible_and_blocks_invalid_submit(
+        qtbot, tmp_path):
+    """Partial or invalid coordinates cannot be submitted via the default button."""
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.name.setText("A faint galaxy")
+    assert dialog.create_btn.isEnabled()  # Coordinate-less objects are allowed.
+    dialog.ra.setText("02:40:23.09")
+    assert not dialog.create_btn.isEnabled()
+    assert "both RA and Dec" in dialog.description.text()
+    assert "Correct" in dialog.create_btn.accessibleDescription()
+    dialog.dec.setText("+95:13:45")
+    assert not dialog.create_btn.isEnabled()
+    assert "Check coordinates" in dialog.description.text()
+    dialog.dec.setText("+01:13:45.3")
+    assert dialog.create_btn.isEnabled()
+    assert "ICRS" in dialog.description.text()
+    assert dialog.ra.accessibleName() and dialog.dec.accessibleName()
+    dialog.dec.clear()
+    dialog.ra.clear()
+    assert dialog.create_btn.isEnabled()  # Still supports unidentified targets.
+
+
+def test_hub_keyboard_search_new_project_and_activation_contract(
+        hub, qtbot, monkeypatch, tmp_path):
+    """Window shortcuts and list activation are usable without a mouse."""
+    create_object_project("Leo P", tmp_path / "leo-p")
+    hub.refresh()
+    assert hub._search_shortcut.key().toString() == "Ctrl+F"
+    assert hub._new_project_shortcut.key().toString() == "Ctrl+N"
+    assert hub.filter.accessibleName() == "Search recent galaxy projects"
+    assert hub.projects.accessibleName() == "Recent galaxy projects"
+    hub.filter.setText("Leo")
+    hub.projects.setFocus()
+    hub._search_shortcut.activated.emit()
+    assert hub.filter.hasFocus()
+    assert hub.filter.selectedText() == "Leo"
+    actions = []
+    monkeypatch.setattr(hub, "_new_project", lambda: actions.append("new"))
+    monkeypatch.setattr(hub, "_open_selected", lambda: actions.append("open"))
+    hub._new_project_shortcut.activated.emit()
+    hub.projects.itemActivated.emit(hub.projects.currentItem())
+    assert actions == ["new", "open"]
+
+def test_empty_hub_does_not_offer_science_evidence_for_no_galaxy(
+        hub, tmp_path):
+    """Only real selected projects expose dataset and QA details."""
+    assert not hub.galaxy_card.details_toggle.isVisible()
+    assert not hub.galaxy_card.observation_heading.isVisible()
+    create_object_project("Leo P", tmp_path / "leo-p-card")
+    hub.refresh()
+    assert hub.galaxy_card.details_toggle.isVisible()
+    assert hub.galaxy_card.observation_heading.isVisible()
+    hub.filter.setText("unmatched-galaxy-name")
+    assert not hub.galaxy_card.details_toggle.isVisible()
+    assert not hub.galaxy_card.observation_heading.isVisible()
+
+
+
+def test_create_dialog_scrolls_high_font_fields_and_pins_footer(
+        qtbot, tmp_path):
+    """Large UI fonts must not push Create/Cancel outside a short dialog."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QFont
+    dialog = CreateProjectDialog(default_root=tmp_path)
+    qtbot.addWidget(dialog)
+    dialog.setFont(QFont("Segoe UI", 17))
+    dialog.resize(500, 360)
+    dialog.show()
+    qtbot.wait(60)
+    assert dialog.width() <= 500
+    assert dialog.height() <= 360
+    assert dialog.form_scroll.verticalScrollBar().maximum() > 0
+    assert dialog.create_btn.isVisibleTo(dialog)
+    assert dialog.cancel.isVisibleTo(dialog)
+    end_of_button = dialog.cancel.mapTo(dialog, QPoint(0, 0)).y() + dialog.cancel.height()
+    assert end_of_button <= dialog.height()
+    dialog.name.setText("High DPI research galaxy")
+    dialog.directory.setFocus()
+    qtbot.wait(30)  # Focus-in scroll is deferred until the widget is laid out.
+    top = dialog.directory.mapTo(dialog.form_scroll.viewport(), QPoint(0, 0)).y()
+    assert top >= 0
+    assert top + dialog.directory.height() <= dialog.form_scroll.viewport().height()
+    assert dialog.create_btn.isEnabled()
+    dialog.ra.setText("42.0")
+    assert not dialog.create_btn.isEnabled()
+    assert "both RA and Dec" in dialog.description.text()
+    assert dialog.form_scroll.verticalScrollBar().maximum() > 0
+
+
+def test_hub_observatory_visual_theme_has_icons_and_semantic_primary(qtbot):
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.gui.visual_theme import theme_colors
+    hub=ProjectHub()
+    qtbot.addWidget(hub)
+    assert hub.brand_symbol.pixmap() is not None
+    assert not hub.brand_symbol.pixmap().isNull()
+    assert hub.new_btn.property("visualRole")=="primary"
+    assert hub.continue_btn.property("visualRole")=="primary"
+    assert not hub.new_btn.icon().isNull()
+    assert not hub.import_btn.icon().isNull()
+    assert not hub.tools_menu_btn.icon().isNull()
+    css=hub.styleSheet()
+    assert theme_colors(hub)["ACCENT"] in css
+    assert "QTabBar::tab:selected" in css
+    assert "QGraphicsView" not in css
+    hub.close()
+
+
+def test_selected_galaxy_card_action_has_a_complete_icon_and_primary_style(qtbot):
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.gui.visual_theme import theme_colors
+    hub=ProjectHub()
+    qtbot.addWidget(hub)
+    button=hub.galaxy_card.open_button
+    assert button.property("visualRole")=="primary"
+    assert not button.icon().isNull()
+    css=hub.galaxy_card.styleSheet()
+    assert theme_colors(hub.galaxy_card)["SURFACE"] in css
+    assert "galaxy_card_content" in css
+    hub.close()
+
+
+def test_hub_theme_choice_repaints_existing_card_without_science(qtbot, tmp_path, monkeypatch):
+    """Light/dark/system changes are immediate and only update presentation."""
+    from PySide6.QtCore import QSettings
+    from lsbpipe.gui.project_hub import ProjectHub
+    from lsbpipe.gui.visual_theme import current_theme_mode, theme_colors
+
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    monkeypatch.setenv("DESIDERA_DISABLE_AUTOMATIC_RGB", "1")
+    settings = QSettings("Desidera", "Desidera")
+    prior = settings.value("appearance/theme", None)
+    hub = None
+    try:
+        settings.setValue("appearance/theme", "system")
+        settings.sync()
+        hub = ProjectHub()
+        qtbot.addWidget(hub)
+        assert hub.appearance_actions["system"].isChecked()
+        assert hub.preview_settings_btn.text() == "Display settings"
+        for mode in ("dark", "light", "system"):
+            hub.appearance_actions[mode].trigger()
+            assert current_theme_mode() == mode
+            assert hub.appearance_actions[mode].isChecked()
+            assert theme_colors(hub)["BG"] in hub.styleSheet()
+            assert "QCheckBox, QRadioButton" in hub.styleSheet()
+            assert f"color: {theme_colors(hub)['TEXT']};" in hub.styleSheet()
+            assert theme_colors(hub.galaxy_card)["SURFACE"] in (
+                hub.galaxy_card.styleSheet())
+            assert not hub.new_btn.icon().isNull()
+            assert not hub.galaxy_card.open_button.icon().isNull()
+            assert not hub.brand_symbol.pixmap().isNull()
+        assert not list(tmp_path.glob("**/*.fits"))
+    finally:
+        if hub is not None:
+            hub.close()
+        if prior is None:
+            settings.remove("appearance/theme")
+        else:
+            settings.setValue("appearance/theme", prior)
+        settings.sync()
+
+
+def test_project_hub_cards_preserve_keyboard_model_and_search(hub, qtbot, tmp_path):
+    """Card presentation must not replace the selected project identity."""
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    from lsbpipe.gui.project_hub import GalaxyProjectRowDelegate
+
+    first = create_object_project(
+        "Alpha dwarf", tmp_path / "alpha", field=SkyField(40.09, 1.22, 5.))
+    create_object_project("Beta dwarf", tmp_path / "beta")
+    hub.refresh()
+    assert hub.projects.count() == 2
+    assert hub.library_count.text() == "2 galaxies"
+    assert isinstance(hub.projects.itemDelegate(), GalaxyProjectRowDelegate)
+    assert not hub.empty_panel.isVisible()
+    for row in range(2):
+        item = hub.projects.item(row)
+        visible = item.data(Qt.UserRole + 2)
+        assert isinstance(visible, tuple) and len(visible) == 3
+        assert visible[0] in ("Alpha dwarf", "Beta dwarf")
+        assert visible[1] and visible[2]
+        assert item.data(Qt.UserRole)["project_id"]
+        assert visible[0] in item.text()  # native display text stays accessible
+    option = QStyleOptionViewItem()
+    option.font = hub.projects.font()
+    height = hub.projects.itemDelegate().sizeHint(
+        option, hub.projects.model().index(0, 0)).height()
+    assert height >= QFontMetrics(option.font).height() * 3 + 26
+    image = hub.projects.viewport().grab()
+    assert not image.isNull()
+
+    hub.filter.setText("Alpha")
+    assert hub.library_count.text() == "1 of 2 galaxies"
+    assert hub.projects.currentItem().data(Qt.UserRole)["project_id"] == first.project_id
+    hub.filter.setText("nonexistent")
+    assert hub.library_count.text() == "0 of 2 galaxies"
+    assert hub.empty_title.text() == "No matching galaxies"
+    assert hub.empty_panel.isVisible()
+    hub.filter.clear()
+    assert hub.library_count.text() == "2 galaxies"
+    assert not hub.empty_panel.isVisible()
+
+
+def test_project_card_view_repaints_without_modifying_project(hub, tmp_path):
+    """Reading, painting and changing appearance must not touch the passport."""
+    from PySide6.QtCore import QSettings
+    from lsbpipe.gui.visual_theme import refresh_visual_tree
+
+    project = create_object_project(
+        "UGC 2162", tmp_path / "UGC_2162",
+        field=SkyField(40.096208, 1.22925, 5.))
+    passport = project.root / "lsbpipe-object.json"
+    assert passport.is_file()
+    before = passport.read_bytes()
+    hub.refresh()
+    settings = QSettings("Desidera", "Desidera")
+    prior = settings.value("appearance/theme", None)
+    try:
+        for mode in ("light", "dark"):
+            settings.setValue("appearance/theme", mode)
+            settings.sync()
+            refresh_visual_tree(hub)
+            assert not hub.projects.viewport().grab().isNull()
+            assert not hub.empty_symbol.pixmap().isNull()
+            assert passport.read_bytes() == before
+            assert read_object_project(project.root).project_id == project.project_id
+    finally:
+        if prior is None:
+            settings.remove("appearance/theme")
+        else:
+            settings.setValue("appearance/theme", prior)
+        settings.sync()
+        refresh_visual_tree(hub)
+
+
+def test_card_recommended_next_action_comes_from_saved_readiness(
+        hub, tmp_path):
+    """The expanded overview is metadata-backed, not a fabricated QA pass."""
+    project = create_object_project(
+        "No data target", tmp_path / "target",
+        field=SkyField(40.096208, 1.22925, 5.))
+    hub.refresh()
+    card = hub.galaxy_card
+    assert card.snapshot.project_id == project.project_id
+    assert card.snapshot.readiness is not None
+    assert card.next_step_panel.isVisible()
+    assert card.next_step.isVisible()
+    assert card.next_step.text() == card.snapshot.readiness.next_action_label
+    assert "automatically adopted" in card.next_step_note.text()
+    hub.filter.setText("no such galaxy")
+    assert not card.next_step_panel.isVisible()
+    assert card.snapshot is None
+    assert read_object_project(project.root).project_id == project.project_id
+
+
+def test_qml_project_hub_preview_uses_same_registry_selection_and_actions(
+        hub, qtbot, tmp_path, monkeypatch):
+    """QML is strictly opt-in; its list is a projection of Widgets records."""
+    from PySide6.QtQuick import QQuickView
+    from lsbpipe.gui.project_hub_qml import QmlProjectHubPreview
+
+    assert hub._qml_preview is None
+    a = create_object_project(
+        "Alpha dwarf", tmp_path / "alpha",
+        field=SkyField(40.096208, 1.229250, 5.))
+    b = create_object_project("Beta dwarf", tmp_path / "beta")
+    original = (a.root / "lsbpipe-object.json").read_bytes()
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    assert isinstance(preview, QmlProjectHubPreview)
+    assert preview.status() == QQuickView.Ready
+    assert preview.rootObject().objectName() == "observatory_qml_hub_root"
+    assert preview.model.rowCount() == 2
+    assert preview.bridge.projectCount == hub.projects.count() == 2
+    assert preview.bridge.visibleCount == 2
+    assert preview.bridge.selectedIndex >= 0
+    assert preview.bridge.idAt(preview.bridge.selectedIndex) == preview.bridge.selectedId
+    # The look of a QML list must never change which galaxy is selected.
+    from PySide6.QtCore import QSettings
+    settings = QSettings("Desidera", "Desidera")
+    prior_theme = settings.value("appearance/theme", None)
+    selected_before = preview.bridge.selectedId
+    try:
+        for mode in ("light", "dark", "light"):
+            settings.setValue("appearance/theme", mode)
+            settings.sync()
+            preview.sync()
+            assert preview.bridge.selectedId == selected_before
+            assert (hub.projects.currentItem().data(Qt.UserRole)["project_id"]
+                    == selected_before)
+            assert preview.bridge.selectedIndex >= 0
+    finally:
+        if prior_theme is None:
+            settings.remove("appearance/theme")
+        else:
+            settings.setValue("appearance/theme", prior_theme)
+        settings.sync()
+        preview.sync()
+    assert preview.rootObject().findChild(
+        QObject, "qml_hub_filter") is not None
+    assert not preview.grabWindow().isNull()
+
+    # Every Qt Quick role comes from an existing native QListWidget record.
+    for row in range(preview.model.rowCount()):
+        identity = preview.model.data(preview.model.index(row, 0),
+                                      preview.model.ProjectId)
+        assert identity in (a.project_id, b.project_id)
+        assert preview.model.data(preview.model.index(row, 0),
+                                  preview.model.StatusText)
+        assert preview.model.data(preview.model.index(row, 0),
+                                  preview.model.Coordinates)
+
+    preview.bridge.setFilter("beta")
+    assert hub.filter.text() == "beta"
+    assert preview.model.rowCount() == 1
+    preview.bridge.choose(b.project_id)
+    assert preview.bridge.selectedId == b.project_id
+    assert hub.projects.currentItem().data(Qt.UserRole)["project_id"] == b.project_id
+    assert preview.bridge.selectedName == "Beta dwarf"
+    assert preview.bridge.nextAction == hub.galaxy_card.snapshot.readiness.next_action_label
+
+    # QML Open delegates to the existing guarded Project Hub action.
+    launched = []
+    monkeypatch.setattr(
+        hub, "_open_selected",
+        lambda: launched.append(preview.bridge.selectedId))
+    preview.bridge.openSelected()
+    assert launched == [b.project_id]
+    preview.bridge.setFilter("missing query")
+    assert preview.model.rowCount() == 0
+    assert not preview.bridge.selectedId
+    preview.bridge.openSelected()
+    assert launched == [b.project_id]
+
+    preview.bridge.setFilter("")
+    assert preview.model.rowCount() == 2
+    assert (a.root / "lsbpipe-object.json").read_bytes() == original
+    preview.close()
+
+
+def test_qml_project_hub_preview_missing_folder_keeps_original_uuid(
+        hub, qtbot, tmp_path):
+    """A missing project has only a relink action, never fake readiness."""
+    from lsbpipe.gui.project_hub_qml import QmlProjectHubPreview
+    project = create_object_project(
+        "Unresolved dwarf", tmp_path / "original",
+        field=SkyField(40.096208, 1.229250, 5.))
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    assert isinstance(preview, QmlProjectHubPreview)
+    root = project.root
+    root.rename(tmp_path / "relocated")
+    hub.refresh()
+    assert preview.model.rowCount() == 1
+    preview.bridge.choose(project.project_id)
+    assert preview.bridge.selectedId == project.project_id
+    assert "Relink" in preview.bridge.nextAction
+    assert "Missing" in preview.bridge.selectedStatus
+    assert preview.bridge.datasetLabel != "Verified science"
+    preview.close()
+
+
+def test_qml_evidence_controls_delegate_to_native_actions(
+        hub, qtbot, tmp_path, monkeypatch):
+    """No alternative network, catalogue or project mutation route exists."""
+    from PySide6.QtCore import QObject
+
+    a = create_object_project(
+        "QML catalogue test", tmp_path / "catalogue",
+        field=SkyField(40.096208, 1.22925, 5.))
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    # The QML ScrollView owns an internal content scene with different
+    # QObject AND visual child parentage. Check the actual mounted control,
+    # evidence-bound bridge properties and rendered screenshot instead.
+    assert preview.rootObject().findChild(
+        QObject, "qml_hub_evidence_scroll") is not None
+    assert not preview.grabWindow().isNull()
+    assert preview.bridge.selectedId == a.project_id
+    assert preview.bridge.catalogueLabel == (
+        "No confirmed SIMBAD / NED association")
+    assert "No saved FITS/WCS audit" in preview.bridge.qaEvidence
+    assert not preview.bridge.canLocalPreview
+    assert preview.bridge.canRemotePreview == hub.rgb_action.isEnabled()
+    assert preview.bridge.canCatalogue
+    assert preview.bridge.canConfigure
+    assert preview.bridge.canRemove
+
+    actions = []
+    monkeypatch.setattr(
+        hub, "_open_knowledge", lambda: actions.append("simbad"))
+    monkeypatch.setattr(
+        hub, "_open_ned", lambda: actions.append("ned"))
+    monkeypatch.setattr(
+        hub, "_open_configurations", lambda: actions.append("config"))
+    monkeypatch.setattr(
+        hub, "_fetch_rgb_preview", lambda: actions.append("remote"))
+    monkeypatch.setattr(
+        hub, "_regenerate_preview", lambda: actions.append("local"))
+    monkeypatch.setattr(
+        hub, "_remove_selected", lambda: actions.append("remove"))
+    preview.bridge.runTool("simbad")
+    preview.bridge.runTool("ned")
+    preview.bridge.runTool("config")
+    preview.bridge.runTool("localPreview")  # no local FITS => disabled
+    hub.rgb_action.setEnabled(False)
+    preview.bridge.runTool("remotePreview")  # honor original disabled action
+    preview.bridge.runTool("remove")
+    preview.bridge.runTool("invalid")
+    assert actions == ["simbad", "ned", "config", "remove"]
+    assert hub.projects.currentItem().data(Qt.UserRole)["project_id"] == a.project_id
+    assert read_object_project(a.root).project_id == a.project_id
+    preview.close()
+
+
+def test_qml_unconfirmed_and_unreadable_catalogue_evidence_fail_closed(
+        hub, tmp_path):
+    """The read-only inspector never upgrades candidates to confirmed IDs."""
+    from dataclasses import replace
+
+    project = create_object_project(
+        "No catalogue adoption", tmp_path / "no_catalogue",
+        field=SkyField(40.096208, 1.22925, 5.))
+    hub.refresh()
+    hub._open_qml_preview()
+    preview = hub._qml_preview
+    original = hub.galaxy_card.snapshot
+    assert original.project_id == project.project_id
+    try:
+        hub.galaxy_card.set_snapshot(replace(
+            original, knowledge_status="UNVERIFIED_CANDIDATES_ONLY"))
+        assert "Unverified candidates" in preview.bridge.catalogueLabel
+        assert "confirmed identity" in preview.bridge.catalogueLabel
+        hub.galaxy_card.set_snapshot(replace(
+            original, knowledge_status="EVIDENCE_ERROR",
+            knowledge_error="Receipt failed project ID check"))
+        assert "requires inspection" in preview.bridge.catalogueLabel
+        assert "Receipt failed" in preview.bridge.catalogueEvidence
+        assert "SCIENCE HOLD" not in preview.bridge.catalogueLabel
+    finally:
+        hub.galaxy_card.set_snapshot(original)
+        preview.close()

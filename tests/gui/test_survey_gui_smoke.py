@@ -123,13 +123,11 @@ def test_data_workbench_is_progressive_and_essential_actions_remain_reachable(
     # No catalog has been searched; advanced settings must not fabricate
     # or reveal a candidate FITS table before it has entries.
     assert not window.files.isVisible()
-    assert window.qa_toggle.isVisible()
-    window.qa_toggle.click()
-    qtbot.wait(20)
+    assert not window.qa_toggle.isVisible()  # no redundant second accordion
     assert window.qa_widget.isVisible()
     assert window.qa_btn.isVisible()
     assert window.download_btn.isVisible()
-    window.qa_toggle.click()
+    window.files_options.click()
     qtbot.wait(20)
     assert not window.qa_widget.isVisible()
     window.data_toggle.click()
@@ -175,6 +173,35 @@ def test_navigation_scroll_keeps_dense_controls_accessible(offline_explorer, qtb
     assert window.data_toggle.isVisible()
 
 
+def test_survey_status_stays_pinned_below_scrollable_navigation(
+        offline_explorer, qtbot):
+    """Real laptop QA: an unfinished-operation warning must not scroll away."""
+    from PySide6.QtWidgets import QWidget
+    w = offline_explorer
+    w.resize(1366, 768)
+    w.message.setText(
+        "Previous session left unfinished operation records. "
+        "Inspect immutable QA history before adopting results.")
+    qtbot.wait(25)
+    assert isinstance(w.sidebar_shell, QWidget)
+    assert w.status_footer.parentWidget() is w.sidebar_shell
+    assert w.navigation_scroll.parentWidget() is w.sidebar_shell
+    assert w.message.isVisible() and w.message_details_btn.isVisible()
+    assert w.status_footer.geometry().bottom() <= w.sidebar_shell.height()
+    initial_status = w.message.text()
+    scroll = w.navigation_scroll.verticalScrollBar()
+    scroll.setValue(scroll.maximum())
+    qtbot.wait(15)
+    assert w.message.text() == initial_status
+    assert w.message.isVisible()
+    assert w.status_footer.geometry().bottom() <= w.sidebar_shell.height()
+    w.message_details_btn.click()
+    qtbot.wait(15)
+    assert w.full_message_box.isVisible()
+    assert w.full_message_box.toPlainText() == initial_status
+    assert w.status_footer.geometry().bottom() <= w.sidebar_shell.height()
+
+
 def test_selection_can_explicitly_clear_hidden_and_visible_products(offline_explorer):
     window = offline_explorer
     apply_offline_state(window, "S1")
@@ -217,7 +244,8 @@ def test_science_inspector_docks_to_right_of_remote_viewer(offline_explorer, qtb
     qtbot.wait(40)
     assert window.data_drawer.isVisible()
     assert window.files.columnCount() == 4
-    assert window.files.horizontalHeaderItem(1).text() == "Product / provenance"
+    assert window.files.horizontalHeaderItem(1).text() == "File"
+    assert "release, region" in window.files.horizontalHeaderItem(1).toolTip()
     assert window.files.horizontalHeaderItem(2).text() == "HTTP"
     assert window.files.rowCount() == 88
     inspector_x = window.data_drawer.mapTo(window, QPoint(0, 0)).x()
@@ -231,6 +259,7 @@ def test_science_inspector_docks_to_right_of_remote_viewer(offline_explorer, qtb
 
 
 def test_http_status_abbreviations_keep_original_evidence(offline_explorer):
+    from PySide6.QtWidgets import QCheckBox
     window = offline_explorer
     apply_offline_state(window, "S1")
     row = 0
@@ -239,6 +268,14 @@ def test_http_status_abbreviations_keep_original_evidence(offline_explorer):
     assert first["brick"] in item.text()
     assert first["release"].upper() in item.text()
     assert first["kind"] in item.text()
+    expected_kind = (
+        f"{first['kind']}-{first['band']}"
+        if first["band"] else first["kind"])
+    assert item.text().startswith(expected_kind + " · ")
+    check = window.files.cellWidget(row, 0).findChild(QCheckBox)
+    assert expected_kind in check.accessibleName()
+    assert first["brick"] in check.accessibleName()
+    assert "download" in check.accessibleName()
     assert first["relative_path"] in item.toolTip()
     assert window.files.item(row, 2).text() == "?"
     r = {first["relative_path"]: {
@@ -1040,3 +1077,155 @@ def test_dataset_audit_passport_conflict_is_not_hidden_by_success_status(
     assert "FITS audit: 1/2 quartets" not in status
     assert "Dataset integrity audit saved" in window.message.text()
     assert (project.root / "lsbpipe-object.json").read_bytes() == original
+
+
+def test_survey_long_status_is_fully_readable_and_explicitly_copyable(
+        offline_explorer, qtbot):
+    """A compact footer may be truncated visually, but no message is lost."""
+    from PySide6.QtWidgets import QApplication
+    w = offline_explorer
+    detail = ("Synthetic failure: FITS validation could not complete; "
+              "original science data remain unchanged. " * 10)
+    w.message.setText(detail)
+    assert w.message.text() == detail
+    assert w.message.toolTip() == detail
+    assert w.message.accessibleDescription() == detail
+    assert w.message_details_btn.isEnabled()
+    w.message_details_btn.click()
+    assert w.full_message_box.isVisible()
+    assert w.full_message_box.toPlainText() == detail
+    w.message_copy_btn.click()
+    assert QApplication.clipboard().text() == detail
+    w.message.setText("Recovered: manual inspection required.")
+    assert w.full_message_box.toPlainText() == "Recovered: manual inspection required."
+    w.message.setText("")
+    assert not w.message_details_btn.isEnabled()
+    assert not w.full_message_box.isVisible()
+
+def test_survey_and_science_qa_buttons_keep_readable_literal_captions(
+        offline_explorer):
+    """Qt ampersand mnemonics must not damage user-visible action text."""
+    w = offline_explorer
+    w._refresh_workflow()
+    assert w.data_toggle.text() in (
+        "Files / QA", "02 · Get original FITS")
+    assert w.science_qa.dataset_audit.text() == (
+        "Audit all local datasets and footprint")
+    assert w.science_qa.result_toggle.text() == "Report details and history"
+
+
+
+def test_primary_survey_navigation_is_compact_and_no_nested_file_disclosure(
+        offline_explorer, qtbot):
+    """The primary controls remain discoverable without accordion cascades."""
+    w = offline_explorer
+    w.resize(1366, 768)
+    qtbot.wait(20)
+    assert w.target_compact_form.rowCount() == 3
+    for field in (w.ra, w.dec, w.field_width):
+        assert w.target_compact_form.labelForField(field) is not None
+    assert w.ra.accessibleName() and w.dec.accessibleName()
+    assert "Files / QA" in w.data_toggle.text() or "original FITS" in w.data_toggle.text()
+    w.data_toggle.click()
+    assert not w.advanced_files.isVisible()
+    assert not w.qa_widget.isVisible()
+    w.files_options.click()
+    assert w.qa_widget.isVisible()
+    assert w.qa_btn.isVisible()
+    assert not w.qa_toggle.isVisible()
+    for field in (w.target_radius, w.sky_inner, w.sky_outer):
+        assert field.isVisible()
+    w.files_options.click()
+    assert not w.qa_widget.isVisible()
+
+
+def test_archive_file_table_keyboard_toggle_is_read_only_and_no_download(
+        offline_explorer, qtbot):
+    """One table tab-stop; Space/Enter toggles only a download checkbox."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QAbstractItemView, QCheckBox
+
+    w = offline_explorer
+    apply_offline_state(w, "S1")
+    w.bricks.selectRow(0)
+    assert w.bricks.editTriggers() == QAbstractItemView.NoEditTriggers
+    assert w.files.editTriggers() == QAbstractItemView.NoEditTriggers
+    assert "Space or Enter" in w.files.accessibleDescription()
+    assert not w._selected()
+    row = next(i for i in range(w.files.rowCount())
+               if not w.files.isRowHidden(i))
+    check = w.files.cellWidget(row, 0).findChild(QCheckBox)
+    assert check.focusPolicy() == Qt.NoFocus
+    path = w.manifest["products"][row]["relative_path"]
+    w.files.setCurrentCell(row, 1)
+    w.files.setFocus()
+    qtbot.keyClick(w.files, Qt.Key_Space)
+    assert w._selected() == {path}
+    assert w.thread is None
+    assert w.download_btn.isEnabled()
+    qtbot.keyClick(w.files, Qt.Key_Return)
+    assert not w._selected()
+    assert not w.download_btn.isEnabled()
+    qtbot.keyClick(w.files, Qt.Key_Space, modifier=Qt.ControlModifier)
+    assert not w._selected()
+    assert w.thread is None
+
+
+def test_keyboard_does_not_check_hidden_archive_rows(offline_explorer, qtbot):
+    """Hidden products cannot be toggled by stale keyboard current-index."""
+    from PySide6.QtCore import Qt
+    w = offline_explorer
+    apply_offline_state(w, "S1")
+    w.bricks.selectRow(0)
+    row = next(i for i in range(w.files.rowCount())
+               if not w.files.isRowHidden(i))
+    w.files.setCurrentCell(row, 1)
+    kind = w.manifest["products"][row]["kind"]
+    w.kind_filter.setCurrentText("tractor" if kind != "tractor" else "image")
+    assert w.files.isRowHidden(row)
+    # Qt can move the current index to a different visible row on filtering.
+    # Only exercise the hidden-row guard when the index remains unchanged.
+    if w.files.currentRow() == row:
+        w.files.setFocus()
+        qtbot.keyClick(w.files, Qt.Key_Space)
+        assert not w._selected()
+
+
+def test_filtered_out_selected_fits_remain_explicitly_warned_before_download(
+        offline_explorer, monkeypatch):
+    """An invisible checked file cannot silently join a download batch."""
+    from unittest.mock import patch
+    from lsbpipe.gui import survey_explorer as gui
+
+    w = offline_explorer
+    apply_offline_state(w, "S1")
+    w.bricks.selectRow(0)
+    with patch.object(gui.QInputDialog, "getItem", return_value=("r", True)):
+        w.select_science_quartet()
+    before = w._selected()
+    assert len(before) == 4
+    w.kind_filter.setCurrentText("image")
+    assert w._selected() == before  # a view filter never clears user choices
+    assert w._data_controller.hidden_selected_count() == 3
+    assert "4 selected (3 hidden)" in w.selected_label.text()
+    assert "WILL be downloaded" in w.download_btn.toolTip()
+    assert "hidden" in w.selected_label.accessibleDescription()
+
+    prompts = []
+    def decline(*args):
+        prompts.append(args)
+        return gui.QMessageBox.No
+
+    monkeypatch.setattr(gui.QMessageBox, "question", decline)
+    w.download()
+    assert len(prompts) == 1
+    assert "3 selected files are hidden" in prompts[0][2]
+    assert "Download 4 selected archive files" in prompts[0][2]
+    assert w.thread is None  # No download or FITS mutation on No.
+    w.kind_filter.setCurrentText("All products")
+    assert w._data_controller.hidden_selected_count() == 0
+    assert "hidden" not in w.selected_label.text()
+    assert not w.selected_label.accessibleDescription()
+    w.clear_all_btn.click()
+    assert not w._selected()
+    assert "hidden" not in w.download_btn.toolTip()

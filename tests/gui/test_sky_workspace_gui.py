@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("pytestqt")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGroupBox
 from lsbpipe.gui.photometry_workspace import PhotometryWorkspace
 from lsbpipe.gui.sky_workspace import SkyWorkspace
 import lsbpipe.gui.sky_workspace as sky_module
@@ -17,8 +17,8 @@ def test_stage03_is_real_and_resumable_without_loading_or_running(qtbot):
     w = PhotometryWorkspace()
     qtbot.addWidget(w)
     assert w.stage_tabs.count() == 4
-    assert w.stage_tabs.tabText(2) == "3 · Background"
-    assert w.stage_tabs.tabText(3) == "4 · Aperture Photometry"
+    assert w.stage_tabs.tabText(2) == "3 · Sky"
+    assert w.stage_tabs.tabText(3) == "4 · Apertures"
     assert w.sky_stage._future is None
     assert w.sky_stage._result is None
     assert not w.sky_stage.run_btn.isEnabled()
@@ -28,6 +28,8 @@ def test_stage03_is_real_and_resumable_without_loading_or_running(qtbot):
     assert w.scene_editor._loaded is None
     assert w.sky_stage._future is None
     assert "current" in w.sky_stage.context_label.text().lower()
+    assert w.sky_stage.findChild(QGroupBox).title() == (
+        "Use current Scene and Masks evidence")
     w.restore_navigation(stage="scene",band="i")
     assert w.current_navigation() == ("scene", "i")
     w.restore_navigation(stage="sky",band="i")
@@ -176,3 +178,330 @@ def test_stage03_readout_exposes_synthetic_sky_leakage_not_only_recovery():
     assert "NOT total galaxy light" in displayed
     assert "signal leakage, NOT a sky pedestal" in displayed
     assert "SKY SCIENCE HOLD" in displayed
+
+
+def test_sky_summary_is_compact_and_full_science_report_on_demand(qtbot):
+    from types import SimpleNamespace
+    scene=SimpleNamespace(
+        _band="r",_future=None,_project_root=Path("/not/read"),
+        _project_id="p",_loaded=None,_draft=None,_contamination=None)
+    w=SkyWorkspace(scene)
+    qtbot.addWidget(w)
+    w.resize(1100,700)
+    w.show()
+    assert not w.run_btn.isEnabled()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+    assert w.status.isVisible()
+    assert w.status.text() == "Not evaluated."
+    from PySide6.QtWidgets import QLabel
+    assert any("science HOLD" in label.text()
+               for label in w.findChildren(QLabel))
+    assert "Scene" in w.context_label.text()
+    # A numeric readout remains stored (and can be exported) but is not
+    # a permanently open wall of text in the initial workspace.
+    assert "No background result" in w.readout.toPlainText()
+    w._result={"status":"INSUFFICIENT_AUTOMATIC_SCENE_SKY_GEOMETRY"}
+    w.report_toggle.show()
+    w.report_toggle.click()
+    assert w.readout.isVisible()
+    w._reset_report_visibility()
+    assert not w.report_toggle.isVisible()
+    assert not w.readout.isVisible()
+
+
+def test_sky_empty_state_has_one_active_navigation_action(qtbot):
+    w=PhotometryWorkspace()
+    qtbot.addWidget(w)
+    w.resize(1366,768)
+    w.show()
+    w.restore_navigation(stage="sky",band="g")
+    assert w.sky_stage.open_scene_btn.isVisible()
+    assert w.sky_stage.open_scene_btn.isEnabled()
+    assert not w.sky_stage.run_btn.isVisible()
+    assert not w.sky_stage.copy_btn.isVisible()
+    assert not w.sky_stage.report_toggle.isVisible()
+    w.sky_stage.open_scene_btn.click()
+    assert w.stage_tabs.currentWidget() is w.scene_editor
+    assert w.scene_editor._loaded is None
+
+
+def test_stage03_user_discard_during_running_worker_is_safe_and_retryable(
+        qtbot, monkeypatch):
+    """A running Future finishes, but its result never reaches QA or cache."""
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+
+    scene=SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    dataset={"project_id":"p","source":"r-native","band":"r"}
+    draft=SimpleNamespace(digest="a"*64)
+    contamination={"catalog_sha256":"b"*64}
+    identity=("p","r-native","r",draft.digest,"b"*64,
+              id(dataset),id(contamination))
+    snap=(identity,dataset,draft,contamination)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    assert future.set_running_or_notify_cancel()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    assert stage._future is future
+    assert stage.discard_btn.isVisible()
+    assert not stage.run_btn.isEnabled()
+    stage.discard_btn.click()
+    assert not stage.discard_btn.isEnabled()
+    assert "will finish" in stage.status.text()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.run_btn.isEnabled()
+    future.set_result({"status":"SHOULD_NEVER_ENTER_QA"})
+    stage._poll_worker()
+    assert stage._result is None
+    assert stage._result_identity is None
+    assert stage._last_failure is None
+    assert "discarded by user" in stage.status.text()
+    assert stage.run_btn.isEnabled()
+    assert not stage.discard_btn.isVisible()
+    assert not stage.copy_btn.isVisible()
+    assert "SHOULD_NEVER_ENTER_QA" not in stage.readout.toPlainText()
+    assert not stage._timer.isActive()
+
+
+def test_stage03_queued_diagnostic_is_cancelled_before_execution(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    scene=SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    dataset={"project_id":"p","source":"r-native","band":"r"}
+    draft=SimpleNamespace(digest="a"*64)
+    mask={"catalog_sha256":"b"*64}
+    snap=(("p","r-native","r",draft.digest,"b"*64,
+           id(dataset),id(mask)),dataset,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    future=Future()
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage.discard_btn.click()
+    assert future.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+    assert "discarded by user" in stage.status.text()
+
+
+def test_sky_worker_failure_is_actionable_and_can_be_retried_without_new_scene(
+        qtbot,monkeypatch):
+    """Failed diagnostic never consumes original Scene/mask evidence."""
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    scene=SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    dataset={"project_id":"p","source":"native-r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=("p","native-r","r",draft.digest,mask["catalog_sha256"],
+              id(dataset),id(mask))
+    snap=(identity,dataset,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only insufficient tiles"))
+    retried=Future()
+    tasks=[failed,retried]
+    monkeypatch.setattr(stage._executor,"submit",lambda *args,**kw:tasks.pop(0))
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage._result is None
+    assert stage._last_failure["status"]=="WORKER_FAILED_CLOSED"
+    assert "test-only insufficient tiles" in stage.status.text()
+    assert "Evaluate residual sky to retry" in stage.status.text()
+    assert stage.run_btn.isEnabled()
+    assert not stage.copy_btn.isEnabled()
+    assert not stage.report_toggle.isVisible()
+    assert stage._snapshot() is snap
+    stage.run_diagnostic()
+    assert stage._future is retried
+    assert stage._last_failure is None
+    assert not stage.run_btn.isEnabled()
+    stage.discard_pending_result()
+    assert retried.cancelled()
+    assert stage._future is None
+    assert stage.run_btn.isEnabled()
+
+
+def test_sky_executor_start_failure_is_reported_without_qt_exception(
+        qtbot,monkeypatch):
+    from types import SimpleNamespace
+    scene=SimpleNamespace(_band="r",_loaded=None,_draft=None,
+                          _contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    ds={"project_id":"p","source":"native-r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    snap=(("p","native-r","r",draft.digest,"c"*64,
+           id(ds),id(mask)),ds,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snap)
+    monkeypatch.setattr(
+        stage._executor,"submit",
+        lambda *args,**kw:(_ for _ in ()).throw(
+            RuntimeError("test-only pool unavailable")))
+    stage.refresh_context()
+    stage.run_diagnostic()
+    assert stage._future is None
+    assert stage._active_identity is None
+    assert stage.run_btn.isEnabled()
+    assert stage._last_failure["status"]=="WORKER_START_FAILED_CLOSED"
+    assert "test-only pool unavailable" in stage.status.text()
+    assert "to retry" in stage.status.text()
+    assert not stage.copy_btn.isEnabled()
+
+
+def test_sky_copy_failure_report_redacts_exception_and_invalidates_on_rebind(
+        qtbot,monkeypatch):
+    import json
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication
+
+    scene=SimpleNamespace(_band="r",_loaded=None,_draft=None,
+                          _contamination=None)
+    stage=SkyWorkspace(scene)
+    qtbot.addWidget(stage)
+    stage.show()
+    ds={"project_id":"private-galaxy","source":"native-r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=(ds["project_id"],ds["source"],"r",draft.digest,
+              mask["catalog_sha256"],id(ds),id(mask))
+    snapshot=(identity,ds,draft,mask)
+    monkeypatch.setattr(stage,"_snapshot",lambda:snapshot)
+    stage.refresh_context()
+    future=Future()
+    future.set_exception(RuntimeError(
+        "sensitive /home/researcher/secret/FITS and token=private"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:future)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage._last_failure is not None
+    assert stage.copy_error_btn.isVisible()
+    assert not stage.copy_btn.isVisible()
+    stage.copy_error_btn.click()
+    report=QApplication.clipboard().text()
+    payload=json.loads(report)
+    assert payload["operation"]=="evaluate_residual_sky"
+    assert payload["error_type"]=="RuntimeError"
+    assert payload["status"]=="WORKER_FAILED_CLOSED"
+    assert payload["band"]=="r"
+    assert "/home/researcher" not in report
+    assert "token=private" not in report
+    assert "private-galaxy" not in report
+    assert "traceback" not in payload
+    assert payload["science_status"]=="UNADOPTED_DIAGNOSTIC_ONLY"
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    assert stage._last_failure is None
+    assert not stage.copy_error_btn.isVisible()
+    previous=QApplication.clipboard().text()
+    stage.copy_failure_report()
+    assert QApplication.clipboard().text()==previous
+
+
+def test_failure_report_formatter_is_strict_allowlist():
+    import json
+    import pytest
+    from lsbpipe.gui.workflow_ux import format_gui_failure_report
+    report=json.loads(format_gui_failure_report(
+        stage="background", error_type="Access /home/secret token",
+        failure_status="WORKER_START_FAILED_CLOSED",
+        band="../private/dir"))
+    assert report["error_type"]=="Exception"
+    assert report["band"] is None
+    assert "secret" not in json.dumps(report)
+    assert "background worker" in report["possible_cause"].lower()
+    with pytest.raises(ValueError):
+        format_gui_failure_report(
+            stage="/home/private",error_type="ValueError",
+            failure_status="WORKER_FAILED_CLOSED")
+    with pytest.raises(ValueError):
+        format_gui_failure_report(
+            stage="scene",error_type="ValueError",
+            failure_status="RAW_PRIVATE_TRACEBACK")
+
+
+def test_sky_failure_keyboard_copy_shortcut_scoped_and_safe(qtbot,monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    import json
+    stage=SkyWorkspace(SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None))
+    qtbot.addWidget(stage)
+    stage.resize(760,580)
+    stage.setFont(QFont("Arial",16))
+    stage.show()
+    data={"project_id":"p","source":"r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=("p","r","r",draft.digest,"c"*64,id(data),id(mask))
+    monkeypatch.setattr(stage,"_snapshot",lambda:(identity,data,draft,mask))
+    stage.refresh_context()
+    failed=Future()
+    failed.set_exception(ValueError("test-only failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**kw:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    qtbot.wait(20)
+    assert stage.copy_error_btn.isVisible()
+    assert stage.run_btn.isVisible()
+    assert stage._failure_shortcut.context()==Qt.WidgetWithChildrenShortcut
+    assert stage._failure_shortcut.key().toString()=="Ctrl+Shift+E"
+    for button in (stage.run_btn,stage.copy_error_btn):
+        point=button.mapTo(stage,button.rect().center())
+        assert stage.rect().contains(point)
+        assert button.width()>70
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert json.loads(QApplication.clipboard().text())["operation"]=="evaluate_residual_sky"
+    monkeypatch.setattr(stage,"_snapshot",lambda:None)
+    stage.refresh_context()
+    QApplication.clipboard().setText("sentinel")
+    stage._failure_shortcut.activated.emit()
+    assert QApplication.clipboard().text()=="sentinel"
+
+
+def test_sky_visual_error_tone_is_not_science_acceptance(qtbot,monkeypatch):
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    stage=SkyWorkspace(SimpleNamespace(
+        _band="r",_loaded=None,_draft=None,_contamination=None))
+    qtbot.addWidget(stage)
+    ds={"project_id":"p","source":"r","band":"r"}
+    draft=SimpleNamespace(digest="d"*64)
+    mask={"catalog_sha256":"c"*64}
+    identity=("p","r","r",draft.digest,"c"*64,id(ds),id(mask))
+    monkeypatch.setattr(stage,"_snapshot",lambda:(identity,ds,draft,mask))
+    failed=Future()
+    failed.set_exception(ValueError("test-only sky failure"))
+    monkeypatch.setattr(stage._executor,"submit",lambda *a,**k:failed)
+    stage.run_diagnostic()
+    stage._poll_worker()
+    assert stage.status.property("visualState")=="error"
+    assert stage.run_btn.property("visualRole")=="primary"
+    assert not stage.run_btn.icon().isNull()
+    assert stage._result is None
+    assert not stage.copy_btn.isEnabled()
+    stage._snapshot=lambda:None
+    stage.refresh_context()
+    assert stage.status.property("visualState")=="normal"

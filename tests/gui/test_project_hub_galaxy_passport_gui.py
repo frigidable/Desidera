@@ -117,3 +117,21 @@ def test_missing_project_relinks_instead_of_fabricating_fits_status(
     assert "Relink" in hub.galaxy_card.open_button.text()
     assert "Location missing" in hub.galaxy_card.fits.text()
     assert read_object_project(moved).project_id == p.project_id
+
+
+
+def test_hub_no_dataset_has_one_observation_line_and_tooltip(hub,tmp_path):
+    p=create_object_project(
+        "No observations",tmp_path/"no-observations",
+        field=SkyField(40.096208,1.22925,5.))
+    hub.refresh()
+    card=hub.galaxy_card
+    assert card.snapshot.project_id==p.project_id
+    assert card.dataset.text()=="No survey dataset selected"
+    assert not card.fits.isVisible()
+    assert "no survey release" in card.dataset.toolTip().lower()
+    assert card.open_button.isVisible()
+    assert card.open_button.isEnabled()
+    assert not card.catalogue_help.isVisible()
+    assert card.preview.width()==124
+    assert card.details_toggle.isVisible()

@@ -79,6 +79,9 @@ class PSF0Panel(QGroupBox):
             raise ValueError("Unsupported PSF-0 fixed band")
         super().__init__("PSF reconstruction", parent)
         self.fixed_band = fixed_band
+        # A standalone PSF inspector with fixed_band must retain its
+        # visual evidence even without an object-bound Photometry tab.
+        self._workspace_band = fixed_band is not None and parent is not None
         self._fwhm_manually_edited = False
         self._latest_seeing_payload = None
         self._last_reported_payload = None
@@ -128,14 +131,24 @@ class PSF0Panel(QGroupBox):
         result_layout.setSpacing(8)
         self._science_row.addWidget(self._model_card, 3, Qt.AlignTop)
         self._science_row.addWidget(self._profile_card, 5, Qt.AlignTop)
-        self._science_row.addWidget(self._result_column, 3, Qt.AlignTop)
         self._work_columns.addLayout(self._science_row)
-        self._controls_column = QGroupBox("PSF reconstruction · settings", self)
+        # On wide desktop windows the model/profile remain the scientific
+        # canvas; quality and controls form one compact right inspector.
+        # On narrow screens both columns reflow vertically without losing
+        # any scientific evidence or changing PSF settings.
+        self._inspector_stack = QBoxLayout(QBoxLayout.TopToBottom)
+        self._inspector_stack.setSpacing(8)
+        self._inspector_stack.addWidget(self._result_column, 0, Qt.AlignTop)
+        self._controls_column = QGroupBox("Setup", self)
         self._controls_column.setObjectName("psf0_controls_column")
         controls = QVBoxLayout(self._controls_column)
         controls.setContentsMargins(10, 12, 10, 10)
         controls.setSpacing(9)
-        self._work_columns.addWidget(self._controls_column, 0, Qt.AlignTop)
+        self._inspector_stack.addWidget(
+            self._controls_column, 0, Qt.AlignTop)
+        self._work_columns.addLayout(self._inspector_stack)
+        self._work_columns.setStretch(0, 7)
+        self._work_columns.setStretch(1, 4)
         self._work_columns.setAlignment(Qt.AlignTop)
         layout.addLayout(self._work_columns, 0)
         form = QFormLayout()
@@ -179,7 +192,7 @@ class PSF0Panel(QGroupBox):
         self.get_tractor_btn.setToolTip(
             "Explicitly download the ORIGINAL DR11 south Tractor brick "
             "catalogue from the official Legacy Surveys archive into "
-            "the current Leo P project's data root. No new project.")
+            "the current galaxy project's data root. No new project.")
         catalogue_row.addWidget(self.get_tractor_btn, 0, Qt.AlignLeft)
         form.addRow("Gaia/Tractor source", catalogue_row)
         self.fwhm = QDoubleSpinBox()
@@ -222,7 +235,8 @@ class PSF0Panel(QGroupBox):
         self.experiment.currentIndexChanged.connect(self._band_changed)
         self.experiment.setToolTip(
             "Controlled one-factor comparisons to investigate the actual "
-            "Leo P outer-wing failure. These tests are not scientific PSF "
+            "outer-wing systematics originally investigated for Leo P. "
+            "These tests are not scientific PSF "
             "selection and may change the selected star sample.")
         self.recipe_geometry = QLabel(
             "Recipe geometry will be shown here. The initial FWHM is a "
@@ -243,7 +257,7 @@ class PSF0Panel(QGroupBox):
         self.fwhm.valueChanged.connect(self._show_recipe_geometry)
         self.protection.setSuffix(" arcsec")
         self.protection.setToolTip(
-            "Preliminary exclusion circle around Leo P. Must be reviewed "
+            "Preliminary exclusion circle around the selected galaxy. Review "
             "against diffuse galaxy light before science-quality PSF.")
         form.addRow("Protect target radius", self.protection)
         controls.addLayout(form)
@@ -346,13 +360,16 @@ class PSF0Panel(QGroupBox):
         self._result_heading.setObjectName("psf0_result_heading")
         self._result_heading.setWordWrap(True)
         result_layout.addWidget(self._result_heading)
+        # The workspace heading already states non-adoption; avoid
+        # repeating the same warning immediately under "PSF quality".
+        self._result_heading.hide()
         self.status = QLabel(
-            "Open saved Leo P project; source bands have not been checked.")
+            "Select a galaxy project and native FITS source to inspect PSF-0.")
         self.status.setObjectName("psf0_status")
         self.status.setWordWrap(True)
         result_layout.addWidget(self.status)
 
-        self.summary = QLabel("No ePSF result. No stellar sample has been verified.")
+        self.summary = QLabel("No fitted PSF yet.")
         self.summary.setObjectName("psf0_summary")
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -506,12 +523,30 @@ class PSF0Panel(QGroupBox):
             "Sky-subtracted annular medians and signed model differences "
             "are in-sample, NOT independent holdout residuals.")
 
-    def set_narrow_visual_layout(self, narrow: bool):
-        """Reflow before Qt computes a too-wide tab's minimum size."""
-        direction = (QBoxLayout.TopToBottom if narrow else
-                     QBoxLayout.LeftToRight)
-        if self._science_row.direction() != direction:
-            self._science_row.setDirection(direction)
+    def set_narrow_visual_layout(self, narrow: bool, *, available_width=None):
+        """Two-column model+radial / quality+setup workspace on wide windows.
+
+        Only the layout changes: the identical PSF kernel, radial plot,
+        training-star QA and fitting controls remain attached to their
+        original widgets. Never recompute or adopt science during resize.
+        """
+        outer = (QBoxLayout.TopToBottom if narrow else
+                 QBoxLayout.LeftToRight)
+        # At medium widths, model and real radial comparison still fit
+        # side-by-side; collapse them only for very narrow viewports.
+        width = self.width() if available_width is None else available_width
+        inner = (QBoxLayout.TopToBottom if width < 770 else
+                 QBoxLayout.LeftToRight)
+        changed = False
+        if self._work_columns.direction() != outer:
+            self._work_columns.setDirection(outer)
+            self._work_columns.setStretch(0, 0 if narrow else 7)
+            self._work_columns.setStretch(1, 0 if narrow else 4)
+            changed = True
+        if self._science_row.direction() != inner:
+            self._science_row.setDirection(inner)
+            changed = True
+        if changed:
             self.updateGeometry()
 
     def resizeEvent(self, event):
@@ -519,7 +554,7 @@ class PSF0Panel(QGroupBox):
         # viewport width; otherwise an over-wide child can repeatedly
         # restore horizontal orientation before the parent can shrink.
         if self.fixed_band is None and hasattr(self, "_science_row"):
-            self.set_narrow_visual_layout(event.size().width() < 1090)
+            self.set_narrow_visual_layout(event.size().width() < 1180)
         super().resizeEvent(event)
 
     def set_research_mode(self, enabled: bool):
@@ -541,30 +576,34 @@ class PSF0Panel(QGroupBox):
         self.advanced_details.setVisible(
             self._research_mode and self.advanced_toggle.isChecked())
         self._update_mode_context()
+        self._update_buttons()
 
     def _update_mode_context(self):
         if self._research_mode:
+            scope = ("Full P15–P20 research audit SELECTED."
+                     if self.extended_qa.isChecked()
+                     else "Standard core + holdout QA SELECTED.")
             self.mode_context.setText(
-                "Advanced methods available. The full original-FITS and "
-                "star QA is preserved; science status: NOT ADOPTED. "
-                + ("Full P15–P20 research audit SELECTED."
-                   if self.extended_qa.isChecked()
-                   else "Standard core + holdout QA SELECTED."))
+                "Advanced methods available · " + scope + " NOT ADOPTED")
         else:
             policy = self.catalog_policy.currentData()
             experiment = self.experiment.currentData()
             altered = (policy != "gaia_strict" or
                        experiment != "outer_sky_isolation_footprint")
-            method = ("Non-default experimental configuration is active. "
-                      if altered else "Gaia/Tractor stars · FWHM-scaled sky. ")
+            method = ("Non-default experimental configuration. "
+                      if altered else "Gaia/Tractor · ")
             qa_scope = ("Full P15–P20 research audit ENABLED. "
                         if self.extended_qa.isChecked() else
                         "Core + holdout QA only. ")
             self.mode_context.setText(
                 method + qa_scope +
-                f"Target protected within {self.protection.value():.1f} arcsec. "
-                "Empirical PSF is a diagnostic until validated; original FITS "
-                "remain unchanged.")
+                f"Target protected: {self.protection.value():.1f} arcsec. "
+                "NOT ADOPTED.")
+        self.mode_context.setToolTip(
+            "Original FITS remain unchanged. PSF-0 fitting is experimental, "
+            "not a validated wide-wing or calibrated science PSF. "
+            "Actual recipes, star identities and independent holdouts "
+            "are preserved in complete QA.")
 
     def overview_state(self):
         """Short, honest status for the g/r/i/z tab strip."""
@@ -842,6 +881,21 @@ class PSF0Panel(QGroupBox):
         self.auto_fwhm_btn.setEnabled(eligible and not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
         self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)
+        # In the object-bound Guided workspace, do not allocate three
+        # oversized placeholder frames to a band with no native quartet.
+        # A standalone review or explicit Advanced mode retains all cards.
+        show_cards = (
+            not self._workspace_band or self._research_mode or eligible
+            or self._preview is not None or self._qa_payload is not None)
+        self._model_card.setVisible(show_cards)
+        self._profile_card.setVisible(show_cards)
+        self.summary.setVisible(
+            show_cards or self._qa_payload is not None)
+        evidence_available = (
+            self._research_mode or self._qa_payload is not None)
+        self.inspection_toggle.setVisible(evidence_available)
+        self.inspection_details.setVisible(
+            evidence_available and self.inspection_toggle.isChecked())
         self.overviewChanged.emit()
 
     def set_busy(self, state: bool, message: str = ""):
@@ -964,7 +1018,7 @@ class PSF0Panel(QGroupBox):
         resolved = self.fwhm.value()
         caveat = (
             " Catalog positions approximate the local PSF prior; not "
-            "a per-pixel seeing measurement at Leo P."
+            "a per-pixel seeing measurement at the selected galaxy."
             if via_tractor else "")
         map_note = seeing.get("native_map_status")
         self.prior_source.setText(

@@ -33,6 +33,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
+      QT_QUICK_BACKEND: software # deterministic offscreen QML comparison only
       PYTEST_QT_API: pyside6
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 tag resolved 2026-11-13
@@ -43,10 +44,24 @@ jobs:
         run: python -m pip install -e ".[exact,gui,test,test-gui]"
       - name: Check installed package dependency compatibility
         run: python -m pip check
+      # Fail fast on a malformed QML component before entering the long
+      # integration suite. Run in a fresh Qt process to isolate style state.
+      - name: QML Hub early compilation and evidence smoke
+        run: python -m pytest -vv -x -o faulthandler_timeout=90 tests/gui/test_project_hub_gui.py -k qml
       - name: Scientific regression suite
         run: python -m pytest -q tests --ignore=tests/gui
+      # The full native-FITS E2E starts Qt, Astropy FITS/WCS and multiple
+      # scientific worker threads. Give it an isolated Qt/Python process:
+      # global font registration and Qt object destruction must not inherit
+      # the state of hundreds of unrelated GUI tests.
       - name: Offline GUI smoke tests
-        run: python -m pytest -q tests/gui
+        # Show the exact test name when a Qt signal handler or event loop
+        # hangs. Emit all-thread tracebacks after 120s of one test.
+        run: python -m pytest -vv -x -o faulthandler_timeout=120 tests/gui --ignore=tests/gui/test_native_fits_photometry_e2e_gui.py
+      - name: Native FITS photometry GUI E2E (isolated Qt process)
+        env:
+          DESIDERA_E2E_SCREENSHOT_DIR: gui-artifacts/native-fits
+        run: python -m pytest -q tests/gui/test_native_fits_photometry_e2e_gui.py
       - name: Capture GUI baseline (remote Viewer substituted offline)
         if: always()
         run: python scripts/capture_gui_baseline.py --output-dir gui-artifacts

@@ -1,6 +1,6 @@
 """Stage 03: project-bound, read-only residual sky diagnostics.
 
-Shares the already opened Scene & Masks dataset/draft/Tractor preparation.
+Shares the already opened Scene and Masks dataset/draft/Tractor preparation.
 No network, no additional bricks, no automatic sky subtraction or adoption.
 """
 from __future__ import annotations
@@ -10,12 +10,15 @@ from datetime import datetime, timezone
 import json
 import traceback
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
-    QPushButton, QVBoxLayout, QWidget, QSizePolicy,
+    QPushButton, QVBoxLayout, QWidget, QSizePolicy, QTabWidget,
 )
 
+from lsbpipe.gui.workflow_ux import format_gui_failure_report
+from lsbpipe.gui.visual_theme import adorn, set_status_tone
 from lsbpipe.background import diagnose_current_project_residual_sky
 
 
@@ -37,6 +40,8 @@ class SkyWorkspace(QWidget):
         self._result_identity = None
         self._result = None
         self._last_failure = None
+        self._failure_identity = None
+        self._discard_requested = False
         self._timer = QTimer(self)
         self._timer.setInterval(80)
         self._timer.timeout.connect(self._poll_worker)
@@ -48,36 +53,39 @@ class SkyWorkspace(QWidget):
         heading.setObjectName("sky_stage_title")
         heading.setStyleSheet("font-size: 19px; font-weight: 600;")
         root.addWidget(heading)
-        note = QLabel(
-            "Diagnostic only. DESI coadds have already been sky-subtracted. "
-            "This stage estimates the remaining local background but cannot "
-            "restore flux removed upstream, calibrate PSF wings, or validate "
-            "the galaxy's outer envelope.")
+        note = QLabel("Residual sky · diagnostic only · science HOLD.")
+        note.setToolTip(
+            "DESI coadds were sky-subtracted upstream. A residual sky model "
+            "cannot recover removed LSB flux, validate PSF wings or prove "
+            "the outer galaxy envelope. Nothing is adopted or subtracted.")
         note.setWordWrap(True)
         root.addWidget(note)
 
-        setup = QGroupBox("Use current Scene & Masks evidence")
+        setup = QGroupBox("Use current Scene and Masks evidence")
         layout = QVBoxLayout(setup)
-        self.context_label = QLabel("Open a galaxy project in Scene & Masks.")
+        self.context_label = QLabel("Open a galaxy project in Scene and Masks.")
         self.context_label.setObjectName("sky_project_context")
         self.context_label.setWordWrap(True)
         layout.addWidget(self.context_label)
-        help_label = QLabel(
-            "In 02 Scene & Masks, load the existing original FITS and "
-            "prepare neighbour masks. Desidera automatically excludes "
-            "the protected target, isophote candidates, catalogued "
-            "neighbours and bright Gaia stars, then selects spatially "
-            "separated sky training and holdout tiles from the SAME "
-            "native image. No manual sky-region drawing is required. "
-            "Review failed geometry or PSF-wing warnings rather than "
-            "forcing a sky fit.")
-        help_label.setWordWrap(True)
-        layout.addWidget(help_label)
+        setup.setToolTip(
+            "Load original FITS and prepare neighbour masks in Scene. "
+            "This stage selects separated sky training and holdout tiles "
+            "from the same native image, excluding provisional target and "
+            "contaminant regions. No manual sky drawing is needed.")
         root.addWidget(setup)
 
         tools = QHBoxLayout()
-        self.run_btn = QPushButton("Build automatic sky")
+        self.open_scene_btn = QPushButton("Open Scene and Masks")
+        self.open_scene_btn.setObjectName("sky_open_scene")
+        adorn(self.open_scene_btn, "mask")
+        self.open_scene_btn.setToolTip(
+            "Open Stage 02 to load the current native FITS and prepare "
+            "neighbour masks. Does not run any background fit.")
+        self.open_scene_btn.clicked.connect(self._open_scene)
+        tools.addWidget(self.open_scene_btn)
+        self.run_btn = QPushButton("Evaluate residual sky")
         self.run_btn.setObjectName("sky_diagnostic_run")
+        adorn(self.run_btn, "sky", primary=True)
         self.run_btn.setToolTip(
             "Uses only the loaded Scene/native image and prepared masks. "
             "Includes automatically chosen fixed tile grids, wider mask "
@@ -86,15 +94,43 @@ class SkyWorkspace(QWidget):
             "of original FITS or new DR11 bricks.")
         self.run_btn.clicked.connect(self.run_diagnostic)
         tools.addWidget(self.run_btn)
+        self.discard_btn = QPushButton("Discard result")
+        self.discard_btn.setObjectName("sky_discard_pending_result")
+        adorn(self.discard_btn, "back", caution=True)
+        self.discard_btn.setAccessibleName(
+            "Discard pending residual background result")
+        self.discard_btn.setToolTip(
+            "If queued, cancel before execution. If already running, "
+            "let the background calculation finish but ignore its result. "
+            "No worker thread is forcibly stopped and no FITS is modified.")
+        self.discard_btn.clicked.connect(self.discard_pending_result)
+        self.discard_btn.hide()
+        tools.addWidget(self.discard_btn)
         self.copy_btn = QPushButton("Copy background QA")
         self.copy_btn.setObjectName("sky_diagnostic_copy_qa")
+        adorn(self.copy_btn, "copy")
         self.copy_btn.setEnabled(False)
         self.copy_btn.clicked.connect(self.copy_qa)
         tools.addWidget(self.copy_btn)
+        self.copy_error_btn = QPushButton("Copy error report")
+        self.copy_error_btn.setObjectName("sky_copy_failure_report")
+        adorn(self.copy_error_btn, "copy", caution=True)
+        self.copy_error_btn.setAccessibleName(
+            "Copy safe residual background failure report")
+        self.copy_error_btn.setToolTip(
+            "Ctrl+Shift+E · Share the error category and retry instructions. "
+            "No traceback, project identifiers or local paths are copied.")
+        self.copy_error_btn.clicked.connect(self.copy_failure_report)
+        self.copy_error_btn.hide()
+        tools.addWidget(self.copy_error_btn)
+        self._failure_shortcut = QShortcut(
+            QKeySequence("Ctrl+Shift+E"), self)
+        self._failure_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self._failure_shortcut.activated.connect(self.copy_failure_report)
         tools.addStretch(1)
         root.addLayout(tools)
 
-        self.status = QLabel("Not evaluated · sky and masks remain provisional.")
+        self.status = QLabel("Not evaluated.")
         self.status.setObjectName("sky_diagnostic_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -106,8 +142,39 @@ class SkyWorkspace(QWidget):
         self.readout.setPlainText(
             "No background result. Sky training/holdout regions will be "
             "selected automatically from the current masked Scene.")
+        self.report_toggle = QPushButton("Full numerical sky QA")
+        self.report_toggle.setObjectName("sky_show_detailed_report")
+        self.report_toggle.setCheckable(True)
+        self.report_toggle.setToolTip(
+            "Inspect complete fit, holdout, tile, sensitivity and caveat "
+            "text. Copy background QA exports the full structured result.")
+        self.report_toggle.toggled.connect(
+            lambda checked: self.readout.setVisible(
+                bool(checked) and self._result is not None))
+        root.addWidget(self.report_toggle)
         root.addWidget(self.readout, 1)
+        self._reset_report_visibility()
+        root.addStretch(1)
         self.refresh_context()
+
+    def _reset_report_visibility(self):
+        self.report_toggle.setChecked(False)
+        self.report_toggle.hide()
+        self.readout.hide()
+
+    def _scene_tabs(self):
+        # QTabWidget reparents each stage to its internal QStackedWidget.
+        # Walk actual Qt ownership, rather than assuming immediate parent.
+        widget = self.parentWidget()
+        while widget is not None and not isinstance(widget, QTabWidget):
+            widget = widget.parentWidget()
+        return widget if (
+            widget is not None and widget.indexOf(self._scene) >= 0) else None
+
+    def _open_scene(self):
+        tabs = self._scene_tabs()
+        if tabs is not None:
+            tabs.setCurrentWidget(self._scene)
 
     def _snapshot(self):
         """Return immutable identity plus currently loaded read-only inputs."""
@@ -162,15 +229,20 @@ class SkyWorkspace(QWidget):
         band = scene._band.upper() if scene._band else "?"
         if snap is None:
             self.context_label.setText(
-                f"Band {band} · No current validated-identity Scene snapshot. "
-                "Load original FITS and prepare masks in 02 Scene & Masks "
-                "before starting a background diagnostic.")
+                f"Band {band} · No current Scene evidence. "
+                "Load FITS and prepare neighbour masks in Scene.")
         else:
             identity = snap[0]
             self.context_label.setText(
-                f"Current project · band {band} · "
-                f"{identity[1]} · draft {identity[3][:12]} · "
-                "provisional Tractor masks available.")
+                f"Band {band} · native Scene masks ready for diagnostic.")
+            self.context_label.setToolTip(
+                f"Native source {identity[1]}; mask draft {identity[3]}. "
+                "Tractor masks are provisional; no sky adopted.")
+        if self._last_failure is not None and (
+                snap is None or snap[0] != self._failure_identity):
+            self._last_failure = None
+            self._failure_identity = None
+            set_status_tone(self.status, error=False)
         if self._result is not None and (
                 snap is None or snap[0] != self._result_identity):
             self._result = None
@@ -179,9 +251,20 @@ class SkyWorkspace(QWidget):
             self.readout.setPlainText(
                 "Previous sky result invalidated by a change in "
                 "project, band, native pixels or scene mask draft.")
-            self.status.setText("Stale input · evaluate again.")
-        self.run_btn.setEnabled(snap is not None and self._future is None)
-        return snap is not None
+            self.status.setText("Stale input · evaluate again · science HOLD.")
+            self._reset_report_visibility()
+        ready = snap is not None
+        self.open_scene_btn.setVisible(
+            not ready and self._scene_tabs() is not None)
+        self.run_btn.setVisible(ready)
+        self.copy_btn.setVisible(self._result is not None)
+        self.copy_error_btn.setVisible(
+            self._last_failure is not None and self._future is None)
+        self.discard_btn.setVisible(self._future is not None)
+        self.discard_btn.setEnabled(
+            self._future is not None and not self._discard_requested)
+        self.run_btn.setEnabled(ready and self._future is None)
+        return ready
 
     def run_diagnostic(self):
         if self._future is not None:
@@ -191,22 +274,65 @@ class SkyWorkspace(QWidget):
             self.refresh_context()
             self.status.setText(
                 "Cannot run: load native FITS and prepare current "
-                "Tractor neighbour masks in Scene & Masks first.")
+                "Tractor neighbour masks in Scene and Masks first.")
             return
         identity, dataset, draft, contamination = snap
         self._result = None
         self._result_identity = None
         self._last_failure = None
+        self._failure_identity = None
+        set_status_tone(self.status, error=False)
+        self.copy_error_btn.hide()
         self.copy_btn.setEnabled(False)
+        self.copy_btn.hide()
+        self._reset_report_visibility()
         self._active_identity = identity
-        self._future = self._executor.submit(
-            diagnose_current_project_residual_sky,
-            dataset, draft, contamination)
+        self._discard_requested = False
+        try:
+            self._future = self._executor.submit(
+                diagnose_current_project_residual_sky,
+                dataset, draft, contamination)
+        except (OSError, RuntimeError) as exc:
+            # Thread-pool startup failures must not escape a Qt button
+            # callback. All source evidence and manual masks stay intact.
+            self._active_identity = None
+            self._failure_identity = identity
+            self._last_failure = {
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:1600],
+                "scene_identity_at_attempt": list(identity[:5]),
+                "status": "WORKER_START_FAILED_CLOSED",
+            }
+            set_status_tone(self.status, error=True)
+            self.status.setText(
+                f"Background worker could not start: {exc}. "
+                "Check the environment, then choose Evaluate residual sky "
+                "to retry. No sky or Scene edits were adopted.")
+            self.refresh_context()
+            return
         self.run_btn.setEnabled(False)
+        self.discard_btn.setVisible(True)
+        self.discard_btn.setEnabled(True)
         self.status.setText(
             "Automatically selecting safe Scene sky tiles, then "
             "fitting constant and planar residual sky candidates…")
         self._timer.start()
+
+    def discard_pending_result(self):
+        """Withdraw interest in a pending diagnostic without killing a thread."""
+        future = self._future
+        if future is None or self._discard_requested:
+            return
+        self._discard_requested = True
+        self.discard_btn.setEnabled(False)
+        if future.cancel():
+            # Future was still queued, so no science worker executed.
+            self._poll_worker()
+        else:
+            self.status.setText(
+                "Background result discard requested. The running "
+                "calculation will finish, but its result will be ignored; "
+                "retry becomes available afterward. Original FITS unchanged.")
 
     def _poll_worker(self):
         future = self._future
@@ -216,6 +342,24 @@ class SkyWorkspace(QWidget):
         identity = self._active_identity
         self._active_identity = None
         self._future = None
+        discard = self._discard_requested
+        self._discard_requested = False
+        if discard:
+            # Ignore even an exception from an already-running Future:
+            # the researcher explicitly withdrew this diagnostic request.
+            self._result = None
+            self._result_identity = None
+            self._last_failure = None
+            self._failure_identity = None
+            set_status_tone(self.status, error=False)
+            self.readout.setPlainText(
+                "Background calculation discarded by user; no sky model "
+                "was accepted, saved or subtracted.")
+            self.status.setText(
+                "Background result discarded by user · ready to retry "
+                "with current Scene evidence · science HOLD.")
+            self.refresh_context()
+            return
         snap = self._snapshot()
         if snap is None or snap[0] != identity:
             self._result = None
@@ -229,6 +373,7 @@ class SkyWorkspace(QWidget):
             result = future.result()
         except (OSError, ValueError, KeyError, TypeError,
                 ArithmeticError, RuntimeError) as exc:
+            self._failure_identity = identity
             self._last_failure = {
                 "error_type": type(exc).__name__,
                 "message": str(exc)[:1600],
@@ -237,10 +382,14 @@ class SkyWorkspace(QWidget):
                 "scene_identity_at_attempt": list(identity[:5]),
                 "status": "WORKER_FAILED_CLOSED",
             }
-            self.status.setText(f"Sky diagnostic failed closed: {exc}")
+            set_status_tone(self.status, error=True)
+            self.status.setText(
+                f"Sky diagnostic failed closed: {exc}. "
+                "Review Stage 02 masks and coverage, then choose Evaluate "
+                "residual sky to retry. No background was adopted.")
             self.readout.setPlainText(
                 "No background candidate accepted or subtracted. "
-                "Review prepared Scene evidence and mask coverage.")
+                "The Scene draft remains available for correction and retry.")
             self.refresh_context()
             return
         if (result.get("project_id") != identity[0] or
@@ -262,6 +411,7 @@ class SkyWorkspace(QWidget):
             f"{warning_count} spatial quality warnings · "
             "UNADOPTED · original FITS unchanged.")
         self.readout.setPlainText(self._format_readout(result))
+        self.report_toggle.show()
         self.refresh_context()
 
     @staticmethod
@@ -439,6 +589,19 @@ class SkyWorkspace(QWidget):
             "Full provenance and warnings: Copy background QA.",
         ]
         return "\n".join(lines)
+
+    def copy_failure_report(self):
+        self.refresh_context()
+        if (self._last_failure is None or self._future is not None
+                or self._failure_identity is None):
+            return
+        band = self._failure_identity[2]
+        QApplication.clipboard().setText(format_gui_failure_report(
+            stage="background", error_type=self._last_failure["error_type"],
+            failure_status=self._last_failure["status"], band=band))
+        self.status.setText(
+            "Background failure report copied without file paths or "
+            "traceback. Correct Stage 02 evidence, then retry.")
 
     def copy_qa(self):
         if self._result is None or self._snapshot() is None or (

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 from pathlib import Path
 from offline_gui_fixture import (offline_legacy_viewer, apply_offline_state,
                                  make_synthetic_fits_view)
@@ -17,8 +18,10 @@ from offline_gui_fixture import (offline_legacy_viewer, apply_offline_state,
 # replacement for real Windows/on-device Qt WebEngine validation.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QObject, QPoint, Qt, QSettings
+from PySide6.QtTest import QTest
 from PySide6.QtGui import QFont, QFontInfo, QFontDatabase
 from PySide6.QtWidgets import QApplication, QGroupBox, QTableWidget
 
@@ -70,9 +73,18 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
         "coverage_button": window.qa_btn,
         "download_button": window.download_btn,
         "web_viewer_placeholder": window.sky,
+        "pinned_operation_status": window.status_footer,
         "science_qa_tab": window.science_qa,
         "science_qa_result": window.science_qa.result,
     }
+    # The survey operational warning is a pinned footer and must never
+    # disappear below the scrolling navigation controls at laptop sizes.
+    footer = _bounds(window.status_footer, window)
+    if (not footer["visible"] or footer["y"] < 0
+            or footer["y"] + footer["height"] > height):
+        raise AssertionError(
+            f"{state} survey status footer clipped at {width}x{height}: "
+            f"{footer}")
     viewer_share = _bounds(splitter.widget(1), window)["width"] / width
     if viewer_share < 0.55:
         raise AssertionError(
@@ -122,16 +134,16 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
                     not window.science_qa.south_directory.isVisible()):
                 raise AssertionError(
                     "Separate original North/South inputs are unreachable")
-    if state == "S5":
+    if state in ("S5", "S9"):
         if window.data_drawer.isVisible():
             raise AssertionError(
                 "FITS viewer should not be squeezed by archive controls")
         if window.preview_tabs.currentWidget() is not window.fits_explorer:
-            raise AssertionError("S5 native FITS Explorer is not visible")
+            raise AssertionError("Native FITS Explorer is not visible")
         if not window.fits_explorer.layer.isVisible():
-            raise AssertionError("S5 image-layer control is clipped or hidden")
+            raise AssertionError("Image-layer control is clipped or hidden")
         if window.fits_explorer.base_item.pixmap().isNull():
-            raise AssertionError("S5 synthetic image not rendered")
+            raise AssertionError("Synthetic FITS image not rendered")
     report = {
         "state": state + "_offline_synthetic",
         "viewer_width_fraction": round(viewer_share, 4),
@@ -144,7 +156,10 @@ def _capture(window, app, outdir: Path, width: int, height: int, state: str):
         "screenshot_bytes": screenshot.stat().st_size,
         "github_sha": os.getenv("GITHUB_SHA"),
         "network_used": False,
-        "viewer_content": "BLANK_OFFLINE_PLACEHOLDER_NOT_SURVEY_IMAGERY",
+        "viewer_content": (
+            "SYNTHETIC_LOCAL_FITS_NOT_SURVEY_IMAGERY"
+            if state in ("S5", "S9")
+            else "BLANK_OFFLINE_PLACEHOLDER_NOT_SURVEY_IMAGERY"),
         "scientific_status": "NO_SCIENCE_RESULT",
         "science_workbench_visible": (
             window.inspector_tabs.currentWidget() is window.science_qa),
@@ -238,6 +253,179 @@ def main():
                     "screenshot": path.name,
                     "screenshot_bytes": path.stat().st_size,
                     "network_used": False, "scientific_status": "NO_SCIENCE_RESULT"})
+            # Filled-library composition: three explicit synthetic galaxy
+            # projects (metadata only), no downloads or science runs.
+            create_object_project(
+                "Leo P · synthetic library entry",
+                outdir.resolve() / "test-project-leop",
+                field=SkyField(155.438, 18.088, 5.))
+            create_object_project(
+                "KDG 73 · synthetic library entry",
+                outdir.resolve() / "test-project-kdg73",
+                field=SkyField(163.1, 69.1, 5.))
+            hub.refresh()
+            for w, h in SIZES[:2]:
+                hub.resize(w, h)
+                hub.show()
+                for _ in range(5):
+                    app.processEvents()
+                if hub.projects.count() != 3:
+                    raise AssertionError("Multi-object Project Hub lacks three rows")
+                path = outdir / f"hub_catalogue_3_SYNTHETIC_{w}x{h}.png"
+                shot = hub.grab()
+                if shot.isNull() or not shot.save(str(path), "PNG"):
+                    raise RuntimeError(f"Cannot capture {path}")
+                reports.append({
+                    "state": "H6_three_synthetic_galaxy_projects",
+                    "screenshot": path.name,
+                    "screenshot_bytes": path.stat().st_size,
+                    "projects": hub.projects.count(),
+                    "network_used": False,
+                    "scientific_status": "NO_SCIENCE_RESULT",
+                })
+            # Matched 3-galaxy baseline in the optional Qt Quick renderer.
+            # The same live Widgets model, selection and status are reused;
+            # no invented FITS imagery, QA or external catalogue evidence.
+            from lsbpipe.gui.project_hub_qml import QmlProjectHubPreview
+            qml = QmlProjectHubPreview(hub)
+            selected_project_id = qml.bridge.selectedId
+            preferences = QSettings("Desidera", "Desidera")
+            earlier_theme = preferences.value("appearance/theme", None)
+            try:
+                for qml_mode in ("light", "dark"):
+                    preferences.setValue("appearance/theme", qml_mode)
+                    preferences.sync()
+                    qml.sync()
+                    if qml.bridge.selectedId != selected_project_id:
+                        raise AssertionError(
+                            "QML appearance switched selected galaxy UUID")
+                    qml.resize(1366, 768)
+                    qml.show()
+                    for _ in range(22):
+                        app.processEvents()
+                    if (qml.model.rowCount() != hub.projects.count()
+                            or qml.bridge.visibleCount != 3):
+                        raise AssertionError(
+                            "Qt Quick comparison lost saved project rows")
+                    image = qml.grabWindow()
+                    if image.isNull():
+                        raise RuntimeError("Qt Quick failed to render offscreen")
+                    if (image.width(), image.height()) != (1366, 768):
+                        raise AssertionError(
+                            f"QML viewport differs: {image.size()}")
+                    path = outdir / (
+                        f"hub_qml_3_SYNTHETIC_{qml_mode}_1366x768.png")
+                    if not image.save(str(path), "PNG"):
+                        raise RuntimeError(f"Could not capture {path}")
+                    reports.append({
+                        "state": "H7_qml_3_galaxy_comparison",
+                        "appearance": qml_mode,
+                        "screenshot": path.name,
+                        "screenshot_bytes": path.stat().st_size,
+                        "same_registry_as_widgets": True,
+                        "network_used": False,
+                        "scientific_status": "NO_SCIENCE_RESULT",
+                        "physical_windows_gpu_verified": False,
+                    })
+                    # Evidence mode is part of the same Project Hub, not a
+                    # second project window. The real on-device screenshot
+                    # exposed hidden headers after disclosure; capture both.
+                    inspector = qml.rootObject().findChild(
+                        QObject, "qml_hub_inspector")
+                    if inspector is None:
+                        raise AssertionError("QML project inspector missing")
+                    inspector.setProperty("detailsExpanded", True)
+                    for _ in range(12):
+                        app.processEvents()
+                    if qml.bridge.selectedId != selected_project_id:
+                        raise AssertionError(
+                            "QML source details changed selected galaxy UUID")
+                    details_image = qml.grabWindow()
+                    if details_image.isNull():
+                        raise RuntimeError("QML evidence mode not rendered")
+                    details_path = outdir / (
+                        f"hub_qml_3_SYNTHETIC_{qml_mode}_sources_1366x768.png")
+                    if not details_image.save(str(details_path), "PNG"):
+                        raise RuntimeError(
+                            f"Cannot capture QML source details: {details_path}")
+                    reports.append({
+                        "state": "H8_qml_scientific_source_documentation",
+                        "appearance": qml_mode,
+                        "screenshot": details_path.name,
+                        "screenshot_bytes": details_path.stat().st_size,
+                        "same_registry_as_widgets": True,
+                        "network_used": False,
+                        "scientific_status": "NO_SCIENCE_RESULT",
+                        "physical_windows_gpu_verified": False,
+                    })
+                    inspector.setProperty("detailsExpanded", False)
+                    for _ in range(4):
+                        app.processEvents()
+            finally:
+                qml.close()
+                if earlier_theme is None:
+                    preferences.remove("appearance/theme")
+                else:
+                    preferences.setValue("appearance/theme", earlier_theme)
+                preferences.sync()
+                from lsbpipe.gui.visual_theme import refresh_visual_tree
+                refresh_visual_tree(hub)
+            # Explicit light/dark UI render; not a physical OS theme test.
+            settings = QSettings("Desidera", "Desidera")
+            prior_mode = settings.value("appearance/theme", None)
+            try:
+                for mode in ("light", "dark"):
+                    hub.appearance_actions[mode].trigger()
+                    hub.resize(1366, 768)
+                    hub.show()
+                    for _ in range(5):
+                        app.processEvents()
+                    from lsbpipe.gui.visual_theme import theme_colors
+                    if theme_colors(hub)["BG"] not in hub.styleSheet():
+                        raise AssertionError("Theme CSS was not applied")
+                    path = outdir / f"hub_recent_{mode}_theme_1366x768.png"
+                    shot = hub.grab()
+                    if shot.isNull() or not shot.save(str(path), "PNG"):
+                        raise RuntimeError(f"Could not capture {path}")
+                    reports.append({
+                        "state": f"H5_recent_{mode}_theme_offline",
+                        "screenshot": path.name,
+                        "screenshot_bytes": path.stat().st_size,
+                        "appearance": mode,
+                        "physical_system_theme_tested": False,
+                        "network_used": False,
+                        "scientific_status": "NO_SCIENCE_RESULT",
+                    })
+            finally:
+                if prior_mode is None:
+                    settings.remove("appearance/theme")
+                else:
+                    settings.setValue("appearance/theme", prior_mode)
+                settings.sync()
+                from lsbpipe.gui.visual_theme import refresh_visual_tree
+                refresh_visual_tree(hub)
+            # Verify the real Project Hub remains readable with larger UI
+            # text, without pretending to emulate physical monitor DPI.
+            hub.setFont(QFont(preferred, 16))
+            hub.resize(1366, 768)
+            hub.show()
+            app.processEvents()
+            if (not hub.galaxy_card.open_button.isVisible()
+                    or not hub.filter.isVisible()
+                    or hub.galaxy_card.snapshot is None):
+                raise AssertionError("High-font Hub lost the selected object")
+            shot = hub.grab()
+            path = outdir / "hub_recent_font16_1366x768.png"
+            if shot.isNull() or not shot.save(str(path), "PNG"):
+                raise RuntimeError(f"Could not capture {path}")
+            reports.append({
+                "state":"H4_recent_project_large_font_offline",
+                "screenshot":path.name,
+                "screenshot_bytes":path.stat().st_size,
+                "font_points":16, "real_monitor_dpi_tested":False,
+                "network_used":False,
+                "scientific_status":"NO_SCIENCE_RESULT",
+            })
         finally:
             hub.close()
         # Capture the real single-page creation form with synthetic input.
@@ -263,6 +451,29 @@ def main():
                 "network_used": False,
                 "scientific_status": "NO_SCIENCE_RESULT",
                 "project_created": False,
+            })
+            # High-font scenario tests scroll reachability, not physical
+            # 150/200% Windows monitor DPI (those still need an on-device gate).
+            wizard.setFont(QFont(preferred, 17))
+            wizard.resize(500, 360)
+            wizard.directory.setFocus()
+            for _ in range(8):
+                app.processEvents()
+            wizard.form_scroll.ensureWidgetVisible(wizard.directory, 8, 10)
+            app.processEvents()
+            path = outdir / "hub_new_project_large_font_500x360.png"
+            shot = wizard.grab()
+            if (shot.isNull() or not shot.save(str(path), "PNG")
+                    or (shot.width(), shot.height()) != (500, 360)):
+                raise RuntimeError("High-font project dialog layout failed")
+            reports.append({
+                "state": "H3_new_project_large_font_offline",
+                "screenshot": path.name,
+                "screenshot_px": [shot.width(), shot.height()],
+                "screenshot_bytes": path.stat().st_size,
+                "font_point_size": 17,
+                "network_used": False, "project_created": False,
+                "scientific_status": "NO_SCIENCE_RESULT",
             })
         finally:
             wizard.close()
@@ -337,7 +548,111 @@ def main():
                 for w, h in SIZES:
                     reports.append(_capture(
                         window, app, outdir, w, h, state))
+                if state == "S5":
+                    # The same *synthetic* native FITS, with a real keyboard
+                    # step and non-color-only pixel category visible.
+                    window.fits_explorer.layer.setCurrentIndex(
+                        window.fits_explorer.layer.findData("quality"))
+                    for w, h in SIZES[:2]:
+                        window.resize(w, h)
+                        window.show()
+                        app.processEvents()
+                        window.fits_explorer.view.setFocus()
+                        # The exact same native pixel must be sampled at both
+                        # UI sizes; each capture gets one fresh arrow step.
+                        window.fits_explorer.view.clear_keyboard_pixel()
+                        QTest.keyClick(window.fits_explorer.view, Qt.Key_Right)
+                        app.processEvents()
+                        width_px = int(
+                            window.fits_explorer.scene.sceneRect().width())
+                        height_px = int(
+                            window.fits_explorer.scene.sceneRect().height())
+                        target_x = (width_px - 1) // 2 + 1
+                        target_y = height_px - 1 - (height_px - 1) // 2
+                        if not window.fits_explorer.pixel_info.text().startswith(
+                                f"Pixel ({target_x}, {target_y})"):
+                            raise AssertionError(
+                                "Window resizing changed the sampled FITS pixel")
+                        if not window.fits_explorer.keyboard_cursor.isVisible():
+                            raise AssertionError(
+                                "FITS keyboard marker not visible after arrow")
+                        if "QUALITY class" not in window.fits_explorer.pixel_quality.text():
+                            raise AssertionError(
+                                "FITS diagnostic text absent after key step")
+                        reports.append(_capture(
+                            window, app, outdir, w, h, "S9"))
             finally:
+                window.close()
+                app.processEvents()
+    # S8: a deliberately long, offline-only status with its complete text open.
+    # This checks the real left navigation at laptop sizes, without HTTP/FITS.
+    with offline_legacy_viewer():
+        window = SurveyExplorer(restore_session=False, launch_remote=False)
+        try:
+            window.show()
+            window.message.setText(
+                "SYNTHETIC STATUS (not a real archive failure). "
+                "Original FITS were not modified. " * 8
+            )
+            window.message_details_btn.setChecked(True)
+            for _ in range(6):
+                app.processEvents()
+            if (not window.full_message_box.isVisible() or
+                    "SYNTHETIC STATUS" not in
+                    window.full_message_box.toPlainText()):
+                raise AssertionError("Complete accessible status not expanded")
+            for w, h in SIZES:
+                window.navigation_scroll.ensureWidgetVisible(
+                    window.full_message_box, 6, 10)
+                reports.append(_capture(
+                    window, app, outdir, w, h, "S8"))
+        finally:
+            window.close()
+            app.processEvents()
+    # On-device reports revealed a second duplicated Galaxy Workspace
+    # navigation strip and a long PSF control sheet. Capture the actual
+    # embedded shell, not only the standalone Photometry widget.
+    with tempfile.TemporaryDirectory(prefix="desidera-shell-ci-") as temp_dir:
+        with offline_legacy_viewer():
+            window = SurveyExplorer(restore_session=False, launch_remote=False)
+            try:
+                project = create_object_project(
+                    "Synthetic shell galaxy", Path(temp_dir) / "shell_target",
+                    field=SkyField(40.096208, 1.22925, 5.))
+                window.attach_object_project(project)
+                # Explicit synthetic on-screen status exercises the pinned
+                # footer; no journal, local FITS or project file is written.
+                window.message.setText(
+                    "Synthetic prior interrupted operation (GUI capture): "
+                    "inspect original QA before trusting historical outputs.")
+                window.show()
+                for _ in range(5):
+                    app.processEvents()
+                if window.preview_tabs.tabBar().isVisible():
+                    raise AssertionError("Duplicate Galaxy Workspace tabs visible")
+                if not window.remote_view_btn.isChecked():
+                    raise AssertionError("Remote sky view is not the default")
+                window.photometry_btn.click()
+                for _ in range(5):
+                    app.processEvents()
+                if not window.photometry_btn.isChecked():
+                    raise AssertionError("Photometry sidebar selection not active")
+                if window.photometry_workspace.back_btn.isVisible():
+                    raise AssertionError("Embedded duplicate Back action visible")
+                for width, height in SIZES[:2]:
+                    reports.append(_capture(
+                        window, app, outdir, width, height,
+                        "W0_embedded_photometry_SCIENCE_HOLD"))
+                window.photometry_workspace.stage_tabs.setCurrentWidget(
+                    window.photometry_workspace.scene_editor)
+                for _ in range(5):
+                    app.processEvents()
+                for width, height in SIZES[:2]:
+                    reports.append(_capture(
+                        window, app, outdir, width, height,
+                        "W1_embedded_scene_NO_FITS"))
+            finally:
+                window._returning_to_hub = True
                 window.close()
                 app.processEvents()
     # Synthetic three-band comparison at a realistic desktop viewport.
@@ -397,6 +712,8 @@ def main():
             "S4–S6 are mock UI content; no original FITS are opened",
             "S5 FITS raster is artificial and cannot support scientific conclusions",
             "S7 band comparison is synthetic and contains no original survey pixels",
+            "S9 keyboard pixel inspection uses synthetic native-grid FITS only",
+            "S8 status is synthetic and does not represent a real failure",
             "Offscreen Qt capture cannot verify real monitor / DPI rendering",
             "This job does not certify accessibility or scientific validity",
         ],
