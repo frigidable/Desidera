@@ -22,7 +22,7 @@ from uuid import uuid4
 import numpy as np
 
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
-from PySide6.QtGui import QColor, QPainterPath, QPen, QShortcut, QKeySequence
+from PySide6.QtGui import QColor, QPainterPath, QPen, QShortcut, QKeySequence, QBrush
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPathItem,
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
@@ -3288,7 +3288,7 @@ class SceneEditor(QWidget):
                     x=e["x"]+.5; y=a.shape[0]-e["y"]-.5
                     graphics.addEllipse(x-5,y-5,10,10,pen)
                     t=graphics.addSimpleText(str(e["objid"]))
-                    t.setBrush(QColor("#70dbe0"))
+                    t.setBrush(QBrush(QColor("#70dbe0")))
                     t.setPos(x+5,y-8)
             view.fitInView(item,Qt.KeepAspectRatio)
             caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "

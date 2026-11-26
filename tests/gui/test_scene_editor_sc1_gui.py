@@ -2496,7 +2496,7 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
     # Mount a synthetic diagnostic result without running another fit.
     # Exercise the actual dialog, all seven raster modes and invalidation.
     from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication,QComboBox,QGraphicsView
+    from PySide6.QtWidgets import QApplication,QComboBox,QGraphicsView,QCheckBox,QTabWidget
     a=np.zeros(editor._loaded["pixel_shape"],dtype=float)
     a[0,0]=np.nan
     preview={"status":"SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED",
@@ -2506,10 +2506,13 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
         "reference_candidate_index":0,"candidate_count":2,"apertures":[],
         "layers":{k:a for k in ("original","halo_model","halo_corrected","sky_model",
                                  "residual","halo_model_spread","sky_model_spread")}}
+    preview["sh1d"]={"sources":[{"objid":360,"x":48.,"y":48.}],
+                      "rows":[],"individual_source_exclusion_trials":[]}
     editor._foreground_psf_result["sh1c_preview"]=preview
     editor._refresh_controls()
     assert editor.sh1c_preview_btn.isEnabled()
     observed=[]
+    overlay_observed=[]
     def inspect_dialog():
         dialog=QApplication.activeModalWidget()
         if dialog is None:
@@ -2520,11 +2523,20 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
             for i in range(selector.count()):
                 selector.setCurrentIndex(i)
                 observed.append((selector.currentData(),len(view.scene().items())))
+            overlay=next(w for w in dialog.findChildren(QCheckBox)
+                         if w.text().startswith("Show Tractor centres"))
+            overlay.setChecked(True)
+            overlay_observed.append(len(view.scene().items()))
+            overlay.setChecked(False)
+            overlay_observed.append(len(view.scene().items()))
+            tabs=dialog.findChild(QTabWidget)
+            overlay_observed.append([tabs.tabText(i) for i in range(tabs.count())])
         finally:
             dialog.accept()
     QTimer.singleShot(50,inspect_dialog)
     editor.sh1c_preview_btn.click()
     assert len(observed)==7 and all(n==1 for _,n in observed)
+    assert overlay_observed==[3,1,["Growth curves","Sector profiles","Source mask trials","Matched g/r"]]
     qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]["sh1c_preview"]
     assert qa["layers"]["original"]["pixel_array_omitted"]
     editor.set_band("r")
