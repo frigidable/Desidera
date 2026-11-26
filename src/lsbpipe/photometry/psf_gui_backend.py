@@ -73,7 +73,7 @@ def _same_observation_source(current, recorded) -> bool:
     return tuple(current[:3]) == tuple(recorded[:3])
 
 
-# Six reproducible diagnostic modes. The extended modes jointly change
+# Reproducible diagnostic modes. The extended modes jointly change
 # cutout, sky-annulus and isolation footprints. Their
 # stellar sample can therefore differ: do not claim a controlled
 # single-variable causal inference or select a "best PSF" from these QA
@@ -102,6 +102,10 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
             "max_iterations": 16,
             "wing_smoothing": False,
         },
+    },
+    "compact_core_sky": {
+        "label": "Compact core · sky 3–3.5× FWHM (wing-sensitive diagnostic)",
+        "kwargs": {"training_outlier_passes": 0, "max_iterations": 16},
     },
     "outer_sky_isolation_footprint": {
         "label": "Extended sky · 16 iterations · nearest DAO separation ≥ stamp size (g pilot)",
@@ -136,8 +140,13 @@ def psf0_experiment_recipe(
     if experiment != "baseline":
         # Integer annulus boundaries are deterministic, in native pixels;
         # enforce 2 pixels beyond outer sky before the square stamp edge.
-        inner = float(math.ceil(4.5*fwhm))
-        outer = float(math.ceil(5.75*fwhm))
+        # Explicit alternative when wide isolation yields no usable stars.
+        # This fits a finite core only: closer sky can absorb stellar wings.
+        # Never substitute automatically for the original extended recipe.
+        compact = experiment == "compact_core_sky"
+        inner_factor, outer_factor = (3., 3.5) if compact else (4.5, 5.75)
+        inner = float(math.ceil(inner_factor*fwhm))
+        outer = float(math.ceil(outer_factor*fwhm))
         half = int(outer)+2
         size = max(51, 2*half+1)
         if size > PSF0_MAX_CUTOUT_SIZE_PIX:
@@ -153,8 +162,10 @@ def psf0_experiment_recipe(
             sky_annulus_outer_pix=outer,
             min_neighbor_separation_pix=float(size+4),
         )
-        if experiment == "outer_sky_isolation_footprint":
-            # Registered, deliberately separate one-factor A/B:
+        if compact or experiment == "outer_sky_isolation_footprint":
+            # Compact is a separate wing-sensitive experiment, not a
+            # relaxation of isolation inside the selected stamp.
+            # Registered extended footprint experiment:
             # centre-to-centre DAO isolation of one FULL stamp width
             # rather than full width + 4 px. In the real Leo P g
             # 81px stamp this recovers the possibility of evaluating

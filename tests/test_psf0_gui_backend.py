@@ -158,7 +158,7 @@ def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
     assert set(("baseline","outer_sky","outer_sky_robust",
                 "outer_sky_convergence",
                 "outer_sky_no_wing_smoothing",
-                "outer_sky_isolation_footprint")) == set(
+                "outer_sky_isolation_footprint", "compact_core_sky")) == set(
         __import__(
             "lsbpipe.photometry.psf_gui_backend",
             fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
@@ -276,3 +276,21 @@ def test_ngc2146sat_r_scaled_stamp_preserves_sky_geometry(mode):
     assert cfg.min_holdout_stars == PSF0Config().min_holdout_stars
     with pytest.raises(ValueError, match="15..151 px"):
         PSF0Config(cutout_size_pix=153)
+
+
+def test_ngc2146sat_r_compact_core_recipe_is_explicit_and_preserves_gates():
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    from dataclasses import replace
+    wide = psf0_experiment_recipe(10.79, "outer_sky_isolation_footprint")
+    compact = psf0_experiment_recipe(10.79, "compact_core_sky")
+    assert wide.cutout_size_pix == 131
+    assert compact == replace(wide, cutout_size_pix=81,
+                              sky_annulus_inner_pix=33.,
+                              sky_annulus_outer_pix=38.,
+                              min_neighbor_separation_pix=81.)
+    assert compact.digest != wide.digest
+    assert compact.sky_annulus_inner_pix >= 3 * 10.79
+    assert compact.sky_annulus_outer_pix >= 3.5 * 10.79
+    assert compact.sky_annulus_outer_pix <= compact.cutout_size_pix // 2 - 2
+    assert 2 * compact.sky_annulus_outer_pix <= compact.min_neighbor_separation_pix
+    assert psf0_experiment_recipe(6.27, "outer_sky_isolation_footprint").cutout_size_pix == 79
