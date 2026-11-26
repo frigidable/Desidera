@@ -3214,7 +3214,8 @@ class SceneEditor(QWidget):
                           ("Halo model range width","halo_model_spread"),("Sky model range width","sky_model_spread")):
             selector.addItem(label,key)
         spike=p.get("sh1e") or {}
-        all_layers=dict(p["layers"],**spike.get("layers",{}))
+        extent=spike.get("adaptive_extent") or {}
+        all_layers=dict(p["layers"],**spike.get("layers",{}),**extent.get("layers",{}))
         for width in (2,4):
             for label,suffix in (("Refit radial residual","refit_residual"),("Spike masked residual","masked_residual"),
                                  ("Mirrored spike model","model"),("Halo + spike model","halo_plus_spike"),
@@ -3222,6 +3223,10 @@ class SceneEditor(QWidget):
                 key=f"spike_{width}_{suffix}"
                 if key in all_layers:
                     selector.addItem(f"{label} · ±{width} arcsec · conditional",key)
+        for label,key in (("Adaptive spike model · truncated hypothesis","adaptive_spike_model"),
+                          ("Adaptive spike residual · conditional","adaptive_spike_corrected")):
+            if key in all_layers:
+                selector.addItem(label,key)
         layout.addWidget(selector)
         overlay=QCheckBox("Show Tractor centres within 49 arcsec · review only")
         overlay.setEnabled(bool(p.get("sh1d",{}).get("sources")))
@@ -3248,7 +3253,7 @@ class SceneEditor(QWidget):
         table.setPlainText("\n".join(lines))
         tabs=QTabWidget()
         tabs.setMinimumHeight(150)
-        tabs.addTab(table,"Growth curves")
+        tabs.addTab(table,"Growth curves · SH1-C")
         def add_text_tab(name,lines):
             widget=QPlainTextEdit()
             widget.setReadOnly(True)
@@ -3292,6 +3297,22 @@ class SceneEditor(QWidget):
                         f"{fmt(a['baseline_off_strip_flux_nMgy'])}/{fmt(a['refit_off_strip_flux_nMgy'])} | "
                         f"{fmt(a['refit_template_matched_flux_nMgy'])}/{fmt(a['spike_corrected_flux_nMgy'])}")
             add_text_tab("Spike trials",slines)
+        if extent:
+            support=extent.get("support") or {}
+            elines=["SH1-E2 · contiguous away-side detection · NOT ADOPTED",
+                    f"Status: {extent['status']} | axis: {fmt(extent.get('selected_axis_deg'))} deg",
+                    f"Detected outer bin edge: {fmt(support.get('detected_outer_edge_arcsec'))} arcsec | {support.get('endpoint_status','—')}",
+                    "Not a physical cutoff or an upper bound. See QA for signed control profiles.",
+                    "Axis | inner detection | outer edge | termination"]
+            for s in extent.get("axis_scan",[]):
+                u=s["support"]
+                elines.append(f"{s['angle_deg']:g} | {fmt(u.get('detected_inner_edge_arcsec'))} | {fmt(u.get('detected_outer_edge_arcsec'))} | {u['endpoint_status']}")
+            elines.append("Aperture | matched pixels | refit / adaptive corrected (nMgy)")
+            for row in extent.get("aperture_and_ring_sums",[]):
+                if row["kind"]=="aperture" and row["sector"]=="ALL":
+                    elines.append(f"{row['outer_arcsec']:g} | {row['template_supported_pixels']} | "
+                        f"{fmt(row['refit_template_matched_flux_nMgy'])} / {fmt(row['spike_corrected_flux_nMgy'])}")
+            add_text_tab("Spike extent",elines)
         layout.addWidget(tabs)
         close=QPushButton("Close")
         close.clicked.connect(dialog.accept)
@@ -3305,6 +3326,9 @@ class SceneEditor(QWidget):
             values=a[np.isfinite(a)]
             shared=key in ("original","halo_corrected","residual") or key.endswith(("_residual","_corrected"))
             lim=limits if shared else tuple(np.quantile(values,[.01,.99])) if values.size else (0.,1.)
+            if (key.startswith("spike_") and key.endswith("_model") and "halo_plus" not in key) or key=="adaptive_spike_model":
+                positive=values[values>0]
+                lim=(0.,float(np.quantile(positive,.99))) if positive.size else (0.,1.)
             if lim[1]<=lim[0]:
                 lim=(lim[0],lim[0]+1e-10)
             rgb=rgb_for_layer(a,"image",self._band,contrast="faint",scaling="asinh",limits=lim)
@@ -3323,7 +3347,8 @@ class SceneEditor(QWidget):
                     t.setPos(x+5,y-8)
             view.fitInView(item,Qt.KeepAspectRatio)
             caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
-                            + ("SH1-E matched reference · conditional transfer" if key.startswith("spike_")
+                            + ("SH1-E2 truncated hypothesis · not an upper limit" if key.startswith("adaptive_")
+                               else "SH1-E matched reference · conditional transfer" if key.startswith("spike_")
                              else f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} (minimum side residual, display only)"))
         selector.currentIndexChanged.connect(render)
         overlay.toggled.connect(render)

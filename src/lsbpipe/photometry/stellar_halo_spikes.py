@@ -175,7 +175,7 @@ def directional_halo_experiment(image,iv,hard,*,source_xy,target_xy,scale,
         scans.append(dict(angle_from_native_y_deg=angle,rows=transverse_rows(a-bh-bb,safe,st,sq,2.)))
     p=original_preview; original=p["layers"]["original"]; base=p["layers"]["residual"]
     ot,oq=coords(original.shape,p["source_xy_native_pix"],p["target_xy_native_pix"],scale)
-    trials=[]; layers={}
+    trials=[]; layers={}; adaptive=None
     for width in (2.,4.):
         strip=np.abs(q)<width
         fit=measure_saturated_halo_sectors(a,iv,hard,source_xy=source_xy,target_xy=target_xy,
@@ -202,6 +202,11 @@ def directional_halo_experiment(image,iv,hard,*,source_xy,target_xy,scale,
         oh,ob=model_arrays(original.shape,p["source_xy_native_pix"],scale,c)
         common=np.isfinite(base)&np.isfinite(oh)&np.isfinite(ob)
         res=np.where(common,original-oh-ob,np.nan)
+        if width==4.:
+            from .stellar_halo_spike_extent import adaptive_spike_experiment
+            adaptive=adaptive_spike_experiment(a-h-b,safe,source_xy=source_xy,
+                target_xy=target_xy,scale=scale,preview=p,refit_residual=res)
+            adaptive["reference_hypothesis"]=list(key(c))
         spike=np.where(common,mirrored_template(ot,oq,width,rows),np.nan)
         masked=np.where(np.abs(oq)<width,np.nan,res)
         prefix=f"spike_{int(width)}"
@@ -222,5 +227,5 @@ def directional_halo_experiment(image,iv,hard,*,source_xy,target_xy,scale,
     return dict(schema="desidera.sh1e-directional-experiment/1",status="SH1E_NOT_ADOPTED",
         science_adopted=False,original_pixels_modified=False,scene_mask_modified=False,
         axis_definition="NATIVE_Y_FIXED; ANGLE_SCAN_DESCRIPTIVE_ONLY",axis_scan=scans,
-        half_width_trials=trials,layers=layers,
+        half_width_trials=trials,layers=layers,adaptive_extent=adaptive,
         warning="Away-only residual contrast; mirrored nonnegative template is conditional, not measured target-facing spike. Split checks descriptive, not independent covariance validation. Off-strip zero is assumed. No unsupported in-strip extrapolation or total photometry. Sector signs refer to native y.")
