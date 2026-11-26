@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
-    QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout,
+    QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout, QDialog,
     QSizePolicy, QBoxLayout, QLayout,
 )
 
@@ -659,7 +659,22 @@ def run_scene_psf0_foreground_probe(
             unresolved_sky_veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],
             neighbor_centres=neighbors, compare_models=True,
             expanded=expanded_window is not None)
+        preview=None
+        if expanded_window is not None:
+            from lsbpipe.photometry.stellar_halo_preview import conditional_halo_images
+            owcs=original_scene["wcs"]
+            osx,osy=map(float,owcs.all_world2pix(float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
+            otx,oty=map(float,owcs.all_world2pix(*map(float,center_icrs),0))
+            preview=conditional_halo_images(original_scene["data"]["image"],
+                original_scene["data"]["invvar"],original_scene["native_hard"],
+                original_masks["mask"],source_xy=(osx,osy),target_xy=(otx,oty),
+                pixel_scale_arcsec=result["pixel_scale_arcsec"],
+                comparison=result["sh1b_model_comparison"],radial_edges=result["radial_edges_arcsec"])
+            preview["grid_fingerprint"]=original_scene["grid_fingerprint"]
+            preview["draft_digest"]=original_masks["draft_digest"]
+            preview["effective_source_mask_sha256"]=original_masks["effective_source_mask_sha256"]
         return dict(output,status=result["status"],sh1_sector_measurement=result,
+                    sh1c_preview=preview,
                     draft_digest=scene_masks["draft_digest"],
                     grid_fingerprint=dataset.get("grid_fingerprint"),
                     original_scene_grid_fingerprint=original_scene.get("grid_fingerprint"),
@@ -1863,6 +1878,11 @@ class SceneEditor(QWidget):
         self.psf0_fg_status.setObjectName("scene_psf0_foreground_status")
         self.psf0_fg_status.setWordWrap(True)
         registry_layout.addWidget(self.psf0_fg_status)
+        self.sh1c_preview_btn=QPushButton("Review conditional halo images · SH1-C")
+        self.sh1c_preview_btn.setObjectName("scene_sh1c_preview")
+        self.sh1c_preview_btn.setEnabled(False)
+        self.sh1c_preview_btn.clicked.connect(self._show_sh1c_preview)
+        registry_layout.addWidget(self.sh1c_preview_btn)
         self.source_registry_copy = QPushButton(
             "Copy filtered evidence as TSV")
         self.source_registry_copy.setObjectName(
@@ -3085,7 +3105,6 @@ class SceneEditor(QWidget):
                 not any(e["source_id"] == result.get("source_id")
                         for e in self._source_registry["entries"])):
             raise ValueError("Stale PSF0 foreground source/project evidence")
-        self._foreground_psf_result = result
         status = result["status"]
         if status == "SH1_SECTORS_MEASURED_NOT_ADOPTED":
             if result.get("draft_digest") != self._draft.digest:
@@ -3094,6 +3113,7 @@ class SceneEditor(QWidget):
                     result.get("original_scene_grid_fingerprint")!=self._loaded.get("grid_fingerprint") or
                     result.get("original_fits_sha256_local")!=self._loaded.get("original_fits_sha256_local")):
                 raise ValueError("Stale SH1-B2 original FITS/grid evidence")
+            self._foreground_psf_result = result
             rows = result["sh1_sector_measurement"]["rows"]
             count = sum(r["adequate_for_descriptive_comparison"]
                         for r in rows if r["role"] == "AWAY_TRAIN_CANDIDATE")
@@ -3104,8 +3124,12 @@ class SceneEditor(QWidget):
             self.psf0_fg_status.setText(
                 f"OBJID {result['source_objid']} · SH1 saturated-star sectors: "
                 f"{count} usable away-sector radial bins. {note}"
-                "no subtraction. Copy Scene QA for profiles and model sensitivity.")
+                + ("SH1-C conditional preview available; no science adoption. "
+                   if (result.get("sh1c_preview") or {}).get("status")=="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED"
+                   else "no subtraction. ")
+                + "Copy Scene QA for profiles and model sensitivity.")
             return
+        self._foreground_psf_result = result
         if status != "FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED":
             self.psf0_fg_status.setText(
                 f"OBJID {result['source_objid']}: {status}. "
@@ -3136,6 +3160,81 @@ class SceneEditor(QWidget):
                f"original FITS only. "
                if result.get("project_only_outer_sector_probe") else "")
             + "Full provenance in Copy Scene QA.")
+
+    def _show_sh1c_preview(self):
+        result=self._foreground_psf_result or {}
+        p=result.get("sh1c_preview") or {}
+        if (self._loaded is None or self._draft is None or self._contamination is None
+                or self._future is not None or p.get("status")!="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED"
+                or p.get("grid_fingerprint")!=self._loaded.get("grid_fingerprint")
+                or p.get("draft_digest")!=self._draft.digest
+                or p.get("effective_source_mask_sha256")!=self._contamination.get("effective_source_mask_sha256")):
+            return
+        dialog=QDialog(self)
+        dialog.setWindowTitle(f"SH1-C · {self._band.upper()} · OBJID {result['source_objid']} · NOT ADOPTED")
+        layout=QVBoxLayout(dialog)
+        warning=QLabel("Conditional diagnostic only. Purple = unavailable or excluded. "
+                       "Original, corrected and residual use shared display limits. "
+                       "No calibrated sky or total flux.")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        selector=QComboBox()
+        selector.setObjectName("sh1c_layer_selector")
+        for label,key in (("Original native image","original"),("Halo model · reference","halo_model"),
+                          ("Halo corrected · reference","halo_corrected"),("Sky model · reference","sky_model"),
+                          ("Halo + sky residual · reference","residual"),
+                          ("Halo model range width","halo_model_spread"),("Sky model range width","sky_model_spread")):
+            selector.addItem(label,key)
+        layout.addWidget(selector)
+        graphics=QGraphicsScene(dialog)
+        view=QGraphicsView(graphics)
+        view.setObjectName("sh1c_image_view")
+        layout.addWidget(view,1)
+        caption=QLabel()
+        caption.setWordWrap(True)
+        layout.addWidget(caption)
+        table=QPlainTextEdit()
+        table.setReadOnly(True)
+        table.setMaximumHeight(140)
+        lines=["Radius | support / valid | raw matched | halo corrected range | halo+sky range (nMgy)"]
+        def fmt(v):
+            return "—" if v is None else f"{v:.4g}"
+        def rng(v):
+            return "—" if v is None else f"{v[0]:.4g} to {v[1]:.4g}"
+        for a in p["apertures"]:
+            lines.append(f"{a['radius_arcsec']:g} arcsec | {a['common_support_pixels']}/{a['valid_pixels']} | "
+                         f"{fmt(a['raw_matched_flux_nMgy'])} | {rng(a['halo_corrected_flux_nMgy_range'])} | "
+                         f"{rng(a['halo_sky_residual_flux_nMgy_range'])}")
+        table.setPlainText("\n".join(lines))
+        layout.addWidget(table)
+        close=QPushButton("Close")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        original=p["layers"]["original"]
+        finite=original[np.isfinite(original)]
+        limits=tuple(np.quantile(finite,[.01,.995])) if finite.size else (0.,1.)
+        def render(*_):
+            key=selector.currentData()
+            a=p["layers"][key]
+            values=a[np.isfinite(a)]
+            shared=key in ("original","halo_corrected","residual")
+            lim=limits if shared else tuple(np.quantile(values,[.01,.99])) if values.size else (0.,1.)
+            if lim[1]<=lim[0]:
+                lim=(lim[0],lim[0]+1e-10)
+            rgb=rgb_for_layer(a,"image",self._band,contrast="faint",scaling="asinh",limits=lim)
+            rgb[~np.isfinite(a)]=(135,49,139)
+            graphics.clear()
+            item=graphics.addPixmap(FITSExplorer._pixmap(rgb))
+            graphics.setSceneRect(item.boundingRect())
+            view.fitInView(item,Qt.KeepAspectRatio)
+            caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
+                            f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} "
+                            "(minimum side residual, display only)")
+        selector.currentIndexChanged.connect(render)
+        dialog.resize(900,740)
+        render()
+        QTimer.singleShot(0,render)
+        dialog.exec()
 
     def _prepare_neighbour_masks(self):
         if (self._loaded is None or self._future is not None or
@@ -4442,6 +4541,11 @@ class SceneEditor(QWidget):
             and evidence.get("gaia_dr3_source_id") is not None
             and evidence.get("foreground_evidence_assessment") ==
                 "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW")
+        p=(self._foreground_psf_result or {}).get("sh1c_preview") or {}
+        self.sh1c_preview_btn.setEnabled(
+            active and self._future is None and evidence is not None
+            and evidence.get("source_id")== (self._foreground_psf_result or {}).get("source_id")
+            and p.get("status")=="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED")
         self.iso_show_sga_shreds.setEnabled(
             self._isophote_proposal is not None
             and bool(self._sga_shred_paths))
