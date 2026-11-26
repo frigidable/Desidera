@@ -107,6 +107,10 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
         "label": "Compact core · sky 3–3.5× FWHM (wing-sensitive diagnostic)",
         "kwargs": {"training_outlier_passes": 0, "max_iterations": 16},
     },
+    "compact_core_robust": {
+        "label": "Compact core · guarded training-star QA (2 passes)",
+        "kwargs": {"training_outlier_passes": 2, "max_iterations": 16},
+    },
     "outer_sky_isolation_footprint": {
         "label": "Extended sky · 16 iterations · nearest DAO separation ≥ stamp size (g pilot)",
         "kwargs": {
@@ -143,7 +147,7 @@ def psf0_experiment_recipe(
         # Explicit alternative when wide isolation yields no usable stars.
         # This fits a finite core only: closer sky can absorb stellar wings.
         # Never substitute automatically for the original extended recipe.
-        compact = experiment == "compact_core_sky"
+        compact = experiment in ("compact_core_sky", "compact_core_robust")
         inner_factor, outer_factor = (3., 3.5) if compact else (4.5, 5.75)
         inner = float(math.ceil(inner_factor*fwhm))
         outer = float(math.ceil(outer_factor*fwhm))

@@ -55,7 +55,7 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
     assert tuple(PSF0_DIAGNOSTIC_EXPERIMENTS) == (
         "baseline", "outer_sky", "outer_sky_robust",
         "outer_sky_convergence", "outer_sky_no_wing_smoothing",
-        "outer_sky_isolation_footprint")
+        "compact_core_sky", "compact_core_robust", "outer_sky_isolation_footprint")
     base = psf0_experiment_recipe(4.8, "baseline")
     extent = psf0_experiment_recipe(4.8, "outer_sky")
     robust = psf0_experiment_recipe(4.8, "outer_sky_robust")
@@ -158,7 +158,7 @@ def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
     assert set(("baseline","outer_sky","outer_sky_robust",
                 "outer_sky_convergence",
                 "outer_sky_no_wing_smoothing",
-                "outer_sky_isolation_footprint", "compact_core_sky")) == set(
+                "outer_sky_isolation_footprint", "compact_core_sky", "compact_core_robust")) == set(
         __import__(
             "lsbpipe.photometry.psf_gui_backend",
             fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
@@ -294,3 +294,12 @@ def test_ngc2146sat_r_compact_core_recipe_is_explicit_and_preserves_gates():
     assert compact.sky_annulus_outer_pix <= compact.cutout_size_pix // 2 - 2
     assert 2 * compact.sky_annulus_outer_pix <= compact.min_neighbor_separation_pix
     assert psf0_experiment_recipe(6.27, "outer_sky_isolation_footprint").cutout_size_pix == 79
+
+
+def test_ngc2146sat_compact_guarded_training_experiment_changes_only_training_passes():
+    from dataclasses import replace
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    compact = psf0_experiment_recipe(10.79, "compact_core_sky")
+    robust = psf0_experiment_recipe(10.79, "compact_core_robust")
+    assert robust == replace(compact, training_outlier_passes=2)
+    assert robust.digest != compact.digest
