@@ -226,3 +226,34 @@ def test_tractor_psf_training_keeps_non_gaia_identity_and_audits_every_gate():
     assert failure == "TRACTOR_NONSTELLAR_MODEL"
     assert PSF0Config(star_catalog_policy="tractor_psf_validated").star_catalog_policy == (
         "tractor_psf_validated")
+
+
+def test_ngc2146sat_pilot_lists_native_grz_and_local_catalog(tmp_path, monkeypatch):
+    from lsbpipe.photometry.psf_tractor_gaia import tractor_catalog_location
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    p = create_object_project("NGC2146sat", tmp_path / "NGC2146sat",
+                              field=SkyField(96.0619, 77.9684, 2.6))
+    p.data_root = p.root / "originals"
+    p.data_root.mkdir()
+    p.selected_dataset = ("dr11", "north", "0965p780", "r")
+    save_object_project(p)
+    for band in ("g", "r", "z"):
+        for path in _expected_paths(p.data_root, ("dr11", "north", "0965p780", band)).values():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"path presence fixture")
+    catalog, _ = tractor_catalog_location(
+        p.data_root, release="dr11", region="north", brick="0965p780")
+    catalog.parent.mkdir(parents=True)
+    catalog.write_bytes(b"path presence fixture")
+    info = inspect_psf0_bands(p.root)
+    assert [x["band"] for x in info["bands"]] == ["g", "r", "z"]
+    assert all(x["paths_present_unverified"] for x in info["bands"])
+    assert info["gaia_tractor_present_unverified"] is True
+    assert info["gaia_tractor_path"] == str(catalog)
+    assert info["status"] == "PATHS_ONLY_NOT_SCIENCE_VALIDATED"
+
+
+def test_ngc2146sat_pilot_rejects_wrong_center(tmp_path, monkeypatch):
+    p = _leo_project(tmp_path, monkeypatch, galaxy="NGC2146sat")
+    with pytest.raises(ValueError, match="center differs"):
+        inspect_psf0_bands(p.root)

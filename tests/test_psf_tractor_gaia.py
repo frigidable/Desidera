@@ -218,3 +218,41 @@ def test_catalog_matches_reject_low_snr_and_faint_undetected_neighbors():
     assert none is None and reason=="TRACTOR_NEIGHBOR_WITHIN_PSF_CUTOUT"
     none,reason=matcher.match(130.,90.,band="g")
     assert none is None and reason=="TRACTOR_LOW_BAND_SIGNAL_TO_NOISE"
+
+
+def test_dr11_north_catalogue_reads_grz_with_native_identity(tmp_path):
+    from types import SimpleNamespace
+    root = tmp_path / "original"
+    path, url = tractor_catalog_location(
+        root, release="dr11", region="north", brick="0965p780")
+    assert "dr11/north/tractor/096/tractor-0965p780.fits" in url
+    path.parent.mkdir(parents=True)
+    wcs = _wcs()
+    wcs.wcs.crval = [96.0619, 77.9684]
+    ra, dec = wcs.all_pix2world([19., 40.], [21., 25.], 0)
+    catalog = Table()
+    catalog["BRICKNAME"] = ["0965p780"] * 2
+    catalog["BRICK_PRIMARY"] = [True, True]
+    catalog["RA"], catalog["DEC"] = ra, dec
+    catalog["REF_CAT"] = ["G3", ""]
+    catalog["REF_ID"] = np.array([1234567890123, 0], dtype=np.int64)
+    catalog["TYPE"] = ["PSF", "SER"]
+    catalog["OBJID"] = [1, 2]
+    catalog["FITBITS"] = np.zeros(2, dtype=np.int16)
+    catalog["MASKBITS"] = np.zeros(2, dtype=np.int32)
+    catalog["GAIA_DUPLICATED_SOURCE"] = [False, False]
+    for band in ("g", "r", "z"):
+        catalog["FLUX_" + band.upper()] = [5., 2.]
+        catalog["FLUX_IVAR_" + band.upper()] = [100., 2.]
+    catalog.write(path, format="fits")
+    for band in ("g", "r", "z"):
+        frame = SimpleNamespace(
+            dataset_id=f"dr11/north/0965p780/{band}", band=band, wcs=wcs)
+        matcher = read_native_tractor_gaia(root, release="dr11", region="north",
+                                            brick="0965p780", frame=frame)
+        assert len(matcher.rows) == 2
+        assert matcher.rows[0]["ref_cat"] == "G3"
+        assert matcher.rows[1]["type"] == "SER"
+        assert matcher.pixel_positions[0] == pytest.approx([19., 21.])
+    with pytest.raises(ValueError, match="supports DR11"):
+        tractor_catalog_location(root, release="dr9", region="north", brick="0965p780")

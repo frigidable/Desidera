@@ -35,8 +35,8 @@ REQUIRED = {"BRICKNAME", "BRICK_PRIMARY", "RA", "DEC",
 
 
 def tractor_catalog_location(data_root, *, release, region, brick):
-    if release != "dr11" or region != "south":
-        raise ValueError("Gaia/Tractor PSF pilot is validated only for DR11 south")
+    if release != "dr11" or region not in ("north", "south"):
+        raise ValueError("Gaia/Tractor PSF pilot supports DR11 North/South only")
     if region not in regions_for_release(release) or not BRICK_RE.fullmatch(brick):
         raise ValueError("Invalid Legacy Survey release/region/brick")
     path = (Path(data_root).resolve() / release / region / "tractor" /

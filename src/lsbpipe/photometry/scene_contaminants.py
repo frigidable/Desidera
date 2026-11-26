@@ -386,7 +386,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                                 gaia_inner_skip_objids=()):
     """Prepare source-bound candidate mask in a worker, with no network.
 
-    The current stage supports verified local DR11 South native Tractor
+    The current stage supports verified local DR11 North/South native Tractor
     catalogues. In other datasets or when the catalogue is absent, fail
     closed rather than call a raw threshold contour a cleaned isophote.
     """
@@ -408,9 +408,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
     if origin_key is not None and tuple(origin_key) != expected_key:
         raise ValueError(
             "Loaded Scene native quartet differs from current project manifest")
-    if (release, region) != ("dr11", "south"):
+    if release != "dr11" or region not in ("north", "south"):
         raise ValueError(
-            "Catalogued-neighbour masking currently supports DR11 South only; "
+            "Catalogued-neighbour masking currently supports DR11 North/South only; "
             "no unmasked isophote will be generated.")
     frame = SimpleNamespace(
         dataset_id=f"{release}/{region}/{brick}/{band}",

@@ -76,11 +76,11 @@ def test_wrong_psfsize_wcs_must_fail_closed(tmp_path):
             frame, target_icrs_deg=(155.438012,18.088025))
 
 
-def _make_original_native_tractor_only(tmp_path, *, broken_map=False):
+def _make_original_native_tractor_only(tmp_path, *, broken_map=False, region="south"):
     root = tmp_path / "project-native"
-    coadd = (root / "dr11" / "south" / "coadd" /
+    coadd = (root / "dr11" / region / "coadd" /
              "155" / "1554p180")
-    tractor = root / "dr11" / "south" / "tractor" / "155"
+    tractor = root / "dr11" / region / "tractor" / "155"
     coadd.mkdir(parents=True)
     tractor.mkdir(parents=True)
     shape = (61,61)
@@ -114,7 +114,7 @@ def _make_original_native_tractor_only(tmp_path, *, broken_map=False):
         image_nMgy=np.zeros(shape),invvar_nMgy2=np.ones(shape),
         nexp=np.ones(shape,dtype=np.int16),
         maskbits=np.zeros(shape,dtype=np.int16),
-        native_wcs=wcs, release="dr11", region="south",
+        native_wcs=wcs, release="dr11", region=region,
         brick="1554p180", band="g",
         source_evidence={
             "synthetic":True,"data_root":str(root),
@@ -123,8 +123,9 @@ def _make_original_native_tractor_only(tmp_path, *, broken_map=False):
     )
 
 
-def test_real_project_tractor_psfsize_is_explicit_backup_to_coadd_map(tmp_path):
-    frame = _make_original_native_tractor_only(tmp_path)
+@pytest.mark.parametrize("region", ["south", "north"])
+def test_real_project_tractor_psfsize_is_explicit_backup_to_coadd_map(tmp_path, region):
+    frame = _make_original_native_tractor_only(tmp_path, region=region)
     result = suggest_detection_fwhm_from_psfsize(
         frame,target_icrs_deg=(155.438012,18.088025))
     assert result["available"] is True

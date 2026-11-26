@@ -190,7 +190,7 @@ class PSF0Panel(QGroupBox):
         self.get_tractor_btn.setObjectName("psf0_get_tractor_gaia")
         self.get_tractor_btn.clicked.connect(self._request_tractor_catalog)
         self.get_tractor_btn.setToolTip(
-            "Explicitly download the ORIGINAL DR11 south Tractor brick "
+            "Explicitly download the ORIGINAL DR11 North/South Tractor brick "
             "catalogue from the official Legacy Surveys archive into "
             "the current galaxy project's data root. No new project.")
         catalogue_row.addWidget(self.get_tractor_btn, 0, Qt.AlignLeft)
@@ -877,7 +877,7 @@ class PSF0Panel(QGroupBox):
         self.catalog_policy.setEnabled(not self._busy)
         self.get_tractor_btn.setEnabled(
             not self._busy and bool(self._snapshot)
-            and self._snapshot.get("dataset", ())[0:2] == ("dr11", "south"))
+            and self._snapshot.get("dataset", ())[0:2] in (("dr11", "south"), ("dr11", "north")))
         self.auto_fwhm_btn.setEnabled(eligible and not self._busy)
         self.copy_qa_btn.setEnabled(self._qa_payload is not None and not self._busy)
         self.review_btn.setEnabled(self._star_review_data is not None and not self._busy)

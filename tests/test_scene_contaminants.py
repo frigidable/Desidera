@@ -47,15 +47,16 @@ def test_catalogue_mask_excludes_outer_stars_but_not_target_or_bad_data():
     assert not mask.flags.writeable
 
 
+@pytest.mark.parametrize("region", ["south", "north"])
 def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
-        monkeypatch, tmp_path):
+        monkeypatch, tmp_path, region):
     import lsbpipe.photometry.scene_contaminants as module
     monkeypatch.setenv("LSBPIPE_SESSION_DIR",str(tmp_path/"session"))
     project = create_object_project(
         "Leo P",tmp_path/"LeoP",field=SkyField(155.,18.,4.))
     project.data_root = project.root/"data"
     project.data_root.mkdir()
-    project.selected_dataset = ("dr11","south","1554p180","g")
+    project.selected_dataset = ("dr11",region,"1554p180","g")
     project.target_radius_arcsec = 20.
     save_object_project(project)
     yy,xx = np.indices((241,241))
@@ -68,7 +69,7 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
     bits[110,180] = 1 << 1   # BRIGHT warning is not unconditional exclusion.
     dataset = {
         "project_id":project.project_id,
-        "source":"DR11 south / 1554p180 / g",
+        "source":f"DR11 {region} / 1554p180 / g",
         "band":"g", "wcs":_wcs(),
         "pixel_shape":image.shape,
         "native_hard":hard, "data":{"image":image, "maskbits":bits},
@@ -88,8 +89,8 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
     monkeypatch.setattr(module,"read_native_tractor_gaia",fake_read)
     result=prepare_scene_contamination(dataset, project, draft,
                                        (155.,18.))
-    assert calls == [(project.data_root,"dr11","south","1554p180",
-                      "dr11/south/1554p180/g")]
+    assert calls == [(project.data_root,"dr11",region,"1554p180",
+                      f"dr11/{region}/1554p180/g")]
     assert result["stats"]["masked_catalog_sources"] == 1
     assert result["stats"]["skipped_target_overlap"] == 1
     assert result["mask"][112,181] and not result["mask"][120,120]
@@ -119,10 +120,10 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
     assert not result["mask"].flags.writeable
     assert np.array_equal(image,original)
     assert np.array_equal(dataset["data"]["maskbits"],bits)
-    dataset["source_quartet_key"] = ["dr11","south","1555p180","g"]
+    dataset["source_quartet_key"] = ["dr11",region,"1555p180","g"]
     with pytest.raises(ValueError, match="differs from current project manifest"):
         prepare_scene_contamination(dataset, project, draft, (155.,18.))
-    dataset["source_quartet_key"] = ["dr11","south","1554p180","g"]
+    dataset["source_quartet_key"] = ["dr11",region,"1554p180","g"]
     current=prepare_scene_contamination(dataset,project,draft,(155.,18.))
     assert current["source_quartet_key"] == dataset["source_quartet_key"]
 
@@ -148,7 +149,7 @@ def test_missing_catalogue_and_unsupported_release_fail_closed(
         prepare_scene_contamination(
             dataset,project,SkyMaskDraft(project.project_id),(155.,18.))
     project.selected_dataset=("dr9","north","1554p180","r")
-    with pytest.raises(ValueError,match="DR11 South only"):
+    with pytest.raises(ValueError,match="DR11 North/South only"):
         prepare_scene_contamination(
             dataset,project,SkyMaskDraft(project.project_id),(155.,18.))
 

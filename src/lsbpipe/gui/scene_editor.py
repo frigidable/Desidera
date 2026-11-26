@@ -1561,7 +1561,7 @@ class SceneEditor(QWidget):
         self.iso_prepare = QPushButton("1 · Prepare neighbour masks")
         self.iso_prepare.setObjectName("scene_prepare_neighbour_masks")
         self.iso_prepare.setToolTip(
-            "Read same-brick local DR11 South Tractor catalogue; "
+            "Read same-brick local DR11 North/South Tractor catalogue; "
             "make provisional source envelopes and inspect MASKBITS. "
             "No model subtraction, PSF wing validation or downloads.")
         self.iso_prepare.clicked.connect(self._prepare_neighbour_masks)
@@ -1672,7 +1672,7 @@ class SceneEditor(QWidget):
             self._update_contamination_overlay)
         iso_layout.addWidget(self.iso_show_sga_shreds)
         self.iso_mask_status = QLabel(
-            "Neighbour mask not prepared. Local DR11 South Tractor "
+            "Neighbour mask not prepared. Local DR11 North/South Tractor "
             "catalogue required; obtain it through PSF-0 if absent.")
         self.iso_mask_status.setObjectName("scene_neighbor_mask_status")
         self.iso_mask_status.setWordWrap(True)
@@ -2351,7 +2351,7 @@ class SceneEditor(QWidget):
                 self.iso_mask_status.setText(
                     "Mask preparation FAILED: " + str(exc)
                     + ". No unmasked isophote will be offered. "
-                      "For DR11 South obtain the local Tractor catalogue "
+                      "For DR11 North/South obtain the local Tractor catalogue "
                       "in PSF-0; no automatic download occurred.")
             elif kind == "radius_sweep":
                 self._sweep_result = None
