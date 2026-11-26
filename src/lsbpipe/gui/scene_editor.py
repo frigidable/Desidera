@@ -547,8 +547,8 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
 
 def run_scene_psf0_foreground_probe(
         dataset, project_root, source_entry, source_inventory,
-        center_icrs, component_indices=None):
-    """Use an EXISTING verified per-band PSF-0; never refit or save a PSF.
+        center_icrs, component_indices=None, *, scene_masks=None):
+    """Inspect a saved finite PSF, or independently measure saturated-star sectors.
 
     Only the original native cutout and immutable restored ePSF are
     inspected. The GUI runs this source-bound I/O and fit in its worker.
@@ -587,6 +587,42 @@ def run_scene_psf0_foreground_probe(
         "source_light_subtracted":False,
         "original_pixels_modified":False,
     }
+    # Saturated stars are a distinct measurement path. Never demand a
+    # successful isolated core fit or use the unfitted Tractor amplitude.
+    if f"SATUR_{band.upper()}" in (source_entry.get("maskbits_names") or ()):
+        from astropy.wcs.utils import proj_plane_pixel_scales
+        from lsbpipe.photometry.stellar_halo import measure_saturated_halo_sectors
+        if scene_masks is None:
+            return dict(output, status="SH1_CURRENT_SCENE_MASKS_REQUIRED")
+        if (scene_masks.get("project_id") != project.project_id or
+                scene_masks.get("dataset_source") != source or
+                scene_masks.get("catalog_sha256") != source_inventory.get("catalog_sha256")):
+            raise ValueError("SH1 scene mask provenance mismatch")
+        wcs = dataset["wcs"]
+        sx,sy = map(float,wcs.all_world2pix(
+            float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
+        if math.hypot(sx-float(source_entry["x"]),sy-float(source_entry["y"])) > .75:
+            raise ValueError("SH1 source WCS mismatch")
+        tx,ty = map(float,wcs.all_world2pix(*map(float,center_icrs),0))
+        scales = np.asarray(proj_plane_pixel_scales(wcs.celestial))*3600.
+        if scales.shape != (2,) or not np.isfinite(scales).all() or np.min(scales)<=0 or np.max(scales)/np.min(scales)>1.01:
+            raise ValueError("SH1 requires near-square native celestial pixels")
+        neighbors = [(e["x"],e["y"]) for e in source_inventory["entries"]
+                     if e["source_id"] != source_entry["source_id"]
+                     and e.get("x") is not None and e.get("y") is not None]
+        result = measure_saturated_halo_sectors(
+            dataset["data"]["image"],dataset["data"]["invvar"],
+            dataset["native_hard"],source_xy=(sx,sy),target_xy=(tx,ty),
+            pixel_scale_arcsec=float(np.sqrt(np.prod(scales))),
+            source_mask=scene_masks["mask"],protected=scene_masks["protected"],
+            unresolved_sky_veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],
+            neighbor_centres=neighbors)
+        return dict(output,status=result["status"],sh1_sector_measurement=result,
+                    draft_digest=scene_masks["draft_digest"],
+                    grid_fingerprint=dataset.get("grid_fingerprint"),
+                    original_fits_sha256_local=dataset.get("original_fits_sha256_local"),
+                    source_maskbits=source_entry.get("maskbits"),
+                    source_maskbits_names=source_entry.get("maskbits_names"))
     restored = read_saved_psf0_bands(project_root)
     psf = restored["restored"].get(band)
     if psf is None:
@@ -1761,7 +1797,7 @@ class SceneEditor(QWidget):
             "or foreground contaminant.")
         registry_layout.addWidget(self.source_registry_details)
         self.psf0_fg_btn = QPushButton(
-            "Probe selected Gaia star · saved PSF-0")
+            "Probe Gaia star · PSF-0 / saturated halo")
         self.psf0_fg_btn.setObjectName("scene_psf0_foreground_probe")
         self.psf0_fg_btn.setToolTip(
             "Read-only fit of saved empirical PSF-0 on original star "
@@ -1770,6 +1806,8 @@ class SceneEditor(QWidget):
             "project blank controls. Uses ONLY currently loaded project "
             "FITS and original Tractor inventory; requires a selected "
             "Gaia foreground source and verified per-band saved PSF-0. "
+            "For saturated stars, SH1 instead measures masked native sectors "
+            "without a PSF or fitted catalogue amplitude. "
             "Does not extrapolate PSF wings, infer galaxy flux loss, "
             "subtract pixels or adopt a science mask.")
         self.psf0_fg_btn.clicked.connect(
@@ -2976,7 +3014,8 @@ class SceneEditor(QWidget):
         self._future = self._executor.submit(
             run_scene_psf0_foreground_probe,
             self._loaded, str(self._project_root), dict(entry),
-            self._source_registry, centre, indices)
+            self._source_registry, centre, indices,
+            scene_masks=self._contamination)
         self._work_kind = "psf_foreground"
         self._active_generation = self._load_generation
         self.psf0_fg_status.setText(
@@ -3001,6 +3040,17 @@ class SceneEditor(QWidget):
             raise ValueError("Stale PSF0 foreground source/project evidence")
         self._foreground_psf_result = result
         status = result["status"]
+        if status == "SH1_SECTORS_MEASURED_NOT_ADOPTED":
+            if result.get("draft_digest") != self._draft.digest:
+                raise ValueError("Stale SH1 scene revision")
+            rows = result["sh1_sector_measurement"]["rows"]
+            count = sum(r["adequate_for_descriptive_comparison"]
+                        for r in rows if r["role"] == "AWAY_TRAIN_CANDIDATE")
+            self.psf0_fg_status.setText(
+                f"OBJID {result['source_objid']} · SH1 saturated-star sectors: "
+                f"{count} usable away-sector radial bins. Signed original pixels; "
+                "no sky or halo fit, no subtraction. Copy Scene QA for profiles.")
+            return
         if status != "FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED":
             self.psf0_fg_status.setText(
                 f"OBJID {result['source_objid']}: {status}. "
