@@ -16,8 +16,6 @@ MAX_SHIFT=8.
 
 
 def local_grid(p,wcs):
-    from astropy.coordinates import SkyCoord
-    import astropy.units as u
     tx,ty=map(float,p["target_xy_native_pix"])
     center=wcs.celestial.pixel_to_world(tx,ty).icrs
     geo=ellipse_from_wcs(wcs,center.ra.deg,center.dec.deg,sky_q=1.,sky_pa_deg=0.)
@@ -104,7 +102,9 @@ def fit_geometry(design,image,g,noise=None,seed=None):
         return dict(info,status="GEO1_INSUFFICIENT_COVERAGE")
     z=d["mean"](image)
     if not np.isfinite(z).all(): raise ValueError("Nonfinite GEO-1 common block")
-    spread=max(float(np.quantile(z,.9)-np.quantile(z,.1)),1e-12)
+    spread=float(np.quantile(z,.9)-np.quantile(z,.1))
+    if spread<=1e-12:
+        return dict(info,status="GEO1_NO_MEASURABLE_PROFILE_CONTRAST")
     norm=spread
     z=z/norm
     # Shared per-comparison noise scale is an empirical robust loss scale,
@@ -114,9 +114,10 @@ def fit_geometry(design,image,g,noise=None,seed=None):
         v=z[outer] if outer.any() else z
         noise=max(.02,float(1.4826*np.median(abs(v-np.median(v)))))
     else:
-        noise=max(.02,float(noise)/norm)
+        noise=max(1e-12,float(noise)/norm)
     e,n=d["e"],d["n"]
-    bg=float(np.median(z[np.hypot(e,n)>=.7*d["radius"]]))
+    outer=z[np.hypot(e,n)>=.7*d["radius"]]
+    bg=float(np.median(outer if outer.size else z))
     amp=max(.1,float(np.quantile(z,.95)-bg))
     lower=np.array([-MAX_SHIFT,-MAX_SHIFT,.25,-2*np.pi,-8.,np.log(1.5),.35,float(z.min()-5)])
     upper=np.array([MAX_SHIFT,MAX_SHIFT,1.,3*np.pi,5.,np.log(70.),2.5,float(z.max()+5)])
