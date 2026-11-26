@@ -111,6 +111,10 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
         "label": "Compact core · guarded training-star QA (2 passes)",
         "kwargs": {"training_outlier_passes": 2, "max_iterations": 16},
     },
+    "compact_moffat_m1": {
+        "label": "PSF-M1 · joint pixel-integrated Moffat (diagnostic)",
+        "kwargs": {"reconstruction": "moffat_m1", "max_iterations": 16},
+    },
     "outer_sky_isolation_footprint": {
         "label": "Extended sky · 16 iterations · nearest DAO separation ≥ stamp size (g pilot)",
         "kwargs": {
@@ -147,7 +151,7 @@ def psf0_experiment_recipe(
         # Explicit alternative when wide isolation yields no usable stars.
         # This fits a finite core only: closer sky can absorb stellar wings.
         # Never substitute automatically for the original extended recipe.
-        compact = experiment in ("compact_core_sky", "compact_core_robust")
+        compact = experiment in ("compact_core_sky", "compact_core_robust", "compact_moffat_m1")
         inner_factor, outer_factor = (3., 3.5) if compact else (4.5, 5.75)
         inner = float(math.ceil(inner_factor*fwhm))
         outer = float(math.ceil(outer_factor*fwhm))
@@ -270,6 +274,7 @@ def _saved_manual_exclusions(project, source_hashes, *,
             # Before this feature, only DAO candidates existed. Treat
             # those historical receipts as DAO-only; never as Gaia-strict.
             original_recipe.setdefault("star_catalog_policy", "dao_diagnostic")
+            original_recipe.setdefault("reconstruction", "epsf")
             ids = data["excluded_training_star_ids"]
             if (data.get("schema") !=
                     "desidera.psf0-manual-training-review/1"

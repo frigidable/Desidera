@@ -55,7 +55,7 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
     assert tuple(PSF0_DIAGNOSTIC_EXPERIMENTS) == (
         "baseline", "outer_sky", "outer_sky_robust",
         "outer_sky_convergence", "outer_sky_no_wing_smoothing",
-        "compact_core_sky", "compact_core_robust", "outer_sky_isolation_footprint")
+        "compact_core_sky", "compact_core_robust", "compact_moffat_m1", "outer_sky_isolation_footprint")
     base = psf0_experiment_recipe(4.8, "baseline")
     extent = psf0_experiment_recipe(4.8, "outer_sky")
     robust = psf0_experiment_recipe(4.8, "outer_sky_robust")
@@ -158,7 +158,7 @@ def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
     assert set(("baseline","outer_sky","outer_sky_robust",
                 "outer_sky_convergence",
                 "outer_sky_no_wing_smoothing",
-                "outer_sky_isolation_footprint", "compact_core_sky", "compact_core_robust")) == set(
+                "outer_sky_isolation_footprint", "compact_core_sky", "compact_core_robust", "compact_moffat_m1")) == set(
         __import__(
             "lsbpipe.photometry.psf_gui_backend",
             fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
@@ -303,3 +303,17 @@ def test_ngc2146sat_compact_guarded_training_experiment_changes_only_training_pa
     robust = psf0_experiment_recipe(10.79, "compact_core_robust")
     assert robust == replace(compact, training_outlier_passes=2)
     assert robust.digest != compact.digest
+
+
+def test_moffat_m1_explicit_recipe_keeps_compact_sample_and_legacy_digest():
+    from dataclasses import replace, asdict
+    from hashlib import sha256
+    import json
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    compact = psf0_experiment_recipe(10.79, "compact_core_sky")
+    m1 = psf0_experiment_recipe(10.79, "compact_moffat_m1")
+    assert m1 == replace(compact, reconstruction="moffat_m1")
+    assert m1.digest != compact.digest
+    legacy = asdict(compact)
+    legacy.pop("reconstruction")
+    assert compact.digest == sha256(json.dumps(legacy,sort_keys=True,allow_nan=False).encode()).hexdigest()

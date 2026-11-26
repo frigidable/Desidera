@@ -98,8 +98,13 @@ class PSF0Config:
     # Only when explicitly requested. Star-level trimming is separate
     # from photutils pixelwise sigma-clipping and needs heldout QA.
     training_outlier_passes: int = 0
+    reconstruction: str = "epsf"
 
     def __post_init__(self):
+        if self.reconstruction not in ("epsf", "moffat_m1"):
+            raise ValueError("Unknown PSF reconstruction method")
+        if self.reconstruction == "moffat_m1" and self.training_outlier_passes:
+            raise ValueError("Moffat M1 does not use empirical training trimming")
         floats = (self.guessed_fwhm_pix, self.detection_sigma,
                   self.sky_annulus_inner_pix, self.sky_annulus_outer_pix,
                   self.max_invalid_fraction, self.min_neighbor_separation_pix,
@@ -148,7 +153,11 @@ class PSF0Config:
 
     @property
     def digest(self):
-        return sha256(json.dumps(asdict(self), sort_keys=True,
+        values = asdict(self)
+        # Preserve old ePSF checkpoint identities exactly.
+        if self.reconstruction == "epsf":
+            values.pop("reconstruction")
+        return sha256(json.dumps(values, sort_keys=True,
                                  allow_nan=False).encode("utf8")).hexdigest()
 
 
@@ -261,7 +270,7 @@ def _implementation_method_fingerprint(cfg, kwargs, versions,
     """Bind source-independent PSF lineage to effective software and defaults."""
     payload = {
         "schema": "desidera.psf0-implementation-method/1",
-        "contract": RECIPE, "config_digest": cfg.digest,
+        "contract": (RECIPE if cfg.reconstruction == "epsf" else "desidera.psf-m1-joint-moffat/1"), "config_digest": cfg.digest,
         "builder_kwargs": dict(kwargs), "package_versions": dict(versions),
         "fit_shape": solver_diagnostics.get("fit_shape_final_if_reported"),
         "smoothing": solver_diagnostics.get(
@@ -688,6 +697,8 @@ def build_empirical_coadd_psf(
         raise TypeError("Expected PSF0Config")
     if type(extended_research_qa) is not bool:
         raise TypeError("extended_research_qa must be an explicit bool")
+    if cfg.reconstruction == "moffat_m1" and extended_research_qa:
+        raise ValueError("Moffat M1 supports standard core/holdout QA only")
     if cfg.star_catalog_policy in ("gaia_strict", "tractor_psf_validated"):
         from lsbpipe.photometry.psf_tractor_gaia import TractorGaiaMatcher
         if not isinstance(catalog_matcher, TractorGaiaMatcher):
@@ -1096,7 +1107,7 @@ def build_empirical_coadd_psf(
         "maxiters": cfg.max_iterations,
         "progress_bar": False,
     }
-    if "wing_smoothing" in inspect.signature(EPSFBuilder).parameters:
+    if cfg.reconstruction == "epsf" and "wing_smoothing" in inspect.signature(EPSFBuilder).parameters:
         kwargs["wing_smoothing"] = cfg.wing_smoothing
     elif not cfg.wing_smoothing:
         raise RuntimeError(
@@ -1107,7 +1118,20 @@ def build_empirical_coadd_psf(
         # rebuild, never reuse its previous fitted-star state.
         b = EPSFBuilder(**kwargs)
         return b, b(training_epsf_stars(entries))
-    builder, fitted = build_for_training(training_entries)
+    m1_diagnostics = None
+    if cfg.reconstruction == "moffat_m1":
+        from types import SimpleNamespace
+        from lsbpipe.photometry.psf_moffat import fit_joint_moffat
+        raw_m1, m1_diagnostics = fit_joint_moffat(
+            [(e[0], e[-1]) for e in training_entries], cfg.guessed_fwhm_pix,
+            cfg.cutout_size_pix, cfg.sky_annulus_outer_pix)
+        # Adapter to the existing finite-kernel diagnostic/export contract.
+        builder = SimpleNamespace()
+        fitted = SimpleNamespace(epsf=SimpleNamespace(data=raw_m1), converged=True)
+        kwargs = {"reconstruction":"moffat_m1", "quadrature_order":3,
+                  "max_nfev":100, "fit_radius_pix":cfg.sky_annulus_outer_pix}
+    else:
+        builder, fitted = build_for_training(training_entries)
     for iteration in range(cfg.training_outlier_passes):
         current_psf = fitted.epsf if hasattr(fitted, "epsf") else fitted[0]
         raw_trial = np.asarray(current_psf.data, dtype=float)
@@ -1191,6 +1215,10 @@ def build_empirical_coadd_psf(
                 and math.isfinite(float(fitted.final_converged_fraction)))
             else None),
     }
+    if m1_diagnostics is not None:
+        solver_diagnostics["parametric_moffat_m1"] = m1_diagnostics
+        solver_diagnostics["wing_smoothing_requested"] = None
+        solver_diagnostics["max_iterations_requested"] = None
     solver_diagnostics["convergence_fraction_target_if_reported"] = (
         float(getattr(builder, "converged_fraction"))
         if getattr(builder, "converged_fraction", None) is not None
@@ -1656,6 +1684,10 @@ def build_empirical_coadd_psf(
         "HOLDOUT_RESIDUAL_NOT_CALIBRATED_CHI_SQUARE",
         "TARGET_PROTECTION_LOCAL_WCS_APPROXIMATION",
     ]
+    if m1_diagnostics is not None:
+        flags.extend(("PARAMETRIC_MOFFAT_CORE_MODEL",
+                      "ANALYTIC_WINGS_NOT_OBSERVATIONALLY_VALIDATED",
+                      "HOLDOUT_TESTS_FINITE_EXPORTED_KERNEL_NOT_JOINT_SKY_FIT"))
     if cfg.star_catalog_policy == "tractor_psf_validated":
         flags.append("TRACTOR_ONLY_TRAINING_STARS_NOT_GAIA_CONFIRMED")
         flags.append("GAIA_ONLY_HOLDOUT_VALIDATION_NOT_CALIBRATED")
@@ -1819,7 +1851,7 @@ def build_empirical_coadd_psf(
         "initial_detection_rms_nMgy_per_pixel": float(std0),
         "assumed_detection_fwhm_pix_not_measured": cfg.guessed_fwhm_pix,
         "epsf_converged_reported": (bool(fitted.converged)
-                                    if hasattr(fitted, "converged") else None),
+                                    if cfg.reconstruction == "epsf" and hasattr(fitted, "converged") else None),
     }
     return PSF0Result(
         dataset_id=frame.dataset_id, instrument=instrument, kernel=kernel,
@@ -1831,6 +1863,6 @@ def build_empirical_coadd_psf(
         target_protection_arcsec=float(target_protection_arcsec),
         review_snapshot=review_snapshot,
         algorithm_versions={
-            "recipe": RECIPE, **versions,
+            "recipe": (RECIPE if cfg.reconstruction == "epsf" else "desidera.psf-m1-joint-moffat/1"), **versions,
             "implementation_method_sha256": method_fingerprint["sha256"],
         })

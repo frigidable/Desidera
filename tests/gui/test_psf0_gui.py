@@ -86,7 +86,8 @@ def test_psf_gui_uses_existing_project_and_chooses_present_r_instead_of_saved_g(
     panel.catalog_policy.setCurrentIndex(
         panel.catalog_policy.findData("dao_diagnostic"))
     assert panel.run_btn.isEnabled()
-    assert panel.experiment.count() == 6
+    assert panel.experiment.count() == 9
+    assert panel.experiment.findData("compact_moffat_m1") >= 0
     assert tuple(window.photometry_workspace.psf0_panels) == ("g", "r", "i", "z")
     assert window.photometry_workspace.psf0_panels["r"] is panel
     assert panel.experiment.currentData() == "outer_sky_isolation_footprint"
