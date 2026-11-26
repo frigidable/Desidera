@@ -21,6 +21,7 @@ from typing import Callable
 from lsbpipe.photometry.native_fits import load_native_legacy_quartet
 from lsbpipe.photometry.psf_empirical import (
     PSF0Config, PSF0Result, PSF0Star, PSF0QualityError, build_empirical_coadd_psf,
+    PSF0_MAX_CUTOUT_SIZE_PIX,
 )
 from lsbpipe.photometry.psf_export import export_psf0_diagnostic
 from lsbpipe.photometry.psf_tractor_gaia import (
@@ -120,7 +121,7 @@ def psf0_experiment_recipe(
     A fixed annulus at 19–24 pix was inside 3×–4× FWHM for the REAL Leo P
     DR11 g PSFSIZE prior of 6.57 pix. Extended modes therefore express the
     *initial* sky-sampling radius in FWHM units and fail closed if the
-    necessary cutout cannot fit safely under the 91-pixel PSF0 limit.
+    necessary cutout exceeds the bounded PSF0 stamp resource limit.
 
     Even 4.5× FWHM does NOT guarantee wing-free sky. The science report
     continues to flag the sky/PSF degeneracy and correlated-coadd noise.
@@ -139,10 +140,10 @@ def psf0_experiment_recipe(
         outer = float(math.ceil(5.75*fwhm))
         half = int(outer)+2
         size = max(51, 2*half+1)
-        if size > 91:
+        if size > PSF0_MAX_CUTOUT_SIZE_PIX:
             raise ValueError(
                 f"FWHM-scaled sky annulus needs {size} px for assumed "
-                f"FWHM {fwhm:.2f} px, above the 91 px PSF0 limit. "
+                f"FWHM {fwhm:.2f} px, above the {PSF0_MAX_CUTOUT_SIZE_PIX} px PSF0 limit. "
                 "Choose baseline as a wing-sensitive diagnostic, not as "
                 "a substitute for validated extended-wing background; "
                 "do not silently shrink the annulus.")

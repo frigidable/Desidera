@@ -802,3 +802,17 @@ def test_psf_desktop_two_column_inspector_reflows_without_touching_science(qtbot
     assert panel._result_column.isVisible()
     assert panel._controls_column.isVisible()
     assert not panel.kernel_view.pixmap() or panel.kernel_view.pixmap().isNull()
+
+
+def test_preparation_failure_reason_visible_without_research_mode(qtbot):
+    panel = PSF0Panel()
+    qtbot.addWidget(panel)
+    panel.show()
+    error = "FWHM-scaled sky annulus exceeds resource limit"
+    panel.show_failure(error)
+    assert error in panel.summary.text()
+    assert error in panel.qa.toPlainText()
+    assert not panel.inspection_toggle.isHidden()
+    assert panel.overview_state() == "Failed"
+    assert panel.active_preview is None
+    assert not panel.save_btn.isEnabled()

@@ -131,16 +131,16 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
     assert wide.digest != psf0_experiment_recipe(4.80, "outer_sky").digest
     # The sky geometry cannot silently fall back to a closer annulus
     # for bad seeing. The scientist must choose a different experiment.
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_robust")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_convergence")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_no_wing_smoothing")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_isolation_footprint")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_robust")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_convergence")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_no_wing_smoothing")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_isolation_footprint")
 
 
 def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
@@ -257,3 +257,22 @@ def test_ngc2146sat_pilot_rejects_wrong_center(tmp_path, monkeypatch):
     p = _leo_project(tmp_path, monkeypatch, galaxy="NGC2146sat")
     with pytest.raises(ValueError, match="center differs"):
         inspect_psf0_bands(p.root)
+
+
+@pytest.mark.parametrize("mode", ["outer_sky", "outer_sky_robust",
+    "outer_sky_convergence", "outer_sky_no_wing_smoothing",
+    "outer_sky_isolation_footprint"])
+def test_ngc2146sat_r_scaled_stamp_preserves_sky_geometry(mode):
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    from lsbpipe.photometry.psf_empirical import PSF0Config
+    cfg = psf0_experiment_recipe(10.79, mode)
+    assert cfg.cutout_size_pix == 131
+    assert cfg.sky_annulus_inner_pix == 49.
+    assert cfg.sky_annulus_outer_pix == 63.
+    assert cfg.min_neighbor_separation_pix == (131. if mode == "outer_sky_isolation_footprint" else 135.)
+    assert cfg.sky_annulus_outer_pix <= cfg.cutout_size_pix // 2 - 2
+    assert cfg.max_invalid_fraction == PSF0Config().max_invalid_fraction
+    assert cfg.min_train_stars == PSF0Config().min_train_stars
+    assert cfg.min_holdout_stars == PSF0Config().min_holdout_stars
+    with pytest.raises(ValueError, match="15..151 px"):
+        PSF0Config(cutout_size_pix=153)

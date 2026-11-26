@@ -892,7 +892,8 @@ class PSF0Panel(QGroupBox):
         self.summary.setVisible(
             show_cards or self._qa_payload is not None)
         evidence_available = (
-            self._research_mode or self._qa_payload is not None)
+            self._research_mode or self._qa_payload is not None
+            or self.status.text().startswith("PSF-0 failed scientific"))
         self.inspection_toggle.setVisible(evidence_available)
         self.inspection_details.setVisible(
             evidence_available and self.inspection_toggle.isChecked())
@@ -1073,7 +1074,9 @@ class PSF0Panel(QGroupBox):
         else:
             explanation = ""
         self.qa.setPlainText(explanation + error)
-        self.summary.setText("No PSF saved or adopted. Original FITS unchanged.")
+        self.summary.setText(
+            "No PSF saved or adopted. Original FITS unchanged.\n"
+            + str(error).split("\n", 1)[0][:500])
         self._update_buttons()
 
     def _attach_star_review(self, payload: dict):

@@ -65,6 +65,11 @@ class PSF0QualityError(ValueError):
         self.review_snapshot = review_snapshot
 
 
+## Resource bound, not a PSF accuracy or wing calibration criterion.
+# 151 px accommodates the DR11 North r-band pilot (131 px at 10.79 px FWHM).
+PSF0_MAX_CUTOUT_SIZE_PIX = 151
+
+
 @dataclass(frozen=True)
 class PSF0Config:
     """Reproducible, conservative core-PSF recipe (not a science calibration)."""
@@ -105,8 +110,8 @@ class PSF0Config:
             raise ValueError("PSF-0 requires sampled stars with guessed FWHM >=2.5 px")
         if not 3 <= self.detection_sigma <= 30:
             raise ValueError("Detection threshold out of conservative range")
-        if type(self.cutout_size_pix) is not int or not 15 <= self.cutout_size_pix <= 91 or self.cutout_size_pix % 2 != 1:
-            raise ValueError("Star cutout must be odd and 15..91 px")
+        if type(self.cutout_size_pix) is not int or not 15 <= self.cutout_size_pix <= PSF0_MAX_CUTOUT_SIZE_PIX or self.cutout_size_pix % 2 != 1:
+            raise ValueError(f"Star cutout must be odd and 15..{PSF0_MAX_CUTOUT_SIZE_PIX} px")
         h = self.cutout_size_pix // 2
         if not 2 < self.sky_annulus_inner_pix < self.sky_annulus_outer_pix <= h:
             raise ValueError("Local stellar sky annulus must lie inside cutout")
