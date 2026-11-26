@@ -2064,7 +2064,8 @@ def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
     editor.source_registry_list.setCurrentRow(0)
     editor.source_registry_list.blockSignals(False)
     calls=[]
-    def fake_probe(dataset,root,source,inventory,centre,indices):
+    def fake_probe(dataset,root,source,inventory,centre,indices,*,scene_masks=None):
+        assert scene_masks is editor._contamination
         calls.append((dataset["band"],source["objid"],centre,indices))
         return {
             "status":"FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED",
@@ -2453,3 +2454,41 @@ def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
         "A wide horizontal toolbar must not lock the previous minimum "
         "size and prevent the smaller viewport reflow")
     assert editor._toolbar.direction() == QBoxLayout.TopToBottom
+
+
+def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypatch):
+    import lsbpipe.gui.scene_editor as module
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    candidate={"source_id":"dr11/south/1554p600/OBJID=360",
+               "objid":360,"x":48.,"y":48.,"tractor_type":"PSF",
+               "gaia_dr3_source_id":12345,"maskbits_names":["SATUR_G"],
+               "foreground_evidence_assessment":"GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW"}
+    editor._source_registry={"catalog_sha256":"a"*64,"entries":[candidate]}
+    zero=np.zeros(editor._loaded["pixel_shape"],dtype=bool)
+    editor._contamination={"catalog_sha256":"a"*64,"draft_digest":editor.draft.digest,
+                           "mask":zero,"auto_mask":zero.copy()}
+    editor._source_registry_visible=[candidate]
+    editor.source_registry_list.blockSignals(True)
+    editor.source_registry_list.addItem("OBJID 360")
+    editor.source_registry_list.setCurrentRow(0)
+    editor.source_registry_list.blockSignals(False)
+    def fake_probe(dataset,root,source,inventory,centre,indices,*,scene_masks):
+        assert source["maskbits_names"]==["SATUR_G"]
+        return {"status":"SH1_SECTORS_MEASURED_NOT_ADOPTED",
+                "project_id":project.project_id,"source_id":candidate["source_id"],
+                "source_objid":360,"dataset_source":dataset["source"],
+                "band":"g","tractor_catalog_sha256":"a"*64,
+                "draft_digest":scene_masks["draft_digest"],"science_adopted":False,
+                "source_light_subtracted":False,"original_pixels_modified":False,
+                "sh1_sector_measurement":{"rows":[{"role":"AWAY_TRAIN_CANDIDATE",
+                      "adequate_for_descriptive_comparison":True}],"halo_fitted":False}}
+    monkeypatch.setattr(module,"run_scene_psf0_foreground_probe",fake_probe)
+    editor._refresh_controls()
+    editor.psf0_fg_btn.click()
+    qtbot.waitUntil(lambda: editor._future is None,timeout=5000)
+    assert "1 usable away-sector radial bins" in editor.psf0_fg_status.text()
+    assert "no subtraction" in editor.psf0_fg_status.text()
+    qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]
+    assert not qa["science_adopted"] and not qa["sh1_sector_measurement"]["halo_fitted"]
+    editor.set_band("r")
+    assert editor._foreground_psf_result is None
