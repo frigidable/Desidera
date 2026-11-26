@@ -684,6 +684,8 @@ def run_scene_psf0_foreground_probe(
                     source_mask=scene_masks["mask"],protected=scene_masks["protected"],
                     veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],neighbours=neighbors,
                     baseline_comparison=result["sh1b_model_comparison"],original_preview=preview)
+                from lsbpipe.photometry.galaxy_geometry_diagnostic import geometry_diagnostics
+                preview["geo1"]=geometry_diagnostics(preview,result["sh1b_model_comparison"],owcs)
         return dict(output,status=result["status"],sh1_sector_measurement=result,
                     sh1c_preview=preview,
                     sh1d_policy={k:original_masks.get(k) for k in (
@@ -3142,6 +3144,14 @@ class SceneEditor(QWidget):
                     except ValueError as exc:
                         result["sh1d_paired"]={"status":"SH1D_PAIR_BLOCKED","reason":str(exc),
                                              "science_adopted":False}
+                    if result["sh1d_paired"].get("status")=="SH1D_PAIRED_NATIVE_PIXELS_NOT_ADOPTED" and all(
+                            v["sh1c_preview"].get("geo1") for v in self._sh1d_session.values()):
+                        from lsbpipe.photometry.galaxy_geometry_diagnostic import paired_geometry
+                        try:
+                            result["geo1_paired"]=paired_geometry(self._sh1d_session["g"],
+                                self._sh1d_session["r"],self._loaded["wcs"])
+                        except ValueError as exc:
+                            result["geo1_paired"]={"status":"GEO1_PAIR_BLOCKED","reason":str(exc),"science_adopted":False}
             rows = result["sh1_sector_measurement"]["rows"]
             count = sum(r["adequate_for_descriptive_comparison"]
                         for r in rows if r["role"] == "AWAY_TRAIN_CANDIDATE")
@@ -3236,6 +3246,10 @@ class SceneEditor(QWidget):
         overlay=QCheckBox("Show Tractor centres within 49 arcsec · review only")
         overlay.setEnabled(bool(p.get("sh1d",{}).get("sources")))
         layout.addWidget(overlay)
+        geo=p.get("geo1") or {}
+        geo_overlay=QCheckBox("Show GEO-1 reference ellipse · 35 arcsec · review only")
+        geo_overlay.setEnabled(bool(geo.get("overlay_35arcsec_native_xy")))
+        layout.addWidget(geo_overlay)
         graphics=QGraphicsScene(dialog)
         view=QGraphicsView(graphics)
         view.setObjectName("sh1c_image_view")
@@ -3332,6 +3346,38 @@ class SceneEditor(QWidget):
                 dlines.append(f"{v['injected_length_arcsec']:g}/{v['injected_sigma_arcsec']:g} -> "
                     f"{v['recovered']['length_arcsec']:g}/{v['recovered']['sigma_arcsec']:g}")
             add_text_tab("Spike decay",dlines)
+        if geo:
+            def geo_line(name,f):
+                return (f"{name} | {f.get('status')} | "
+                    f"{fmt(f.get('east_offset_arcsec'))}/{fmt(f.get('north_offset_arcsec'))} | "
+                    f"{fmt(f.get('q'))} | {fmt(f.get('pa_deg'))} | "
+                    f"{f.get('used_pixels',0)} | {', '.join(f.get('flags',[])) or '—'}")
+            glines=["GEO-1 · conditional observed geometry · NOT ADOPTED",
+                "Window / core / strip (arcsec) | scenario | status | E/N offset (arcsec) | q | ICRS PA (deg) | pixels | flags"]
+            for t in geo.get("trials",[]):
+                for name,f in t["fits"].items():
+                    glines.append(geo_line(f"{t['radius_arcsec']:g}/{t['inner_excluded_arcsec']:g}/{t['strip_half_width_arcsec']:g} {name}",f))
+            glines.append("SH1-C ensemble · fixed 35 arcsec window:")
+            for f in geo.get("ensemble_geometry",[]):
+                glines.append(geo_line(str(f["index"]+1),f))
+            pair=result.get("geo1_paired") or {}
+            if pair:
+                glines.append("Matched g/r · native pixels · no PSF matching")
+                glines.append(pair.get("reason",pair.get("status","")))
+                for name,f in pair.get("fits",{}).items():
+                    glines.append(geo_line(name,f))
+            else:
+                glines.append("Run both g and r in this session for matched geometry.")
+            add_text_tab("GEO-1",glines)
+            plines=["Fixed SH1-C reference geometry · signed sums on common pixels",
+                    "Annulus | sector | scenario | pixels | mean nMgy/arcsec² | cumulative nMgy"]
+            for key,label in (("elliptical_profiles","Elliptical"),("circular_profiles_same_centre","Circular, same centre")):
+                plines.append(label)
+                for a in geo.get(key,[]):
+                    for name,v in a["scenarios"].items():
+                        plines.append(f"{a['inner_arcsec']:g}–{a['outer_arcsec']:g} | {a['sector']} | {name} | "
+                            f"{a['used_pixels']}/{a['in_frame_pixels']} | {fmt(v['mean_nMgy_arcsec2'])} | {fmt(v['cumulative_flux_nMgy'])}")
+            add_text_tab("GEO profiles",plines)
         layout.addWidget(tabs)
         close=QPushButton("Close")
         close.clicked.connect(dialog.accept)
@@ -3364,6 +3410,15 @@ class SceneEditor(QWidget):
                     t=graphics.addSimpleText(str(e["objid"]))
                     t.setBrush(QBrush(QColor("#70dbe0")))
                     t.setPos(x+5,y-8)
+            if geo_overlay.isChecked() and geo.get("overlay_35arcsec_native_xy"):
+                points=geo["overlay_35arcsec_native_xy"]
+                path=QPainterPath()
+                path.moveTo(points[0][0]+.5,a.shape[0]-points[0][1]-.5)
+                for x,y in points[1:]:
+                    path.lineTo(x+.5,a.shape[0]-y-.5)
+                pen=QPen(QColor("#ffba65"),1.5,Qt.DashLine)
+                pen.setCosmetic(True)
+                graphics.addPath(path,pen)
             view.fitInView(item,Qt.KeepAspectRatio)
             caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
                             + ("SH1-E3 decay hypothesis · not adopted" if key.startswith("decay_")
@@ -3372,6 +3427,7 @@ class SceneEditor(QWidget):
                              else f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} (minimum side residual, display only)"))
         selector.currentIndexChanged.connect(render)
         overlay.toggled.connect(render)
+        geo_overlay.toggled.connect(render)
         dialog.resize(1000,780)
         render()
         QTimer.singleShot(0,render)
