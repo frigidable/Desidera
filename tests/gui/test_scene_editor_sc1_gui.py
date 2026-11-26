@@ -2508,6 +2508,8 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
                                  "residual","halo_model_spread","sky_model_spread")}}
     preview["sh1d"]={"sources":[{"objid":360,"x":48.,"y":48.}],
                       "rows":[],"individual_source_exclusion_trials":[]}
+    preview["sh1e"]={"layers":{"spike_2_model":a,"spike_2_corrected":a},
+                     "half_width_trials":[]}
     editor._foreground_psf_result["sh1c_preview"]=preview
     editor._refresh_controls()
     assert editor.sh1c_preview_btn.isEnabled()
@@ -2535,8 +2537,8 @@ def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypa
             dialog.accept()
     QTimer.singleShot(50,inspect_dialog)
     editor.sh1c_preview_btn.click()
-    assert len(observed)==7 and all(n==1 for _,n in observed)
-    assert overlay_observed==[3,1,["Growth curves","Sector profiles","Source mask trials","Matched g/r"]]
+    assert len(observed)==9 and all(n==1 for _,n in observed)
+    assert overlay_observed==[3,1,["Growth curves","Sector profiles","Source mask trials","Matched g/r","Spike trials"]]
     qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]["sh1c_preview"]
     assert qa["layers"]["original"]["pixel_array_omitted"]
     editor.set_band("r")

@@ -32,7 +32,7 @@ def _stats(image, select):
 def measure_saturated_halo_sectors(image, invvar, native_hard, *,
         source_xy, target_xy, pixel_scale_arcsec, source_mask, protected,
         unresolved_sky_veto, neighbor_centres=(), compare_models=False,
-        expanded=False):
+        expanded=False, diagnostic_tile_map=True):
     a = np.asarray(image, dtype=float)
     iv = np.asarray(invvar, dtype=float)
     masks = [np.asarray(m, dtype=bool) for m in
@@ -103,7 +103,7 @@ def measure_saturated_halo_sectors(image, invvar, native_hard, *,
                   sx=sx, sy=sy, scale=scale, target_distance=math.hypot(tx-sx,ty-sy)*scale,
                   edges=edges, expanded=expanded)
                   if compare_models else None)
-    if expanded and comparison is not None:
+    if expanded and comparison is not None and diagnostic_tile_map:
         comparison["diagnostic_tile_map"] = _diagnostic_tile_map(
             a, descriptive, protection, distance, sx=sx,sy=sy,scale=scale,
             candidates=comparison["candidates"])

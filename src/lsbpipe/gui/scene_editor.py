@@ -677,6 +677,13 @@ def run_scene_psf0_foreground_probe(
                 from lsbpipe.photometry.stellar_halo_sectors import sector_diagnostics
                 preview["sh1d"]=sector_diagnostics(preview,result["sh1b_model_comparison"],
                     owcs,original_masks["source_inventory"]["entries"])
+                from lsbpipe.photometry.stellar_halo_spikes import directional_halo_experiment
+                preview["sh1e"]=directional_halo_experiment(
+                    dataset["data"]["image"],dataset["data"]["invvar"],dataset["native_hard"],
+                    source_xy=(sx,sy),target_xy=(tx,ty),scale=result["pixel_scale_arcsec"],
+                    source_mask=scene_masks["mask"],protected=scene_masks["protected"],
+                    veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],neighbours=neighbors,
+                    baseline_comparison=result["sh1b_model_comparison"],original_preview=preview)
         return dict(output,status=result["status"],sh1_sector_measurement=result,
                     sh1c_preview=preview,
                     sh1d_policy={k:original_masks.get(k) for k in (
@@ -3206,6 +3213,15 @@ class SceneEditor(QWidget):
                           ("Halo + sky residual · reference","residual"),
                           ("Halo model range width","halo_model_spread"),("Sky model range width","sky_model_spread")):
             selector.addItem(label,key)
+        spike=p.get("sh1e") or {}
+        all_layers=dict(p["layers"],**spike.get("layers",{}))
+        for width in (2,4):
+            for label,suffix in (("Refit radial residual","refit_residual"),("Spike masked residual","masked_residual"),
+                                 ("Mirrored spike model","model"),("Halo + spike model","halo_plus_spike"),
+                                 ("Halo + spike + sky residual","corrected")):
+                key=f"spike_{width}_{suffix}"
+                if key in all_layers:
+                    selector.addItem(f"{label} · ±{width} arcsec · conditional",key)
         layout.addWidget(selector)
         overlay=QCheckBox("Show Tractor centres within 49 arcsec · review only")
         overlay.setEnabled(bool(p.get("sh1d",{}).get("sources")))
@@ -3261,6 +3277,21 @@ class SceneEditor(QWidget):
             else:
                 add_text_tab("Matched g/r",[pair.get("reason","Run both g and r for the same star and draft in this session.") if pair else
                     "Run both g and r for the same star and draft in this session."])
+        if spike:
+            slines=["SH1-E · native Y axis · away-only template · NOT ADOPTED",
+                    "Compare equal-pixel columns only; masked flux excludes galaxy light too."]
+            for trial in spike.get("half_width_trials",[]):
+                slines.append(f"Half width {trial['half_width_arcsec']:g} arcsec | {trial['status']} | "
+                    f"{trial['candidate_count']} radial models | {trial.get('template_supported_cell_count',0)} supported cells")
+                slines.append("Aperture | common/off-strip/template pixels | baseline/refit (common) | baseline/refit (off-strip) | refit/corrected (template matched), nMgy")
+                for a in trial.get("aperture_and_ring_sums",[]):
+                    if a["kind"]!="aperture" or a["sector"]!="ALL":
+                        continue
+                    slines.append(f"{a['outer_arcsec']:g} | {a['common_pixels']}/{a['off_strip_pixels']}/{a['template_supported_pixels']} | "
+                        f"{fmt(a['baseline_common_flux_nMgy'])}/{fmt(a['refit_common_flux_nMgy'])} | "
+                        f"{fmt(a['baseline_off_strip_flux_nMgy'])}/{fmt(a['refit_off_strip_flux_nMgy'])} | "
+                        f"{fmt(a['refit_template_matched_flux_nMgy'])}/{fmt(a['spike_corrected_flux_nMgy'])}")
+            add_text_tab("Spike trials",slines)
         layout.addWidget(tabs)
         close=QPushButton("Close")
         close.clicked.connect(dialog.accept)
@@ -3270,9 +3301,9 @@ class SceneEditor(QWidget):
         limits=tuple(np.quantile(finite,[.01,.995])) if finite.size else (0.,1.)
         def render(*_):
             key=selector.currentData()
-            a=p["layers"][key]
+            a=all_layers[key]
             values=a[np.isfinite(a)]
-            shared=key in ("original","halo_corrected","residual")
+            shared=key in ("original","halo_corrected","residual") or key.endswith(("_residual","_corrected"))
             lim=limits if shared else tuple(np.quantile(values,[.01,.99])) if values.size else (0.,1.)
             if lim[1]<=lim[0]:
                 lim=(lim[0],lim[0]+1e-10)
@@ -3292,8 +3323,8 @@ class SceneEditor(QWidget):
                     t.setPos(x+5,y-8)
             view.fitInView(item,Qt.KeepAspectRatio)
             caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
-                            f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} "
-                            "(minimum side residual, display only)")
+                            + ("SH1-E matched reference · conditional transfer" if key.startswith("spike_")
+                             else f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} (minimum side residual, display only)"))
         selector.currentIndexChanged.connect(render)
         overlay.toggled.connect(render)
         dialog.resize(1000,780)
