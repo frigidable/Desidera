@@ -81,6 +81,29 @@ def png_bytes(a,band,limits=None):
     return b"\x89PNG\r\n\x1a\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",a.shape[1],a.shape[0],8,2,0,0,0))+chunk(b"IDAT",zlib.compress(raw))+chunk(b"IEND",b""),list(map(float,limits))
 
 
+def compact_summary(bands,pairs):
+    result={}
+    for band,v in bands.items():
+        sky=v["sky"]["expanded_sky"]
+        rows=[]
+        for t in sky["trials"]:
+            def scores(candidates):
+                return [dict(method=c["method"],status=c["status"],
+                    zero_mae=c.get("zero_equal_quadrant_mae_nMgy_pix"),
+                    cv_mae=c.get("cv_equal_quadrant_mae_nMgy_pix")) for c in candidates]
+            rows.append(dict(halo=t["halo_scenario"],guard_arcsec=t["target_guard_arcsec"],
+                tile_pix=t["tile_size_pix"],models=scores(t["candidates"]),
+                edge_stress=[dict(side=e["side"],removed_blocks=e["removed_blocks"],models=scores(e["candidates"]))
+                    for e in t.get("edge_stress",[])]))
+        p=v["probe"]["sh1c_preview"]
+        result[band]=dict(geometry=(p.get("geo1") or {}).get("reference"),
+            spike_decay_status=((p.get("sh1e") or {}).get("decay_extent") or {}).get("status"),
+            sky=rows)
+    return dict(bands=result,paired={k:{"status":v.get("status"),
+        **{x:v[x] for x in ("reason","common_pixels","common_pixel_count","common_mask_sha256") if x in v}}
+        for k,v in pairs.items()})
+
+
 def report_archive(path,manifest,bands,pairs):
     from ..gui.scene_editor import _scene_qa_json_value
     def write(z):
@@ -115,6 +138,7 @@ def report_archive(path,manifest,bands,pairs):
         manifest["images"]=images
         z.writestr("manifest.json",json.dumps(manifest,ensure_ascii=False,allow_nan=False,indent=2))
         z.writestr("paired-qa.json",json.dumps(_scene_qa_json_value(pairs),ensure_ascii=False,allow_nan=False,separators=(",",":")))
+        z.writestr("summary.json",json.dumps(_scene_qa_json_value(compact_summary(bands,pairs)),ensure_ascii=False,allow_nan=False,indent=2))
     atomic_zip(path,write)
 
 
