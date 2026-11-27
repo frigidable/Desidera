@@ -15,14 +15,14 @@ BLOCK=6
 MAX_SHIFT=8.
 
 
-def local_grid(p,wcs):
+def local_grid(p,wcs,*,margin_arcsec=50.):
     tx,ty=map(float,p["target_xy_native_pix"])
     center=wcs.celestial.pixel_to_world(tx,ty).icrs
     geo=ellipse_from_wcs(wcs,center.ra.deg,center.dec.deg,sky_q=1.,sky_pa_deg=0.)
     k=geo.local_pixel_per_arcsec_en
     shape=p["layers"]["original"].shape
     # Crop fixed region, including every permitted shifted 40 arcsec ellipse.
-    margin=int(np.ceil(50.*np.linalg.norm(k,ord=2)))+2
+    margin=int(np.ceil(float(margin_arcsec)*np.linalg.norm(k,ord=2)))+2
     x0=max(0,int(np.floor(tx))-margin); x1=min(shape[1],int(np.ceil(tx))+margin+1)
     y0=max(0,int(np.floor(ty))-margin); y1=min(shape[0],int(np.ceil(ty))+margin+1)
     yy,xx=np.mgrid[y0:y1,x0:x1]

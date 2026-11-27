@@ -165,7 +165,7 @@ def fit_profile(image,valid,grid,geom,kernel,outer=40.,inner=3.):
     # Native observed sums and separate model predictions on exactly
     # the same observed support; no replacement of missing pixels.
     aperture=[]
-    for rad in RADII:
+    for rad in (*RADII,*range(45,int(outer)+1,5)):
         if rad>outer: continue
         use=(rho<rad)&valid
         aperture.append(dict(a_arcsec=rad,observed_pixels=int(use.sum()),
@@ -238,7 +238,7 @@ def halo_refit(image,inputs,extra_protected,extra_veto,reference):
         sky_y_nMgy_pix_per_arcsec=c["sky_y_nMgy_pix_per_arcsec"])
 
 
-def injection_case(inputs,wcs,mask,site,params,kernel,reference,f40,extra_veto,control=None):
+def injection_case(inputs,wcs,mask,site,params,kernel,reference,f40,extra_veto,control=None,*,outer=40.,guard_arcsec=60.):
     x,y=site["x_pix"],site["y_pix"]; re,n,q,pa,ratio=params
     scale=inputs["scale"]; tx,ty=inputs["target_xy"]
     raw=np.asarray(inputs["image"],float)
@@ -261,7 +261,7 @@ def injection_case(inputs,wcs,mask,site,params,kernel,reference,f40,extra_veto,c
     if truth["negative_model_mass_fraction"]>1e-5:
         return dict(result,status="INJ2_SIGNED_PSF_MODEL_BLOCKED"),control
     yy,xx=np.ogrid[:raw.shape[0],:raw.shape[1]]
-    guard=np.hypot(xx-x,yy-y)*scale<60.
+    guard=np.hypot(xx-x,yy-y)*scale<guard_arcsec
     if control is None:
         control=halo_refit(raw,inputs,guard,extra_veto,reference)
     before,h0=control
@@ -279,19 +279,19 @@ def injection_case(inputs,wcs,mask,site,params,kernel,reference,f40,extra_veto,c
         raise ValueError("INJ2 training pixel mismatch")
     points=np.asarray([[r["x_pix"],r["y_pix"]] for r in b0])
     angle=np.linspace(0,2*np.pi,32,endpoint=False)
-    check=np.column_stack((x+45./scale/np.cos(np.pi/32)*np.cos(angle),
-                           y+45./scale/np.cos(np.pi/32)*np.sin(angle)))
+    check=np.column_stack((x+(outer+5.)/scale/np.cos(np.pi/32)*np.cos(angle),
+                           y+(outer+5.)/scale/np.cos(np.pi/32)*np.sin(angle)))
     try: inside=bool(np.all(Delaunay(points).find_simplex(check)>=0))
     except (QhullError,ValueError): inside=False
     result["injection_hull_supported"]=inside
-    grid=local_grid(dict(target_xy_native_pix=[x,y],layers={"original":raw}),wcs)
+    grid=local_grid(dict(target_xy_native_pix=[x,y],layers={"original":raw}),wcs,margin_arcsec=outer+10.)
     valid=common[grid["sl"]]
     d=block_design(grid,valid,35.,3.)
     true_rho=rho[grid["sl"]]
     # Re-check support after the upstream halo refit on the same truth
     # ellipse, including the central region and outer ring.
     covers=[]
-    for lo,hi in ((0,5),(0,20),(0,40),(35,40)):
+    for lo,hi in ((0,5),(0,20),(0,outer),(outer-5.,outer)):
         region=(true_rho>=lo)&(true_rho<hi)
         covers.append(float(valid[region].mean()) if region.any() else 0.)
     result["post_refit_elliptical_coverage"]=covers
@@ -309,7 +309,7 @@ def injection_case(inputs,wcs,mask,site,params,kernel,reference,f40,extra_veto,c
         ctrl=before[grid["sl"]]-(predict(f0,dx,dy) if f0 else 0.)
         recovered=after[grid["sl"]]-(predict(f1,dx,dy) if f1 else 0.)
         rec=dict(status="INJ2_CONDITIONAL_NOT_ADOPTED",sky_before=f0,sky_after=f1,apertures=[])
-        for radius in (20.,35.,40.):
+        for radius in sorted(set((20.,35.,40.,outer))):
             use=valid&(true_rho<radius)
             f=float(model[grid["sl"]][use].sum())
             if f<=0:continue
@@ -322,7 +322,7 @@ def injection_case(inputs,wcs,mask,site,params,kernel,reference,f40,extra_veto,c
         if fitted(geom):
             rec["geometry_errors"]=dict(centre_arcsec=float(np.hypot(geom["east_offset_arcsec"],geom["north_offset_arcsec"])),
                 delta_q=float(geom["q"]-q),delta_pa_deg=float((geom["pa_deg"]-pa+90)%180-90))
-            fit=fit_profile(recovered,valid,grid,geom,kernel)
+            fit=fit_profile(recovered,valid,grid,geom,kernel,outer=outer)
             rec["sersic"]=fit
             if fit["status"]=="SERSIC_CONDITIONAL_NOT_ADOPTED":
                 rec["sersic_errors"]=dict(delta_n=fit["n"]-n,

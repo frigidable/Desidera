@@ -18,7 +18,7 @@ from .diagnostic_cache import atomic_zip,cached,digest,file_hash
 
 RECIPE="desidera.project-diagnostics/1"
 SKY_ONLY={"background.py","photometry/residual_sky_diagnostic.py","gui/sky_workspace.py"}
-VALIDATION_ONLY={"photometry/sky_clean_injection.py","photometry/sersic_recovery.py"}
+VALIDATION_ONLY={"photometry/sky_clean_injection.py","photometry/sersic_recovery.py","photometry/outer_photometry.py"}
 
 
 def code_identity():
@@ -118,7 +118,7 @@ def compact_summary(bands,pairs):
         for k,v in pairs.items()})
 
 
-def report_archive(path,manifest,bands,pairs,validation=None,inj2=None):
+def report_archive(path,manifest,bands,pairs,validation=None,inj2=None,outer=None):
     from ..gui.scene_editor import _scene_qa_json_value
     def write(z):
         images=[]
@@ -165,6 +165,12 @@ def report_archive(path,manifest,bands,pairs,validation=None,inj2=None):
                 filename="inj2-"+name+".png"
                 data,bounds=png_bytes(arr,name[0]);z.writestr(filename,data)
                 images.append(dict(file=filename,limits_nMgy_pix=bounds,orientation="FITS_Y_UP",purple="unavailable"))
+        if outer is not None:
+            z.writestr("outer-qa.json",json.dumps(_scene_qa_json_value(outer),ensure_ascii=False,allow_nan=False,separators=(",",":")))
+            for name,arr in outer.get("layers",{}).items():
+                filename="outer-"+name+".png"
+                data,bounds=png_bytes(arr,name[0]);z.writestr(filename,data)
+                images.append(dict(file=filename,limits_nMgy_pix=bounds,orientation="FITS_Y_UP",purple="unavailable"))
         manifest["images"]=images
         z.writestr("manifest.json",json.dumps(manifest,ensure_ascii=False,allow_nan=False,indent=2))
         z.writestr("paired-qa.json",json.dumps(_scene_qa_json_value(pairs),ensure_ascii=False,allow_nan=False,separators=(",",":")))
@@ -187,6 +193,10 @@ def report_archive(path,manifest,bands,pairs,validation=None,inj2=None):
             summary["inj2"]={k:v for k,v in inj2.items() if k!="target"}
             if "target" in inj2:
                 summary["inj2"]["target"]={k:v for k,v in inj2["target"].items() if k!="layers"}
+        if outer is not None:
+            summary["outer"]={k:v for k,v in outer.items() if k not in ("layers","fits","profiles","injections","raw_reference_profiles")}
+            summary["outer"]["trials"]={k:{x:v[x] for x in ("sky_supported_outer_arcsec","plateau")} for k,v in outer.get("profiles",{}).items()}
+            summary["outer"]["injection_sites"]=[{k:v for k,v in g.items() if k!="bands"} for g in outer.get("injections",[])]
         z.writestr("summary.json",json.dumps(_scene_qa_json_value(summary),ensure_ascii=False,allow_nan=False,indent=2))
     atomic_zip(path,write)
 
@@ -203,6 +213,7 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
     from .residual_sky_diagnostic import paired_sky_diagnostics
     from .sky_clean_injection import run_validation
     from .sersic_recovery import psf_evidence,run_inj2
+    from .outer_photometry import run_outer
     project=read_object_project(root)
     if project.field is None or project.selected_dataset is None or project.data_root is None:
         raise ValueError("Project needs local native source, field and data root")
@@ -283,6 +294,12 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
             lambda:run_inj2(products,datasets,validation,kernels,psf),force=force_stage is not None)
         manifest["inj2"]=dict(cache=im,key=ik,archive_sha256=ia,status=inj2["status"])
         progress(f"INJ-2 {im}: {inj2['status']}")
+        progress("OUTER-PHOT + INJ-3 (cache check)")
+        ok=digest([RECIPE,code.get("validation",code["sky"]),va,ia,psf])
+        outer,om,oa=cached(folder/"project-diagnostics-outer.zip",ok,
+            lambda:run_outer(products,datasets,validation,kernels,psf),force=force_stage is not None)
+        manifest["outer"]=dict(cache=om,key=ok,archive_sha256=oa,status=outer["status"])
+        progress(f"OUTER-PHOT + INJ-3 {om}: {outer['status']}")
         # No completed report if inputs changed mid-run. The cache keys
         # still describe the old input snapshot and cannot match new data.
         current=read_object_project(root); current_draft,_=read_active_mask_draft(root)
@@ -292,6 +309,6 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
         manifest["paired_status"]={k:v["status"] for k,v in pairs.items()}
         # Replace only the diagnostic report; earlier scientific artifacts untouched.
         path=folder/"project-diagnostics-qa.zip"
-        report_archive(path,manifest,products,pairs,validation,inj2)
+        report_archive(path,manifest,products,pairs,validation,inj2,outer)
     progress(f"QA: {path}")
     return path
