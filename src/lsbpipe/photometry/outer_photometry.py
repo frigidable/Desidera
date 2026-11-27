@@ -132,6 +132,31 @@ def preflight_sites(mask,res,wcs,tx,ty,scale,outer,guard,max_sites):
         hull_blocked=blocked,hull_passed=passed,sites=selected)
 
 
+def native_overlap(grid,mask,expanded,preview,ref,tx,ty):
+    """Compare native and expanded reference residuals on the same pixels."""
+    offset=np.asarray([tx,ty])-np.asarray(preview["target_xy_native_pix"])
+    if not np.allclose(offset,np.rint(offset),atol=1e-3,rtol=0):
+        raise ValueError("OUTER native translation is not integral")
+    ox,oy=np.rint(offset).astype(int)
+    x=grid["x"]-ox; y=grid["y"]-oy
+    native=preview["layers"]["residual"]
+    in_native=(x>=0)&(x<native.shape[1])&(y>=0)&(y<native.shape[0])
+    old=np.full(mask.shape,np.nan)
+    old[in_native]=native[y[in_native],x[in_native]]
+    radius=ellipse_radius(grid["e"]-ref["east_offset_arcsec"],grid["n"]-ref["north_offset_arcsec"],ref["q"],ref["pa_deg"])
+    domain=radius<40.
+    use=domain&mask&np.isfinite(old)&np.isfinite(expanded)
+    delta=expanded[use]-old[use]
+    return dict(native_finite_pixels_in_overlap=int((domain&np.isfinite(old)).sum()),
+        expanded_common_pixels=int((domain&mask).sum()),identical_pixels=int(use.sum()),
+        native_signed_flux_nMgy=float(old[use].sum()) if use.any() else None,
+        expanded_signed_flux_nMgy=float(expanded[use].sum()) if use.any() else None,
+        max_abs_pixel_delta_nMgy=float(np.max(abs(delta))) if use.any() else None,
+        status=("OUTER_NATIVE_OVERLAP_AGREES" if use.any() and np.allclose(old[use],expanded[use],rtol=1e-5,atol=1e-8)
+            else "OUTER_NATIVE_OVERLAP_REVIEW"),
+        warning="Only shared observed pixels; independent native/expanded source-mask boundaries may differ.")
+
+
 def _range(values):
     return [float(min(values)),float(max(values))] if values else None
 
@@ -153,6 +178,7 @@ def sensitivity(fits,inj):
             sky=spans([f for f in seq if f["halo_scenario"]=="reference" and f["guard_arcsec"]==75. and f["outer_arcsec"]==40. and f["inner_arcsec"]==3.]),
             radius=spans([f for f in seq if f["halo_scenario"]=="reference" and f["guard_arcsec"]==75. and f["method"]==method and f["inner_arcsec"]==3.]),
             inner=spans([f for f in seq if f["halo_scenario"]=="reference" and f["guard_arcsec"]==75. and f["method"]==method and f["outer_arcsec"]==40.]),
+            sky_guard=spans([f for f in seq if f["halo_scenario"]=="reference" and f["method"]==method and f["outer_arcsec"]==40. and f["inner_arcsec"]==3.]),
             guard_and_halo=spans([f for f in seq if f["method"]==method and f["outer_arcsec"]==40. and f["inner_arcsec"]==3.]),
             all_models=spans(seq),injection_errors={})
         for group in inj:
@@ -226,6 +252,8 @@ def run_outer(products,datasets,validation,kernels,psf):
     mask=photo[grid["sl"]]
     out["common_photo_mask_sha256"]=native_boolean_mask_sha256(mask)
     out["reference_geometry"]=ref
+    out["native_overlap"]={b:native_overlap(grid,mask,residuals[b]["reference"][grid["sl"]],
+        products[b]["probe"]["sh1c_preview"],ref,tx,ty) for b in products}
     out["fits"]={b:[] for b in products}
     source_x=s0["expanded_source_xy"][0]
     # Halo and guard vary jointly for refits; reference permits separate
@@ -263,18 +291,26 @@ def run_outer(products,datasets,validation,kernels,psf):
             item["plateau"]={k:plateau(rows,k) for k in images}
             for k,image in images.items():
                 band,method=k.split("_",1)
-                for outer in OUTERS:
+                supported=item["plateau"][k]["supported_outer_arcsec"]
+                # Full radius experiment in the predeclared reference
+                # configuration only; guard/refit stress at fixed 40 and
+                # largest supported predeclared radius. Avoid redundant fits.
+                windows=OUTERS if trial=="reference_75" else tuple(sorted({40.,max(
+                    (a for a in OUTERS if a<=min(supported,max_a)),default=40.)}))
+                for outer in windows:
                     if outer>max_a: continue
-                    supported=item["plateau"][k]["supported_outer_arcsec"]
-                    for inner in ((3.,5.) if outer==40. else (3.,)):
+                    for inner in ((3.,5.) if outer==40. and trial=="reference_75" else (3.,)):
                         tags=dict(halo_scenario=name,guard_arcsec=guard,method=method,outer_arcsec=outer,inner_arcsec=inner)
                         if band not in kernels or outer>supported:
                             fit=dict(status="OUTER_FIT_PSF_OR_COVERAGE_BLOCKED")
                         else:
-                            fit=fit_profile(image,mask,grid,ref,kernels[band],outer=outer,inner=inner)
+                            fit=fit_profile(image,mask,grid,ref,kernels[band],outer=outer,inner=inner,
+                                validation_outer=supported)
                         out["fits"][band].append(dict(fit,**tags))
                 if trial=="reference_75" and method in ("constant","plane"):
-                    out["layers"][k]=np.where(mask,image,np.nan)
+                    # Never display the interpolated sky outside the checked disk.
+                    display=mask&(np.hypot(dx,dy)<=max_a+shift+1.)
+                    out["layers"][k]=np.where(display,image,np.nan)
     # Raw baseline outer rings up to 70 even if sky cannot be interpolated.
     out["raw_reference_profiles"]=outer_rows(grid,mask,{b:residuals[b]["reference"][grid["sl"]] for b in products},
         ref,source_x,scale)

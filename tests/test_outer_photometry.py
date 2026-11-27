@@ -37,7 +37,27 @@ def test_profile_extends_observed_aperture_to_outer_radius():
     k=np.ones((3,3))/9
     r=radius_pixels(g["x"].shape,(180.,180.),g["k"],.56,44.5,origin=(g["x"][0,0],g["y"][0,0]),pad=(1,1))
     im=.12*g["area"]*convolved_profile(r,26.,.5,k)
-    fit=fit_profile(im,np.ones_like(im,bool),g,geom,k,outer=60.)
+    fit=fit_profile(im,np.ones_like(im,bool),g,geom,k,outer=60.,validation_outer=70.)
     assert fit["status"]=="SERSIC_CONDITIONAL_NOT_ADOPTED"
     assert fit["apertures"][-1]["a_arcsec"]==60.
     assert fit["re_arcsec"]==pytest.approx(26.,rel=.02)
+
+    assert len(fit["heldout_outer_rings"])==2
+    assert all(not row["used_in_profile_fit"] for row in fit["heldout_outer_rings"])
+    assert max(abs(row["observed_minus_model_nMgy"]) for row in fit["heldout_outer_rings"])<.01
+
+
+def test_native_overlap_compares_only_shared_pixels():
+    from lsbpipe.photometry.outer_photometry import native_overlap
+    y,x=np.mgrid[0:21,0:21]
+    a=np.ones_like(x,dtype=float)
+    old=a.copy(); old[0,0]=np.nan
+    mask=np.ones_like(x,bool); mask[1,1]=False
+    grid=dict(x=x,y=y,e=x-10,n=y-10)
+    geom=dict(east_offset_arcsec=0.,north_offset_arcsec=0.,q=1.,pa_deg=0.)
+    p=dict(target_xy_native_pix=[10.,10.],layers={"residual":old})
+    z=native_overlap(grid,mask,a,p,geom,10.,10.)
+    assert z["identical_pixels"]==439
+    assert z["status"]=="OUTER_NATIVE_OVERLAP_AGREES"
+    a[2,2]+=1.
+    assert native_overlap(grid,mask,a,p,geom,10.,10.)["status"]=="OUTER_NATIVE_OVERLAP_REVIEW"

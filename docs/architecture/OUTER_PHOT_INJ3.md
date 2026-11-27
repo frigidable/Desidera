@@ -18,3 +18,11 @@ separate 40 and 60 arcsec experiments, up to two and one sites respectively.
 Actual refits may still block. Frozen masks, radial halo only, finite-core
 PSF, no extra Poisson noise. Sensitivity table separates model/window/guard
 ranges and injection error ranges; no quadrature or calibrated uncertainty.
+
+Native/expanded reference overlap is checked on identical observed pixels.
+The reference 75 arcsec guard retains all radius windows; other guard and
+halo trials use 40 arcsec and the largest supported predeclared radius.
+For each fit, outer rings outside the fitted interval are predicted on
+observed support up to the screened limiting radius. These are withheld
+from that profile fit, not necessarily independent of upstream masking/sky.
+Display of interpolated sky corrections is restricted to the verified disk.

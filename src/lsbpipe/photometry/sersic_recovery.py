@@ -99,7 +99,7 @@ def strict_convolve(image,valid,kernel):
     return np.where(good,out,np.nan),good
 
 
-def fit_profile(image,valid,grid,geom,kernel,outer=40.,inner=3.):
+def fit_profile(image,valid,grid,geom,kernel,outer=40.,inner=3.,*,validation_outer=None):
     """Fit signed annular means and forward-model the same observed pixels.
 
     Equal ring weights, robust loss, no diagonal/covariance likelihood claim.
@@ -181,11 +181,25 @@ def fit_profile(image,valid,grid,geom,kernel,outer=40.,inner=3.):
     for row in rows:
         use=(rho>=row["lo_arcsec"])&(rho<row["hi_arcsec"])&valid
         row["model_mean_on_observed_pixels_nMgy_arcsec2"]=float(predicted[use].mean()/grid["area"]) if use.any() else None
+    heldout=[]
+    if validation_outer is not None:
+        for hi in range(int(outer)+5,int(validation_outer)+1,5):
+            lo=hi-5
+            use=(rho>=lo)&(rho<hi)&valid
+            nominal=np.pi*q*(hi**2-lo**2)/grid["area"]
+            count=int(use.sum())
+            observed=float(image[use].sum()) if count else None
+            expected=float(predicted[use].sum()) if count else None
+            heldout.append(dict(inner_arcsec=lo,outer_arcsec=hi,observed_pixels=count,
+                coverage_approx=float(count/nominal),observed_signed_flux_nMgy=observed,
+                model_on_observed_pixels_nMgy=expected,
+                observed_minus_model_nMgy=observed-expected if count else None,
+                used_in_profile_fit=False))
     return dict(info,status="SERSIC_CONDITIONAL_NOT_ADOPTED",re_arcsec=re,n=n,
         mu0_mag_arcsec2=float(22.5-2.5*np.log10(i0)),i0_nMgy_arcsec2=i0,
         analytic_total_nMgy=full,analytic_total_mag=float(22.5-2.5*np.log10(full)),
         intrinsic_tail_fraction=tail,robust_cost=float(best.cost),flags=flags,
-        converged_starts=len(fits),apertures=aperture,
+        converged_starts=len(fits),apertures=aperture,heldout_outer_rings=heldout,
         warning="Finite-core PSF model only; no calibrated covariance or empirical asymptote. Analytic total assumes Sersic continuation to infinity.")
 
 
