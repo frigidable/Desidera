@@ -591,6 +591,8 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         raise ValueError("Nonprimary supplement changed protected photometric pixels")
     nonprimary_entries=[e for e in source_inventory["entries"] if not e.get("brick_primary",True)]
     edge_audit=dict(schema="desidera.scene-edge/1",science_adopted=False,
+        nonprimary_centres_in_native_frame=sum(e["centre_in_native_frame"] for e in nonprimary_entries),
+        nonprimary_centres_right25arcsec=sum(e["centre_in_native_frame"] and e["x"]>=shape[1]-25./pxscale for e in nonprimary_entries),
         primary_catalog_rows=int(primary.sum()),nonprimary_catalog_rows=int((~primary).sum()),
         nonprimary_relevant_entries=len(nonprimary_entries),
         nonprimary_entries=nonprimary_entries,

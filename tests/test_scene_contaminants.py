@@ -83,6 +83,7 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
         rows=(_row(),_row(flux=1000.)))
     calls = []
     def fake_read(root, **kwargs):
+        assert kwargs["include_nonprimary"] is True
         calls.append((root,kwargs["release"],kwargs["region"],
                       kwargs["brick"],kwargs["frame"].dataset_id))
         return catalogue
@@ -1367,8 +1368,8 @@ def test_nonprimary_supplement_preserves_primary_decisions_and_target():
     y,x=np.indices(shape)
     protected=(x-100)**2+(y-100)**2<=20**2
     points=np.array([[30.,30.],[190.,100.],[100.,100.]])
-    rows=(_row(flux=100.,objid=1),_row(flux=100.,objid=2,brick_primary=False),
-          _row(flux=100.,objid=3,brick_primary=False))
+    rows=(dict(_row(flux=100.),objid=1),dict(_row(flux=100.),objid=2,brick_primary=False),
+          dict(_row(flux=100.),objid=3,brick_primary=False))
     base,stats=conservative_catalogue_mask(shape,points[:1],rows[:1],
         arcsec_per_pixel=.5,protected=protected)
     cat=SimpleNamespace(rows=rows,pixel_positions=points)

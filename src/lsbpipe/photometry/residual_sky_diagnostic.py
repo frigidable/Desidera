@@ -251,11 +251,14 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
         shared_original_crop_origin_xy=[int(g["x"][0,0]),int(g["y"][0,0])],
         trials=[],layers={},reference_geometry=refgeo,required_target_support_radius_arcsec=required,
         warning="Residual correction on top of SH1 sky, not upstream sky. Holdout quadrants exclude this fit's training only; prior halo fit may overlap. No missing-pixel filling or calibrated uncertainty; quadratic is a stress scenario. Masked target interior is interpolation, not observed sky.")
-    if primary_safe is not None:
+    if primary_safe is not None and (scene_edge or {}).get("inventory_complete",True):
         out["scene_edge"]=edge_mask_comparison(res["SH1C"],primary_safe,safe,
             tx,ty,scale,required,scene_edge)
         out["expanded_layers_edge_added"]=primary_safe&~safe
         out["expanded_layers_edge_added"].setflags(write=False)
+    elif primary_safe is not None:
+        out["scene_edge"]={"status":"SCENE_EDGE_CONTROL_BLOCKED_INCOMPLETE_INVENTORY",
+                           "scene":scene_edge,"science_adopted":False}
     # Expanded display layers, not replacement science images.
     out["expanded_layers"]={"original":np.where(np.isfinite(a)&~hard&(iv>0),a,np.nan)}
     for name,v in res.items():

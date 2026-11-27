@@ -98,7 +98,18 @@ def compact_summary(bands,pairs):
         p=v["probe"]["sh1c_preview"]
         result[band]=dict(geometry=(p.get("geo1") or {}).get("reference"),
             spike_decay_status=((p.get("sh1e") or {}).get("decay_extent") or {}).get("status"),
-            sky=rows,scene_edge=(sky.get("scene_edge") or {}))
+            sky=rows)
+        edge=sky.get("scene_edge") or {}
+        if edge:
+            result[band]["scene_edge"]={k:edge[k] for k in (
+                "primary_safe_pixels","inclusive_safe_pixels","removed_safe_pixels","removed_right25_pixels",
+                "removed_signed_residual_flux_nMgy","removed_right25_signed_residual_flux_nMgy","warning")
+                if k in edge}
+            meta=edge.get("scene") or {}
+            result[band]["scene_edge"]["scene"]={k:v for k,v in meta.items() if k!="nonprimary_entries"}
+            result[band]["scene_edge"]["controls"]={k:dict(block_count=v["block_count"],
+                models=scores(v["candidates"]),brightest_blocks=v["brightest_blocks"])
+                for k,v in edge.get("controls",{}).items()}
     return dict(bands=result,paired={k:{"status":v.get("status"),
         **{x:v[x] for x in ("reason","common_pixels","common_pixel_count","common_mask_sha256") if x in v}}
         for k,v in pairs.items()})
