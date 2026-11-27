@@ -98,6 +98,8 @@ def test_headless_runner_reuses_both_stages_and_exports(monkeypatch,tmp_path):
         assert manifest["stages"]["g"]["sh1"]["cache"]=="HIT"
         assert "g-native-sh1c.png" in z.namelist()
         assert "summary.json" in z.namelist()
+        assert "validation-qa.json" in z.namelist()
+        assert manifest["validation"]["cache"]=="HIT"
         assert z.read("r-native-original.png").startswith(b"\x89PNG")
     code["sky"]="changed"
     run()

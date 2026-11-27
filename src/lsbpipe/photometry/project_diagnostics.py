@@ -18,6 +18,7 @@ from .diagnostic_cache import atomic_zip,cached,digest,file_hash
 
 RECIPE="desidera.project-diagnostics/1"
 SKY_ONLY={"background.py","photometry/residual_sky_diagnostic.py","gui/sky_workspace.py"}
+VALIDATION_ONLY={"photometry/sky_clean_injection.py"}
 
 
 def code_identity():
@@ -31,8 +32,10 @@ def code_identity():
         except md.PackageNotFoundError: versions[package]=None
     # Conservative SH1 dependency set: all Python modules except the three
     # explicitly downstream sky modules. Other code edits can invalidate SH1.
-    upstream={k:v for k,v in files.items() if k not in SKY_ONLY}
-    return {"sh1":digest([upstream,versions]),"sky":digest([files,versions]),"versions":versions}
+    upstream={k:v for k,v in files.items() if k not in SKY_ONLY|VALIDATION_ONLY}
+    sky={k:v for k,v in files.items() if k not in VALIDATION_ONLY}
+    return {"sh1":digest([upstream,versions]),"sky":digest([sky,versions]),
+            "validation":digest([files,versions]),"versions":versions}
 
 
 def project_identity(project,draft,width,anchor,policy):
@@ -115,7 +118,7 @@ def compact_summary(bands,pairs):
         for k,v in pairs.items()})
 
 
-def report_archive(path,manifest,bands,pairs):
+def report_archive(path,manifest,bands,pairs,validation=None):
     from ..gui.scene_editor import _scene_qa_json_value
     def write(z):
         images=[]
@@ -148,10 +151,28 @@ def report_archive(path,manifest,bands,pairs):
                 data,bounds=png_bytes(a,band,limits if same else display)
                 filename=f"{band}-{name}.png"; z.writestr(filename,data)
                 images.append(dict(file=filename,limits_nMgy_pix=bounds,orientation="FITS_Y_UP",purple="unavailable"))
+        if validation is not None:
+            z.writestr("validation-qa.json",json.dumps(_scene_qa_json_value(validation),ensure_ascii=False,allow_nan=False,separators=(",",":")))
+            for band,masks in validation.get("masks",{}).items():
+                if band=="common_removed": masks={"common_removed":masks}
+                for name,mask in masks.items():
+                    filename=f"validation-{band}-{name}.png"
+                    data,bounds=png_bytes(mask.astype(float),"g",(0.,1.)); z.writestr(filename,data)
+                    images.append(dict(file=filename,limits_nMgy_pix=bounds,orientation="FITS_Y_UP",meaning="1=additional sky-only veto; not a photometric mask"))
         manifest["images"]=images
         z.writestr("manifest.json",json.dumps(manifest,ensure_ascii=False,allow_nan=False,indent=2))
         z.writestr("paired-qa.json",json.dumps(_scene_qa_json_value(pairs),ensure_ascii=False,allow_nan=False,separators=(",",":")))
-        z.writestr("summary.json",json.dumps(_scene_qa_json_value(compact_summary(bands,pairs)),ensure_ascii=False,allow_nan=False,indent=2))
+        summary=compact_summary(bands,pairs)
+        if validation is not None:
+            summary["validation"]={k:v for k,v in validation.items() if k not in ("bands","masks")}
+            summary["validation"]["bands"]={}
+            for band,b in validation.get("bands",{}).items():
+                v={k:x for k,x in b.items() if k not in ("before","after")}
+                for key in ("before","after"):
+                    v[key]={k:b[key][k] for k in ("block_count","empty_aperture_count")}
+                    v[key]["models"]=[{k:c.get(k) for k in ("method","status","zero_equal_quadrant_mae_nMgy_pix","cv_equal_quadrant_mae_nMgy_pix")} for c in b[key]["candidates"]]
+                summary["validation"]["bands"][band]=v
+        z.writestr("summary.json",json.dumps(_scene_qa_json_value(summary),ensure_ascii=False,allow_nan=False,indent=2))
     atomic_zip(path,write)
 
 
@@ -165,6 +186,7 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
     from .stellar_halo_sectors import paired_sector_diagnostics
     from .galaxy_geometry_diagnostic import paired_geometry
     from .residual_sky_diagnostic import paired_sky_diagnostics
+    from .sky_clean_injection import run_validation
     project=read_object_project(root)
     if project.field is None or project.selected_dataset is None or project.data_root is None:
         raise ValueError("Project needs local native source, field and data root")
@@ -184,7 +206,7 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
         status="PROJECT_DIAGNOSTICS_NOT_ADOPTED",science_adopted=False,identity=identity,
         code=code,requested_bands=list(bands),foreground_objid=objid,stages={},
         limitations=["Saved mask draft only; no unsaved GUI state or SGA prior.",
-            "SH1 includes GEO-1 and directional diagnostics; no fresh PSF-0 fit, calibrated sky, final photometry or galaxy injection recovery.",
+            "SH1 includes GEO-1 and directional diagnostics; no fresh PSF-0 fit, calibrated sky or final photometry. INJ-1 is fixed-halo, observed-profile recovery only.",
             "Caches preserve numerical arrays; report contains metadata and display PNGs, not new science FITS."])
     products={}; datasets={}; contours={}
     with exclusive_metadata_lock(folder/"project-diagnostics.lock"):
@@ -230,6 +252,13 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
                     ("sky",paired_sky_diagnostics,(g["sky"],r["sky"]))):
                 try: pairs[name]=fn(*args)
                 except ValueError as exc: pairs[name]=dict(status="PAIR_BLOCKED",reason=str(exc),science_adopted=False)
+        progress("SKY-CLEAN + INJ-1 (cache check)")
+        vk=digest([RECIPE,code.get("validation",code["sky"]),list(bands),
+            {b:manifest["stages"][b]["sky"]["archive_sha256"] for b in bands}])
+        validation,vm,va=cached(folder/"project-diagnostics-validation.zip",vk,
+            lambda:run_validation(project,products,datasets,pairs),force=force_stage is not None)
+        manifest["validation"]=dict(cache=vm,key=vk,archive_sha256=va,status=validation["status"])
+        progress(f"SKY-CLEAN + INJ-1 {vm}: {validation['status']}")
         # No completed report if inputs changed mid-run. The cache keys
         # still describe the old input snapshot and cannot match new data.
         current=read_object_project(root); current_draft,_=read_active_mask_draft(root)
@@ -239,6 +268,6 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
         manifest["paired_status"]={k:v["status"] for k,v in pairs.items()}
         # Replace only the diagnostic report; earlier scientific artifacts untouched.
         path=folder/"project-diagnostics-qa.zip"
-        report_archive(path,manifest,products,pairs)
+        report_archive(path,manifest,products,pairs,validation)
     progress(f"QA: {path}")
     return path
