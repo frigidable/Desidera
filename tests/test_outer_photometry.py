@@ -61,3 +61,43 @@ def test_native_overlap_compares_only_shared_pixels():
     assert z["status"]=="OUTER_NATIVE_OVERLAP_AGREES"
     a[2,2]+=1.
     assert native_overlap(grid,mask,a,p,geom,10.,10.)["status"]=="OUTER_NATIVE_OVERLAP_REVIEW"
+
+
+def test_halo_support_is_per_scenario_not_global():
+    from lsbpipe.photometry.outer_photometry import scenario_photo_masks
+    y,x=np.mgrid[-80:81,-80:81]
+    base=np.ones_like(x,bool)
+    base[80,80]=False  # native hard/source exclusion must survive all trials
+    ref=np.ones_like(x,float)
+    g=ref.copy(); r=ref.copy()
+    g[np.hypot(x,y+56)<38]=np.nan
+    r[np.hypot(x,y+56)<36]=np.nan
+    masks=scenario_photo_masks(base,{"g":{"reference":ref,"protect_90":g},
+                                     "r":{"reference":ref,"protect_90":r}})
+    assert np.array_equal(masks["reference"],base)
+    assert np.array_equal(masks["protect_90"],base&np.isfinite(g)&np.isfinite(r))
+    assert np.array_equal(base,masks["reference"])
+    grid=dict(x=x,e=x,n=y,area=1.)
+    geom=dict(east_offset_arcsec=0.,north_offset_arcsec=0.,q=1.,pa_deg=0.)
+    rows=outer_rows(grid,masks["reference"],{"g":ref,"r":ref},geom,0.,1.)
+    assert plateau(rows,"g")["supported_outer_arcsec"]==70.
+    rows=outer_rows(grid,masks["protect_90"],{"g":g,"r":r},geom,0.,1.)
+    assert plateau(rows,"g")["supported_outer_arcsec"]<40.
+    assert np.isfinite([row["scenarios"]["g"]["ring_flux_nMgy"] for row in rows]).all()
+    assert not masks["reference"][80,80] and not masks["protect_90"][80,80]
+
+
+def test_native_overlap_reports_support_loss_separately_from_residual_delta():
+    from lsbpipe.photometry.outer_photometry import native_overlap
+    y,x=np.mgrid[0:21,0:21]
+    a=np.ones_like(x,float); mask=np.ones_like(x,bool)
+    mask[1,1]=False
+    grid=dict(x=x+7,y=y+11,e=x-10,n=y-10)
+    geom=dict(east_offset_arcsec=0.,north_offset_arcsec=0.,q=1.,pa_deg=0.)
+    p=dict(target_xy_native_pix=[10.,10.],layers={"residual":a})
+    z=native_overlap(grid,mask,a,p,geom,17.,21.)
+    assert z["max_abs_pixel_delta_nMgy"]==0.
+    assert z["native_only_pixels"]==1
+    assert not z["support_agrees_in_native_frame"]
+    mask[1,1]=True
+    assert native_overlap(grid,mask,a,p,geom,17.,21.)["support_agrees_in_native_frame"]

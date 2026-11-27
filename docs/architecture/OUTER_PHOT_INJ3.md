@@ -26,3 +26,23 @@ For each fit, outer rings outside the fitted interval are predicted on
 observed support up to the screened limiting radius. These are withheld
 from that profile fit, not necessarily independent of upstream masking/sky.
 Display of interpolated sky corrections is restricted to the verified disk.
+
+
+## Scenario-local support correction (NGC2146sat, QA 2026-11-27)
+
+The previous global intersection included the protect-90 halo, whose
+g-band lower training radius is 37.967561 arcsec from OBJID 360. Native
+and expanded reference finite-pixel masks reconstructed from the report
+PNGs agree inside the 40 arcsec ellipse (40924 pixels). Applying that
+radial exclusion reproduces all 4448 missing pixels and the 36476-pixel
+intersection exactly. No hard/source mask or sector threshold is relaxed.
+
+Use one common band mask per halo scenario; preserve the SH1-C ensemble
+radial baseline. The reference is no longer vetoed by alternative halo
+model domains. Report per-scenario hashes, radial aperture counts,
+nonfinite reference-pixel counts, and the old global intersection loss.
+A refit with missing sectors remains blocked. Compare refits with the
+reference at the same sky guard on their pairwise intersection, including
+signed ring differences and reference fits where the same support passes
+the screen. Sensitivity ranges exclude different full-crop mask hashes.
+No halo extrapolation or calibrated uncertainty is introduced.
