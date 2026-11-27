@@ -42,3 +42,25 @@ def test_larger_required_target_disk_blocks_extrapolation():
     f=candidate(rows,"plane",[],200.,200.,.5,required_radius_arcsec=110.)
     assert f["status"]=="SKY1_VALIDATION_OR_HULL_BLOCKED"
     assert not f["target_region_inside_training_hull"]
+
+
+def test_pair_uses_identical_blocks_and_apertures():
+    from lsbpipe.photometry.residual_sky_diagnostic import paired_sky_diagnostics
+    shape=(401,401); y,x=np.indices(shape); dx=(x-200)*.5; dy=(y-200)*.5
+    g=.0003+1e-6*dx; r=.0006+2e-6*dy
+    base=dict(project_id="p",draft_sha256="d",catalog_sha256="c",foreground_source_id="star",
+        source_triplet=["dr11","north","brick"],original_grid_fingerprint="native",sh1_policy={},
+        original_fits_sha256_local={"image":"hash"})
+    def band(name,a,mask):
+        return dict(base,band=name,expanded_sky=dict(expanded_grid_fingerprint="expanded",
+            expanded_shape=list(shape),expanded_target_xy=[200.,200.],expanded_source_xy=[200.,100.],
+            pixel_scale_arcsec=.5,expanded_layers={"SH1C":a},expanded_safe_mask=mask,
+            required_target_support_radius_arcsec=48.))
+    one=band("g",g,x>10); two=band("r",r,y>15)
+    result=paired_sky_diagnostics(one,two)
+    assert result["status"]=="SKY2_PAIRED_NOT_ADOPTED"
+    assert result["common_pixels"]==int(((x>10)&(y>15)&(np.hypot(dx,dy)>=60.)).sum())
+    assert result["bands"]["g"]["empty_aperture_centres"]==result["bands"]["r"]["empty_aperture_centres"]
+    two["expanded_sky"]["expanded_grid_fingerprint"]="wrong"
+    with pytest.raises(ValueError,match="grid mismatch"):
+        paired_sky_diagnostics(one,two)

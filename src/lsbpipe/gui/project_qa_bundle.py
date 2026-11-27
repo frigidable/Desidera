@@ -150,10 +150,13 @@ def _stage_result(workspace, name):
         outcome["last_attempt_failure"] = failure
         outcome["last_failure_is_historical_not_current_proof"] = True
     result = stage._result
+    identity = (stage._current_identity(stage._result_identity,current)
+                if name=="background" and hasattr(stage,"_current_identity") else
+                current[0] if current is not None else None)
     if stage._future is not None:
         outcome["state"] = "WORKER_IN_PROGRESS"
     elif result is not None and (
-            current is None or current[0] != stage._result_identity):
+            current is None or identity != stage._result_identity):
         outcome["state"] = "STALE_RESULT_WITHHELD"
         outcome["current_result_provenance_matches"] = False
     elif result is not None:

@@ -211,6 +211,7 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
     for v in list(out["expanded_layers"].values())+[out["expanded_safe_mask"]]:
         v.setflags(write=False)
     out["pixel_scale_arcsec"]=float(scale)
+    out["native_reference_residual"]=p["layers"]["residual"]
     # Compute profiles on the fixed GEO-1 ellipse before optional geometry refit.
     for guard in GUARDS:
         m=safe&(rt>=guard)
@@ -272,3 +273,49 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
                                         for method in METHODS]))
                 out["trials"].append(trial)
     return out
+
+
+def paired_sky_diagnostics(g,r):
+    """Matched observed sky pixels, blocks and empty-aperture centres.
+
+    Same-session snapshots only; no new file reads, no PSF matching.
+    """
+    if g.get("band")!="g" or r.get("band")!="r":
+        raise ValueError("SKY-2 pair requires g and r")
+    for k in ("project_id","draft_sha256","catalog_sha256","foreground_source_id",
+              "source_triplet","original_grid_fingerprint","sh1_policy"):
+        if g.get(k) is None or g.get(k)!=r.get(k):
+            raise ValueError("SKY-2 pair identity mismatch: "+k)
+    gg,rr=g["expanded_sky"],r["expanded_sky"]
+    for k in ("expanded_grid_fingerprint","expanded_shape"):
+        if gg.get(k) is None or gg.get(k)!=rr.get(k):
+            raise ValueError("SKY-2 expanded grid mismatch: "+k)
+    for k in ("expanded_target_xy","expanded_source_xy","pixel_scale_arcsec"):
+        if not np.allclose(gg[k],rr[k],rtol=0,atol=1e-6):
+            raise ValueError("SKY-2 pair geometry mismatch: "+k)
+    tx,ty=gg["expanded_target_xy"]; scale=gg["pixel_scale_arcsec"]
+    shape=tuple(gg["expanded_shape"])
+    images={b:d["expanded_layers"]["SH1C"] for b,d in (("g",gg),("r",rr))}
+    masks=[d["expanded_safe_mask"] for d in (gg,rr)]
+    if any(m.shape!=shape for m in masks+list(images.values())):
+        raise ValueError("SKY-2 pair array shape mismatch")
+    y,x=np.ogrid[:shape[0],:shape[1]]
+    safe=masks[0]&masks[1]&np.isfinite(images["g"])&np.isfinite(images["r"])
+    safe &= np.hypot(x-tx,y-ty)*scale>=60.
+    required=max(gg["required_target_support_radius_arcsec"],rr["required_target_support_radius_arcsec"])
+    results={}
+    for band,image in images.items():
+        rows=tile_rows(image,safe,tx,ty,scale,32)
+        samples=empty_samples(image,safe,tx,ty,scale)
+        results[band]=dict(blocks=rows,candidates=[candidate(rows,m,samples,tx,ty,scale,required)
+                                                   for m in METHODS],
+                           empty_aperture_centres=[[s["radius_arcsec"],s["x_pix"],s["y_pix"],s["n"]] for s in samples])
+    def loc(b): return [(v["tile_x_pix"],v["tile_y_pix"],v["n"]) for v in results[b]["blocks"]]
+    if loc("g")!=loc("r") or results["g"]["empty_aperture_centres"]!=results["r"]["empty_aperture_centres"]:
+        raise ValueError("SKY-2 paired sampling mismatch")
+    return dict(schema="desidera.sky2-matched-controls/1",status="SKY2_PAIRED_NOT_ADOPTED",
+        science_adopted=False,psf_matched=False,common_mask_sha256=native_boolean_mask_sha256(safe),
+        common_pixels=int(safe.sum()),expanded_grid_fingerprint=gg["expanded_grid_fingerprint"],
+        guard_arcsec=60.,tile_size_pix=32,halo_scenario="SH1C",bands=results,
+        band_fits_sha256={b:v["original_fits_sha256_local"] for b,v in (("g",g),("r",r))},
+        warning="Same-session snapshots, prior-band file hashes not refreshed. Spatial validation conditional on halo fit; no adopted colour, sky or covariance.")

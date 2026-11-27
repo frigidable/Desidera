@@ -25,10 +25,10 @@ from lsbpipe.gui.visual_theme import adorn, set_status_tone
 from lsbpipe.background import diagnose_current_project_residual_sky
 from lsbpipe.gui.fits_explorer import FITSExplorer
 from lsbpipe.gui.fits_raster import rgb_for_layer
-from lsbpipe.photometry.residual_sky_diagnostic import sky_diagnostics
+from lsbpipe.photometry.residual_sky_diagnostic import sky_diagnostics, paired_sky_diagnostics
 
 
-def run_expanded_sky(dataset,draft,contamination,probe):
+def run_expanded_sky(dataset,draft,contamination,probe,other=None):
     p=probe["sh1c_preview"]
     inputs=dict(p["sky1_inputs"])
     entries=inputs.pop("source_entries")
@@ -38,14 +38,22 @@ def run_expanded_sky(dataset,draft,contamination,probe):
         preview=p,wcs=dataset["wcs"])
     result["source_entries"]=entries
     result["expanded_grid_fingerprint"]=grid
-    return dict(status=result["status"],project_id=dataset["project_id"],
+    out=dict(status=result["status"],project_id=dataset["project_id"],
         dataset_source=dataset["source"],band=dataset["band"],draft_sha256=draft.digest,
         catalog_sha256=contamination["catalog_sha256"],science_adopted=False,
         foreground_source_id=probe["source_id"],foreground_source_objid=probe["source_objid"],
         original_grid_fingerprint=dataset["grid_fingerprint"],
         original_fits_sha256_local=dataset["original_fits_sha256_local"],
         effective_source_mask_sha256=contamination["effective_source_mask_sha256"],
-        expanded_sky=result)
+        source_triplet=list(dataset.get("source_quartet_key",())[:3]),
+        sh1_policy=probe.get("sh1d_policy"),expanded_sky=result)
+    if other is not None:
+        try:
+            g,r=(out,other) if out["band"]=="g" else (other,out)
+            out["paired_sky"]=paired_sky_diagnostics(g,r)
+        except (ValueError,KeyError,TypeError) as exc:
+            out["paired_sky"]={"status":"SKY2_PAIR_BLOCKED","reason":str(exc),"science_adopted":False}
+    return out
 
 
 class SkyCanvas(QGraphicsView):
@@ -73,6 +81,7 @@ class SkyWorkspace(QWidget):
         self._active_identity = None
         self._result_identity = None
         self._result = None
+        self._expanded_session={}
         self._last_failure = None
         self._failure_identity = None
         self._discard_requested = False
@@ -183,7 +192,13 @@ class SkyWorkspace(QWidget):
         self.sky_layer.setAccessibleName("Expanded sky layer")
         for label,key in (("Original expanded field","original"),("Halo + sky residual","residual"),
                           ("Eligible sky pixels","safe"),("Block mean (signed)","mean"),
-                          ("Block median (signed)","median")):
+                          ("Block median (signed)","median"),
+                          ("Reference central sky · constant","sky1_constant_model"),
+                          ("Reference central sky · plane","sky1_plane_model"),
+                          ("Reference central sky · quadratic","sky1_quadratic_model"),
+                          ("Reference central corrected · constant","sky1_constant_corrected"),
+                          ("Reference central corrected · plane","sky1_plane_corrected"),
+                          ("Reference central corrected · quadratic","sky1_quadratic_corrected")):
             self.sky_layer.addItem(label,key)
         controls.addWidget(self.sky_trial,1); controls.addWidget(self.sky_layer,1)
         el.addLayout(controls)
@@ -383,8 +398,15 @@ class SkyWorkspace(QWidget):
         if expanded and probe is None:
             self.status.setText("Run the saturated-star SH1 probe in Scene first; current evidence required.")
             return
+        other=None
         if expanded:
             identity=identity+(id(probe),)
+            if dataset["band"] in ("g","r"):
+                opposite="r" if dataset["band"]=="g" else "g"
+                cached=self._expanded_session.get(opposite)
+                prior=getattr(self._scene,"_sh1d_session",{}).get(opposite)
+                if cached and prior is not None and cached[0] is prior:
+                    other=cached[1]
         self.expanded_panel.hide()
         self.sky_graphics.clear()
         self._result = None
@@ -399,7 +421,7 @@ class SkyWorkspace(QWidget):
         self._active_identity = identity
         self._discard_requested = False
         try:
-            self._future = (self._executor.submit(run_expanded_sky,dataset,draft,contamination,probe)
+            self._future = (self._executor.submit(run_expanded_sky,dataset,draft,contamination,probe,other)
                 if expanded else self._executor.submit(diagnose_current_project_residual_sky,dataset,draft,contamination))
         except (OSError, RuntimeError) as exc:
             # Thread-pool startup failures must not escape a Qt button
@@ -521,6 +543,11 @@ class SkyWorkspace(QWidget):
             f"{warning_count} spatial quality warnings · "
             "UNADOPTED · original FITS unchanged.")
         if "expanded_sky" in result:
+            self._expanded_session={b:v for b,v in self._expanded_session.items()
+                if v[1]["project_id"]==result["project_id"] and v[1]["draft_sha256"]==result["draft_sha256"]}
+            # Cache only the single-band evidence, never nested pair histories.
+            self._expanded_session[identity[2]]=(self._expanded_probe(snap),{k:v for k,v in result.items() if k!="paired_sky"})
+            self.status.setText(f"{result['status']} · {identity[2].upper()} · {result.get('paired_sky',{}).get('status','single band')} · UNADOPTED")
             self.readout.setPlainText(self._format_expanded(result))
             self.sky_trial.blockSignals(True)
             self.sky_trial.clear()
@@ -540,7 +567,15 @@ class SkyWorkspace(QWidget):
         r=self._result["expanded_sky"]; t=r["trials"][self.sky_trial.currentData()]
         layer=self.sky_layer.currentData()
         shape=tuple(r["expanded_shape"]); tile=t["tile_size_pix"]
-        if layer in ("mean","median"):
+        central=layer.startswith("sky1_")
+        if central:
+            arr=r["layers"].get(layer)
+            if arr is None:
+                self.sky_graphics.clear()
+                self.sky_caption.setText("Reference central model unavailable: spatial support or fit blocked.")
+                return
+            shape=arr.shape
+        elif layer in ("mean","median"):
             arr=np.full(shape,np.nan)
             for b in t["blocks"]:
                 x,y=b["tile_x_pix"],b["tile_y_pix"]
@@ -555,6 +590,9 @@ class SkyWorkspace(QWidget):
         v=arr[np.isfinite(arr)]
         if layer=="safe":
             limits=(0.,1.)
+        elif central and layer.endswith("_corrected"):
+            z=r["native_reference_residual"]; z=z[np.isfinite(z)]
+            limits=tuple(np.quantile(z,[.01,.99])) if z.size else (0.,1.)
         elif layer in ("mean","median"):
             lim=max(float(np.quantile(abs(v),.98)) if v.size else 0.,1e-12)
             limits=(-lim,lim)
@@ -568,12 +606,14 @@ class SkyWorkspace(QWidget):
         self.sky_graphics.setSceneRect(item.boundingRect())
         pen=QPen(QColor("#ffba65")); pen.setCosmetic(True)
         tx,ty=r["expanded_target_xy"]; rad=t["target_guard_arcsec"]/r["pixel_scale_arcsec"]
-        self.sky_graphics.addEllipse(tx+.5-rad,shape[0]-ty-.5-rad,2*rad,2*rad,pen)
+        if not central:
+            self.sky_graphics.addEllipse(tx+.5-rad,shape[0]-ty-.5-rad,2*rad,2*rad,pen)
         self.sky_canvas.fitInView(item,Qt.KeepAspectRatio)
         self.sky_caption.setText(f"{self.sky_layer.currentText()} · {shape[1]} × {shape[0]} native px · "
             f"display {limits[0]:.4g} … {limits[1]:.4g} "
             + ("(1 = eligible; 0 = excluded)" if layer=="safe" else "nMgy/px · purple = unavailable")
-            + " · orange = additional target guard · NOT ADOPTED")
+            + (" · fixed SH1C / 60 arcsec / 32 px" if central else " · orange = additional target guard")
+            + " · NOT ADOPTED")
 
     @staticmethod
     def _format_expanded(result):
@@ -599,7 +639,22 @@ class SkyWorkspace(QWidget):
                     near=min(sources,key=lambda s:np.hypot(s["x"]-x,s["y"]-y)) if sources else None
                     lines.append(f"    ({x:.1f},{y:.1f}) mean={b['mean_nMgy_pix']:.6g}, median={b['median_nMgy_pix']:.6g}"
                         + (f" · nearest OBJID {near['objid']} at {np.hypot(near['x']-x,near['y']-y)*r['pixel_scale_arcsec']:.1f} arcsec" if near else ""))
+        pair=result.get("paired_sky")
+        if pair:
+            lines.append("Matched g/r controls: "+pair["status"])
+            if pair.get("reason"): lines.append(pair["reason"])
+            if "bands" in pair:
+                lines.append(f"  Common eligible pixels: {pair['common_pixels']}")
+                for b,v in pair["bands"].items():
+                    lines.append(f"  {b}: {len(v['blocks'])} blocks; {len(v['empty_aperture_centres'])} empty apertures")
+                    lines.extend(candidates(v["candidates"]))
         return "\n".join(lines)
+
+    def current_expanded_result(self):
+        if self._result is not None and "expanded_sky" in self._result and (
+                self._current_identity(self._result_identity,self._snapshot())==self._result_identity):
+            return self._result
+        return None
 
     @staticmethod
     def _format_readout(result):
