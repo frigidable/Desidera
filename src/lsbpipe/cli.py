@@ -135,7 +135,21 @@ def main(argv=None):
           help='retain SATUR_band pixels as an alternate mask policy')
     fits_cmd.add_argument('--keep-allmask',action='store_true',
           help='retain ALLMASK_band pixels as an alternate mask policy')
+    batch=cmd.add_parser("diagnose-project",help="run saved Scene/SH1/GEO/SKY diagnostics for local bands; no GUI windows")
+    batch.add_argument("--project",type=Path,required=True)
+    batch.add_argument("--bands",nargs="+",choices=["g","r","i","z"],default=["g","r"])
+    batch.add_argument("--objid",type=int,required=True,help="explicit saturated foreground Tractor OBJID")
+    batch.add_argument("--width",type=float,default=None,help="native cutout width in arcmin; default as Scene")
+    batch.add_argument("--anchor",type=float,nargs=2,metavar=("RA","DEC"),default=None)
+    batch.add_argument("--gaia-inner-preview",action="store_true")
+    batch.add_argument("--red-extended-preview",action="store_true")
+    batch.add_argument("--force-stage",choices=["sh1","sky","all"],default=None)
     args = p.parse_args(argv)
+    if args.command=="diagnose-project":
+        from .photometry.project_diagnostics import run_project
+        run_project(args.project,bands=args.bands,objid=args.objid,width=args.width,anchor=args.anchor,
+            gaia_inner=args.gaia_inner_preview,red_extended=args.red_extended_preview,force_stage=args.force_stage)
+        return
     if args.command == 'measure-fits':
         from .survey import load_legacy_coadd
         from .fits_workflow import measure_fits_observation, export_fits_measurement
