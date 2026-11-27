@@ -12,7 +12,7 @@ from astropy.wcs import WCS
 from .psf_tractor_gaia import read_native_tractor_gaia, SATURATION_BITS
 from .sky_masks import native_boolean_mask_sha256
 from .residual_sky_diagnostic import tile_rows, empty_samples, candidate, fit_blocks, predict, METHODS
-from .galaxy_geometry_diagnostic import local_grid, block_design, fit_geometry, fitted
+from .galaxy_geometry_diagnostic import local_grid, block_design, fit_geometry, fitted, radial_profiles
 
 SAT_RADIUS=20.
 PEAK_SIGMA=8.
@@ -81,11 +81,15 @@ def compact_peaks(res,safe,scale):
         count=np.bincount(lab.ravel(),minlength=n+1)
         keep=count>=3; keep[0]=False
         return keep[lab],int(keep.sum())
-    pos,npk=components(use&(v-med>PEAK_SIGMA*noise))
-    neg,nn=components(use&(v-med< -PEAK_SIGMA*noise))
+    # Reject opposite-sign high-pass rings surrounding negative/positive
+    # compact features by requiring corresponding signed smoothed excess.
+    smed=float(np.median(small[use])); ssig=mad(small[use])
+    pos,npk=components(use&(v-med>PEAK_SIGMA*noise)&(small>smed+3*ssig))
+    neg,nn=components(use&(v-med< -PEAK_SIGMA*noise)&(small<smed-3*ssig))
     grown=(distance_transform_edt(~pos)<=PEAK_GROW/scale) if pos.any() else pos
     return grown,dict(status="CONDITIONAL_COMPACT_EXCESS",threshold_sigma=PEAK_SIGMA,
         highpass_median_nMgy_pix=med,highpass_mad_nMgy_pix=noise,
+        smoothed_sign_gate_sigma=3.,smoothed_median_nMgy_pix=smed,smoothed_mad_nMgy_pix=ssig,
         positive_components=npk,negative_components=nn,
         positive_core_pixels=int(pos.sum()),negative_core_pixels=int(neg.sum()),
         grown_pixels=int(grown.sum()),grow_arcsec=PEAK_GROW)
@@ -242,6 +246,52 @@ def expanded_wcs(probe,ds,sky):
     return w
 
 
+def target_profiles(products,datasets,out):
+    """Common native support; sky-training vetoes never alter target flux mask."""
+    refband="r" if "r" in products else next(iter(products))
+    p=products[refband]["probe"]["sh1c_preview"]
+    ref=(p.get("geo1") or {}).get("reference") or {}
+    if not fitted(ref): return dict(status="TARGET_REFERENCE_GEOMETRY_UNAVAILABLE",science_adopted=False)
+    ds=datasets[refband]
+    grid=local_grid(p,ds["wcs"])
+    images={}
+    anchor=p["target_xy_native_pix"]
+    for band,b in products.items():
+        other=b["probe"]["sh1c_preview"]
+        if (datasets[band]["grid_fingerprint"]!=ds["grid_fingerprint"] or
+                other["layers"]["residual"].shape!=grid["shape"] or
+                not np.allclose(other["target_xy_native_pix"],anchor,rtol=0,atol=1e-6)):
+            raise ValueError("INJ1 target native grid mismatch")
+        images[band]=np.asarray(other["layers"]["residual"][grid["sl"]],float)
+    valid=np.logical_and.reduce([np.isfinite(im) for im in images.values()])
+    for b in products.values():
+        valid &= np.isfinite(b["probe"]["sh1c_preview"]["layers"]["original"][grid["sl"]])
+    # The pre-existing SH1 native mask is preserved. New screening applies
+    # to sky training only. Comparison uses one fixed reference geometry.
+    design=block_design(grid,valid,35.,3.)
+    variants={}; geometry={}
+    for band,im in images.items():
+        p=products[band]["probe"]["sh1c_preview"]
+        scale=float(p["pixel_scale_arcsec"])
+        dx=(grid["x"]-anchor[0])*scale; dy=(grid["y"]-anchor[1])*scale
+        variants[band+"_zero"]=im
+        geometry[band]={}
+        for c in out["bands"][band]["after"]["candidates"]:
+            if c["status"]!="SKY1_CONDITIONAL_NOT_ADOPTED": continue
+            corrected=im-predict(c["fit"],dx,dy)
+            variants[band+"_"+c["method"]]=corrected
+            seed=(p.get("geo1") or {}).get("reference") or {}
+            geometry[band][c["method"]]=fit_geometry(design,corrected,grid,
+                seed.get("robust_loss_scale_nMgy_pix"),seed if fitted(seed) else None,
+                fixed_background_nMgy_pix=0.)
+    rows=radial_profiles(grid,variants,valid,ref)
+    return dict(status="TARGET_COMMON_PROFILES_NOT_ADOPTED",science_adopted=False,
+        reference_band=refband,reference_geometry=ref,psf_matched=False,
+        common_mask_sha256=native_boolean_mask_sha256(valid),common_crop_pixels=int(valid.sum()),
+        geometry_refits=geometry,profiles=rows,
+        warning="Common native support, fixed SH1C reference; signed observed flux only; no PSF matching or total flux. No new sky-only veto applied to target pixels.")
+
+
 def run_validation(project,products,datasets,paired):
     """Independent downstream diagnostic, not a science-ready photometry stage."""
     out=dict(schema="desidera.sky-clean-inj1/1",status="INJ1_NOT_ADOPTED",
@@ -258,7 +308,8 @@ def run_validation(project,products,datasets,paired):
         res=s["expanded_layers"]["SH1C"]; safe=np.asarray(s["expanded_safe_mask"],bool)&np.isfinite(res)
         tx,ty=s["expanded_target_xy"]; scale=s["pixel_scale_arcsec"]
         ident=(tuple(res.shape),s["expanded_grid_fingerprint"],tx,ty,scale)
-        if geom is not None and ident!=geom: raise ValueError("INJ1 matched expanded grid mismatch")
+        if geom is not None and (ident[:2]!=geom[:2] or not np.allclose(ident[2:],geom[2:],rtol=0,atol=1e-6)):
+            raise ValueError("INJ1 matched expanded grid mismatch")
         geom=ident; grids[band]=w; images[band]=res
         release,region,brick,_=ds["source_quartet_key"]
         catalog=read_native_tractor_gaia(project.data_root,release=release,region=region,brick=brick,
@@ -297,5 +348,6 @@ def run_validation(project,products,datasets,paired):
             g,r=(out["bands"][b][key] for b in ("g","r"))
             if g["tile_ids"]!=r["tile_ids"] or g["empty_aperture_centres"]!=r["empty_aperture_centres"]:
                 raise ValueError("INJ1 common sampling mismatch")
+    out["target"]=target_profiles(products,datasets,out)
     if not sites: out["status"]="INJ1_NO_SUITABLE_BLANK_FIELD"
     return out

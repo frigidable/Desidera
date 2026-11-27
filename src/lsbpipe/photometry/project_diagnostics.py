@@ -164,11 +164,16 @@ def report_archive(path,manifest,bands,pairs,validation=None):
         z.writestr("paired-qa.json",json.dumps(_scene_qa_json_value(pairs),ensure_ascii=False,allow_nan=False,separators=(",",":")))
         summary=compact_summary(bands,pairs)
         if validation is not None:
-            summary["validation"]={k:v for k,v in validation.items() if k not in ("bands","masks")}
+            summary["validation"]={k:v for k,v in validation.items() if k not in ("bands","masks","target")}
+            if validation.get("target"):
+                target=validation["target"]
+                summary["validation"]["target"]={k:v for k,v in target.items() if k!="profiles"}
+                summary["validation"]["target"]["profiles_all"]=[r for r in target.get("profiles",[]) if r["sector"]=="ALL"]
             summary["validation"]["bands"]={}
             for band,b in validation.get("bands",{}).items():
                 v={k:x for k,x in b.items() if k not in ("before","after")}
                 for key in ("before","after"):
+                    if key not in b: continue
                     v[key]={k:b[key][k] for k in ("block_count","empty_aperture_count")}
                     v[key]["models"]=[{k:c.get(k) for k in ("method","status","zero_equal_quadrant_mae_nMgy_pix","cv_equal_quadrant_mae_nMgy_pix")} for c in b[key]["candidates"]]
                 summary["validation"]["bands"][band]=v

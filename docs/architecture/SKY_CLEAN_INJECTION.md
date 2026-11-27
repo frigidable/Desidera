@@ -6,7 +6,7 @@ or new science FITS. Old Scene and SH1/SKY-2 results remain available.
 Sky-only screening uses a 20 arcsec guard around each current-band saturated
 Tractor centre (no flux/IVAR gate), and positive compact excess on a normalized
 Gaussian high-pass (1.5 and 10 pixels, 8 robust sigma, >=3 connected pixels,
-4 arcsec growth). Negative components are counted as a control. This is a
+4 arcsec growth, plus a corresponding 3 robust sigma sign gate on the small-smoothed field). Negative components are counted as a control. This is a
 conditional heuristic, not a source catalogue or PSF wing measurement. No
 photometric mask or saved draft changes. No network.
 
@@ -30,3 +30,9 @@ the nuisance fit half-intensity radius as effective radius. No upstream SH1
 refit, intrinsic PSF convolution, source detection after injection, injected
 Poisson noise or total-flux/uncertainty adoption. If no suitable site exists,
 report it rather than relax coverage. Results remain NOT_ADOPTED.
+
+For the actual target the updated sky candidates are applied to the original
+native SH1C residuals, preserving the native photometric support and using a
+common observed pixel mask and r reference ellipse for g/r. Geometry is also
+refit with a fixed zero background. New sky-only vetoes are not applied as
+target photometric masks. No PSF matching or adopted flux.
