@@ -47,3 +47,15 @@ def test_forward_profile_recovers_signed_observed_ring_fit():
         f["apertures"][-1]["model_on_observed_pixels_nMgy"],rel=.02)
     blocked=fit_profile(image,np.zeros_like(valid),grid,geom,k)
     assert blocked["status"]=="SERSIC_INSUFFICIENT_RADIAL_SUPPORT"
+
+
+def test_plateau_screen_keeps_signed_growth_and_never_adopts():
+    from lsbpipe.photometry.sersic_recovery import growth_saturation
+    def rows(flux):
+        return [dict(sector="ALL",outer_arcsec=a,scenarios={"r_plane":{"cumulative_flux_nMgy":f}})
+                for a,f in zip((30.,35.,40.),flux)]
+    assert growth_saturation(rows([216.,254.,288.]),"r_plane")["status"]=="COG_NO_EMPIRICAL_PLATEAU_AT_OUTER_RADIUS"
+    p=growth_saturation(rows([100.,99.,100.]),"r_plane")
+    assert p["status"]=="COG_SMALL_LAST_INCREMENTS_UNCALIBRATED"
+    assert p["last_two_signed_increments_over_outer_flux"]==[-.01,.01]
+    assert not p["science_adopted"]

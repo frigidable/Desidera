@@ -223,6 +223,7 @@ def run_project(root,*,bands=("g","r"),objid,force_stage=None,width=None,anchor=
         code=code,requested_bands=list(bands),foreground_objid=objid,stages={},
         limitations=["Saved mask draft only; no unsaved GUI state or SGA prior.",
             "SH1 includes GEO-1 and directional diagnostics; no fresh PSF-0 fit, calibrated sky or final photometry. INJ-1 is fixed-halo, observed-profile recovery only.",
+            "INJ-2 uses verified experimental finite-core PSF0, frozen masks, radial halo refits and conditional Sersic totals; no adopted PSF, covariance or calibrated uncertainty.",
             "Caches preserve numerical arrays; report contains metadata and display PNGs, not new science FITS."])
     products={}; datasets={}; contours={}
     with exclusive_metadata_lock(folder/"project-diagnostics.lock"):

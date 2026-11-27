@@ -39,3 +39,11 @@ injection. This remains a conditional coadd-level experiment.
 
 No GUI changes or additional user actions. Inspect inj2-qa.json in the
 existing unified archive. Real FITS and saved masks remain read-only.
+
+The SH1 refit executes only the explicitly matched hypothesis, with the
+same model code and gates as the full ensemble. A regression test verifies
+that its candidate equals the corresponding full-ensemble candidate.
+The last two signed curve-of-growth increments are screened against 2% of
+the outer measured flux; this is descriptive only and cannot establish a
+total or a noise-calibrated limiting radius. Large measured/model aperture
+disagreement is flagged independently of optimizer convergence.

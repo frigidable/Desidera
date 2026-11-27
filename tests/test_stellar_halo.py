@@ -77,6 +77,14 @@ def test_sh1b_block_hypotheses_exclude_target_light_and_keep_disjoint_tiles():
         assert h[-1]==0
     assert any(c["sky_model"]=="plane" for c in result["candidates"])
     assert result["target_distance_hypothesis_range_nMgy_pix"] is not None
+    c=result["candidates"][0]
+    key=(c["tile_size_pix"],c["assumed_zero_halo_radius_arcsec"],c["sky_model"])
+    fixed=measure_saturated_halo_sectors(image,np.ones_like(image),hard,
+        source_xy=(sx,sy),target_xy=(400,610),pixel_scale_arcsec=.262,
+        source_mask=source,protected=protected,unresolved_sky_veto=source,
+        compare_models=True,fixed_hypothesis=key)["sh1b_model_comparison"]
+    assert fixed["candidates"]==[c]
+    assert len(fixed["block_sets"])==1
 
 
 def test_sh1b2_extends_radial_support_and_emits_nonadopted_tile_map():

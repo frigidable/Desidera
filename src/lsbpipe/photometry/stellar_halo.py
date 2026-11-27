@@ -32,7 +32,14 @@ def _stats(image, select):
 def measure_saturated_halo_sectors(image, invvar, native_hard, *,
         source_xy, target_xy, pixel_scale_arcsec, source_mask, protected,
         unresolved_sky_veto, neighbor_centres=(), compare_models=False,
-        expanded=False, diagnostic_tile_map=True):
+        expanded=False, diagnostic_tile_map=True, fixed_hypothesis=None):
+    if fixed_hypothesis is not None:
+        anchors=EXPANDED_ANCHORS_ARCSEC if expanded else (70.,85.,100.)
+        if (not isinstance(fixed_hypothesis,(tuple,list)) or len(fixed_hypothesis)!=3 or
+                fixed_hypothesis[0] not in (24,40) or fixed_hypothesis[1] not in anchors or
+                fixed_hypothesis[2] not in ("plane","constant") or not compare_models):
+            raise ValueError("Invalid fixed SH1 hypothesis")
+        fixed_hypothesis=tuple(fixed_hypothesis)
     a = np.asarray(image, dtype=float)
     iv = np.asarray(invvar, dtype=float)
     masks = [np.asarray(m, dtype=bool) for m in
@@ -101,7 +108,7 @@ def measure_saturated_halo_sectors(image, invvar, native_hard, *,
                              safe["n"] >= MIN_PIXELS and fraction >= MIN_COVERAGE})
     comparison = (_compare_block_models(a, train_valid, distance, sector, rows,
                   sx=sx, sy=sy, scale=scale, target_distance=math.hypot(tx-sx,ty-sy)*scale,
-                  edges=edges, expanded=expanded)
+                  edges=edges, expanded=expanded, fixed_hypothesis=fixed_hypothesis)
                   if compare_models else None)
     if expanded and comparison is not None and diagnostic_tile_map:
         comparison["diagnostic_tile_map"] = _diagnostic_tile_map(
@@ -183,7 +190,7 @@ def _block_design(blocks, knots, plane):
 
 
 def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,target_distance,
-                          edges=EDGES_ARCSEC, expanded=False):
+                          edges=EDGES_ARCSEC, expanded=False, fixed_hypothesis=None):
     """Hypothesis/sensitivity comparison, never an adopted correction.
     The additive halo/sky degeneracy is exposed via several outer anchors.
     Equal spatial-subset weights, signed block medians, robust residual loss.
@@ -191,6 +198,7 @@ def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,t
     from scipy.optimize import least_squares
     candidates=[]; rejected=[]; block_sets=[]
     for step in (24,40):
+        if fixed_hypothesis is not None and step!=fixed_hypothesis[0]: continue
         blocks=_spatial_blocks(image,valid,distance,sector,rows,sx=sx,sy=sy,scale=scale,step=step,edges=edges)
         train=[b for b in blocks if b["role"]=="TRAIN"]
         side=[b for b in blocks if b["role"]=="SIDE_HOLDOUT"]
@@ -200,6 +208,7 @@ def _compare_block_models(image, valid, distance, sector, rows, *, sx,sy,scale,t
             for plane in (False,True):
                 meta={"tile_size_pix":step,"assumed_zero_halo_radius_arcsec":anchor,
                       "sky_model":"plane" if plane else "constant"}
+                if fixed_hypothesis is not None and (step,anchor,meta["sky_model"])!=fixed_hypothesis: continue
                 outer=[b for b in train if b["r_arcsec"]>=anchor]
                 inner=[b for b in train if b["r_arcsec"]<anchor]
                 if (len(train)<25 or len(side)<6 or len(outer)<6

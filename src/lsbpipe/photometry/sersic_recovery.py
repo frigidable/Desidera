@@ -30,7 +30,10 @@ def psf_evidence(project,products,datasets):
                "source_quartet_key" in datasets[b] for b in products):
         return {},{"status":"PSF_SOURCE_EVIDENCE_UNAVAILABLE","bands":{}}
     from .psf_gui_backend import read_saved_psf0_bands
-    restored=read_saved_psf0_bands(project.root)
+    try:
+        restored=read_saved_psf0_bands(project.root)
+    except (OSError,ValueError) as exc:
+        return {},dict(status="SAVED_PSF0_RESTORE_BLOCKED",bands={},reason=str(exc))
     kernels={}; meta={}
     for b in products:
         p=restored["restored"].get(b)
@@ -170,6 +173,11 @@ def fit_profile(image,valid,grid,geom,kernel,outer=40.,inner=3.):
             observed_signed_flux_nMgy=float(image[use].sum()),
             model_on_observed_pixels_nMgy=float(predicted[use].sum()),
             intrinsic_model_enclosed_nMgy=float(full*gammainc(2*n,bn*(rad/re)**(1/n)))))
+    outer_ap=aperture[-1]
+    if outer_ap["observed_signed_flux_nMgy"]<=0:
+        flags.append("NONPOSITIVE_OUTER_APERTURE")
+    elif abs(outer_ap["model_on_observed_pixels_nMgy"]/outer_ap["observed_signed_flux_nMgy"]-1)>.10:
+        flags.append("MODEL_OBSERVED_APERTURE_MISMATCH_GT_10_PERCENT")
     for row in rows:
         use=(rho>=row["lo_arcsec"])&(rho<row["hi_arcsec"])&valid
         row["model_mean_on_observed_pixels_nMgy_arcsec2"]=float(predicted[use].mean()/grid["area"]) if use.any() else None
@@ -219,7 +227,7 @@ def halo_refit(image,inputs,extra_protected,extra_veto,reference):
         protected=inputs["protected"]|extra_protected,
         unresolved_sky_veto=inputs["veto"]|extra_veto,
         neighbor_centres=inputs["neighbours"],compare_models=True,
-        expanded=True,diagnostic_tile_map=False)
+        expanded=True,diagnostic_tile_map=False,fixed_hypothesis=key(reference))
     c=next((c for c in result["sh1b_model_comparison"]["candidates"] if key(c)==key(reference)),None)
     if c is None: return None,None
     h,b=model_arrays(image.shape,inputs["source_xy"],inputs["scale"],c)
@@ -325,6 +333,25 @@ def injection_case(inputs,wcs,mask,site,params,kernel,reference,f40,extra_veto,c
     return result,control
 
 
+def growth_saturation(rows,scenario):
+    """Descriptive last two signed growth increments, no noise-based gate."""
+    allrows=sorted((r for r in rows if r["sector"]=="ALL" and scenario in r["scenarios"]),
+        key=lambda r:r["outer_arcsec"])
+    points=[(r["outer_arcsec"],r["scenarios"][scenario]["cumulative_flux_nMgy"]) for r in allrows]
+    if len(points)<3 or any(f is None or not np.isfinite(f) for _,f in points[-3:]):
+        return dict(status="COG_INSUFFICIENT_SUPPORT",points=points)
+    last=points[-1][1]
+    if last<=0:
+        return dict(status="COG_NONPOSITIVE_OUTER_FLUX",points=points)
+    increments=[(points[i][1]-points[i-1][1])/last for i in (-2,-1)]
+    # This tolerance is only a plateau screen: no uncertainty, coverage
+    # correction, or claim that a flat curve is the galaxy's total light.
+    return dict(status="COG_SMALL_LAST_INCREMENTS_UNCALIBRATED" if max(map(abs,increments))<=.02
+        else "COG_NO_EMPIRICAL_PLATEAU_AT_OUTER_RADIUS",
+        points=points,outer_arcsec=points[-1][0],last_two_signed_increments_over_outer_flux=increments,
+        screen_fraction=.02,science_adopted=False)
+
+
 def target_analysis(products,datasets,validation,kernels):
     """Native forward-convolved totals plus strict matched-PSF apertures."""
     refband="r" if "r" in products else next(iter(products))
@@ -393,8 +420,11 @@ def target_analysis(products,datasets,validation,kernels):
             effective_kernel_shape=list(effective.shape),effective_kernel_sum=float(effective.sum()),
             effective_kernel_negative_mass=float(-np.minimum(effective,0).sum()),apertures=rows,
             warning="Cross convolution equalizes stored finite core kernels only. Entire kernel box must be observed; no mask filling. Colour is conditional; covariance and far wings unvalidated.")
+    growth={band:{name:growth_saturation(validation["target"]["profiles"],band+"_"+name)
+                  for name in variants}
+            for band,variants in images.items()}
     return dict(status="TARGET_SERSIC_NOT_ADOPTED",science_adopted=False,reference_band=refband,
-        native_profile_fits=fits,matched_psf=matched,layers=layers)
+        native_profile_fits=fits,matched_psf=matched,growth_saturation=growth,layers=layers)
 
 
 def run_inj2(products,datasets,validation,kernels,evidence):
