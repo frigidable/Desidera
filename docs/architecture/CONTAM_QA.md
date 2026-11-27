@@ -36,3 +36,23 @@ in injection experiments, retain nonmonotonic curves, and distinguish
 observed aperture flux from extrapolated Sérsic totals. Extend only
 where native coverage and sky control support allow. Existing OUTER
 results do not establish a plateau or calibrated uncertainty.
+
+## Numeric snapshot for the next review
+
+Run only when a numerical source decomposition or sky/COG investigation
+is needed. No diagnose-project run is required:
+
+```powershell
+python scripts/export_contam_inputs.py --project "C:\Users\frigi\DESIDERAProjects\NGC2146sat"
+```
+
+Produces analyses/contam-inputs.zip from existing verified SH1/SKY caches
+and the same saved PSF0 lineage as the latest QA. Each array is stored as
+a non-pickle NPY with a SHA256 in the diagnostic-cache manifest. The
+bundle retains the expanded original numerical image, IVAR, separate
+hard/source/protection/sky-veto masks, reference halo residual, sky
+training support, exact expanded WCS and source positions. No replacement
+of missing data or change to existing caches. It is a snapshot, not a
+fresh verification of the source FITS. Missing or inconsistent caches,
+PSF or WCS block export rather than trigger a long rerun. Existing
+export files are not overwritten.
