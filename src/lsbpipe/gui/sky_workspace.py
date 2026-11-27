@@ -12,7 +12,7 @@ import traceback
 
 import numpy as np
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QColor, QPen
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
@@ -57,6 +57,14 @@ def run_expanded_sky(dataset,draft,contamination,probe,other=None):
 
 
 class SkyCanvas(QGraphicsView):
+    pixelSelected=Signal(float,float)
+
+    def mousePressEvent(self,event):
+        if event.button()==Qt.LeftButton:
+            p=self.mapToScene(event.position().toPoint())
+            self.pixelSelected.emit(p.x(),p.y())
+        super().mousePressEvent(event)
+
     def resizeEvent(self,event):
         super().resizeEvent(event)
         if self.scene() is not None and not self.scene().sceneRect().isEmpty():
@@ -206,10 +214,16 @@ class SkyWorkspace(QWidget):
         self.sky_canvas=SkyCanvas(self.sky_graphics,self.expanded_panel)
         self.sky_canvas.setObjectName("sky_expanded_canvas")
         self.sky_canvas.setMinimumHeight(180)
+        self.sky_canvas.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sky_canvas.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sky_canvas.pixelSelected.connect(self._inspect_block)
         el.addWidget(self.sky_canvas,1)
         self.sky_caption=QLabel()
         self.sky_caption.setWordWrap(True)
         el.addWidget(self.sky_caption)
+        self.block_caption=QLabel("Click an expanded-field pixel to inspect its block and nearest catalogue centres.")
+        self.block_caption.setWordWrap(True)
+        el.addWidget(self.block_caption)
         self.sky_trial.currentIndexChanged.connect(self._render_expanded)
         self.sky_layer.currentIndexChanged.connect(self._render_expanded)
         root.addWidget(self.expanded_panel,3)
@@ -330,6 +344,9 @@ class SkyWorkspace(QWidget):
     def refresh_context(self):
         scene = self._scene
         snap = self._snapshot()
+        self._expanded_session={b:v for b,v in self._expanded_session.items()
+            if v[1]["project_id"]==getattr(scene,"_project_id",None) and
+               v[1]["draft_sha256"]==getattr(getattr(scene,"_draft",None),"digest",None)}
         band = scene._band.upper() if scene._band else "?"
         if snap is None:
             self.context_label.setText(
@@ -568,6 +585,8 @@ class SkyWorkspace(QWidget):
         layer=self.sky_layer.currentData()
         shape=tuple(r["expanded_shape"]); tile=t["tile_size_pix"]
         central=layer.startswith("sky1_")
+        self.block_caption.setText("Click an expanded-field pixel to inspect its block and nearest catalogue centres." if not central else
+            "Central reference view; choose an expanded-field layer to inspect blocks.")
         if central:
             arr=r["layers"].get(layer)
             if arr is None:
@@ -614,6 +633,32 @@ class SkyWorkspace(QWidget):
             + ("(1 = eligible; 0 = excluded)" if layer=="safe" else "nMgy/px · purple = unavailable")
             + (" · fixed SH1C / 60 arcsec / 32 px" if central else " · orange = additional target guard")
             + " · NOT ADOPTED")
+
+    def _inspect_block(self,sx,sy):
+        if not self.current_expanded_result() or self.sky_trial.currentData() is None:
+            return
+        if self.sky_layer.currentData().startswith("sky1_"):
+            return
+        r=self._result["expanded_sky"]; t=r["trials"][self.sky_trial.currentData()]
+        ny,nx=r["expanded_shape"]
+        if not (0<=sx<nx and 0<=sy<ny):
+            return
+        x=int(sx); y=ny-1-int(sy); tile=t["tile_size_pix"]
+        bx=x//tile*tile; by=y//tile*tile
+        b=next((b for b in t["blocks"] if b["tile_x_pix"]==bx and b["tile_y_pix"]==by),None)
+        text=f"Expanded FITS pixel ({x},{y}), zero-based · "
+        if b is None:
+            text+="not in an eligible sky block"
+        else:
+            text+=(f"block ({bx},{by}), N={b['n']}, signed mean={b['mean_nMgy_pix']:.6g}, "
+                   f"median={b['median_nMgy_pix']:.6g} nMgy/px")
+        entries=[s for s in r.get("source_entries",[]) if s.get("x") is not None and s.get("y") is not None
+                 and np.isfinite([s["x"],s["y"]]).all()]
+        nearest=sorted(entries,key=lambda s:np.hypot(s["x"]-x,s["y"]-y))[:3]
+        if nearest:
+            text+=" · nearest (not classification): "+", ".join(
+                f"OBJID {s['objid']} ({np.hypot(s['x']-x,s['y']-y)*r['pixel_scale_arcsec']:.1f} arcsec)" for s in nearest)
+        self.block_caption.setText(text)
 
     @staticmethod
     def _format_expanded(result):
