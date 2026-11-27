@@ -98,7 +98,7 @@ def test_full_preparation_uses_exact_catalogue_identity_and_preserves_originals(
     assert result["maskbits_caution_counts"]["BRIGHT"] == 1
     assert result["draft_digest"] == draft.digest
     assert result["source_mask_policy_id"] == (
-        "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS")
+        "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V3_NONPRIMARY_TAN_WCS")
     assert result["source_mask_native_geometry"] == (
         "TAN_INTERMEDIATE_PROJECTION_PLANE_JACOBIAN_NO_EXTRA_COS_DECLINATION")
     from lsbpipe.photometry.sky_masks import native_boolean_mask_sha256
@@ -1359,3 +1359,24 @@ def test_catalogue_mask_svd_scales_once_for_many_sources(monkeypatch):
         arcsec_per_pixel=1., protected=protected, wcs=None)
     assert not calls
     assert fallback.any()
+
+def test_nonprimary_supplement_preserves_primary_decisions_and_target():
+    from types import SimpleNamespace
+    from lsbpipe.photometry.scene_contaminants import include_nonprimary_footprints
+    shape=(201,201)
+    y,x=np.indices(shape)
+    protected=(x-100)**2+(y-100)**2<=20**2
+    points=np.array([[30.,30.],[190.,100.],[100.,100.]])
+    rows=(_row(flux=100.,objid=1),_row(flux=100.,objid=2,brick_primary=False),
+          _row(flux=100.,objid=3,brick_primary=False))
+    base,stats=conservative_catalogue_mask(shape,points[:1],rows[:1],
+        arcsec_per_pixel=.5,protected=protected)
+    cat=SimpleNamespace(rows=rows,pixel_positions=points)
+    new,merged=include_nonprimary_footprints(shape,cat,protected=protected,
+        arcsec_per_pixel=.5,wcs=None,primary_auto=base,primary_counts=stats)
+    assert new[100,190] and new[30,30]
+    assert not np.any(new&protected)
+    assert merged["unresolved_target_overlap_sky_veto_mask"][100,100]
+    assert np.all(new[base])
+    assert merged["masked_catalog_sources"]==2
+    assert stats["masked_catalog_sources"]==1

@@ -154,8 +154,47 @@ def candidate(rows,method,samples,tx,ty,scale,required_radius_arcsec=48.):
     return out
 
 
+def edge_mask_comparison(res,primary_safe,safe,tx,ty,scale,required,scene_edge=None):
+    """Fixed updated SH1 residual; only the source screening changes.
+
+    CV scores on different support are descriptive, not paired predictive
+    scores. Also measure block statistics on the same retained tile IDs.
+    """
+    yy,xx=np.ogrid[:res.shape[0],:res.shape[1]]
+    guard=np.hypot(xx-tx,yy-ty)*scale>=60.
+    p=primary_safe&guard; n=safe&guard
+    if np.any(n&~p): raise ValueError("SCENE-EDGE nonmonotonic control")
+    removed=p&~n
+    right=np.broadcast_to(xx>=res.shape[1]-25./scale,res.shape)
+    result=dict(schema="desidera.scene-edge-sky/1",science_adopted=False,
+        scene=scene_edge,primary_safe_pixels=int(p.sum()),inclusive_safe_pixels=int(n.sum()),
+        removed_safe_pixels=int(removed.sum()),removed_right25_pixels=int((removed&right).sum()),
+        removed_signed_residual_flux_nMgy=float(res[removed].sum()),
+        removed_right25_signed_residual_flux_nMgy=float(res[removed&right].sum()),
+        primary_safe_mask_sha256=native_boolean_mask_sha256(p),
+        inclusive_safe_mask_sha256=native_boolean_mask_sha256(n),
+        warning="Fixed updated halo/sky reference. Support changes; CV scores not same-pixel comparisons. Removed flux is not isolated source flux. Same tile IDs may contain different pixels.",
+        controls={})
+    maps={}
+    for name,m in (("PRIMARY_ONLY",p),("INCLUSIVE",n)):
+        rows=tile_rows(res,m,tx,ty,scale,32)
+        samples=empty_samples(res,m,tx,ty,scale)
+        maps[name]={(r["tile_x_pix"],r["tile_y_pix"]):r for r in rows}
+        result["controls"][name]=dict(block_count=len(rows),
+            candidates=[candidate(rows,method,samples,tx,ty,scale,required) for method in METHODS],
+            brightest_blocks=sorted(rows,key=lambda r:r["mean_nMgy_pix"],reverse=True)[:10])
+    keys=sorted(set(maps["PRIMARY_ONLY"])&set(maps["INCLUSIVE"]))
+    result["same_tile_id_comparison"]=[dict(tile_xy=list(k),
+        primary_pixels=maps["PRIMARY_ONLY"][k]["n"],inclusive_pixels=maps["INCLUSIVE"][k]["n"],
+        primary_mean_nMgy_pix=maps["PRIMARY_ONLY"][k]["mean_nMgy_pix"],
+        inclusive_mean_nMgy_pix=maps["INCLUSIVE"][k]["mean_nMgy_pix"])
+        for k in keys]
+    return result
+
+
 def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protected,veto,
-                    neighbours,comparison,preview,wcs):
+                    neighbours,comparison,preview,wcs,primary_only_mask=None,primary_only_veto=None,
+                    primary_only_neighbours=None,scene_edge=None):
     a=np.asarray(image,dtype=float); iv=np.asarray(iv,dtype=float)
     hard,source_mask,protected,veto=[np.asarray(m,dtype=bool) for m in (hard,source_mask,protected,veto)]
     if a.ndim!=2 or any(m.shape!=a.shape for m in (iv,hard,source_mask,protected,veto)):
@@ -185,6 +224,15 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
         h,b=model_arrays(a.shape,source_xy,scale,c)
         res[name]=a-h-b
         safe &= np.isfinite(res[name])
+    primary_safe=None
+    if primary_only_mask is not None and primary_only_veto is not None and primary_only_neighbours is not None:
+        pm,pv=np.asarray(primary_only_mask,dtype=bool),np.asarray(primary_only_veto,dtype=bool)
+        if pm.shape!=a.shape or pv.shape!=a.shape or np.any(pm&~source_mask) or np.any(pv&~veto):
+            raise ValueError("SCENE-EDGE primary mask control mismatch")
+        primary_safe=safe_pixels(a,iv,hard,pm,protected,pv,primary_only_neighbours,scale)
+        primary_safe &= abs(xx-sx)*scale>=4.
+        for v in res.values(): primary_safe &= np.isfinite(v)
+        if np.any(safe&~primary_safe): raise ValueError("SCENE-EDGE safe mask is not a subset")
     g=local_grid(p,wcs)
     native={name:im[g["sl"]] for name,(c,im) in variants.items()}
     valid=np.logical_and.reduce([np.isfinite(im) for im in native.values()])
@@ -203,6 +251,11 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
         shared_original_crop_origin_xy=[int(g["x"][0,0]),int(g["y"][0,0])],
         trials=[],layers={},reference_geometry=refgeo,required_target_support_radius_arcsec=required,
         warning="Residual correction on top of SH1 sky, not upstream sky. Holdout quadrants exclude this fit's training only; prior halo fit may overlap. No missing-pixel filling or calibrated uncertainty; quadratic is a stress scenario. Masked target interior is interpolation, not observed sky.")
+    if primary_safe is not None:
+        out["scene_edge"]=edge_mask_comparison(res["SH1C"],primary_safe,safe,
+            tx,ty,scale,required,scene_edge)
+        out["expanded_layers_edge_added"]=primary_safe&~safe
+        out["expanded_layers_edge_added"].setflags(write=False)
     # Expanded display layers, not replacement science images.
     out["expanded_layers"]={"original":np.where(np.isfinite(a)&~hard&(iv>0),a,np.nan)}
     for name,v in res.items():

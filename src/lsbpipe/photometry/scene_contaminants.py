@@ -28,7 +28,7 @@ from lsbpipe.survey import named_bit
 # A geometry correction can change source-mask pixels without changing
 # the target, catalogue, or mask draft. Its recipe must therefore be
 # independently versioned for reproducible photometry and SBF inputs.
-_SCENE_MASK_POLICY = "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V2_TAN_WCS"
+_SCENE_MASK_POLICY = "PROVISIONAL_SCENE_EFFECTIVE_AUTO_PLUS_EXCLUDE_V3_NONPRIMARY_TAN_WCS"
 
 
 def _has_gaia_catalogue_reference(row):
@@ -380,6 +380,37 @@ def conservative_catalogue_mask(shape, positions, rows, *,
 
 
 
+def include_nonprimary_footprints(shape,catalog,*,protected,arcsec_per_pixel,wcs,
+                                 primary_auto,primary_counts):
+    """Supplement primary screening without changing any primary decision.
+
+    Nonprimary rows are never eligible for experimental protected-light
+    exclusion rules. Their unresolved overlaps are sky-only vetoes.
+    """
+    indices=[i for i,r in enumerate(catalog.rows) if not r.get("brick_primary",True)]
+    if not indices:
+        return primary_auto,primary_counts
+    extra,counts=conservative_catalogue_mask(shape,catalog.pixel_positions[indices],
+        tuple(catalog.rows[i] for i in indices),arcsec_per_pixel=arcsec_per_pixel,
+        protected=protected,wcs=wcs)
+    if np.any(extra&protected):
+        raise ValueError("Nonprimary source footprint overlaps target protection")
+    merged=dict(primary_counts)
+    for k in ("unresolved_target_overlap_sky_veto_sources","masked_catalog_sources",
+              "elliptical_catalog_sources","missing_shape_fallbacks","skipped_target_overlap",
+              "possible_sga_shreds","masked_centres_truncated","outside_cutout","unusable_catalog_sources"):
+        merged[k]+=counts[k]
+    for k,limit in (("masked_catalog_centres",4096),("near_target_sources",256)):
+        combined=primary_counts[k]+counts[k]
+        if k=="masked_catalog_centres":
+            merged["masked_centres_truncated"]+=max(0,len(combined)-limit)
+        merged[k]=combined[:limit]
+    v=primary_counts["unresolved_target_overlap_sky_veto_mask"]|counts["unresolved_target_overlap_sky_veto_mask"]
+    merged["unresolved_target_overlap_sky_veto_mask"]=v
+    merged["unresolved_target_overlap_sky_veto_native_pixels"]=int(v.sum())
+    return primary_auto|extra,merged
+
+
 def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                                 *, sga_prior=None, gaia_inner_preview=False,
                                 red_extended_preview=False,
@@ -417,7 +448,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         band=band, wcs=dataset["wcs"])
     catalog = read_native_tractor_gaia(
         project.data_root, release=release, region=region,
-        brick=brick, frame=frame)
+        brick=brick, frame=frame, include_nonprimary=True)
     shape = tuple(dataset["pixel_shape"])
     hard = np.asarray(dataset["native_hard"], dtype=bool)
     if hard.shape != shape:
@@ -475,8 +506,9 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
             manual_excluded |= selected
         else:
             restored_auto |= selected
+    primary=np.array([r.get("brick_primary",True) for r in catalog.rows],dtype=bool)
     auto, counts = conservative_catalogue_mask(
-        shape, catalog.pixel_positions, catalog.rows,
+        shape, catalog.pixel_positions[primary], tuple(r for r,k in zip(catalog.rows,primary) if k),
         arcsec_per_pixel=pxscale, protected=protected,
         wcs=dataset["wcs"], sga_core=sga_core,
         gaia_inner_preview=bool(gaia_inner_preview),
@@ -486,6 +518,11 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
                       if red_extended_preview else None),
         target_radius_arcsec=(float(project.target_radius_arcsec)
                               if red_extended_preview else None))
+    primary_auto=auto
+    primary_veto=counts["unresolved_target_overlap_sky_veto_mask"]
+    auto,counts=include_nonprimary_footprints(shape,catalog,protected=protected,
+        arcsec_per_pixel=pxscale,wcs=dataset["wcs"],primary_auto=auto,primary_counts=counts)
+    primary_excluded=(primary_auto&~restored_auto)|manual_excluded
     inner_gaia_mask = counts.pop("gaia_inner_preview_mask")
     red_extended_mask = counts.pop("red_extended_preview_mask")
     ambiguous_sky_veto = counts.pop("unresolved_target_overlap_sky_veto_mask")
@@ -549,8 +586,26 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         flags.append("TRACTOR_BAILOUT_PIXELS_PRESENT")
     if caution["BRIGHT"]:
         flags.append("BRIGHT_STAR_MASKBITS_REQUIRE_WING_REVIEW")
+    added=excluded&~primary_excluded
+    if np.any(added&protected):
+        raise ValueError("Nonprimary supplement changed protected photometric pixels")
+    nonprimary_entries=[e for e in source_inventory["entries"] if not e.get("brick_primary",True)]
+    edge_audit=dict(schema="desidera.scene-edge/1",science_adopted=False,
+        primary_catalog_rows=int(primary.sum()),nonprimary_catalog_rows=int((~primary).sum()),
+        nonprimary_relevant_entries=len(nonprimary_entries),
+        nonprimary_entries=nonprimary_entries,
+        inventory_complete=not (source_inventory["truncated"] or source_inventory["screening_evidence_incomplete"]),
+        primary_only_excluded_pixels=int(primary_excluded.sum()),
+        added_excluded_pixels=int(added.sum()),added_excluded_usable_pixels=int((added&~hard).sum()),
+        added_excluded_protected_pixels=int((added&protected).sum()),
+        added_sky_veto_pixels=int((ambiguous_sky_veto&~primary_veto).sum()),
+        primary_only_mask_sha256=native_boolean_mask_sha256(primary_excluded),
+        warning="Same-brick rows only; catalogue geometry, not PSF wings or membership. Nonprimary overlaps are sky-only vetoes.")
     output = {
         "status": "CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+        "scene_edge":edge_audit,
+        "primary_only_mask":primary_excluded,
+        "primary_only_sky_veto_mask":primary_veto,
         "mask": excluded.copy(),
         "auto_mask": auto.copy(),
         "gaia_inner_preview_mask": inner_gaia_mask.copy(),
@@ -610,6 +665,7 @@ def prepare_scene_contamination(dataset, project, draft, anchor_icrs,
         "flags": tuple(flags),
     }
     for name in ("mask", "auto_mask", "gaia_inner_preview_mask",
-                 "red_extended_preview_mask", "protected", "hard"):
+                 "red_extended_preview_mask", "protected", "hard",
+                 "primary_only_mask","primary_only_sky_veto_mask"):
         output[name].setflags(write=False)
     return output

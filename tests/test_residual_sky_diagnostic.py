@@ -64,3 +64,15 @@ def test_pair_uses_identical_blocks_and_apertures():
     two["expanded_sky"]["expanded_grid_fingerprint"]="wrong"
     with pytest.raises(ValueError,match="grid mismatch"):
         paired_sky_diagnostics(one,two)
+
+def test_edge_mask_fixed_residual_control():
+    from lsbpipe.photometry.residual_sky_diagnostic import edge_mask_comparison
+    y,x=np.indices((401,401))
+    res=np.full(x.shape,.0002); res[:,370:]=.1
+    p=np.ones(x.shape,bool); n=x<370
+    a=edge_mask_comparison(res,p,n,200.,200.,.5,48.)
+    assert a["removed_safe_pixels"]==int((x>=370).sum())
+    assert a["removed_right25_pixels"]==a["removed_safe_pixels"]
+    assert a["controls"]["INCLUSIVE"]["block_count"]<a["controls"]["PRIMARY_ONLY"]["block_count"]
+    assert a["controls"]["INCLUSIVE"]["candidates"][0]["zero_equal_quadrant_mae_nMgy_pix"]<a["controls"]["PRIMARY_ONLY"]["candidates"][0]["zero_equal_quadrant_mae_nMgy_pix"]
+    assert not a["science_adopted"]

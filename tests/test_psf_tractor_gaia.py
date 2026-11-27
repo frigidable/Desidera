@@ -124,6 +124,7 @@ def test_tractor_reader_uses_exact_native_brick_and_wcs(tmp_path):
         root,release="dr11",region="south",brick="1554p180",
         frame=frame)
     assert len(data.rows)==3
+    assert all(r["brick_primary"] for r in data.rows)
     assert data.rows[2]["type"]=="EXP"
     assert data.rows[0]["ra_deg"]==pytest.approx(ra[0])
     assert data.rows[0]["dec_deg"]==pytest.approx(dec[0])
@@ -256,3 +257,22 @@ def test_dr11_north_catalogue_reads_grz_with_native_identity(tmp_path):
         assert matcher.pixel_positions[0] == pytest.approx([19., 21.])
     with pytest.raises(ValueError, match="supports DR11"):
         tractor_catalog_location(root, release="dr9", region="north", brick="0965p780")
+
+def test_nonprimary_catalogue_mode_is_explicit_and_psf_stays_primary(tmp_path):
+    root=tmp_path/"original"
+    path,_=tractor_catalog_location(root,release="dr11",region="south",brick="1554p180")
+    path.parent.mkdir(parents=True)
+    w=_wcs()
+    ra,dec=w.all_pix2world([20.,40.],[20.,40.],0)
+    t=Table(dict(BRICKNAME=["1554p180"]*2,BRICK_PRIMARY=[True,False],RA=ra,DEC=dec,
+        REF_CAT=["G3","G3"],REF_ID=[11,22],TYPE=["PSF","PSF"],OBJID=[1,2],
+        FITBITS=[0,0],MASKBITS=[0,0],FLUX_G=[10.,20.],FLUX_IVAR_G=[100.,100.],
+        GAIA_DUPLICATED_SOURCE=[False,False]))
+    t.write(path,format="fits")
+    kwargs=dict(release="dr11",region="south",brick="1554p180",frame=_frame(root))
+    primary=read_native_tractor_gaia(root,**kwargs)
+    allrows=read_native_tractor_gaia(root,**kwargs,include_nonprimary=True)
+    assert [r["objid"] for r in primary.rows]==[1]
+    assert [r["brick_primary"] for r in allrows.rows]==[True,False]
+    assert primary.source_sha256==allrows.source_sha256
+    assert allrows.match(40.,40.,band="g")[1]=="TRACTOR_NONPRIMARY_SOURCE_NOT_PSF_TRAINING"

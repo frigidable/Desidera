@@ -640,6 +640,7 @@ def run_scene_psf0_foreground_probe(
             sx,sy=map(float,wcs.all_world2pix(float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
             if math.hypot(sx-float(matches[0]["x"]),sy-float(matches[0]["y"]))>.75:
                 raise ValueError("SH1-B2 expanded source WCS mismatch")
+            expanded_window["scene_edge"]=scene_masks["scene_edge"]
             expanded_window["mask_stats"]=scene_masks["stats"]
             expanded_window["effective_source_mask_sha256"]=scene_masks["effective_source_mask_sha256"]
             expanded_window["manual_exclude_mask_sha256"]=scene_masks["manual_exclude_mask_sha256"]
@@ -699,7 +700,13 @@ def run_scene_psf0_foreground_probe(
                     "protected":frozen(scene_masks["protected"]),
                     "veto":frozen(scene_masks["unresolved_target_overlap_sky_veto_mask"]),
                     "neighbours":tuple(neighbors),
-                    "source_entries":[{k:e.get(k) for k in ("objid","source_id","x","y","tractor_type")}
+                    "primary_only_mask":frozen(scene_masks["primary_only_mask"]),
+                    "primary_only_veto":frozen(scene_masks["primary_only_sky_veto_mask"]),
+                    "primary_only_neighbours":tuple((e["x"],e["y"]) for e in source_inventory["entries"]
+                        if e["source_id"]!=source_entry["source_id"] and e.get("brick_primary",True)
+                        and e.get("x") is not None and e.get("y") is not None),
+                    "scene_edge":scene_masks["scene_edge"],
+                    "source_entries":[{k:e.get(k) for k in ("objid","source_id","x","y","tractor_type","brick_primary")}
                                       for e in source_inventory["entries"]],
                     "expanded_grid_fingerprint":dataset.get("grid_fingerprint"),
                 }

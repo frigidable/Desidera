@@ -98,7 +98,7 @@ def compact_summary(bands,pairs):
         p=v["probe"]["sh1c_preview"]
         result[band]=dict(geometry=(p.get("geo1") or {}).get("reference"),
             spike_decay_status=((p.get("sh1e") or {}).get("decay_extent") or {}).get("status"),
-            sky=rows)
+            sky=rows,scene_edge=(sky.get("scene_edge") or {}))
     return dict(bands=result,paired={k:{"status":v.get("status"),
         **{x:v[x] for x in ("reason","common_pixels","common_pixel_count","common_mask_sha256") if x in v}}
         for k,v in pairs.items()})
@@ -114,6 +114,8 @@ def report_archive(path,manifest,bands,pairs):
             z.writestr(f"{band}-qa.json",json.dumps(_scene_qa_json_value(payload),ensure_ascii=False,allow_nan=False,separators=(",",":")))
             layers={"native-original":p["layers"]["original"],"native-sh1c":p["layers"]["residual"]}
             layers.update({f"expanded-{k}":v for k,v in sky["expanded_layers"].items()})
+            if "expanded_layers_edge_added" in sky:
+                layers["expanded-edge-newly-excluded"]=sky["expanded_layers_edge_added"].astype(float)
             layers.update({k:v for k,v in sky["layers"].items()})
             t=next((t for t in sky["trials"] if t["halo_scenario"]=="SH1C" and t["target_guard_arcsec"]==60 and t["tile_size_pix"]==32),None)
             if t:
@@ -127,7 +129,7 @@ def report_archive(path,manifest,bands,pairs):
             limits=tuple(np.quantile(v,[.01,.99])) if v.size else (0.,1.)
             for name,a in layers.items():
                 same=name.startswith("native-") or name.endswith("_corrected")
-                display=None
+                display=(0.,1.) if name=="expanded-edge-newly-excluded" else None
                 if "block-" in name:
                     v=a[np.isfinite(a)]
                     lim=max(float(np.quantile(abs(v),.98)) if v.size else 0.,1e-12)
