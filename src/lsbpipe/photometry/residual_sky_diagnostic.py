@@ -40,7 +40,7 @@ def tile_rows(res,safe,tx,ty,scale,tile):
             dx=(xx+x-tx)*scale; dy=(yy+y-ty)*scale
             # Block means of basis on exactly the observed pixels.
             v=res[sl][m]
-            rows.append(dict(x_pix=float(xx.mean()+x),y_pix=float(yy.mean()+y),
+            rows.append(dict(tile_x_pix=x,tile_y_pix=y,x_pix=float(xx.mean()+x),y_pix=float(yy.mean()+y),
                 quadrant=int(quadrant(np.asarray(dx.mean()),np.asarray(dy.mean()))),
                 n=int(m.sum()),mean_nMgy_pix=float(v.mean()),
                 median_nMgy_pix=float(np.median(v)),design=features(dx,dy).mean(axis=0).tolist()))
@@ -146,6 +146,8 @@ def candidate(rows,method,samples,tx,ty,scale,required_radius_arcsec=48.):
     out.update(fit=f,target_region_inside_training_hull=inside,heldout_quadrants=cv,
         empty_apertures=summarize_apertures(samples,folds))
     if len(cv)==4:
+        zero=float(np.mean([np.mean([abs(r["mean_nMgy_pix"]) for r in rows if r["quadrant"]==i]) for i in range(4)]))
+        out["zero_equal_quadrant_mae_nMgy_pix"]=zero
         out["cv_equal_quadrant_mae_nMgy_pix"]=float(np.mean([r["mae_nMgy_pix"] for r in cv]))
         out["cv_max_abs_quadrant_median_nMgy_pix"]=max(abs(r["median_nMgy_pix"]) for r in cv)
     out["status"]="SKY1_CONDITIONAL_NOT_ADOPTED" if inside and len(cv)==4 else "SKY1_VALIDATION_OR_HULL_BLOCKED"
@@ -201,6 +203,14 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
         shared_original_crop_origin_xy=[int(g["x"][0,0]),int(g["y"][0,0])],
         trials=[],layers={},reference_geometry=refgeo,required_target_support_radius_arcsec=required,
         warning="Residual correction on top of SH1 sky, not upstream sky. Holdout quadrants exclude this fit's training only; prior halo fit may overlap. No missing-pixel filling or calibrated uncertainty; quadratic is a stress scenario. Masked target interior is interpolation, not observed sky.")
+    # Expanded display layers, not replacement science images.
+    out["expanded_layers"]={"original":np.where(np.isfinite(a)&~hard&(iv>0),a,np.nan)}
+    for name,v in res.items():
+        out["expanded_layers"][name]=np.where(np.isfinite(a)&~hard&(iv>0),v,np.nan)
+    out["expanded_safe_mask"]=safe.copy()
+    for v in list(out["expanded_layers"].values())+[out["expanded_safe_mask"]]:
+        v.setflags(write=False)
+    out["pixel_scale_arcsec"]=float(scale)
     # Compute profiles on the fixed GEO-1 ellipse before optional geometry refit.
     for guard in GUARDS:
         m=safe&(rt>=guard)
@@ -240,5 +250,25 @@ def sky_diagnostics(image,iv,hard,*,source_xy,target_xy,scale,source_mask,protec
                             for v2 in (sky,residual): v2.setflags(write=False)
                             out["layers"][f"sky1_{method}_model"]=sky
                             out["layers"][f"sky1_{method}_corrected"]=residual
+                if guard==60. and tile==32:
+                    # Symmetric edge stress, not a change to the scene.
+                    pad=25./scale
+                    ny,nx=a.shape
+                    for side in ("left","right","bottom","top","all"):
+                        def keep(x,y,w,h):
+                            return ((side not in ("left","all") or x>=pad)
+                                and (side not in ("right","all") or x+w<=nx-pad)
+                                and (side not in ("bottom","all") or y>=pad)
+                                and (side not in ("top","all") or y+h<=ny-pad))
+                        rr=[r for r in rows if keep(r["tile_x_pix"],r["tile_y_pix"],tile,tile)]
+                        ss=[]
+                        for sample in samples:
+                            radius=sample["radius_arcsec"]/scale
+                            if keep(sample["x_pix"]-radius,sample["y_pix"]-radius,2*radius+1,2*radius+1):
+                                ss.append(sample)
+                        trial.setdefault("edge_stress",[]).append(dict(side=side,width_arcsec=25.,
+                            retained_blocks=len(rr),removed_blocks=len(rows)-len(rr),
+                            candidates=[candidate(rr,method,ss,tx,ty,scale,required_radius_arcsec=required)
+                                        for method in METHODS]))
                 out["trials"].append(trial)
     return out

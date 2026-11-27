@@ -686,12 +686,23 @@ def run_scene_psf0_foreground_probe(
                     baseline_comparison=result["sh1b_model_comparison"],original_preview=preview)
                 from lsbpipe.photometry.galaxy_geometry_diagnostic import geometry_diagnostics
                 preview["geo1"]=geometry_diagnostics(preview,result["sh1b_model_comparison"],owcs)
-                from lsbpipe.photometry.residual_sky_diagnostic import sky_diagnostics
-                preview["sky1"]=sky_diagnostics(dataset["data"]["image"],dataset["data"]["invvar"],
-                    dataset["native_hard"],source_xy=(sx,sy),target_xy=(tx,ty),
-                    scale=result["pixel_scale_arcsec"],source_mask=scene_masks["mask"],
-                    protected=scene_masks["protected"],veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],
-                    neighbours=neighbors,comparison=result["sh1b_model_comparison"],preview=preview,wcs=owcs)
+                # Freeze expanded native inputs for explicit Sky execution.
+                def frozen(a):
+                    v=np.array(a,copy=True); v.setflags(write=False); return v
+                preview["sky1_inputs"]={
+                    "image":frozen(dataset["data"]["image"]),
+                    "iv":frozen(dataset["data"]["invvar"]),
+                    "hard":frozen(dataset["native_hard"]),
+                    "source_xy":(sx,sy),"target_xy":(tx,ty),
+                    "scale":result["pixel_scale_arcsec"],
+                    "source_mask":frozen(scene_masks["mask"]),
+                    "protected":frozen(scene_masks["protected"]),
+                    "veto":frozen(scene_masks["unresolved_target_overlap_sky_veto_mask"]),
+                    "neighbours":tuple(neighbors),
+                    "source_entries":[{k:e.get(k) for k in ("objid","source_id","x","y","tractor_type")}
+                                      for e in source_inventory["entries"]],
+                    "expanded_grid_fingerprint":dataset.get("grid_fingerprint"),
+                }
         return dict(output,status=result["status"],sh1_sector_measurement=result,
                     sh1c_preview=preview,
                     sh1d_policy={k:original_masks.get(k) for k in (
@@ -3171,7 +3182,7 @@ class SceneEditor(QWidget):
                 + ("SH1-C conditional preview available; no science adoption. "
                    if (result.get("sh1c_preview") or {}).get("status")=="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED"
                    else "no subtraction. ")
-                + "Copy Scene QA for profiles and model sensitivity.")
+                + "Copy Scene QA for profiles and model sensitivity. Open Sky for expanded residual background.")
             return
         self._foreground_psf_result = result
         if status != "FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED":
