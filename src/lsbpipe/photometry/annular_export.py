@@ -36,6 +36,8 @@ def export_annular_diagnostic(path, records, covariance, fit, *, render=False):
     area is only an approximate projected area.
     """
     records=tuple(records)
+    if any("synthetic_injection_parent_sha256" in r for r in records):
+        raise ValueError("Synthetic injection records cannot be exported as observational diagnostics")
     if not records or fit.get("status")!=STATUS:
         raise ValueError("Expected a non-adopted diagnostic fit")
     if tuple(annular_record_sha256(r) for r in records)!=tuple(fit["record_sha256"]):
