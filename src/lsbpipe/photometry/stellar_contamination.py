@@ -183,3 +183,126 @@ def fit_independent_sky_halo(block_values, sky_design, halo_template, *,
             "holdout_rmse": float(np.sqrt(np.mean(e**2))),
             "counts": tuple(int(m.sum()) for m in masks),
             "covariance_calibrated": False}
+
+
+def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
+                                     core_arcsec, cutoff_arcsec, power,
+                                     pivot_arcsec, galaxy_guard_arcsec,
+                                     far_star_guard_arcsec, rays, block_size,
+                                     minimum_block_fraction, holdout_pa_deg,
+                                     holdout_width_deg, buffer_deg,
+                                     sky_degree=1, compact_sources=None,
+                                     max_condition=100., max_work_pixels=2_000_000):
+    """Strict independent block fit from one native observation.
+
+    Entire block footprints obey both geometric guards; only usable pixels
+    contribute to means. Galaxy light is never fitted/subtracted implicitly.
+    A spatial sector and buffer are excluded from BOTH training stages.
+    The caller declares the geometry/guards and repeats folds explicitly.
+    No automatic family selection, correction adoption, or calibrated errors.
+    """
+    from astropy.coordinates import SkyCoord
+    from astropy import units as u
+    from lsbpipe.scene import SceneState, evaluate_mask, Operation
+    from .contracts import NativeBandFrame
+    from .native_annular_diagnostic import NativeCorrection
+
+    if not isinstance(frame,NativeBandFrame) or not isinstance(scene,SceneState):
+        raise ValueError("Validated frame and explicit scene required")
+    grid=frame.native_grid_fingerprint
+    digest=frame.native_input_sha256
+    if scene.grid_id!=grid or scene.shape!=frame.shape or scene.band!=frame.band:
+        raise ValueError("Frame/scene identity mismatch")
+    if not isinstance(max_work_pixels,int) or max_work_pixels<1 or np.prod(frame.shape)>max_work_pixels:
+        raise ValueError("Explicit work-pixel budget exceeded")
+    if not isinstance(block_size,int) or isinstance(block_size,bool) or block_size<2:
+        raise ValueError("Invalid block size")
+    core,cutoff,pivot,p,gg,fg,fraction,hpa,hw,buf=map(_number,
+        (core_arcsec,cutoff_arcsec,pivot_arcsec,power,galaxy_guard_arcsec,
+         far_star_guard_arcsec,minimum_block_fraction,holdout_pa_deg,holdout_width_deg,buffer_deg))
+    if (not 0<core<=pivot<cutoff<=fg or p<0 or gg<=0 or not 0<fraction<=1
+            or not 0<hw<180 or buf<0 or hw/2+buf>=180 or sky_degree not in (0,1)):
+        raise ValueError("Invalid guards, template, holdout or sky degree")
+    ra,dec=map(_number,star_icrs)
+    gra,gdec=map(_number,galaxy_icrs)
+    if not 0<=ra<360 or not -90<=dec<=90 or not 0<=gra<360 or not -90<=gdec<=90:
+        raise ValueError("Invalid ICRS center")
+    # Existing scene and new core/ray hypotheses can only reduce validity.
+    core_layer,ray_layer=stellar_exclusion_layers(frame,source_id="diagnostic_star",
+        ra_deg=ra,dec_deg=dec,core_arcsec=core,rays=rays)
+    base=frame.valid & ~frame.mask_reasons[f"SATUR_{frame.band.upper()}"]
+    base &= ~frame.mask_reasons[f"ALLMASK_{frame.band.upper()}"]
+    valid=evaluate_mask(scene,frame.image_nMgy,frame.invvar_nMgy2,grid_id=grid,
+                        operation=Operation.PHOTOMETRY,observation_valid=base).valid
+    # Respect any explicitly protected target region as well as the
+    # independent radial guard used below.
+    for layer in scene.layers:
+        if layer.kind==LayerKind.TARGET_PROTECT:
+            valid=valid & ~layer.data
+    valid=valid & ~core_layer.data & ~ray_layer.data
+    values=np.array(frame.image_nMgy,copy=True)
+    if compact_sources is not None:
+        c=compact_sources
+        if (not isinstance(c,NativeCorrection) or c.kind!="compact_sources"
+                or c.grid_id!=grid or c.input_sha256!=digest or c.values.shape!=frame.shape
+                or not np.isfinite(c.values[valid]).all()):
+            raise ValueError("Invalid explicitly supplied compact-source correction")
+        values[valid]-=c.values[valid]
+    yy,xx=np.indices(frame.shape)
+    world=frame.wcs.pixel_to_world(xx,yy).icrs
+    star=SkyCoord(ra*u.deg,dec*u.deg,frame="icrs")
+    galaxy=SkyCoord(gra*u.deg,gdec*u.deg,frame="icrs")
+    sr=star.separation(world)
+    if np.max(sr.deg)>.5:
+        raise ValueError("Small-field sky plane exceeds 0.5 degree")
+    r=sr.arcsec
+    angle=star.position_angle(world).rad
+    gr=galaxy.separation(world).arcsec
+    delta=np.abs((np.rad2deg(angle)-hpa+180)%360-180)
+    x=r*np.sin(angle)/fg
+    y=r*np.cos(angle)/fg
+    template=compact_halo_template(r,cutoff_arcsec=cutoff,power=p,
+                                   pivot_arcsec=pivot,core_arcsec=core)
+    means=[]; designs=[]; halos=[]; masks=[]; tiles=[]; counts=[]
+    ny,nx=frame.shape
+    for j in range(0,ny-block_size+1,block_size):
+        for i in range(0,nx-block_size+1,block_size):
+            sl=np.s_[j:j+block_size,i:i+block_size]
+            ok=valid[sl]
+            if ok.sum()<fraction*block_size**2 or gr[sl].min()<gg or r[sl].min()<core:
+                continue
+            far=bool(r[sl].min()>=fg)
+            near=bool(r[sl].max()<=cutoff)
+            training=bool(delta[sl].min()>=hw/2+buf)
+            held=bool(delta[sl].max()<=hw/2)
+            mask=(far and training,near and training,near and held)
+            if not any(mask):
+                continue
+            means.append(float(values[sl][ok].mean()))
+            designs.append([1.] if sky_degree==0 else [1.,float(x[sl][ok].mean()),float(y[sl][ok].mean())])
+            halos.append(float(template[sl][ok].mean()))
+            masks.append(mask);tiles.append((i,j));counts.append(int(ok.sum()))
+    if not masks:
+        raise ValueError("No eligible independent blocks")
+    far,near,holdout=np.asarray(masks,dtype=bool).T
+    result=fit_independent_sky_halo(means,designs,halos,far=far,near=near,
+                                   holdout=holdout,max_condition=max_condition)
+    beta=result["sky_coefficients"]
+    sky=np.full(frame.shape,beta[0]) if sky_degree==0 else beta[0]+beta[1]*x+beta[2]*y
+    halo=result["amplitude"]*template
+    provenance=(f"strict independent block fit; core={core}; cutoff={cutoff}; "
+                f"power={p}; pivot={pivot}; galaxy_guard={gg}; far_guard={fg}; "
+                f"holdout_PA={hpa}; width={hw}; buffer={buf}; block={block_size}; "
+                f"valid_fraction={fraction}; {STATUS}")
+    # NaN inside the candidate halo core is intentional. Applying these
+    # corrections requires adding the same core/ray layers to the scene.
+    result.update({"dataset_id":frame.dataset_id,"grid_id":grid,"native_input_sha256":digest,
+        "sky":NativeCorrection("residual_sky",grid,digest,provenance,sky),
+        "halo":NativeCorrection("stellar_halo",grid,digest,provenance,halo),
+        "proposed_layers":(core_layer,ray_layer),"block_xy":np.asarray(tiles),
+        "block_counts":np.asarray(counts),"far":far,"near":near,"holdout":holdout,
+        "block_means":np.asarray(means),"block_sky_design":np.asarray(designs),
+        "block_halo_template":np.asarray(halos),"compact_sources_sha256":
+            None if compact_sources is None else compact_sources.sha256,
+        "conditional_on_strict_galaxy_guard":True})
+    return result
