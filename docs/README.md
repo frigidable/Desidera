@@ -18,6 +18,8 @@ For current capabilities and runnable entry points, use the [top-level README](.
 - [Repository checkpoint, 2026-11-09](validation/REPOSITORY_CHECKPOINT_2026-11-09.md): merged PRs #39–#43, CI and science statuses, user-workflow simplification, and historical branch triage.
 - [Empirical PSF core and broad-wing audit](qa/PSF_CORE_WINGS_VALIDATION.md): the preserved Leo P DR11 South g-band P16–P20 analysis, measured radius limitations and unresolved wide-angle wings.
 
+- [NGC2146sat-derived annular diagnostics, 2026-11-28](qa/NGC2146SAT_ANNULAR_DIAGNOSTICS_20261128.md): opt-in native stellar contamination, signed annular flux, conditional GLS and control QA; not science-adopted.
+
 ## Scientific and implementation contracts
 
 These explain constraints and intended behavior; re-check details against current source before relying on an old phase note.
