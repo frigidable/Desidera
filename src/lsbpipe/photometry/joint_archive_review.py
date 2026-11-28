@@ -227,12 +227,25 @@ def read_joint_archive(path, *, project_id, source_triplet, target_icrs,
             any(f"{name}.{ext}" not in names for name in FIGURES[:6] for ext in ("png","svg"))
             or not {"publication_arrays.npz","publication_qa.json"}.issubset(names)):
         raise ValueError("Incomplete declared six-figure package")
+    asym=_json(keep["asymptotic.json"]) if "asymptotic.json" in keep else None
+    qa=_json(keep["publication_qa.json"]) if "publication_qa.json" in keep else None
+    if asym is not None and (not isinstance(asym,dict) or asym.get("status")!=STATUS
+            or asym.get("record_sha256")!=fit["record_sha256"]
+            or asym.get("covariance_sha256")!=fit["covariance_sha256"]
+            or asym.get("asymptotic_flux_adopted") is not False
+            or asym!=fit.get("asymptotic_diagnostic")):
+        raise ValueError("Asymptotic report does not match the diagnostic fit")
+    if qa is not None and (not isinstance(qa,dict) or qa.get("status")!=STATUS
+            or qa.get("band_order")!=bands or qa.get("record_sha256")!=fit["record_sha256"]
+            or qa.get("covariance_sha256")!=fit["covariance_sha256"]
+            or qa.get("masked_pixels_reconstructed") is not False
+            or qa.get("covariance_calibrated") is not False):
+        raise ValueError("Publication QA does not match the diagnostic fit")
     return {"status":STATUS,"archive_path":str(path),"archive_sha256":digest,
             "context":context,"archive_anchor_icrs":anchors[0],
             "anchor_separation_arcsec":separation,"manifest":manifest,
             "fit":fit,"rows":rows,"figures":figures,
-            "asymptotic":_json(keep["asymptotic.json"]) if "asymptotic.json" in keep else None,
-            "publication_qa":_json(keep["publication_qa.json"]) if "publication_qa.json" in keep else None,
+            "asymptotic":asym,"publication_qa":qa,
             "original_fits_reverified":False}
 
 
