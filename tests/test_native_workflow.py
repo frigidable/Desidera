@@ -88,8 +88,10 @@ def test_full_native_workflow(tmp_path):
     with pytest.raises(WorkflowBlocked,match="GEOMETRY_REVIEW"):
         run_reviewed_annular_workflow(prepared,**dict(args,geometry_confirmed=False),output=path)
     assert not path.exists()
+    from importlib.util import find_spec
+    has_matplotlib=find_spec("matplotlib") is not None
     out=run_reviewed_annular_workflow(prepared,**args,output=path,
-        asymptotic_settings={"aperture_count":6},publication=True)
+        asymptotic_settings={"aperture_count":6},publication=has_matplotlib)
     assert "asymptotic_diagnostic" in out["fit"]
     assert out["stage"]=="DIAGNOSTIC_COMPLETE"
     assert out["fit"]["holdout"] is not None
@@ -101,28 +103,29 @@ def test_full_native_workflow(tmp_path):
         fit=json.loads(z.read("fit.json"))
         assert fit["workflow"]["masks_explicitly_reviewed"]
         assert "asymptotic.json" in z.namelist()
-        import io
-        import hashlib
-        manifest=json.loads(z.read("manifest.json"))
-        assert manifest["six_figure_diagnostic"]
-        names=("01_stellar_halo","02_prepared_images","03_curve_of_growth",
-               "04_surface_brightness","05_model_residual","06_radial_model")
-        for name in names:
-            assert z.read(name+".png").startswith(b"\x89PNG\r\n\x1a\n")
-            assert b"<svg" in z.read(name+".svg")
-        for name,digest in manifest["files_sha256"].items():
-            assert hashlib.sha256(z.read(name)).hexdigest()==digest
-        qa=json.loads(z.read("publication_qa.json"))
-        assert not qa["masked_pixels_reconstructed"]
-        assert max(r["max_model_ring_difference_nMgy"] for r in qa["ring_closure"])<1e-8
-        with np.load(io.BytesIO(z.read("publication_arrays.npz")),allow_pickle=False) as a:
-            assert np.isnan(a["band0_prepared"][~a["common_valid"]]).all()
-            assert np.isnan(a["band0_residual"][~a["common_valid"]]).all()
-            np.testing.assert_allclose(a["band0_prepared"]-a["band0_model"],
-                                       a["band0_residual"])
-            np.testing.assert_allclose(a["band0_observed_ring_flux"],
-                                       out["records"][0]["observed_flux_nMgy"])
-        assert not fit["workflow"]["full_geometry_containment_verified"]
+        if has_matplotlib:
+            import io
+            import hashlib
+            manifest=json.loads(z.read("manifest.json"))
+            assert manifest["six_figure_diagnostic"]
+            names=("01_stellar_halo","02_prepared_images","03_curve_of_growth",
+                   "04_surface_brightness","05_model_residual","06_radial_model")
+            for name in names:
+                assert z.read(name+".png").startswith(b"\x89PNG\r\n\x1a\n")
+                assert b"<svg" in z.read(name+".svg")
+            for name,digest in manifest["files_sha256"].items():
+                assert hashlib.sha256(z.read(name)).hexdigest()==digest
+            qa=json.loads(z.read("publication_qa.json"))
+            assert not qa["masked_pixels_reconstructed"]
+            assert max(r["max_model_ring_difference_nMgy"] for r in qa["ring_closure"])<1e-8
+            with np.load(io.BytesIO(z.read("publication_arrays.npz")),allow_pickle=False) as a:
+                assert np.isnan(a["band0_prepared"][~a["common_valid"]]).all()
+                assert np.isnan(a["band0_residual"][~a["common_valid"]]).all()
+                np.testing.assert_allclose(a["band0_prepared"]-a["band0_model"],
+                                           a["band0_residual"])
+                np.testing.assert_allclose(a["band0_observed_ring_flux"],
+                                           out["records"][0]["observed_flux_nMgy"])
+            assert not fit["workflow"]["full_geometry_containment_verified"]
     assert all(len(s.layers)==0 for s in scenes)
     assert tuple(f.native_input_sha256 for f in frames)==tuple(i[0] for i in identities)
     from lsbpipe.photometry.publication_products import publication_arrays
