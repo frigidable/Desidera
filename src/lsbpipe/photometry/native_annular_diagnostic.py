@@ -73,8 +73,12 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
     kinds=[c.kind for c in corrections]
     if "residual_sky" not in kinds or len(set(kinds))!=len(kinds):
         raise ValueError("Require one residual sky and no duplicate correction kinds")
+    # This conservative diagnostic never restores a native saturation or
+    # ALLMASK flag even if the frame's exploratory policy allowed it.
+    hard_valid=frame.valid & ~frame.mask_reasons[f"SATUR_{frame.band.upper()}"]
+    hard_valid &= ~frame.mask_reasons[f"ALLMASK_{frame.band.upper()}"]
     valid=evaluate_mask(scene,frame.image_nMgy,frame.invvar_nMgy2,grid_id=grid,
-                        operation=Operation.PHOTOMETRY,observation_valid=frame.valid).valid
+                        operation=Operation.PHOTOMETRY,observation_valid=hard_valid).valid
     image=np.array(frame.image_nMgy,copy=True)
     for c in corrections:
         if c.grid_id!=grid or c.input_sha256!=digest or c.values.shape!=frame.shape:
