@@ -47,7 +47,8 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
                           radial_nodes, corrections, psf, psf_input_sha256,
                           psf_grid_id, n_sectors, ring_min, cumulative_min,
                           sector_min, max_work_pixels=2_000_000, row_chunk=128,
-                          common_valid=None, retain_pixel_support=False):
+                          common_valid=None, retain_pixel_support=False,
+                          retain_full_aperture_operator=False):
     """Build observed signed fluxes and a finite native PSF response matrix.
 
     The tangent plane is a small-field sky-offset approximation. Coverage
@@ -163,6 +164,17 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
             "formal_diagonal_variance_nMgy2":formal,"operator":op,
             "operator_ring_indices":np.flatnonzero(measured),
             "covariance_calibrated":False,"full_geometry_containment_verified":False}
+    if retain_full_aperture_operator:
+        full=np.array([labels==j for j in range(nr)])
+        if not np.all(full.any(axis=(1,2))):
+            raise ValueError("Full in-frame aperture contains an empty ring")
+        result["full_aperture_operator"]=adjoint_annular_operator(
+            radius,radial_nodes,full,psf.kernel,grid_id=grid,mask_grid_id=scene.grid_id)
+        yy,xx=np.nonzero(labels>=0)
+        hy,hx=np.asarray(psf.kernel.shape)//2
+        result["full_aperture_finite_psf_support"]=bool(
+            yy.min()>=hy and xx.min()>=hx and yy.max()+hy<frame.shape[0]
+            and xx.max()+hx<frame.shape[1])
     if retain_pixel_support:
         result["ring_index"]=np.frombuffer(ring_index.tobytes(),dtype=ring_index.dtype).reshape(ring_index.shape)
     return result
@@ -275,6 +287,10 @@ def annular_record_sha256(rec):
     for name in ("ring_fraction","cumulative_fraction","sector_fraction","eligible"):
         h.update(name.encode("ascii"))
         h.update(numeric_sha256(rec["coverage"][name]).encode("ascii"))
+    if "full_aperture_operator" in rec:
+        h.update(b"full_aperture_operator")
+        h.update(numeric_sha256(rec["full_aperture_operator"]).encode("ascii"))
+        h.update(str(rec["full_aperture_finite_psf_support"]).encode("ascii"))
     return h.hexdigest()
 
 
