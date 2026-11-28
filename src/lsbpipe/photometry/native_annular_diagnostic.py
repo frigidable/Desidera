@@ -5,7 +5,7 @@ does not select a background, halo, geometry or covariance automatically.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from hashlib import sha256
 import math
 import numpy as np
@@ -45,7 +45,7 @@ class NativeCorrection:
 def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
                           radial_nodes, corrections, psf, psf_input_sha256,
                           psf_grid_id, n_sectors, ring_min, cumulative_min,
-                          sector_min):
+                          sector_min, max_work_pixels=2_000_000, row_chunk=128):
     """Build observed signed fluxes and a finite native PSF response matrix.
 
     The tangent plane is a small-field sky-offset approximation. Coverage
@@ -90,22 +90,33 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
     ra,dec=map(float,anchor_icrs)
     if not math.isfinite(ra) or not math.isfinite(dec) or not 0<=ra<360 or not -90<=dec<=90:
         raise ValueError("Invalid ICRS anchor")
-    yy,xx=np.indices(frame.shape)
+    if (not isinstance(max_work_pixels,int) or isinstance(max_work_pixels,bool) or
+            max_work_pixels<1 or np.prod(frame.shape)>max_work_pixels):
+        raise ValueError("Native diagnostic exceeds explicit work-pixel budget; use a validated cutout or raise budget")
+    if not isinstance(row_chunk,int) or isinstance(row_chunk,bool) or row_chunk<1:
+        raise ValueError("Invalid row chunk")
     center=SkyCoord(ra=ra*u.deg,dec=dec*u.deg,frame="icrs")
-    coords=frame.wcs.pixel_to_world(xx,yy).icrs
-    sep=center.separation(coords)
-    if np.max(sep.deg)>.5:
-        raise ValueError("Small-field tangent-plane diagnostic restricted to 0.5 degree")
-    pa=center.position_angle(coords).rad
-    east,north=sep.arcsec*np.sin(pa),sep.arcsec*np.cos(pa)
-    radius=geometry.radius(east,north)
-    cx,cy,q,theta=geometry.at(radius)
-    dx,dy=east-cx,north-cy
-    phi=np.mod(np.arctan2((dx*np.cos(theta)-dy*np.sin(theta))/q,
-                         dx*np.sin(theta)+dy*np.cos(theta)),2*np.pi)
     if not isinstance(n_sectors,int) or n_sectors<1:
         raise ValueError("Explicit sector count required")
-    sectors=np.minimum(n_sectors-1,np.floor(phi/(2*np.pi)*n_sectors).astype(int))
+    radius=np.empty(frame.shape,dtype=float)
+    sectors=np.empty(frame.shape,dtype=np.int32)
+    wcs=frame.wcs
+    for start in range(0,frame.shape[0],row_chunk):
+        stop=min(start+row_chunk,frame.shape[0])
+        yy,xx=np.mgrid[start:stop,:frame.shape[1]]
+        coords=wcs.pixel_to_world(xx,yy).icrs
+        sep=center.separation(coords)
+        if np.max(sep.deg)>.5:
+            raise ValueError("Small-field tangent-plane diagnostic restricted to 0.5 degree")
+        pa=center.position_angle(coords).rad
+        east,north=sep.arcsec*np.sin(pa),sep.arcsec*np.cos(pa)
+        a=geometry.radius(east,north)
+        cx,cy,q,theta=geometry.at(a)
+        dx,dy=east-cx,north-cy
+        phi=np.mod(np.arctan2((dx*np.cos(theta)-dy*np.sin(theta))/q,
+                             dx*np.sin(theta)+dy*np.cos(theta)),2*np.pi)
+        radius[start:stop]=a
+        sectors[start:stop]=np.minimum(n_sectors-1,np.floor(phi/(2*np.pi)*n_sectors).astype(int))
     labels=np.searchsorted(edges,radius,side="right")-1
     nr=len(edges)-1
     labels[labels>=nr]=-1
@@ -129,7 +140,9 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
             "valid_sha256":native_boolean_mask_sha256(valid),
             "corrections":[{"kind":c.kind,"source":c.source,"sha256":c.sha256} for c in corrections],
             "psf_sha256":sha256(np.asarray(psf.kernel,dtype=np.float64).tobytes()).hexdigest(),
-            "anchor_icrs":[ra,dec],"ring_edges_arcsec":edges.copy(),
+            "anchor_icrs":[ra,dec],"geometry":asdict(geometry),"ring_edges_arcsec":edges.copy(),
+            "coverage_thresholds":{"n_sectors":n_sectors,"ring":ring_min,"cumulative":cumulative_min,"sector":sector_min},
+            "psf_shape":list(psf.kernel.shape),
             "radial_nodes_arcsec":np.asarray(radial_nodes,dtype=float).copy(),
             "coverage":support,"observed_flux_nMgy":flux,
             "formal_diagonal_variance_nMgy2":formal,"operator":op,
