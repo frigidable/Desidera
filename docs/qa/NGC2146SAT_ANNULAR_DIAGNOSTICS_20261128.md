@@ -155,3 +155,45 @@ test_sga_informed_radial_initial_ellipse_requires_explicit_review, with
 the worker stack in ellipse_seed._outer_boundary. Root cause is not
 established; do not disable the test or change scientific algorithms
 merely to make CI pass.
+
+
+## Native covariance adapter (follow-up)
+
+The previously missing native adapter is now implemented as
+`native_scene_block_covariance` in block_covariance.py. Opt-in sequence:
+
+1. Fit each native band with fit_native_independent_sky_halo; use a
+   common block lattice and explicit holdout angular sector. Far held
+   blocks are retained separately, not used to fit sky or halo.
+2. Review and add the proposed core/ray layers, then intersect native
+   validity with common_native_validity. Use that mask and
+   retain_pixel_support=True when preparing each annular record.
+3. Pass the exact frames, records and independent halo fit results to
+   native_scene_block_covariance. It verifies grid, data and correction
+   identity, exact observed ring support, and disjoint training/control
+   tiles. Far controls must match both tile positions and pixel-mask
+   fingerprints across bands. Block means, counts and formal IVAR
+   variances are retained in the halo-fit results.
+4. Use fit_native_covariance_sersic to bind the conditional covariance
+   to the exact annular records and export as before.
+
+This is a NEW conditional covariance hypothesis, not an exact
+reimplementation of the archived L15_A50 matrix. It models coherent
+tile fluctuations as additive to independent pixel-IVAR noise. It
+subtracts the median formal block-mean variance from the robust
+paired far-control covariance, rejects unresolved or indefinite
+coherent covariance, and propagates independent IVAR through ring sums
+and fixed sky/halo influence matrices. No covariance eigenvalue
+clipping, arbitrary jitter or automatic fit acceptance is used.
+The control residuals still include uncertainty of predicted sky;
+robust scales and clipped correlation are approximate, and spatial
+stationarity, independence of pixel IVAR and transfer from held-out
+control tiles to aperture tiles remain hypotheses. The model does not
+propagate compact-source or geometry refits. An insufficient control
+sample is a failure, not permission to relax the support criteria.
+
+New tests exercise the noise decomposition, exact formal IVAR
+propagation, and a synthetic native two-band pipeline. Their presence
+does not establish execution. Real FITS replay, comparison against
+archived covariance, empirical calibration, geometry optimization,
+and GUI integration remain open. Do not update adopted photometry.
