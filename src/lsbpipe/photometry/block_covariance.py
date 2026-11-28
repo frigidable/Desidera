@@ -150,3 +150,49 @@ def paired_control_statistics(residuals, *, band_order, tile_ids, minimum_tiles,
     return {"status":STATUS,"band_order":bands,"n_matched_tiles":len(r),
             "scales":scale,"correlation":rho,"clip_sigma":clip,
             "covariance_calibrated":False}
+
+
+def split_control_block_noise(scales, correlation, formal_mean_variances):
+    """Separate an explicit independent-IVAR component from control scatter.
+
+    A conditional additive model: total control covariance = coherent
+    block covariance + independent formal mean variance. Subtract the
+    median formal variance per band, and reject a nonpositive/indefinite
+    result rather than clipping eigenvalues or silently using a zero term.
+    The empirical estimates remain sensitivity hypotheses.
+    """
+    s=np.asarray(scales,dtype=float)
+    v=np.asarray(formal_mean_variances,dtype=float)
+    if (s.ndim!=1 or not len(s) or not np.isfinite(s).all() or np.any(s<=0)
+            or v.ndim!=2 or v.shape[1]!=len(s) or not len(v)
+            or not np.isfinite(v).all() or np.any(v<=0)):
+        raise ValueError("Positive finite control scales and mean variances required")
+    rho=_covariance(correlation,len(s))
+    if not np.allclose(np.diag(rho),1.,rtol=0,atol=1e-12):
+        raise ValueError("Expected a correlation matrix")
+    white=np.median(v,axis=0)
+    coherent=_covariance(rho*np.outer(s,s)-np.diag(white),len(s))
+    if np.any(np.diag(coherent)<=0):
+        raise ValueError("Coherent block variance not resolved above formal IVAR")
+    sig=np.sqrt(np.diag(coherent))
+    return {"status":STATUS,"coherent_scales":sig,
+            "coherent_correlation":coherent/np.outer(sig,sig),
+            "formal_mean_variance_median":white,"covariance_calibrated":False}
+
+
+def independent_ivar_covariance(ring_variances, correction_operator, training_mean_variances):
+    """Exact linear propagation conditional on independent native pixels.
+
+    Ring sums and fitted training tile means have disjoint support. The
+    correction operator contains sky and halo influence, including their
+    shared training data. No cross-band white covariance is assumed.
+    """
+    v=np.asarray(ring_variances,dtype=float)
+    q=np.asarray(correction_operator,dtype=float)
+    t=np.asarray(training_mean_variances,dtype=float)
+    if (v.ndim!=1 or not len(v) or q.ndim!=2 or q.shape[0]!=len(v)
+            or t.shape!=(q.shape[1],) or not all(np.isfinite(a).all() for a in (v,q,t))
+            or np.any(v<=0) or np.any(t<0)):
+        raise ValueError("Invalid formal ring/training variance arrays")
+    d=np.diag(v)+(q*t)@q.T
+    return _covariance((d+d.T)/2,len(v))
