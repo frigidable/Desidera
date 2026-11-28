@@ -396,3 +396,38 @@ exact-commit CI and no real FITS publication figures were rendered
 or visually inspected in this follow-up. Prior run 46146235229 for
 742e2829 was canceled before completing. GUI integration and real
 NGC2146sat replay remain separate open gates.
+
+
+## Photometry Workspace: archive review acceptance plan
+
+Source review: existing PhotometryWorkspace has four functional stages,
+and stage/band navigation is persisted elsewhere. Introduce an explicit
+Joint QA dialog from the Apertures stage, not another automatic analysis
+or an incompatible navigation key. Use the existing project UUID,
+selected release/region/brick and target position as the review context.
+
+Acceptance cases before UI approval:
+- Unbound/no target/no dataset: the action is disabled with a clear reason.
+- Explicit local ZIP selection: a bounded read-only worker validates the
+  complete diagnostic manifest, member hashes, dataset/anchor identity
+  and signed ring tables before enabling review. Opening the dialog or
+  canceling a file chooser performs no science operation.
+- Missing, malformed, incompatible, changed and injected evidence must
+  not appear as a successful review. Retain explicit recovery actions.
+- Show band/radius/observed/model/conditional sigma and coverage without
+  converting signed flux to magnitudes. Existing verified PNG figures
+  can be inspected; absence of figures must be explicit.
+- A project-bound review receipt is an explicit new JSON file selected
+  by the researcher. It binds the archive digest, UUID, target and source
+  selection; reopening verifies them again. It is not saved science,
+  automatic adoption, or a checkpoint of a running numerical calculation.
+- Empty, loading, populated, error, and resized states need offline
+  regression coverage. Actual screenshot capture and inspection, Windows
+  high-font/DPI and keyboard review remain separate GUI gates.
+
+The archive schema does not currently encode a project UUID, and a
+matching brick or nearby anchor does not prove galaxy identity or that
+original FITS are still unchanged. Display this limitation; an explicit
+researcher association is necessary before creating a receipt. This
+increment intentionally does not launch the new multiband optimizer,
+edit saved masks or automatically convert earlier PSF/Scene drafts.
