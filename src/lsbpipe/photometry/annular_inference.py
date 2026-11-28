@@ -171,3 +171,59 @@ def conditional_holdout(observed, prediction, covariance, jacobian,
     w=solve_triangular(cholesky(cc,lower=True),residual,lower=True)
     return {"status":STATUS,"residual":residual,"predictive_covariance":cc,
             "chi2":float(w@w),"n_test":len(t),"covariance_calibrated":False}
+
+
+def control_model_comparison(observed, nominal_model_flux, control_residuals,
+                             covariance, models, *, null_model, train,
+                             reference_support_id, control_support_ids,
+                             control_ids, overlap, control_provenance):
+    """Ring-domain control injections with predeclared comparable support.
+
+    Each model maps to (predictor, initial, bounds). Fit the same full set
+    for observations and nominal model plus each *measured* control vector.
+    This routine does not choose positions or certify exchangeability,
+    identical detector noise, or a calibrated empirical false-positive rate.
+    Overlap describes the ENTIRE control footprint including sky training.
+    """
+    obs=np.asarray(observed,dtype=float)
+    base=np.asarray(nominal_model_flux,dtype=float)
+    controls=np.asarray(control_residuals,dtype=float)
+    if (obs.ndim!=1 or base.shape!=obs.shape or controls.ndim!=2
+            or controls.shape[1:]!=obs.shape or not len(controls)
+            or not all(np.isfinite(x).all() for x in (obs,base,controls))):
+        raise ValueError("Finite observed and matched control vectors required")
+    count=len(controls)
+    ids=tuple(control_ids)
+    supports=tuple(control_support_ids)
+    if (not isinstance(reference_support_id,str) or not reference_support_id
+            or len(ids)!=count or len(set(ids))!=count or any(not isinstance(i,str) or not i for i in ids)
+            or len(supports)!=count or any(i!=reference_support_id for i in supports)
+            or not isinstance(control_provenance,str) or not control_provenance.strip()):
+        raise ValueError("Unique controls with exact declared support and provenance required")
+    ov=np.asarray(overlap)
+    if ov.shape!=(count,count) or ov.dtype.kind!="b" or not np.array_equal(ov,ov.T):
+        raise ValueError("Explicit symmetric footprint overlap matrix required")
+    if np.any(ov & ~np.eye(count,dtype=bool)):
+        raise ValueError("Controls overlap; do not count them as separate controls")
+    if null_model not in models or len(models)<2:
+        raise ValueError("Explicit null and alternative model set required")
+    def score(values):
+        results={}
+        for name,(predict,initial,bounds) in models.items():
+            fit=fit_conditional_gls(values,covariance,predict,initial,bounds,train=train)
+            if not fit["success"]:
+                raise ValueError("Model comparison contains a failed fit")
+            results[name]={"chi2":fit["chi2"],"boundary":fit["boundary"],"rank":fit["rank"]}
+        null=results[null_model]["chi2"]
+        alternative=min((name for name in results if name!=null_model),
+                        key=lambda name:results[name]["chi2"])
+        return {"delta_chi2":max(0.,null-results[alternative]["chi2"]),
+                "best_alternative":alternative,"fits":results}
+    target=score(obs)
+    rows=[dict(control_id=cid,**score(base+v)) for cid,v in zip(ids,controls)]
+    exceed=sum(row["delta_chi2"]>=target["delta_chi2"] for row in rows)
+    return {"status":STATUS,"target":target,"controls":rows,
+            "n_controls":count,"n_equal_or_exceed":exceed,
+            "control_provenance":control_provenance,"reference_support_id":reference_support_id,
+            "calibrated_false_positive_rate":None,"exchangeability_verified":False,
+            "kind":"RING_DOMAIN_CONTROL_STRESS_TEST"}
