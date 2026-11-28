@@ -88,7 +88,9 @@ def test_full_native_workflow(tmp_path):
     with pytest.raises(WorkflowBlocked,match="GEOMETRY_REVIEW"):
         run_reviewed_annular_workflow(prepared,**dict(args,geometry_confirmed=False),output=path)
     assert not path.exists()
-    out=run_reviewed_annular_workflow(prepared,**args,output=path)
+    out=run_reviewed_annular_workflow(prepared,**args,output=path,
+        asymptotic_settings={"aperture_count":6})
+    assert "asymptotic_diagnostic" in out["fit"]
     assert out["stage"]=="DIAGNOSTIC_COMPLETE"
     assert out["fit"]["holdout"] is not None
     assert not out["science_adopted"] and not out["covariance_calibrated"]
@@ -98,6 +100,7 @@ def test_full_native_workflow(tmp_path):
         assert z.testzip() is None
         fit=json.loads(z.read("fit.json"))
         assert fit["workflow"]["masks_explicitly_reviewed"]
+        assert "asymptotic.json" in z.namelist()
         assert not fit["workflow"]["full_geometry_containment_verified"]
     assert all(len(s.layers)==0 for s in scenes)
     assert tuple(f.native_input_sha256 for f in frames)==tuple(i[0] for i in identities)
@@ -105,3 +108,19 @@ def test_full_native_workflow(tmp_path):
     bad=dict(fs,train_rings=np.ones(6,dtype=bool))
     with pytest.raises(WorkflowBlocked,match="COVERAGE"):
         run_reviewed_annular_workflow(prepared,**dict(args,fit_settings=bad))
+
+    from lsbpipe.photometry.pixel_injection import run_differential_sersic_injection
+    profiles=truth.copy()
+    profiles[:,0]*=.25
+    recovered=run_differential_sersic_injection(frames,scenes,psfs=psfs,
+        psf_identities=identities,halo_settings=settings,compact_sources=[None,None],
+        injection_geometry=geo,injection_anchor_icrs=anchor,
+        injection_profiles=profiles,workflow_settings=args)
+    assert not recovered["science_adopted"]
+    assert recovered["sky_halo_covariance_refitted"]
+    for band in ("g","r"):
+        row=recovered["bands"][band]
+        assert np.all(row["expected_valid_ring_flux_nMgy"]>0)
+        assert np.isfinite(row["ring_flux_bias_nMgy"]).all()
+        assert row["fitted_model_total_change_nMgy"]>0
+    assert tuple(f.native_input_sha256 for f in frames)==tuple(i[0] for i in identities)
