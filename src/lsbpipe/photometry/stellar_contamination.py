@@ -206,6 +206,7 @@ def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
     from lsbpipe.scene import SceneState, evaluate_mask, Operation
     from .contracts import NativeBandFrame
     from .native_annular_diagnostic import NativeCorrection
+    from .sky_masks import native_boolean_mask_sha256
 
     if not isinstance(frame,NativeBandFrame) or not isinstance(scene,SceneState):
         raise ValueError("Validated frame and explicit scene required")
@@ -263,7 +264,7 @@ def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
     y=r*np.cos(angle)/fg
     template=compact_halo_template(r,cutoff_arcsec=cutoff,power=p,
                                    pivot_arcsec=pivot,core_arcsec=core)
-    means=[]; designs=[]; halos=[]; masks=[]; tiles=[]; counts=[]
+    means=[]; designs=[]; halos=[]; masks=[]; tiles=[]; counts=[]; footprints=[]
     ny,nx=frame.shape
     for j in range(0,ny-block_size+1,block_size):
         for i in range(0,nx-block_size+1,block_size):
@@ -275,16 +276,17 @@ def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
             near=bool(r[sl].max()<=cutoff)
             training=bool(delta[sl].min()>=hw/2+buf)
             held=bool(delta[sl].max()<=hw/2)
-            mask=(far and training,near and training,near and held)
+            mask=(far and training,near and training,near and held,far and held)
             if not any(mask):
                 continue
             means.append(float(values[sl][ok].mean()))
             designs.append([1.] if sky_degree==0 else [1.,float(x[sl][ok].mean()),float(y[sl][ok].mean())])
             halos.append(float(template[sl][ok].mean()))
             masks.append(mask);tiles.append((i,j));counts.append(int(ok.sum()))
+            footprints.append(native_boolean_mask_sha256(ok))
     if not masks:
         raise ValueError("No eligible independent blocks")
-    far,near,holdout=np.asarray(masks,dtype=bool).T
+    far,near,holdout,far_control=np.asarray(masks,dtype=bool).T
     result=fit_independent_sky_halo(means,designs,halos,far=far,near=near,
                                    holdout=holdout,max_condition=max_condition)
     beta=result["sky_coefficients"]
@@ -301,6 +303,10 @@ def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
         "halo":NativeCorrection("stellar_halo",grid,digest,provenance,halo),
         "proposed_layers":(core_layer,ray_layer),"block_xy":np.asarray(tiles),
         "block_counts":np.asarray(counts),"far":far,"near":near,"holdout":holdout,
+        "far_control":far_control,"block_footprint_sha256":tuple(footprints),
+        "block_size":block_size,"star_icrs":(ra,dec),"far_star_guard_arcsec":fg,
+        "core_arcsec":core,"cutoff_arcsec":cutoff,"pivot_arcsec":pivot,"power":p,
+        "sky_degree":sky_degree,
         "block_means":np.asarray(means),"block_sky_design":np.asarray(designs),
         "block_halo_template":np.asarray(halos),"compact_sources_sha256":
             None if compact_sources is None else compact_sources.sha256,
