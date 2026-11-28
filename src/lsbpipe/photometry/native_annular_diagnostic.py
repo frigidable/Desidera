@@ -164,6 +164,8 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
             "formal_diagonal_variance_nMgy2":formal,"operator":op,
             "operator_ring_indices":np.flatnonzero(measured),
             "covariance_calibrated":False,"full_geometry_containment_verified":False}
+    if "synthetic_injection" in frame.source_evidence:
+        result["synthetic_injection_parent_sha256"]=frame.source_evidence["synthetic_injection"]["parent_input_sha256"]
     if retain_full_aperture_operator:
         full=np.array([labels==j for j in range(nr)])
         if not np.all(full.any(axis=(1,2))):
@@ -278,6 +280,8 @@ def annular_record_sha256(rec):
             "scene_revision","valid_sha256","ring_index_sha256","corrections","psf_sha256",
             "anchor_icrs","geometry","coverage_thresholds","pixel_area_arcsec2")
     meta={k:rec[k] for k in fields}
+    if "synthetic_injection_parent_sha256" in rec:
+        meta["synthetic_injection_parent_sha256"]=rec["synthetic_injection_parent_sha256"]
     h=sha256(json.dumps(meta,sort_keys=True,allow_nan=False).encode("utf-8"))
     for name in ("ring_edges_arcsec","radial_nodes_arcsec","observed_flux_nMgy",
                  "formal_diagonal_variance_nMgy2","operator","operator_ring_indices",
