@@ -9,7 +9,7 @@ from lsbpipe.photometry.native_annular_diagnostic import (
 from lsbpipe.scene import SceneState, MaskLayer, LayerKind
 
 
-def test_native_joint_workflow_on_synthetic_frames():
+def test_native_joint_workflow_on_synthetic_frames(tmp_path):
     WCS=pytest.importorskip("astropy.wcs").WCS
     from astropy.coordinates import SkyCoord
     from astropy import units as u
@@ -69,6 +69,21 @@ def test_native_joint_workflow_on_synthetic_frames():
     assert fit["holdout"]["chi2"]<.001
     assert fit["model_extrapolations"]["g"]["kind"]=="UNTRUNCATED_MODEL_EXTRAPOLATION"
     assert not fit["covariance_calibrated"]
+    from lsbpipe.photometry.annular_export import export_annular_diagnostic
+    import zipfile, json, hashlib
+    path=tmp_path/"diagnostic.zip"
+    manifest=export_annular_diagnostic(path,records,np.eye(12)*.0004,fit)
+    assert manifest["status"]=="DIAGNOSTIC_NOT_ADOPTED"
+    with zipfile.ZipFile(path) as z:
+        assert z.testzip() is None
+        assert set(z.namelist())=={"rings.csv","arrays.npz","fit.json","manifest.json"}
+        stored=json.loads(z.read("manifest.json"))
+        for name,digest in stored["files_sha256"].items():
+            assert hashlib.sha256(z.read(name)).hexdigest()==digest
+    with pytest.raises(FileExistsError):
+        export_annular_diagnostic(path,records,np.eye(12)*.0004,fit)
+    with pytest.raises(ValueError):
+        export_annular_diagnostic(tmp_path/"wrong.zip",records,np.eye(12),fit)
     with pytest.raises(ValueError):
         fit_common_support_sersic(records,np.eye(12),band_order=("r","g"),
             covariance_source="wrong band order",train_rings=train,test_rings=~train,
