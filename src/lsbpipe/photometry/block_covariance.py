@@ -55,7 +55,11 @@ def within_tile_diagonal_remainder(ring_tile_variance):
     total=v.sum(axis=0)
     use=total>0
     w=v[:,use]/np.sqrt(total[use])
-    d=np.diag(v.sum(axis=1))-w@w.T
+    # Pairwise Laplacian form avoids subtracting almost equal diagonal
+    # terms, including the exact single-ring/zero-remainder case.
+    d=-(w@w.T)
+    np.fill_diagonal(d,0.)
+    np.fill_diagonal(d,-d.sum(axis=1))
     return (d+d.T)/2
 
 
@@ -113,4 +117,36 @@ def conditional_block_covariance(tile_xy_arcsec, operators, band_scales,
     return {"status":STATUS,"covariance":c,"band_order":bands,
             "ring_counts_by_band":tuple(o.shape[0] for o in ops),
             "length_arcsec":length,"mix":m,"n_tiles":len(xy),
+            "covariance_calibrated":False}
+
+
+def paired_control_statistics(residuals, *, band_order, tile_ids, minimum_tiles, clip_sigma):
+    """Robust marginal scales and PSD sample correlation on matched far tiles.
+
+    Rows must represent the same disjoint control footprints in every band.
+    Clip and minimum count are explicit diagnostic choices, not calibration.
+    No assumption of independent samples or effective degrees of freedom.
+    """
+    r=np.asarray(residuals,dtype=float)
+    bands=tuple(band_order)
+    ids=tuple(tile_ids)
+    clip=float(clip_sigma)
+    if (r.ndim!=2 or r.shape[1]!=len(bands) or not bands or len(set(bands))!=len(bands)
+            or len(ids)!=len(r) or len(set(ids))!=len(ids) or not np.isfinite(r).all()
+            or not isinstance(minimum_tiles,int) or minimum_tiles<max(3,len(bands)+1)
+            or len(r)<minimum_tiles or not np.isfinite(clip) or clip<=0):
+        raise ValueError("Insufficient matched finite control tiles or invalid configuration")
+    center=np.median(r,axis=0)
+    scale=1.4826*np.median(np.abs(r-center),axis=0)
+    if np.any(scale<=0) or not np.isfinite(scale).all():
+        raise ValueError("Degenerate robust control scale")
+    z=np.clip((r-center)/scale,-clip,clip)
+    z-=z.mean(axis=0)
+    norm=np.linalg.norm(z,axis=0)
+    if np.any(norm<=0) or not np.isfinite(norm).all():
+        raise ValueError("Degenerate matched control correlation")
+    unit=z/norm
+    rho=_covariance(unit.T@unit,len(bands))
+    return {"status":STATUS,"band_order":bands,"n_matched_tiles":len(r),
+            "scales":scale,"correlation":rho,"clip_sigma":clip,
             "covariance_calibrated":False}
