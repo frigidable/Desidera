@@ -11,7 +11,7 @@ import math
 import numpy as np
 from scipy.integrate import quad
 from scipy.optimize import brentq
-from scipy.special import gammaincinv, gammainc, gammaln
+from scipy.special import gammaincinv, gammainc, gammaincc, gammaln
 
 from .uncertainty_budget import _covariance, STATUS
 
@@ -103,7 +103,7 @@ def sersic_intensity(radius, central_intensity, scale_radius, index):
     return i0*np.exp(-gammaincinv(2*n,.5)*(r/re)**(1/n))
 
 
-def sersic_model_total(geometry, central_intensity, scale_radius, index):
+def sersic_model_total(geometry, central_intensity, scale_radius, index, *, aperture_radius=None):
     """Model-only integration using d(pi q(a) a^2)/da and analytic outer tail.
 
     central_intensity is per square arcsec, all radii in arcsec. The result
@@ -142,9 +142,27 @@ def sersic_model_total(geometry, central_intensity, scale_radius, index):
     else:
         raise ValueError("Cannot bracket model half-light radius")
     half=brentq(lambda a:enclosed(a)-total/2,0.,upper)
-    return {"status":STATUS,"kind":"UNTRUNCATED_MODEL_EXTRAPOLATION",
+    result={"status":STATUS,"kind":"UNTRUNCATED_MODEL_EXTRAPOLATION",
             "model_total":float(total),"model_half_light_arcsec":float(half),
             "profile_scale_arcsec":re}
+    if aperture_radius is not None:
+        a=float(aperture_radius)
+        if not np.isfinite(a) or a<0:
+            raise ValueError("Finite nonnegative aperture radius required")
+        # Evaluate the outer tail directly, avoiding loss of precision
+        # when the enclosed flux is close to the model total.
+        def tail_const(radius):
+            return norm*gammaincc(2*n,bn*(radius/re)**(1/n))
+        if a>=hi:
+            tail=qo*tail_const(a)
+        elif a>=lo:
+            tail=quad(integrand,a,hi,epsabs=norm*1e-10,epsrel=1e-9)[0]+qo*tail_const(hi)
+        else:
+            tail=qi*(primitive(lo)-primitive(a))+mid+qo*tail_const(hi)
+        result.update({"aperture_radius_arcsec":a,
+                       "intrinsic_enclosed_flux":float(enclosed(a)),
+                       "intrinsic_outer_tail":float(tail)})
+    return result
 
 
 def signed_curve_of_growth(ring_flux, covariance, eligible):
