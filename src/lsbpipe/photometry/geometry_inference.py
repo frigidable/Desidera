@@ -230,3 +230,81 @@ def fit_block_geometry(east_arcsec, north_arcsec, images, kernels, *, band_order
             "block_size":b,"tile_shape":(ty,tx),"buffer_tiles":buffer_tiles,
             "score_kind":"CONDITIONAL_DIAGONAL_BLOCK_SCORE_NOT_CALIBRATED_CHI2",
             "selected_geometry":None,"covariance_calibrated":False}
+
+
+def fit_native_geometry_candidates(frames, scenes, *, anchor_icrs,
+                                    corrections_by_band, psfs, psf_identities,
+                                    region, region_grid_id, **configuration):
+    """Native adapter; all masks and correction/PSF identities must match.
+
+    psf_identities are ordered (native input SHA256, grid fingerprint) pairs.
+    Region and tile selections are predeclared; this function does not infer
+    them from image brightness or change the scene. Candidate geometries
+    must be explicitly reviewed before reuse in annular photometry.
+    """
+    from astropy.coordinates import SkyCoord
+    from astropy import units as u
+    from .contracts import NativeBandFrame, PSFDescription
+    from .native_annular_diagnostic import NativeCorrection, common_native_validity
+    from .sky_masks import native_boolean_mask_sha256
+    from hashlib import sha256
+
+    frames,scenes,psfs,psf_identities=map(tuple,(frames,scenes,psfs,psf_identities))
+    corrections_by_band=tuple(tuple(c) for c in corrections_by_band)
+    if not frames or any(len(x)!=len(frames) for x in
+            (scenes,psfs,psf_identities,corrections_by_band)):
+        raise ValueError("One explicit scene, correction set and PSF per native band required")
+    if any(not isinstance(f,NativeBandFrame) for f in frames):
+        raise ValueError("Validated native frames required")
+    first=frames[0]
+    grid=first.native_grid_fingerprint
+    if region_grid_id!=grid:
+        raise ValueError("Region grid identity mismatch")
+    budget=configuration.get("max_work_pixels",500000)
+    if not isinstance(budget,int) or budget<1 or np.prod(first.shape)>budget:
+        raise ValueError("Native geometry exceeds explicit work-pixel budget")
+    valid=common_native_validity(frames,scenes)
+    bands=tuple(f.band for f in frames)
+    ra,dec=map(float,anchor_icrs)
+    if not np.isfinite([ra,dec]).all() or not 0<=ra<360 or not -90<=dec<=90:
+        raise ValueError("Invalid ICRS anchor")
+    center=SkyCoord(ra*u.deg,dec*u.deg,frame="icrs")
+    yy,xx=np.indices(first.shape)
+    sky=first.wcs.pixel_to_world(xx,yy).icrs
+    separation=center.separation(sky)
+    if not np.isfinite(separation.deg).all() or np.max(separation.deg)>.5:
+        raise ValueError("Small-field geometry restricted to 0.5 degree")
+    angle=center.position_angle(sky).rad
+    east=separation.arcsec*np.sin(angle)
+    north=separation.arcsec*np.cos(angle)
+    images=[]; kernels=[]; inputs=[]
+    for f,s,cs,psf,identity in zip(frames,scenes,corrections_by_band,psfs,psf_identities):
+        if (not isinstance(psf,PSFDescription) or psf.state!="EMPIRICAL_KERNEL"
+                or tuple(identity)!=(f.native_input_sha256,grid)):
+            raise ValueError("PSF must refer to this native observation")
+        if not cs or any(not isinstance(c,NativeCorrection) for c in cs):
+            raise ValueError("Explicit native corrections required")
+        kinds=[c.kind for c in cs]
+        if "residual_sky" not in kinds or len(set(kinds))!=len(kinds):
+            raise ValueError("One residual sky and no repeated correction kind required")
+        image=np.array(f.image_nMgy,copy=True)
+        for c in cs:
+            if (c.grid_id!=grid or c.input_sha256!=f.native_input_sha256
+                    or c.values.shape!=f.shape or not np.isfinite(c.values[valid]).all()):
+                raise ValueError("Correction identity or usable-pixel mismatch")
+            image[valid]-=c.values[valid]
+        images.append(image)
+        kernels.append(psf.kernel)
+        inputs.append({"dataset_id":f.dataset_id,"native_input_sha256":f.native_input_sha256,
+                       "scene_revision":s.revision,
+                       "corrections":[{"kind":c.kind,"sha256":c.sha256,"source":c.source} for c in cs],
+                       "psf_sha256":sha256(psf.kernel.tobytes()).hexdigest()})
+    result=fit_block_geometry(east,north,images,kernels,band_order=bands,
+                               valid=valid,region=region,**configuration)
+    result.update({"grid_id":grid,"anchor_icrs":[ra,dec],"inputs":inputs,
+                   "common_valid_sha256":native_boolean_mask_sha256(valid),
+                   "region_sha256":native_boolean_mask_sha256(region),
+                   "train_tiles_sha256":native_boolean_mask_sha256(configuration["train_tiles"]),
+                   "holdout_tiles_sha256":native_boolean_mask_sha256(configuration["holdout_tiles"]),
+                   "geometry_adopted":False})
+    return result
