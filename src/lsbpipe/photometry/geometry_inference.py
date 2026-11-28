@@ -228,6 +228,14 @@ def fit_block_geometry(east_arcsec, north_arcsec, images, kernels, *, band_order
             "observed_block_means":observed,"block_ids":used,
             "block_counts":cnt,"train":train,"holdout":test,"block_scales":scales.copy(),
             "block_size":b,"tile_shape":(ty,tx),"buffer_tiles":buffer_tiles,
+            "configuration":{"seed":asdict(seed),"transition_start":a0,"transition_end":a1,
+                "midpoint_bounds":[lo.tolist(),hi.tolist()],
+                "delta_limits":limit.tolist(),"delta_scales":ds.tolist(),
+                "profile_initial":np.exp(ini).reshape(len(bands),3).tolist(),
+                "profile_bounds":[np.exp(pl).reshape(len(bands),3).tolist(),
+                                  np.exp(ph).reshape(len(bands),3).tolist()],
+                "min_block_fraction":float(min_block_fraction),"max_nfev":max_nfev,
+                "max_work_pixels":max_work_pixels},
             "score_kind":"CONDITIONAL_DIAGONAL_BLOCK_SCORE_NOT_CALIBRATED_CHI2",
             "selected_geometry":None,"covariance_calibrated":False}
 
@@ -308,3 +316,21 @@ def fit_native_geometry_candidates(frames, scenes, *, anchor_icrs,
                    "holdout_tiles_sha256":native_boolean_mask_sha256(configuration["holdout_tiles"]),
                    "geometry_adopted":False})
     return result
+
+
+def reviewed_geometry_candidate(result, mode, *, confirmed):
+    """Return an explicit candidate for further diagnostic measurement only.
+
+    Does not adopt photometry, change a scene, or automatically select a
+    winner. Preserve the full result separately as fit provenance.
+    """
+    if confirmed is not True or result.get("status")!=STATUS:
+        raise ValueError("Explicit researcher confirmation of diagnostic geometry required")
+    if mode not in ("fixed","constant","variable"):
+        raise ValueError("Unknown geometry candidate")
+    candidate=result["candidates"][mode]
+    if not candidate["success"] or candidate["boundary"]:
+        raise ValueError("Failed or boundary-constrained geometry requires separate investigation")
+    g=candidate["geometry"]
+    return NestedEllipse(EllipseNode(**g["inner"]),EllipseNode(**g["outer"]),
+                         g["transition_start"],g["transition_end"])
