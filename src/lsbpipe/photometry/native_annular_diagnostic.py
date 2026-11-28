@@ -151,6 +151,7 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
             "psf_shape":list(psf.kernel.shape),
             "radial_nodes_arcsec":np.asarray(radial_nodes,dtype=float).copy(),
             "coverage":support,"observed_flux_nMgy":flux,
+            "valid_pixel_count":masks.sum(axis=(1,2)),
             "formal_diagonal_variance_nMgy2":formal,"operator":op,
             "operator_ring_indices":np.flatnonzero(measured),
             "covariance_calibrated":False,"full_geometry_containment_verified":False}
@@ -209,6 +210,10 @@ def fit_common_support_sersic(records, covariance, *, band_order,
     result=fit_conditional_gls(d,covariance,predictor,p,bounds,train=train)
     result["band_order"]=bands
     result["covariance_source"]=covariance_source
+    result["train_rings"]=tr.copy()
+    result["test_rings"]=te.copy()
+    result["record_sha256"]=tuple(annular_record_sha256(rec) for rec in records)
+    result["covariance_sha256"]=numeric_sha256(covariance)
     result["model_extrapolations"]=None
     result["holdout"]=None
     result["full_geometry_containment_verified"]=False
@@ -232,3 +237,30 @@ def fit_common_support_sersic(records, covariance, *, band_order,
             d,result["prediction"],covariance,jac,
             result["conditional_parameter_covariance"],train=train,test=test)
     return result
+
+
+def numeric_sha256(values):
+    """Canonical float64 array digest including shape."""
+    a=np.ascontiguousarray(values,dtype="<f8")
+    h=sha256(str(a.shape).encode("ascii")+b":")
+    h.update(a.tobytes())
+    return h.hexdigest()
+
+
+def annular_record_sha256(rec):
+    """Bind fit/export to the same measured ring arrays and provenance."""
+    import json
+    fields=("status","dataset_id","grid_id","native_input_sha256",
+            "scene_revision","valid_sha256","corrections","psf_sha256",
+            "anchor_icrs","geometry","coverage_thresholds","pixel_area_arcsec2")
+    meta={k:rec[k] for k in fields}
+    h=sha256(json.dumps(meta,sort_keys=True,allow_nan=False).encode("utf-8"))
+    for name in ("ring_edges_arcsec","radial_nodes_arcsec","observed_flux_nMgy",
+                 "formal_diagonal_variance_nMgy2","operator","operator_ring_indices",
+                 "valid_pixel_count"):
+        h.update(name.encode("ascii"))
+        h.update(numeric_sha256(rec[name]).encode("ascii"))
+    for name in ("ring_fraction","cumulative_fraction","sector_fraction","eligible"):
+        h.update(name.encode("ascii"))
+        h.update(numeric_sha256(rec["coverage"][name]).encode("ascii"))
+    return h.hexdigest()
