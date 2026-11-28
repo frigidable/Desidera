@@ -197,3 +197,50 @@ propagation, and a synthetic native two-band pipeline. Their presence
 does not establish execution. Real FITS replay, comparison against
 archived covariance, empirical calibration, geometry optimization,
 and GUI integration remain open. Do not update adopted photometry.
+
+
+## Regularized geometry inference (follow-up)
+
+`geometry_inference.py` adds three PSF-forward hypotheses on the same
+predeclared native block support: fixed reference, free constant ellipse,
+and two smoothly varying nested endpoints. The geometry midpoint and
+endpoint differences are bounded; the entire variable parameter box
+must satisfy the conservative non-crossing certificate of NestedEllipse.
+The user supplies explicit regularization scales, profile bounds, block
+size, minimum usable fraction, holdout buffer and block intensity scales.
+There is no automatic geometry selection or calibration of the diagonal
+block score as a chi-square. The penalty is recorded separately.
+A finite PSF convolution footprint is required inside the native frame.
+
+The native adapter verifies frame, WCS, mask and correction/PSF identities,
+uses common_native_validity, and preserves the split and geometry
+configuration. The selected geometry can be returned only after explicit
+review via reviewed_geometry_candidate; this does not adopt a measurement.
+Geometry candidates with failed or boundary-constrained optimization
+are rejected by that review helper. The entire result is diagnostic.
+
+Historical NGC2146sat_reggeom_fits.csv, variable, all, g, gives endpoint
+q=0.5604268448317696 and 0.67487168 (rounded), PA=44.867813 and
+50.866228 degrees, and transition 10–70 arcsec. The conservative nesting
+margin for these archived parameters is 0.14809569. An independent
+calculation on 100000 uniform tangent-plane test positions reproduced
+the original 52-step bisection using the new endpoint/transition
+shortcut to max absolute 2.73e-11 arcsec. This checks the radius algorithm,
+not an end-to-end real FITS geometry fit or a package CI result.
+
+Regression tests in tests/test_geometry_inference.py cover synthetic
+PSF-convolved geometry recovery, radius equality, holdout leakage,
+bounds, native identity and explicit review. Full CI is still required.
+At exact prior commit cac0414fcc7b7f9a3f81c20c4c3dbdd1328c1c2e,
+Ubuntu Python 3.12 reported 1058 passed, 49 skipped and one failure:
+test_native_joint_workflow_on_synthetic_frames had insufficient inner
+ring sector support. The test fixture now samples the same 40 arcsec
+field at 0.5 arcsec/pixel instead of 1 arcsec/pixel, preserving the
+coverage gate and a hard exclusion. This repair requires exact-commit CI.
+The prior Windows GUI access violation remains unresolved.
+
+Outstanding: evaluate geometry candidates on real native frames with
+predeclared bounds/splits, joint empirical covariance calibration,
+full real-data replay, profile family and pixel injection studies, six
+publication figures, end-to-end workspace orchestration and GUI review.
+No new method is science-adopted.
