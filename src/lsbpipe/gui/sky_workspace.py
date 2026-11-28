@@ -10,16 +10,66 @@ from datetime import datetime, timezone
 import json
 import traceback
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QShortcut, QKeySequence
+import numpy as np
+
+from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtGui import QShortcut, QKeySequence, QColor, QPen
 from PySide6.QtWidgets import (
     QApplication, QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit,
     QPushButton, QVBoxLayout, QWidget, QSizePolicy, QTabWidget,
+    QComboBox, QGraphicsScene, QGraphicsView,
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
 from lsbpipe.gui.visual_theme import adorn, set_status_tone
 from lsbpipe.background import diagnose_current_project_residual_sky
+from lsbpipe.gui.fits_explorer import FITSExplorer
+from lsbpipe.gui.fits_raster import rgb_for_layer
+from lsbpipe.photometry.residual_sky_diagnostic import sky_diagnostics, paired_sky_diagnostics
+
+
+def run_expanded_sky(dataset,draft,contamination,probe,other=None):
+    p=probe["sh1c_preview"]
+    inputs=dict(p["sky1_inputs"])
+    entries=inputs.pop("source_entries")
+    grid=inputs.pop("expanded_grid_fingerprint")
+    result=sky_diagnostics(**inputs,
+        comparison=probe["sh1_sector_measurement"]["sh1b_model_comparison"],
+        preview=p,wcs=dataset["wcs"])
+    result["source_entries"]=entries
+    result["expanded_grid_fingerprint"]=grid
+    out=dict(status=result["status"],project_id=dataset["project_id"],
+        dataset_source=dataset["source"],band=dataset["band"],draft_sha256=draft.digest,
+        catalog_sha256=contamination["catalog_sha256"],science_adopted=False,
+        foreground_source_id=probe["source_id"],foreground_source_objid=probe["source_objid"],
+        original_grid_fingerprint=dataset["grid_fingerprint"],
+        original_fits_sha256_local=dataset["original_fits_sha256_local"],
+        effective_source_mask_sha256=contamination["effective_source_mask_sha256"],
+        source_triplet=list(dataset.get("source_quartet_key",())[:3]),
+        sh1_policy=probe.get("sh1d_policy"),expanded_sky=result)
+    if other is not None:
+        try:
+            g,r=(out,other) if out["band"]=="g" else (other,out)
+            out["paired_sky"]=paired_sky_diagnostics(g,r)
+        except (ValueError,KeyError,TypeError) as exc:
+            out["paired_sky"]={"status":"SKY2_PAIR_BLOCKED","reason":str(exc),"science_adopted":False}
+    return out
+
+
+class SkyCanvas(QGraphicsView):
+    pixelSelected=Signal(float,float)
+
+    def mousePressEvent(self,event):
+        if event.button()==Qt.LeftButton:
+            p=self.mapToScene(event.position().toPoint())
+            self.pixelSelected.emit(p.x(),p.y())
+        super().mousePressEvent(event)
+
+    def resizeEvent(self,event):
+        super().resizeEvent(event)
+        if self.scene() is not None and not self.scene().sceneRect().isEmpty():
+            self.fitInView(self.scene().sceneRect(),Qt.KeepAspectRatio)
+
 
 
 class SkyWorkspace(QWidget):
@@ -39,6 +89,7 @@ class SkyWorkspace(QWidget):
         self._active_identity = None
         self._result_identity = None
         self._result = None
+        self._expanded_session={}
         self._last_failure = None
         self._failure_identity = None
         self._discard_requested = False
@@ -94,6 +145,11 @@ class SkyWorkspace(QWidget):
             "of original FITS or new DR11 bricks.")
         self.run_btn.clicked.connect(self.run_diagnostic)
         tools.addWidget(self.run_btn)
+        self.expanded_btn=QPushButton("Evaluate halo-aware sky")
+        self.expanded_btn.setObjectName("sky_expanded_run")
+        self.expanded_btn.setToolTip("Requires current expanded SH1 Scene evidence. No model adopted.")
+        self.expanded_btn.clicked.connect(self.run_expanded_diagnostic)
+        tools.addWidget(self.expanded_btn)
         self.discard_btn = QPushButton("Discard result")
         self.discard_btn.setObjectName("sky_discard_pending_result")
         adorn(self.discard_btn, "back", caution=True)
@@ -134,6 +190,44 @@ class SkyWorkspace(QWidget):
         self.status.setObjectName("sky_diagnostic_status")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
+        self.expanded_panel=QWidget(self)
+        el=QVBoxLayout(self.expanded_panel)
+        el.setContentsMargins(0,0,0,0)
+        controls=QHBoxLayout()
+        self.sky_trial=QComboBox()
+        self.sky_trial.setAccessibleName("Expanded sky trial")
+        self.sky_layer=QComboBox()
+        self.sky_layer.setAccessibleName("Expanded sky layer")
+        for label,key in (("Original expanded field","original"),("Halo + sky residual","residual"),
+                          ("Eligible sky pixels","safe"),("Block mean (signed)","mean"),
+                          ("Block median (signed)","median"),
+                          ("Reference central sky · constant","sky1_constant_model"),
+                          ("Reference central sky · plane","sky1_plane_model"),
+                          ("Reference central sky · quadratic","sky1_quadratic_model"),
+                          ("Reference central corrected · constant","sky1_constant_corrected"),
+                          ("Reference central corrected · plane","sky1_plane_corrected"),
+                          ("Reference central corrected · quadratic","sky1_quadratic_corrected")):
+            self.sky_layer.addItem(label,key)
+        controls.addWidget(self.sky_trial,1); controls.addWidget(self.sky_layer,1)
+        el.addLayout(controls)
+        self.sky_graphics=QGraphicsScene(self)
+        self.sky_canvas=SkyCanvas(self.sky_graphics,self.expanded_panel)
+        self.sky_canvas.setObjectName("sky_expanded_canvas")
+        self.sky_canvas.setMinimumHeight(180)
+        self.sky_canvas.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sky_canvas.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sky_canvas.pixelSelected.connect(self._inspect_block)
+        el.addWidget(self.sky_canvas,1)
+        self.sky_caption=QLabel()
+        self.sky_caption.setWordWrap(True)
+        el.addWidget(self.sky_caption)
+        self.block_caption=QLabel("Click an expanded-field pixel to inspect its block and nearest catalogue centres.")
+        self.block_caption.setWordWrap(True)
+        el.addWidget(self.block_caption)
+        self.sky_trial.currentIndexChanged.connect(self._render_expanded)
+        self.sky_layer.currentIndexChanged.connect(self._render_expanded)
+        root.addWidget(self.expanded_panel,3)
+        self.expanded_panel.hide()
         self.readout = QPlainTextEdit(self)
         self.readout.setObjectName("sky_diagnostic_readout")
         self.readout.setMinimumWidth(0)
@@ -223,9 +317,36 @@ class SkyWorkspace(QWidget):
             id(dataset), id(contamination))
         return identity, dataset, draft, contamination
 
+    def _expanded_probe(self,snap):
+        if snap is None: return None
+        ident,ds,draft,cont=snap
+        probe=getattr(self._scene,"_foreground_psf_result",None) or {}
+        p=probe.get("sh1c_preview") or {}
+        if not p.get("sky1_inputs") or p.get("status")!="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED":
+            return None
+        checks=((probe.get("project_id"),ident[0]),(probe.get("dataset_source"),ident[1]),
+                (probe.get("band"),ident[2]),(probe.get("draft_digest"),ident[3]),
+                (probe.get("tractor_catalog_sha256"),ident[4]),
+                (probe.get("original_scene_grid_fingerprint"),ds.get("grid_fingerprint")),
+                (probe.get("original_fits_sha256_local"),ds.get("original_fits_sha256_local")),
+                (p.get("effective_source_mask_sha256"),cont.get("effective_source_mask_sha256")),
+                (p.get("grid_fingerprint"),ds.get("grid_fingerprint")),
+                (p.get("draft_digest"),draft.digest))
+        return probe if all(a is not None and a==b for a,b in checks) else None
+
+    def _current_identity(self,identity,snap):
+        if snap is None or identity is None: return None
+        if len(identity)==len(snap[0]):
+            return snap[0]
+        probe=self._expanded_probe(snap)
+        return snap[0]+(id(probe),) if probe is not None else None
+
     def refresh_context(self):
         scene = self._scene
         snap = self._snapshot()
+        self._expanded_session={b:v for b,v in self._expanded_session.items()
+            if v[1]["project_id"]==getattr(scene,"_project_id",None) and
+               v[1]["draft_sha256"]==getattr(getattr(scene,"_draft",None),"digest",None)}
         band = scene._band.upper() if scene._band else "?"
         if snap is None:
             self.context_label.setText(
@@ -239,12 +360,12 @@ class SkyWorkspace(QWidget):
                 f"Native source {identity[1]}; mask draft {identity[3]}. "
                 "Tractor masks are provisional; no sky adopted.")
         if self._last_failure is not None and (
-                snap is None or snap[0] != self._failure_identity):
+                self._current_identity(self._failure_identity,snap) != self._failure_identity):
             self._last_failure = None
             self._failure_identity = None
             set_status_tone(self.status, error=False)
         if self._result is not None and (
-                snap is None or snap[0] != self._result_identity):
+                self._current_identity(self._result_identity,snap) != self._result_identity):
             self._result = None
             self._result_identity = None
             self.copy_btn.setEnabled(False)
@@ -253,6 +374,8 @@ class SkyWorkspace(QWidget):
                 "project, band, native pixels or scene mask draft.")
             self.status.setText("Stale input · evaluate again · science HOLD.")
             self._reset_report_visibility()
+            self.expanded_panel.hide()
+            self.sky_graphics.clear()
         ready = snap is not None
         self.open_scene_btn.setVisible(
             not ready and self._scene_tabs() is not None)
@@ -264,9 +387,20 @@ class SkyWorkspace(QWidget):
         self.discard_btn.setEnabled(
             self._future is not None and not self._discard_requested)
         self.run_btn.setEnabled(ready and self._future is None)
+        expanded=self._expanded_probe(snap) is not None
+        self.expanded_btn.setVisible(ready)
+        self.expanded_btn.setEnabled(expanded and self._future is None)
+        if expanded:
+            self.context_label.setText(f"Band {band} · current Scene masks and expanded SH1 evidence ready.")
         return ready
 
     def run_diagnostic(self):
+        self._run_diagnostic(False)
+
+    def run_expanded_diagnostic(self):
+        self._run_diagnostic(True)
+
+    def _run_diagnostic(self,expanded):
         if self._future is not None:
             return
         snap = self._snapshot()
@@ -277,6 +411,21 @@ class SkyWorkspace(QWidget):
                 "Tractor neighbour masks in Scene and Masks first.")
             return
         identity, dataset, draft, contamination = snap
+        probe=self._expanded_probe(snap) if expanded else None
+        if expanded and probe is None:
+            self.status.setText("Run the saturated-star SH1 probe in Scene first; current evidence required.")
+            return
+        other=None
+        if expanded:
+            identity=identity+(id(probe),)
+            if dataset["band"] in ("g","r"):
+                opposite="r" if dataset["band"]=="g" else "g"
+                cached=self._expanded_session.get(opposite)
+                prior=getattr(self._scene,"_sh1d_session",{}).get(opposite)
+                if cached and prior is not None and cached[0] is prior:
+                    other=cached[1]
+        self.expanded_panel.hide()
+        self.sky_graphics.clear()
         self._result = None
         self._result_identity = None
         self._last_failure = None
@@ -289,9 +438,8 @@ class SkyWorkspace(QWidget):
         self._active_identity = identity
         self._discard_requested = False
         try:
-            self._future = self._executor.submit(
-                diagnose_current_project_residual_sky,
-                dataset, draft, contamination)
+            self._future = (self._executor.submit(run_expanded_sky,dataset,draft,contamination,probe,other)
+                if expanded else self._executor.submit(diagnose_current_project_residual_sky,dataset,draft,contamination))
         except (OSError, RuntimeError) as exc:
             # Thread-pool startup failures must not escape a Qt button
             # callback. All source evidence and manual masks stay intact.
@@ -311,11 +459,12 @@ class SkyWorkspace(QWidget):
             self.refresh_context()
             return
         self.run_btn.setEnabled(False)
+        self.expanded_btn.setEnabled(False)
         self.discard_btn.setVisible(True)
         self.discard_btn.setEnabled(True)
         self.status.setText(
-            "Automatically selecting safe Scene sky tiles, then "
-            "fitting constant and planar residual sky candidates…")
+            "Evaluating expanded SH1 residuals and edge stress tests…" if expanded else
+            "Automatically selecting safe Scene sky tiles, then fitting constant and planar residual sky candidates…")
         self._timer.start()
 
     def discard_pending_result(self):
@@ -361,7 +510,7 @@ class SkyWorkspace(QWidget):
             self.refresh_context()
             return
         snap = self._snapshot()
-        if snap is None or snap[0] != identity:
+        if self._current_identity(identity,snap) != identity:
             self._result = None
             self._result_identity = None
             self.status.setText(
@@ -410,9 +559,147 @@ class SkyWorkspace(QWidget):
             f"{result['status']} · band {identity[2].upper()} · "
             f"{warning_count} spatial quality warnings · "
             "UNADOPTED · original FITS unchanged.")
-        self.readout.setPlainText(self._format_readout(result))
+        if "expanded_sky" in result:
+            self._expanded_session={b:v for b,v in self._expanded_session.items()
+                if v[1]["project_id"]==result["project_id"] and v[1]["draft_sha256"]==result["draft_sha256"]}
+            # Cache only the single-band evidence, never nested pair histories.
+            self._expanded_session[identity[2]]=(self._expanded_probe(snap),{k:v for k,v in result.items() if k!="paired_sky"})
+            self.status.setText(f"{result['status']} · {identity[2].upper()} · {result.get('paired_sky',{}).get('status','single band')} · UNADOPTED")
+            self.readout.setPlainText(self._format_expanded(result))
+            self.sky_trial.blockSignals(True)
+            self.sky_trial.clear()
+            for i,t in enumerate(result["expanded_sky"]["trials"]):
+                self.sky_trial.addItem(f"{t['halo_scenario']} · {t['target_guard_arcsec']:g} arcsec / {t['tile_size_pix']} px",i)
+            self.sky_trial.blockSignals(False)
+            self.expanded_panel.show()
+            self._render_expanded()
+        else:
+            self.readout.setPlainText(self._format_readout(result))
         self.report_toggle.show()
         self.refresh_context()
+
+    def _render_expanded(self,*args):
+        if not self._result or "expanded_sky" not in self._result or self.sky_trial.currentData() is None:
+            return
+        r=self._result["expanded_sky"]; t=r["trials"][self.sky_trial.currentData()]
+        layer=self.sky_layer.currentData()
+        shape=tuple(r["expanded_shape"]); tile=t["tile_size_pix"]
+        central=layer.startswith("sky1_")
+        self.block_caption.setText("Click an expanded-field pixel to inspect its block and nearest catalogue centres." if not central else
+            "Central reference view; choose an expanded-field layer to inspect blocks.")
+        if central:
+            arr=r["layers"].get(layer)
+            if arr is None:
+                self.sky_graphics.clear()
+                self.sky_caption.setText("Reference central model unavailable: spatial support or fit blocked.")
+                return
+            shape=arr.shape
+        elif layer in ("mean","median"):
+            arr=np.full(shape,np.nan)
+            for b in t["blocks"]:
+                x,y=b["tile_x_pix"],b["tile_y_pix"]
+                arr[y:y+tile,x:x+tile]=b[layer+"_nMgy_pix"]
+        elif layer=="safe":
+            y,x=np.ogrid[:shape[0],:shape[1]]
+            tx,ty=r["expanded_target_xy"]
+            safe=r["expanded_safe_mask"] & (np.hypot(x-tx,y-ty)*r["pixel_scale_arcsec"]>=t["target_guard_arcsec"])
+            arr=safe.astype(float)
+        else:
+            arr=r["expanded_layers"]["original" if layer=="original" else t["halo_scenario"]]
+        v=arr[np.isfinite(arr)]
+        if layer=="safe":
+            limits=(0.,1.)
+        elif central and layer.endswith("_corrected"):
+            z=r["native_reference_residual"]; z=z[np.isfinite(z)]
+            limits=tuple(np.quantile(z,[.01,.99])) if z.size else (0.,1.)
+        elif layer in ("mean","median"):
+            lim=max(float(np.quantile(abs(v),.98)) if v.size else 0.,1e-12)
+            limits=(-lim,lim)
+        else:
+            limits=tuple(np.quantile(v,[.01,.99])) if v.size else (0.,1.)
+        if limits[1]<=limits[0]: limits=(limits[0],limits[0]+1e-10)
+        rgb=rgb_for_layer(arr,"image",self._result["band"],contrast="faint",scaling="asinh",limits=limits)
+        rgb[~np.isfinite(arr)]=(135,49,139)
+        self.sky_graphics.clear()
+        item=self.sky_graphics.addPixmap(FITSExplorer._pixmap(rgb))
+        self.sky_graphics.setSceneRect(item.boundingRect())
+        pen=QPen(QColor("#ffba65")); pen.setCosmetic(True)
+        tx,ty=r["expanded_target_xy"]; rad=t["target_guard_arcsec"]/r["pixel_scale_arcsec"]
+        if not central:
+            self.sky_graphics.addEllipse(tx+.5-rad,shape[0]-ty-.5-rad,2*rad,2*rad,pen)
+        self.sky_canvas.fitInView(item,Qt.KeepAspectRatio)
+        self.sky_caption.setText(f"{self.sky_layer.currentText()} · {shape[1]} × {shape[0]} native px · "
+            f"display {limits[0]:.4g} … {limits[1]:.4g} "
+            + ("(1 = eligible; 0 = excluded)" if layer=="safe" else "nMgy/px · purple = unavailable")
+            + (" · fixed SH1C / 60 arcsec / 32 px" if central else " · orange = additional target guard")
+            + " · NOT ADOPTED")
+
+    def _inspect_block(self,sx,sy):
+        if not self.current_expanded_result() or self.sky_trial.currentData() is None:
+            return
+        if self.sky_layer.currentData().startswith("sky1_"):
+            return
+        r=self._result["expanded_sky"]; t=r["trials"][self.sky_trial.currentData()]
+        ny,nx=r["expanded_shape"]
+        if not (0<=sx<nx and 0<=sy<ny):
+            return
+        x=int(sx); y=ny-1-int(sy); tile=t["tile_size_pix"]
+        bx=x//tile*tile; by=y//tile*tile
+        b=next((b for b in t["blocks"] if b["tile_x_pix"]==bx and b["tile_y_pix"]==by),None)
+        text=f"Expanded FITS pixel ({x},{y}), zero-based · "
+        if b is None:
+            text+="not in an eligible sky block"
+        else:
+            text+=(f"block ({bx},{by}), N={b['n']}, signed mean={b['mean_nMgy_pix']:.6g}, "
+                   f"median={b['median_nMgy_pix']:.6g} nMgy/px")
+        entries=[s for s in r.get("source_entries",[]) if s.get("x") is not None and s.get("y") is not None
+                 and np.isfinite([s["x"],s["y"]]).all()]
+        nearest=sorted(entries,key=lambda s:np.hypot(s["x"]-x,s["y"]-y))[:3]
+        if nearest:
+            text+=" · nearest (not classification): "+", ".join(
+                f"OBJID {s['objid']} ({np.hypot(s['x']-x,s['y']-y)*r['pixel_scale_arcsec']:.1f} arcsec)" for s in nearest)
+        self.block_caption.setText(text)
+
+    @staticmethod
+    def _format_expanded(result):
+        r=result["expanded_sky"]
+        lines=["Expanded residual sky · NOT ADOPTED",str(result["dataset_source"]),
+               f"Foreground OBJID {result['foreground_source_objid']} · {r['expanded_shape']} px",
+               r["warning"],"Equal-quadrant CV MAE (nMgy/px); zero uses the same blocks."]
+        def fmt(v): return "—" if v is None else f"{v:.6g}"
+        def candidates(cands):
+            return [f"  {c['method']}: zero={fmt(c.get('zero_equal_quadrant_mae_nMgy_pix'))} "
+                f"fit={fmt(c.get('cv_equal_quadrant_mae_nMgy_pix'))} · {c['status']}" for c in cands]
+        for t in r["trials"]:
+            lines.append(f"{t['halo_scenario']} · guard={t['target_guard_arcsec']} arcsec · tile={t['tile_size_pix']} px")
+            lines.extend(candidates(t["candidates"]))
+            for edge in t.get("edge_stress",[]):
+                lines.append(f"  Edge stress {edge['side']} 25 arcsec · removed {edge['removed_blocks']} blocks")
+                lines.extend(candidates(edge["candidates"]))
+            if t["target_guard_arcsec"]==60 and t["tile_size_pix"]==32:
+                lines.append("  Largest positive block means; nearest catalogue centre is not source attribution:")
+                sources=[s for s in r.get("source_entries",[]) if s.get("x") is not None and s.get("y") is not None]
+                for b in sorted(t["blocks"],key=lambda b:b["mean_nMgy_pix"],reverse=True)[:10]:
+                    x,y=b["x_pix"],b["y_pix"]
+                    near=min(sources,key=lambda s:np.hypot(s["x"]-x,s["y"]-y)) if sources else None
+                    lines.append(f"    ({x:.1f},{y:.1f}) mean={b['mean_nMgy_pix']:.6g}, median={b['median_nMgy_pix']:.6g}"
+                        + (f" · nearest OBJID {near['objid']} at {np.hypot(near['x']-x,near['y']-y)*r['pixel_scale_arcsec']:.1f} arcsec" if near else ""))
+        pair=result.get("paired_sky")
+        if pair:
+            lines.append("Matched g/r controls: "+pair["status"])
+            if pair.get("reason"): lines.append(pair["reason"])
+            if "bands" in pair:
+                lines.append(f"  Common eligible pixels: {pair['common_pixels']}")
+                for b,v in pair["bands"].items():
+                    lines.append(f"  {b}: {len(v['blocks'])} blocks; {len(v['empty_aperture_centres'])} empty apertures")
+                    lines.extend(candidates(v["candidates"]))
+        return "\n".join(lines)
+
+    def current_expanded_result(self):
+        if self._result is not None and "expanded_sky" in self._result and (
+                self._current_identity(self._result_identity,self._snapshot())==self._result_identity):
+            return self._result
+        return None
 
     @staticmethod
     def _format_readout(result):
@@ -604,8 +891,7 @@ class SkyWorkspace(QWidget):
             "traceback. Correct Stage 02 evidence, then retry.")
 
     def copy_qa(self):
-        if self._result is None or self._snapshot() is None or (
-                self._snapshot()[0] != self._result_identity):
+        if self._result is None or self._current_identity(self._result_identity,self._snapshot()) != self._result_identity:
             self.refresh_context()
             self.status.setText(
                 "No current background QA to copy. Re-evaluate.")
@@ -614,6 +900,9 @@ class SkyWorkspace(QWidget):
             **self._result,
             "export_generated_utc": datetime.now(timezone.utc).isoformat(),
         }
+        if "expanded_sky" in payload:
+            from lsbpipe.gui.scene_editor import _scene_qa_json_value
+            payload=_scene_qa_json_value(payload)
         QApplication.clipboard().setText(
             json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
         self.status.setText(

@@ -35,8 +35,8 @@ REQUIRED = {"BRICKNAME", "BRICK_PRIMARY", "RA", "DEC",
 
 
 def tractor_catalog_location(data_root, *, release, region, brick):
-    if release != "dr11" or region != "south":
-        raise ValueError("Gaia/Tractor PSF pilot is validated only for DR11 south")
+    if release != "dr11" or region not in ("north", "south"):
+        raise ValueError("Gaia/Tractor PSF pilot supports DR11 North/South only")
     if region not in regions_for_release(release) or not BRICK_RE.fullmatch(brick):
         raise ValueError("Invalid Legacy Survey release/region/brick")
     path = (Path(data_root).resolve() / release / region / "tractor" /
@@ -143,6 +143,8 @@ class TractorGaiaMatcher:
             return finish(failure="AMBIGUOUS_TRACTOR_CROSSMATCH")
         index = int(near[0])
         row = self.rows[index]
+        if not row.get("brick_primary",True):
+            return finish(failure="TRACTOR_NONPRIMARY_SOURCE_NOT_PSF_TRAINING")
         trace["checks_passed"].append("unique_tractor_centroid_match")
         trace.update({
             "matched_tractor_objid": row["objid"],
@@ -244,12 +246,14 @@ class TractorGaiaMatcher:
 
 
 def read_native_tractor_gaia(data_root, *, release, region, brick,
-                             frame, max_bytes=MAX_CATALOG_BYTES):
+                             frame, max_bytes=MAX_CATALOG_BYTES, include_nonprimary=False):
     """Validate and read the exact versioned local native Tractor FITS.
 
     The input is always the *original* Tractor catalog; it is not Gaia
     queried at different epoch or an unverified viewer overlay.
     """
+    if type(include_nonprimary) is not bool:
+        raise TypeError("include_nonprimary must be Boolean")
     from astropy.io import fits
     path, _url = tractor_catalog_location(
         data_root, release=release, region=region, brick=brick)
@@ -286,9 +290,10 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
                 raise ValueError("Tractor FITS contains another brick identity")
             ra = _number(row[names["RA"]])
             dec = _number(row[names["DEC"]])
+            primary=bool(row[names["BRICK_PRIMARY"]])
             if (ra is None or dec is None or
                     not 0 <= ra < 360 or not -90 <= dec <= 90 or
-                    not bool(row[names["BRICK_PRIMARY"]])):
+                    (not primary and not include_nonprimary)):
                 continue
             world.append((ra,dec))
             ref_id = int(row[names["REF_ID"]])
@@ -296,7 +301,7 @@ def read_native_tractor_gaia(data_root, *, release, region, brick,
                 # Exact catalogued coordinates and optional DR11 context.
                 # These are observations/model metadata, NOT physical
                 # classifications or an independent Gaia re-query.
-                "ra_deg": ra, "dec_deg": dec,
+                "ra_deg": ra, "dec_deg": dec, "brick_primary":primary,
                 "ref_cat": _value(row[names["REF_CAT"]]).upper(),
                 "ref_id": ref_id,
                 "objid": int(row[names["OBJID"]]),

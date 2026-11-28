@@ -22,14 +22,14 @@ from uuid import uuid4
 import numpy as np
 
 from PySide6.QtCore import Qt, QTimer, Signal, QSize
-from PySide6.QtGui import QColor, QPainterPath, QPen, QShortcut, QKeySequence
+from PySide6.QtGui import QColor, QPainterPath, QPen, QShortcut, QKeySequence, QBrush
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QGraphicsPathItem,
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QGroupBox, QScrollArea, QSlider, QToolButton, QFileDialog,
-    QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout,
-    QSizePolicy, QBoxLayout, QLayout,
+    QApplication, QPlainTextEdit, QStackedWidget, QFormLayout, QGridLayout, QDialog,
+    QSizePolicy, QBoxLayout, QLayout, QTabWidget,
 )
 
 from lsbpipe.gui.workflow_ux import format_gui_failure_report
@@ -547,8 +547,9 @@ def propose_scene_isophote(dataset, center_icrs, threshold, smoothing,
 
 def run_scene_psf0_foreground_probe(
         dataset, project_root, source_entry, source_inventory,
-        center_icrs, component_indices=None):
-    """Use an EXISTING verified per-band PSF-0; never refit or save a PSF.
+        center_icrs, component_indices=None, *, scene_masks=None, scene_draft=None,
+        sga_prior=None):
+    """Inspect a saved finite PSF, or independently measure saturated-star sectors.
 
     Only the original native cutout and immutable restored ePSF are
     inspected. The GUI runs this source-bound I/O and fit in its worker.
@@ -587,6 +588,140 @@ def run_scene_psf0_foreground_probe(
         "source_light_subtracted":False,
         "original_pixels_modified":False,
     }
+    # Saturated stars are a distinct measurement path. Never demand a
+    # successful isolated core fit or use the unfitted Tractor amplitude.
+    if f"SATUR_{band.upper()}" in (source_entry.get("maskbits_names") or ()):
+        from astropy.wcs.utils import proj_plane_pixel_scales
+        from lsbpipe.photometry.stellar_halo import measure_saturated_halo_sectors
+        if scene_masks is None:
+            return dict(output, status="SH1_CURRENT_SCENE_MASKS_REQUIRED")
+        if (scene_masks.get("project_id") != project.project_id or
+                scene_masks.get("dataset_source") != source or
+                scene_masks.get("catalog_sha256") != source_inventory.get("catalog_sha256")):
+            raise ValueError("SH1 scene mask provenance mismatch")
+        original_scene=dataset
+        original_masks=scene_masks
+        wcs = dataset["wcs"]
+        sx,sy = map(float,wcs.all_world2pix(
+            float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
+        if math.hypot(sx-float(source_entry["x"]),sy-float(source_entry["y"])) > .75:
+            raise ValueError("SH1 source WCS mismatch")
+        expanded_window=None
+        if scene_draft is not None:
+            from lsbpipe.photometry.native_fits import load_native_legacy_quartet
+            from lsbpipe.photometry.stellar_halo_scene import expanded_halo_cutout
+            from lsbpipe.gui.science_workflows import science_data_root
+            if (scene_draft.digest!=scene_masks["draft_digest"] or
+                    tuple(center_icrs)!=tuple(scene_masks["anchor_icrs"]) or
+                    scene_masks["sga_prior_id"]!=(sga_prior.sga_id if sga_prior else None) or
+                    scene_masks["sga_prior_sha256"]!=(sga_prior.source_sha256 if sga_prior else None)):
+                raise ValueError("SH1-B2 stale scene draft or protection policy")
+            release,region,brick=project.selected_dataset[:3]
+            hit=BrickHit(release,region,brick,0.,0.,0.,0.,{band:1})
+            root=science_data_root(project.data_root,hit=hit,band=band)
+            frame=load_native_legacy_quartet(root,release=release,region=region,
+                        brick=brick,band=band,require_explicit_bunit=True,hash_inputs=True)
+            dataset,expanded_window=expanded_halo_cutout(
+                frame,original_scene,(float(source_entry["ra_deg"]),float(source_entry["dec_deg"])))
+            del frame
+            scene_masks=prepare_scene_contamination(
+                dataset,project,scene_draft,center_icrs,sga_prior=sga_prior,
+                gaia_inner_preview=original_masks["gaia_inner_preview_enabled"],
+                red_extended_preview=original_masks["red_extended_preview_enabled"],
+                gaia_inner_skip_objids=original_masks.get("gaia_inner_skipped_objids_for_qa",()))
+            if scene_masks["catalog_sha256"]!=output["tractor_catalog_sha256"]:
+                raise ValueError("SH1-B2 original Tractor hash changed")
+            source_inventory=scene_masks["source_inventory"]
+            matches=[e for e in source_inventory["entries"] if e["source_id"]==output["source_id"]]
+            if (len(matches)!=1 or str(matches[0]["gaia_dr3_source_id"])!=output["gaia_dr3_source_id"]
+                    or f"SATUR_{band.upper()}" not in matches[0]["maskbits_names"]):
+                raise ValueError("SH1-B2 source identity changed in expanded inventory")
+            wcs=dataset["wcs"]
+            sx,sy=map(float,wcs.all_world2pix(float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
+            if math.hypot(sx-float(matches[0]["x"]),sy-float(matches[0]["y"]))>.75:
+                raise ValueError("SH1-B2 expanded source WCS mismatch")
+            expanded_window["scene_edge"]=scene_masks["scene_edge"]
+            expanded_window["mask_stats"]=scene_masks["stats"]
+            expanded_window["effective_source_mask_sha256"]=scene_masks["effective_source_mask_sha256"]
+            expanded_window["manual_exclude_mask_sha256"]=scene_masks["manual_exclude_mask_sha256"]
+            expanded_window["sky_veto_sha256"]=scene_masks["unresolved_target_overlap_sky_veto_sha256"]
+        tx,ty = map(float,wcs.all_world2pix(*map(float,center_icrs),0))
+        scales = np.asarray(proj_plane_pixel_scales(wcs.celestial))*3600.
+        if scales.shape != (2,) or not np.isfinite(scales).all() or np.min(scales)<=0 or np.max(scales)/np.min(scales)>1.01:
+            raise ValueError("SH1 requires near-square native celestial pixels")
+        neighbors = [(e["x"],e["y"]) for e in source_inventory["entries"]
+                     if e["source_id"] != source_entry["source_id"]
+                     and e.get("x") is not None and e.get("y") is not None]
+        result = measure_saturated_halo_sectors(
+            dataset["data"]["image"],dataset["data"]["invvar"],
+            dataset["native_hard"],source_xy=(sx,sy),target_xy=(tx,ty),
+            pixel_scale_arcsec=float(np.sqrt(np.prod(scales))),
+            source_mask=scene_masks["mask"],protected=scene_masks["protected"],
+            unresolved_sky_veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],
+            neighbor_centres=neighbors, compare_models=True,
+            expanded=expanded_window is not None)
+        preview=None
+        if expanded_window is not None:
+            from lsbpipe.photometry.stellar_halo_preview import conditional_halo_images
+            owcs=original_scene["wcs"]
+            osx,osy=map(float,owcs.all_world2pix(float(source_entry["ra_deg"]),float(source_entry["dec_deg"]),0))
+            otx,oty=map(float,owcs.all_world2pix(*map(float,center_icrs),0))
+            preview=conditional_halo_images(original_scene["data"]["image"],
+                original_scene["data"]["invvar"],original_scene["native_hard"],
+                original_masks["mask"],source_xy=(osx,osy),target_xy=(otx,oty),
+                pixel_scale_arcsec=result["pixel_scale_arcsec"],
+                comparison=result["sh1b_model_comparison"],radial_edges=result["radial_edges_arcsec"])
+            preview["grid_fingerprint"]=original_scene["grid_fingerprint"]
+            preview["draft_digest"]=original_masks["draft_digest"]
+            preview["effective_source_mask_sha256"]=original_masks["effective_source_mask_sha256"]
+            if preview["status"]=="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED":
+                from lsbpipe.photometry.stellar_halo_sectors import sector_diagnostics
+                preview["sh1d"]=sector_diagnostics(preview,result["sh1b_model_comparison"],
+                    owcs,original_masks["source_inventory"]["entries"])
+                from lsbpipe.photometry.stellar_halo_spikes import directional_halo_experiment
+                preview["sh1e"]=directional_halo_experiment(
+                    dataset["data"]["image"],dataset["data"]["invvar"],dataset["native_hard"],
+                    source_xy=(sx,sy),target_xy=(tx,ty),scale=result["pixel_scale_arcsec"],
+                    source_mask=scene_masks["mask"],protected=scene_masks["protected"],
+                    veto=scene_masks["unresolved_target_overlap_sky_veto_mask"],neighbours=neighbors,
+                    baseline_comparison=result["sh1b_model_comparison"],original_preview=preview)
+                from lsbpipe.photometry.galaxy_geometry_diagnostic import geometry_diagnostics
+                preview["geo1"]=geometry_diagnostics(preview,result["sh1b_model_comparison"],owcs)
+                # Freeze expanded native inputs for explicit Sky execution.
+                def frozen(a):
+                    v=np.array(a,copy=True); v.setflags(write=False); return v
+                preview["sky1_inputs"]={
+                    "image":frozen(dataset["data"]["image"]),
+                    "iv":frozen(dataset["data"]["invvar"]),
+                    "hard":frozen(dataset["native_hard"]),
+                    "source_xy":(sx,sy),"target_xy":(tx,ty),
+                    "scale":result["pixel_scale_arcsec"],
+                    "source_mask":frozen(scene_masks["mask"]),
+                    "protected":frozen(scene_masks["protected"]),
+                    "veto":frozen(scene_masks["unresolved_target_overlap_sky_veto_mask"]),
+                    "neighbours":tuple(neighbors),
+                    "primary_only_mask":frozen(scene_masks["primary_only_mask"]),
+                    "primary_only_veto":frozen(scene_masks["primary_only_sky_veto_mask"]),
+                    "primary_only_neighbours":tuple((e["x"],e["y"]) for e in source_inventory["entries"]
+                        if e["source_id"]!=source_entry["source_id"] and e.get("brick_primary",True)
+                        and e.get("x") is not None and e.get("y") is not None),
+                    "scene_edge":scene_masks["scene_edge"],
+                    "source_entries":[{k:e.get(k) for k in ("objid","source_id","x","y","tractor_type","brick_primary")}
+                                      for e in source_inventory["entries"]],
+                    "expanded_grid_fingerprint":dataset.get("grid_fingerprint"),
+                }
+        return dict(output,status=result["status"],sh1_sector_measurement=result,
+                    sh1c_preview=preview,
+                    sh1d_policy={k:original_masks.get(k) for k in (
+                        "anchor_icrs","sga_prior_id","sga_prior_sha256","gaia_inner_preview_enabled",
+                        "gaia_inner_skipped_objids_for_qa","red_extended_preview_enabled")},
+                    draft_digest=scene_masks["draft_digest"],
+                    grid_fingerprint=dataset.get("grid_fingerprint"),
+                    original_scene_grid_fingerprint=original_scene.get("grid_fingerprint"),
+                    sh1b2_native_window=expanded_window,
+                    original_fits_sha256_local=dataset.get("original_fits_sha256_local"),
+                    source_maskbits=source_entry.get("maskbits"),
+                    source_maskbits_names=source_entry.get("maskbits_names"))
     restored = read_saved_psf0_bands(project_root)
     psf = restored["restored"].get(band)
     if psf is None:
@@ -1238,6 +1373,7 @@ class SceneEditor(QWidget):
         self._sweep_result = None
         self._policy_ablation_result = None
         self._foreground_psf_result = None
+        self._sh1d_session = {}
         self._contamination_overlay = None
         self._conflict_paths = []
         self._sga_shred_paths = []
@@ -1561,7 +1697,7 @@ class SceneEditor(QWidget):
         self.iso_prepare = QPushButton("1 · Prepare neighbour masks")
         self.iso_prepare.setObjectName("scene_prepare_neighbour_masks")
         self.iso_prepare.setToolTip(
-            "Read same-brick local DR11 South Tractor catalogue; "
+            "Read same-brick local DR11 North/South Tractor catalogue; "
             "make provisional source envelopes and inspect MASKBITS. "
             "No model subtraction, PSF wing validation or downloads.")
         self.iso_prepare.clicked.connect(self._prepare_neighbour_masks)
@@ -1672,7 +1808,7 @@ class SceneEditor(QWidget):
             self._update_contamination_overlay)
         iso_layout.addWidget(self.iso_show_sga_shreds)
         self.iso_mask_status = QLabel(
-            "Neighbour mask not prepared. Local DR11 South Tractor "
+            "Neighbour mask not prepared. Local DR11 North/South Tractor "
             "catalogue required; obtain it through PSF-0 if absent.")
         self.iso_mask_status.setObjectName("scene_neighbor_mask_status")
         self.iso_mask_status.setWordWrap(True)
@@ -1761,7 +1897,7 @@ class SceneEditor(QWidget):
             "or foreground contaminant.")
         registry_layout.addWidget(self.source_registry_details)
         self.psf0_fg_btn = QPushButton(
-            "Probe selected Gaia star · saved PSF-0")
+            "Probe Gaia star · PSF-0 / saturated halo")
         self.psf0_fg_btn.setObjectName("scene_psf0_foreground_probe")
         self.psf0_fg_btn.setToolTip(
             "Read-only fit of saved empirical PSF-0 on original star "
@@ -1770,6 +1906,8 @@ class SceneEditor(QWidget):
             "project blank controls. Uses ONLY currently loaded project "
             "FITS and original Tractor inventory; requires a selected "
             "Gaia foreground source and verified per-band saved PSF-0. "
+            "For saturated stars, SH1 instead measures masked native sectors "
+            "without a PSF or fitted catalogue amplitude. "
             "Does not extrapolate PSF wings, infer galaxy flux loss, "
             "subtract pixels or adopt a science mask.")
         self.psf0_fg_btn.clicked.connect(
@@ -1781,6 +1919,11 @@ class SceneEditor(QWidget):
         self.psf0_fg_status.setObjectName("scene_psf0_foreground_status")
         self.psf0_fg_status.setWordWrap(True)
         registry_layout.addWidget(self.psf0_fg_status)
+        self.sh1c_preview_btn=QPushButton("Review conditional halo images · SH1-C")
+        self.sh1c_preview_btn.setObjectName("scene_sh1c_preview")
+        self.sh1c_preview_btn.setEnabled(False)
+        self.sh1c_preview_btn.clicked.connect(self._show_sh1c_preview)
+        registry_layout.addWidget(self.sh1c_preview_btn)
         self.source_registry_copy = QPushButton(
             "Copy filtered evidence as TSV")
         self.source_registry_copy.setObjectName(
@@ -2192,6 +2335,8 @@ class SceneEditor(QWidget):
         self._redraw_outlines()
 
     def _switch_source(self, key, dataset):
+        if key != self._source_key:
+            self._sh1d_session.clear()
         self._load_generation += 1
         self._fits_load_failure = None
         self.copy_error_btn.hide()
@@ -2351,7 +2496,7 @@ class SceneEditor(QWidget):
                 self.iso_mask_status.setText(
                     "Mask preparation FAILED: " + str(exc)
                     + ". No unmasked isophote will be offered. "
-                      "For DR11 South obtain the local Tractor catalogue "
+                      "For DR11 North/South obtain the local Tractor catalogue "
                       "in PSF-0; no automatic download occurred.")
             elif kind == "radius_sweep":
                 self._sweep_result = None
@@ -2976,12 +3121,16 @@ class SceneEditor(QWidget):
         self._future = self._executor.submit(
             run_scene_psf0_foreground_probe,
             self._loaded, str(self._project_root), dict(entry),
-            self._source_registry, centre, indices)
+            self._source_registry, centre, indices,
+            scene_masks=self._contamination,
+            **({"scene_draft":self._draft,
+                "sga_prior":self._sga_candidate if self.sga_use_prior.isChecked() else None}
+               if f"SATUR_{self._band.upper()}" in (entry.get("maskbits_names") or ()) else {}))
         self._work_kind = "psf_foreground"
         self._active_generation = self._load_generation
         self.psf0_fg_status.setText(
-            f"Checking stored PSF-0 hashes and native pixels for "
-            f"OBJID {entry['objid']} in the background… "
+            f"Checking original FITS and native pixels for "
+            f"OBJID {entry['objid']} (saturated: expanded halo window; otherwise saved PSF-0)… "
             "No image, draft or science model changes.")
         self._poll_timer.start()
         self._refresh_controls()
@@ -2999,8 +3148,50 @@ class SceneEditor(QWidget):
                 not any(e["source_id"] == result.get("source_id")
                         for e in self._source_registry["entries"])):
             raise ValueError("Stale PSF0 foreground source/project evidence")
-        self._foreground_psf_result = result
         status = result["status"]
+        if status == "SH1_SECTORS_MEASURED_NOT_ADOPTED":
+            if result.get("draft_digest") != self._draft.digest:
+                raise ValueError("Stale SH1 scene revision")
+            if result.get("sh1b2_native_window") is not None and (
+                    result.get("original_scene_grid_fingerprint")!=self._loaded.get("grid_fingerprint") or
+                    result.get("original_fits_sha256_local")!=self._loaded.get("original_fits_sha256_local")):
+                raise ValueError("Stale SH1-B2 original FITS/grid evidence")
+            self._foreground_psf_result = result
+            preview=result.get("sh1c_preview") or {}
+            if self._band in ("g","r") and preview.get("sh1d") is not None:
+                self._sh1d_session[self._band]=result
+                if set(self._sh1d_session)=={"g","r"}:
+                    from lsbpipe.photometry.stellar_halo_sectors import paired_sector_diagnostics
+                    try:
+                        result["sh1d_paired"]=paired_sector_diagnostics(
+                            self._sh1d_session["g"],self._sh1d_session["r"],self._loaded["wcs"])
+                    except ValueError as exc:
+                        result["sh1d_paired"]={"status":"SH1D_PAIR_BLOCKED","reason":str(exc),
+                                             "science_adopted":False}
+                    if result["sh1d_paired"].get("status")=="SH1D_PAIRED_NATIVE_PIXELS_NOT_ADOPTED" and all(
+                            v["sh1c_preview"].get("geo1") for v in self._sh1d_session.values()):
+                        from lsbpipe.photometry.galaxy_geometry_diagnostic import paired_geometry
+                        try:
+                            result["geo1_paired"]=paired_geometry(self._sh1d_session["g"],
+                                self._sh1d_session["r"],self._loaded["wcs"])
+                        except ValueError as exc:
+                            result["geo1_paired"]={"status":"GEO1_PAIR_BLOCKED","reason":str(exc),"science_adopted":False}
+            rows = result["sh1_sector_measurement"]["rows"]
+            count = sum(r["adequate_for_descriptive_comparison"]
+                        for r in rows if r["role"] == "AWAY_TRAIN_CANDIDATE")
+            comparison = result["sh1_sector_measurement"].get("sh1b_model_comparison")
+            label = "SH1-B2 expanded native window" if result.get("sh1b2_native_window") else "SH1-B"
+            note = (f"{label}: {len(comparison['candidates'])} diagnostic hypotheses; "
+                    if comparison is not None else "no sky or halo fit; ")
+            self.psf0_fg_status.setText(
+                f"OBJID {result['source_objid']} · SH1 saturated-star sectors: "
+                f"{count} usable away-sector radial bins. {note}"
+                + ("SH1-C conditional preview available; no science adoption. "
+                   if (result.get("sh1c_preview") or {}).get("status")=="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED"
+                   else "no subtraction. ")
+                + "Copy Scene QA for profiles and model sensitivity. Open Sky for expanded residual background.")
+            return
+        self._foreground_psf_result = result
         if status != "FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED":
             self.psf0_fg_status.setText(
                 f"OBJID {result['source_objid']}: {status}. "
@@ -3031,6 +3222,270 @@ class SceneEditor(QWidget):
                f"original FITS only. "
                if result.get("project_only_outer_sector_probe") else "")
             + "Full provenance in Copy Scene QA.")
+
+    def _show_sh1c_preview(self):
+        result=self._foreground_psf_result or {}
+        p=result.get("sh1c_preview") or {}
+        if (self._loaded is None or self._draft is None or self._contamination is None
+                or self._future is not None or p.get("status")!="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED"
+                or p.get("grid_fingerprint")!=self._loaded.get("grid_fingerprint")
+                or p.get("draft_digest")!=self._draft.digest
+                or p.get("effective_source_mask_sha256")!=self._contamination.get("effective_source_mask_sha256")):
+            return
+        dialog=QDialog(self)
+        dialog.setWindowTitle(f"SH1-C · {self._band.upper()} · OBJID {result['source_objid']} · NOT ADOPTED")
+        layout=QVBoxLayout(dialog)
+        warning=QLabel("Conditional diagnostic only. Purple = unavailable or excluded. "
+                       "Original, corrected and residual use shared display limits. "
+                       "No calibrated sky or total flux.")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+        selector=QComboBox()
+        selector.setObjectName("sh1c_layer_selector")
+        for label,key in (("Original native image","original"),("Halo model · reference","halo_model"),
+                          ("Halo corrected · reference","halo_corrected"),("Sky model · reference","sky_model"),
+                          ("Halo + sky residual · reference","residual"),
+                          ("Halo model range width","halo_model_spread"),("Sky model range width","sky_model_spread")):
+            selector.addItem(label,key)
+        spike=p.get("sh1e") or {}
+        extent=spike.get("adaptive_extent") or {}
+        decay=spike.get("decay_extent") or {}
+        sky=p.get("sky1") or {}
+        all_layers=dict(p["layers"],**spike.get("layers",{}),**extent.get("layers",{}),**decay.get("layers",{}),**sky.get("layers",{}))
+        for width in (2,4):
+            for label,suffix in (("Refit radial residual","refit_residual"),("Spike masked residual","masked_residual"),
+                                 ("Mirrored spike model","model"),("Halo + spike model","halo_plus_spike"),
+                                 ("Halo + spike + sky residual","corrected")):
+                key=f"spike_{width}_{suffix}"
+                if key in all_layers:
+                    selector.addItem(f"{label} · ±{width} arcsec · conditional",key)
+        for label,key in (("Adaptive spike model · truncated hypothesis","adaptive_spike_model"),
+                          ("Adaptive spike residual · conditional","adaptive_spike_corrected")):
+            if key in all_layers:
+                selector.addItem(label,key)
+        for label,key in (("Decay spike model · conditional","decay_spike_model"),
+                          ("Decay spike residual · conditional","decay_spike_corrected")):
+            if key in all_layers:
+                selector.addItem(label,key)
+        for method in ("constant","plane","quadratic"):
+            for suffix,label in (("model","Additional sky"),("corrected","Sky-corrected residual")):
+                key=f"sky1_{method}_{suffix}"
+                if key in all_layers:
+                    selector.addItem(f"SKY-1 {label} · {method} · 60 arcsec / 32 px",key)
+        layout.addWidget(selector)
+        overlay=QCheckBox("Show Tractor centres within 49 arcsec · review only")
+        overlay.setEnabled(bool(p.get("sh1d",{}).get("sources")))
+        layout.addWidget(overlay)
+        geo=p.get("geo1") or {}
+        geo_overlay=QCheckBox("Show GEO-1 reference ellipse · 35 arcsec · review only")
+        geo_overlay.setEnabled(bool(geo.get("overlay_35arcsec_native_xy")))
+        layout.addWidget(geo_overlay)
+        graphics=QGraphicsScene(dialog)
+        view=QGraphicsView(graphics)
+        view.setObjectName("sh1c_image_view")
+        layout.addWidget(view,1)
+        caption=QLabel()
+        caption.setWordWrap(True)
+        layout.addWidget(caption)
+        table=QPlainTextEdit()
+        table.setReadOnly(True)
+        table.setMinimumHeight(120)
+        lines=["Radius | support / valid | raw matched | halo corrected range | halo+sky range (nMgy)"]
+        def fmt(v):
+            return "—" if v is None else f"{v:.4g}"
+        def rng(v):
+            return "—" if v is None else f"{v[0]:.4g} to {v[1]:.4g}"
+        for a in p["apertures"]:
+            lines.append(f"{a['radius_arcsec']:g} arcsec | {a['common_support_pixels']}/{a['valid_pixels']} | "
+                         f"{fmt(a['raw_matched_flux_nMgy'])} | {rng(a['halo_corrected_flux_nMgy_range'])} | "
+                         f"{rng(a['halo_sky_residual_flux_nMgy_range'])}")
+        table.setPlainText("\n".join(lines))
+        tabs=QTabWidget()
+        tabs.setMinimumHeight(150)
+        tabs.addTab(table,"Growth curves · SH1-C")
+        def add_text_tab(name,lines):
+            widget=QPlainTextEdit()
+            widget.setReadOnly(True)
+            widget.setPlainText("\n".join(lines))
+            tabs.addTab(widget,name)
+        d=p.get("sh1d") or {}
+        if d:
+            def sector_lines(rows):
+                lines=["Ring (arcsec) | sector | pixels | reference flux (nMgy) | mean range (nMgy/arcsec²)"]
+                for a in rows:
+                    lines.append(f"{a['r_inner_arcsec']:g}–{a['r_outer_arcsec']:g} | {a['sector']} | "
+                        f"{a['used_pixels']}/{a['in_frame_pixels']} | {fmt(a['reference_residual_flux_nMgy'])} | "
+                        f"{rng(a['mean_intensity_range_nMgy_arcsec2'])}")
+                return lines
+            add_text_tab("Sector profiles",sector_lines(d["rows"]))
+            source_lines=["One source at a time; removed flux includes unknown galaxy light.",
+                          "OBJID | mask radius | aperture | removed pixels | baseline → excluded (nMgy)"]
+            for a in d["individual_source_exclusion_trials"]:
+                source_lines.append(f"{a['objid']} | {a['mask_radius_arcsec']:g} | {a['aperture_radius_arcsec']:g} | "
+                     f"{a['removed_pixels']} | {fmt(a['baseline_reference_flux_nMgy'])} → {fmt(a['excluded_reference_flux_nMgy'])}")
+            add_text_tab("Source mask trials",source_lines)
+            pair=result.get("sh1d_paired")
+            if pair and pair.get("bands"):
+                add_text_tab("Matched g",sector_lines(pair["bands"]["g"]["rows"]))
+                add_text_tab("Matched r",sector_lines(pair["bands"]["r"]["rows"]))
+            else:
+                add_text_tab("Matched g/r",[pair.get("reason","Run both g and r for the same star and draft in this session.") if pair else
+                    "Run both g and r for the same star and draft in this session."])
+        if spike:
+            slines=["SH1-E · native Y axis · away-only template · NOT ADOPTED",
+                    "Compare equal-pixel columns only; masked flux excludes galaxy light too."]
+            for trial in spike.get("half_width_trials",[]):
+                slines.append(f"Half width {trial['half_width_arcsec']:g} arcsec | {trial['status']} | "
+                    f"{trial['candidate_count']} radial models | {trial.get('template_supported_cell_count',0)} supported cells")
+                slines.append("Aperture | common/off-strip/template pixels | baseline/refit (common) | baseline/refit (off-strip) | refit/corrected (template matched), nMgy")
+                for a in trial.get("aperture_and_ring_sums",[]):
+                    if a["kind"]!="aperture" or a["sector"]!="ALL":
+                        continue
+                    slines.append(f"{a['outer_arcsec']:g} | {a['common_pixels']}/{a['off_strip_pixels']}/{a['template_supported_pixels']} | "
+                        f"{fmt(a['baseline_common_flux_nMgy'])}/{fmt(a['refit_common_flux_nMgy'])} | "
+                        f"{fmt(a['baseline_off_strip_flux_nMgy'])}/{fmt(a['refit_off_strip_flux_nMgy'])} | "
+                        f"{fmt(a['refit_template_matched_flux_nMgy'])}/{fmt(a['spike_corrected_flux_nMgy'])}")
+            add_text_tab("Spike trials",slines)
+        if extent:
+            support=extent.get("support") or {}
+            elines=["SH1-E2 · contiguous away-side detection · NOT ADOPTED",
+                    f"Status: {extent['status']} | axis: {fmt(extent.get('selected_axis_deg'))} deg",
+                    f"Detected outer bin edge: {fmt(support.get('detected_outer_edge_arcsec'))} arcsec | {support.get('endpoint_status','—')}",
+                    "Not a physical cutoff or an upper bound. See QA for signed control profiles.",
+                    "Axis | inner detection | outer edge | termination"]
+            for s in extent.get("axis_scan",[]):
+                u=s["support"]
+                elines.append(f"{s['angle_deg']:g} | {fmt(u.get('detected_inner_edge_arcsec'))} | {fmt(u.get('detected_outer_edge_arcsec'))} | {u['endpoint_status']}")
+            elines.append("Aperture | matched pixels | refit / adaptive corrected (nMgy)")
+            for row in extent.get("aperture_and_ring_sums",[]):
+                if row["kind"]=="aperture" and row["sector"]=="ALL":
+                    elines.append(f"{row['outer_arcsec']:g} | {row['template_supported_pixels']} | "
+                        f"{fmt(row['refit_template_matched_flux_nMgy'])} / {fmt(row['spike_corrected_flux_nMgy'])}")
+            add_text_tab("Spike extent",elines)
+        if decay:
+            fit=decay.get("fit") or {}
+            best=fit.get("best") or {}
+            dlines=["SH1-E3 · fixed native vertical · NOT ADOPTED",decay["status"],
+                f"Measured blocks: {fit.get('block_count',0)} | matched controls: {decay.get('usable_control_count',0)}",
+                f"E-folding scale: {fmt(best.get('length_arcsec'))} arcsec | near-best range: {rng(fit.get('near_best_length_range_arcsec'))}",
+                f"Transverse sigma: {fmt(best.get('sigma_arcsec'))} arcsec | near-best range: {rng(fit.get('near_best_sigma_range_arcsec'))}",
+                "Grid sensitivity ranges, NOT confidence intervals or physical endpoints.",
+                f"Positive blocked CV: {decay.get('positive_cv',False)}",
+                "Injected length / sigma -> recovered length / sigma (arcsec):"]
+            for v in decay.get("injections",[]):
+                dlines.append(f"{v['injected_length_arcsec']:g}/{v['injected_sigma_arcsec']:g} -> "
+                    f"{v['recovered']['length_arcsec']:g}/{v['recovered']['sigma_arcsec']:g}")
+            add_text_tab("Spike decay",dlines)
+        if geo:
+            def geo_line(name,f):
+                return (f"{name} | {f.get('status')} | "
+                    f"{fmt(f.get('east_offset_arcsec'))}/{fmt(f.get('north_offset_arcsec'))} | "
+                    f"{fmt(f.get('q'))} | {fmt(f.get('pa_deg'))} | "
+                    f"{f.get('used_pixels',0)} | {', '.join(f.get('flags',[])) or '—'}")
+            glines=["GEO-1 · conditional observed geometry · NOT ADOPTED",
+                "Window / core / strip (arcsec) | scenario | status | E/N offset (arcsec) | q | ICRS PA (deg) | pixels | flags"]
+            for t in geo.get("trials",[]):
+                for name,f in t["fits"].items():
+                    glines.append(geo_line(f"{t['radius_arcsec']:g}/{t['inner_excluded_arcsec']:g}/{t['strip_half_width_arcsec']:g} {name}",f))
+            glines.append("SH1-C ensemble · fixed 35 arcsec window:")
+            for f in geo.get("ensemble_geometry",[]):
+                glines.append(geo_line(str(f["index"]+1),f))
+            pair=result.get("geo1_paired") or {}
+            if pair:
+                glines.append("Matched g/r · native pixels · no PSF matching")
+                glines.append(pair.get("reason",pair.get("status","")))
+                for name,f in pair.get("fits",{}).items():
+                    glines.append(geo_line(name,f))
+            else:
+                glines.append("Run both g and r in this session for matched geometry.")
+            add_text_tab("GEO-1",glines)
+            plines=["Fixed SH1-C reference geometry · signed sums on common pixels",
+                    "Annulus | sector | scenario | pixels | mean nMgy/arcsec² | cumulative nMgy"]
+            for key,label in (("elliptical_profiles","Elliptical"),("circular_profiles_same_centre","Circular, same centre")):
+                plines.append(label)
+                for a in geo.get(key,[]):
+                    for name,v in a["scenarios"].items():
+                        plines.append(f"{a['inner_arcsec']:g}–{a['outer_arcsec']:g} | {a['sector']} | {name} | "
+                            f"{a['used_pixels']}/{a['in_frame_pixels']} | {fmt(v['mean_nMgy_arcsec2'])} | {fmt(v['cumulative_flux_nMgy'])}")
+            add_text_tab("GEO profiles",plines)
+        if sky:
+            sklines=["SKY-1 · expanded off-target field · NOT ADOPTED",
+                "Holdout excludes this sky fit only, not prior halo training. Quadratic = stress test.",
+                "Halo | guard / tile | model | B0 (nMgy/px) | CV MAE | status"]
+            for t in sky.get("trials",[]):
+                for c in t["candidates"]:
+                    f=c.get("fit") or {}
+                    b=f.get("coefficients_nMgy_pix",[None])[0]
+                    sklines.append(f"{t['halo_scenario']} | {t['target_guard_arcsec']:g}/{t['tile_size_pix']} | "
+                        f"{c['method']} | {fmt(b)} | {fmt(c.get('cv_equal_quadrant_mae_nMgy_pix'))} | {c['status']}")
+                    if t["target_guard_arcsec"]==60 and t["tile_size_pix"]==32:
+                        for v in c.get("empty_apertures",[]):
+                            sklines.append(f"  Empty R={v['radius_arcsec']:g} arcsec: N={v['count']}, "
+                                f"MAD sigma={fmt(v['mad_sigma_nMgy'])} nMgy (uncalibrated)")
+                        f=c.get("geometry_fixed_zero_background") or {}
+                        if f:
+                            sklines.append(f"  Fixed-zero sky geometry: {f['status']} | q={fmt(f.get('q'))} | PA={fmt(f.get('pa_deg'))}")
+                        for v in c.get("fixed_geometry_profiles",[]):
+                            if v["sector"]=="ALL" and v["outer_arcsec"] in (30.,35.,40.):
+                                sklines.append(f"  a={v['outer_arcsec']:g}: "
+                                    f"{fmt(v['scenarios']['baseline']['cumulative_flux_nMgy'])} -> "
+                                    f"{fmt(v['scenarios']['corrected']['cumulative_flux_nMgy'])} nMgy")
+            add_text_tab("SKY-1",sklines)
+        layout.addWidget(tabs)
+        close=QPushButton("Close")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close)
+        original=p["layers"]["original"]
+        finite=original[np.isfinite(original)]
+        limits=tuple(np.quantile(finite,[.01,.995])) if finite.size else (0.,1.)
+        def render(*_):
+            key=selector.currentData()
+            a=all_layers[key]
+            values=a[np.isfinite(a)]
+            shared=key in ("original","halo_corrected","residual") or key.endswith(("_residual","_corrected"))
+            lim=limits if shared else tuple(np.quantile(values,[.01,.99])) if values.size else (0.,1.)
+            if (key.startswith("spike_") and key.endswith("_model") and "halo_plus" not in key) or key in ("adaptive_spike_model","decay_spike_model"):
+                positive=values[values>0]
+                lim=(0.,float(np.quantile(positive,.99))) if positive.size else (0.,1.)
+            if lim[1]<=lim[0]:
+                lim=(lim[0],lim[0]+1e-10)
+            rgb=rgb_for_layer(a,"image",self._band,contrast="faint",scaling="asinh",limits=lim)
+            rgb[~np.isfinite(a)]=(135,49,139)
+            graphics.clear()
+            item=graphics.addPixmap(FITSExplorer._pixmap(rgb))
+            graphics.setSceneRect(item.boundingRect())
+            if overlay.isChecked():
+                pen=QPen(QColor("#70dbe0"))
+                pen.setCosmetic(True)
+                for e in p.get("sh1d",{}).get("sources",[]):
+                    x=e["x"]+.5; y=a.shape[0]-e["y"]-.5
+                    graphics.addEllipse(x-5,y-5,10,10,pen)
+                    t=graphics.addSimpleText(str(e["objid"]))
+                    t.setBrush(QBrush(QColor("#70dbe0")))
+                    t.setPos(x+5,y-8)
+            if geo_overlay.isChecked() and geo.get("overlay_35arcsec_native_xy"):
+                points=geo["overlay_35arcsec_native_xy"]
+                path=QPainterPath()
+                path.moveTo(points[0][0]+.5,a.shape[0]-points[0][1]-.5)
+                for x,y in points[1:]:
+                    path.lineTo(x+.5,a.shape[0]-y-.5)
+                pen=QPen(QColor("#ffba65"),1.5,Qt.DashLine)
+                pen.setCosmetic(True)
+                graphics.addPath(path,pen)
+            view.fitInView(item,Qt.KeepAspectRatio)
+            caption.setText(f"{selector.currentText()} · nMgy/px · display limits {lim[0]:.4g}, {lim[1]:.4g} · "
+                            + ("SKY-1 additional residual model · not adopted" if key.startswith("sky1_")
+                               else "SH1-E3 decay hypothesis · not adopted" if key.startswith("decay_")
+                               else "SH1-E2 truncated hypothesis · not an upper limit" if key.startswith("adaptive_")
+                               else "SH1-E matched reference · conditional transfer" if key.startswith("spike_")
+                             else f"reference {p['reference_candidate_index']+1}/{p['candidate_count']} (minimum side residual, display only)"))
+        selector.currentIndexChanged.connect(render)
+        overlay.toggled.connect(render)
+        geo_overlay.toggled.connect(render)
+        dialog.resize(1000,780)
+        render()
+        QTimer.singleShot(0,render)
+        dialog.exec()
 
     def _prepare_neighbour_masks(self):
         if (self._loaded is None or self._future is not None or
@@ -4337,6 +4792,11 @@ class SceneEditor(QWidget):
             and evidence.get("gaia_dr3_source_id") is not None
             and evidence.get("foreground_evidence_assessment") ==
                 "GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW")
+        p=(self._foreground_psf_result or {}).get("sh1c_preview") or {}
+        self.sh1c_preview_btn.setEnabled(
+            active and self._future is None and evidence is not None
+            and evidence.get("source_id")== (self._foreground_psf_result or {}).get("source_id")
+            and p.get("status")=="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED")
         self.iso_show_sga_shreds.setEnabled(
             self._isophote_proposal is not None
             and bool(self._sga_shred_paths))

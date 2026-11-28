@@ -2064,7 +2064,8 @@ def test_psf0_foreground_probe_is_explicit_read_only_and_scene_qa_bound(
     editor.source_registry_list.setCurrentRow(0)
     editor.source_registry_list.blockSignals(False)
     calls=[]
-    def fake_probe(dataset,root,source,inventory,centre,indices):
+    def fake_probe(dataset,root,source,inventory,centre,indices,*,scene_masks=None):
+        assert scene_masks is editor._contamination
         calls.append((dataset["band"],source["objid"],centre,indices))
         return {
             "status":"FINITE_PSF0_LOCAL_PROBE_DIAGNOSTIC_NOT_ADOPTED",
@@ -2453,3 +2454,102 @@ def test_scene_context_inspector_preserves_native_canvas_space(qtbot):
         "A wide horizontal toolbar must not lock the previous minimum "
         "size and prevent the smaller viewport reflow")
     assert editor._toolbar.direction() == QBoxLayout.TopToBottom
+
+
+def test_sh1_saturated_probe_status_and_qa_are_read_only(qtbot,tmp_path,monkeypatch):
+    import lsbpipe.gui.scene_editor as module
+    editor,project=_make_editor(qtbot,tmp_path,monkeypatch)
+    candidate={"source_id":"dr11/south/1554p600/OBJID=360",
+               "objid":360,"x":48.,"y":48.,"tractor_type":"PSF",
+               "gaia_dr3_source_id":12345,"maskbits_names":["SATUR_G"],
+               "foreground_evidence_assessment":"GAIA_ASTROMETRY_FOREGROUND_CANDIDATE_REVIEW"}
+    editor._source_registry={"catalog_sha256":"a"*64,"entries":[candidate]}
+    zero=np.zeros(editor._loaded["pixel_shape"],dtype=bool)
+    editor._contamination={"catalog_sha256":"a"*64,"draft_digest":editor.draft.digest,
+                           "mask":zero,"auto_mask":zero.copy()}
+    editor._source_registry_visible=[candidate]
+    editor.source_registry_list.blockSignals(True)
+    editor.source_registry_list.addItem("OBJID 360")
+    editor.source_registry_list.setCurrentRow(0)
+    editor.source_registry_list.blockSignals(False)
+    def fake_probe(dataset,root,source,inventory,centre,indices,*,scene_masks,scene_draft,sga_prior):
+        assert scene_draft.digest==editor.draft.digest and sga_prior is None
+        assert source["maskbits_names"]==["SATUR_G"]
+        return {"status":"SH1_SECTORS_MEASURED_NOT_ADOPTED",
+                "project_id":project.project_id,"source_id":candidate["source_id"],
+                "source_objid":360,"dataset_source":dataset["source"],
+                "band":"g","tractor_catalog_sha256":"a"*64,
+                "draft_digest":scene_masks["draft_digest"],"science_adopted":False,
+                "source_light_subtracted":False,"original_pixels_modified":False,
+                "sh1_sector_measurement":{"rows":[{"role":"AWAY_TRAIN_CANDIDATE",
+                      "adequate_for_descriptive_comparison":True}],"halo_fitted":False}}
+    monkeypatch.setattr(module,"run_scene_psf0_foreground_probe",fake_probe)
+    editor._refresh_controls()
+    editor.psf0_fg_btn.click()
+    qtbot.waitUntil(lambda: editor._future is None,timeout=5000)
+    assert "1 usable away-sector radial bins" in editor.psf0_fg_status.text()
+    assert "no subtraction" in editor.psf0_fg_status.text()
+    qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]
+    assert not qa["science_adopted"] and not qa["sh1_sector_measurement"]["halo_fitted"]
+    assert not editor.sh1c_preview_btn.isEnabled()
+
+    # Mount a synthetic diagnostic result without running another fit.
+    # Exercise the actual dialog, all seven raster modes and invalidation.
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication,QComboBox,QGraphicsView,QCheckBox,QTabWidget
+    a=np.zeros(editor._loaded["pixel_shape"],dtype=float)
+    a[0,0]=np.nan
+    preview={"status":"SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED",
+        "grid_fingerprint":editor._loaded.get("grid_fingerprint"),
+        "draft_digest":editor.draft.digest,
+        "effective_source_mask_sha256":editor._contamination.get("effective_source_mask_sha256"),
+        "reference_candidate_index":0,"candidate_count":2,"apertures":[],
+        "layers":{k:a for k in ("original","halo_model","halo_corrected","sky_model",
+                                 "residual","halo_model_spread","sky_model_spread")}}
+    preview["sh1d"]={"sources":[{"objid":360,"x":48.,"y":48.}],
+                      "rows":[],"individual_source_exclusion_trials":[]}
+    preview["sh1e"]={"layers":{"spike_2_model":a,"spike_2_corrected":a},
+                     "half_width_trials":[],
+                     "adaptive_extent":{"status":"NO_AXIS_SUPPORT","axis_scan":[],"layers":{}},
+                     "decay_extent":{"status":"SH1E3_INSUFFICIENT_PREDICTIVE_OR_CONTROL_EVIDENCE","layers":{}}}
+    preview["geo1"]={"trials":[],"ensemble_geometry":[],"overlay_35arcsec_native_xy":[[40.,40.],[50.,50.],[40.,40.]]}
+    preview["sky1"]={"trials":[],"layers":{"sky1_plane_model":a,"sky1_plane_corrected":a}}
+    editor._foreground_psf_result["sh1c_preview"]=preview
+    editor._refresh_controls()
+    assert editor.sh1c_preview_btn.isEnabled()
+    observed=[]
+    overlay_observed=[]
+    def inspect_dialog():
+        dialog=QApplication.activeModalWidget()
+        if dialog is None:
+            return
+        try:
+            selector=dialog.findChild(QComboBox,"sh1c_layer_selector")
+            view=dialog.findChild(QGraphicsView,"sh1c_image_view")
+            for i in range(selector.count()):
+                selector.setCurrentIndex(i)
+                observed.append((selector.currentData(),len(view.scene().items())))
+            overlay=next(w for w in dialog.findChildren(QCheckBox)
+                         if w.text().startswith("Show Tractor centres"))
+            overlay.setChecked(True)
+            overlay_observed.append(len(view.scene().items()))
+            overlay.setChecked(False)
+            overlay_observed.append(len(view.scene().items()))
+            geo=next(w for w in dialog.findChildren(QCheckBox) if w.text().startswith("Show GEO-1"))
+            geo.setChecked(True)
+            overlay_observed.append(len(view.scene().items()))
+            geo.setChecked(False)
+            overlay_observed.append(len(view.scene().items()))
+            tabs=dialog.findChild(QTabWidget)
+            overlay_observed.append([tabs.tabText(i) for i in range(tabs.count())])
+        finally:
+            dialog.accept()
+    QTimer.singleShot(50,inspect_dialog)
+    editor.sh1c_preview_btn.click()
+    assert len(observed)==11 and all(n==1 for _,n in observed)
+    assert overlay_observed==[3,1,2,1,["Growth curves · SH1-C","Sector profiles","Source mask trials","Matched g/r","Spike trials","Spike extent","Spike decay","GEO-1","GEO profiles","SKY-1"]]
+    qa=editor._complete_scene_qa_snapshot()["psf0_foreground_probe"]["sh1c_preview"]
+    assert qa["layers"]["original"]["pixel_array_omitted"]
+    editor.set_band("r")
+    assert editor._foreground_psf_result is None
+    assert not editor.sh1c_preview_btn.isEnabled()

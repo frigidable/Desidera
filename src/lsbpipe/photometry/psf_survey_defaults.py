@@ -40,7 +40,7 @@ def _suggest_detection_fwhm_from_native_map(frame, *, target_icrs_deg):
             "available": False,
             "source": "OPTIONAL_DESI_LOCAL_PSF_SIZE_MAP_ABSENT",
             "message": ("The per-band PSFSIZE map is not stored in the "
-                        "current Leo P native FITS project. Manual FWHM "
+                        "current native FITS project. Manual FWHM "
                         "guess remains an explicit heuristic."),
         }
     with fits.open(path, memmap=True) as hdul:
@@ -65,7 +65,7 @@ def _suggest_detection_fwhm_from_native_map(frame, *, target_icrs_deg):
             float(target_icrs_deg[0]), float(target_icrs_deg[1]), 0)
         if (not np.isfinite(probe_x) or not np.isfinite(probe_y) or
                 np.hypot(probe_x-x, probe_y-y) > .05):
-            raise ValueError("PSFSIZE map WCS differs at Leo P target")
+            raise ValueError("PSFSIZE map WCS differs at project target")
         # Check an additional off-center position to reject different scale
         # or orientation despite matching target CRVAL.
         world0, world1 = source_wcs.all_pix2world(
@@ -78,7 +78,7 @@ def _suggest_detection_fwhm_from_native_map(frame, *, target_icrs_deg):
         patch = np.asarray(hdu.data[iy-2:iy+3, ix-2:ix+3], dtype=float)
         samples = patch[np.isfinite(patch) & (patch > 0)]
         if len(samples) < 12:
-            raise ValueError("PSFSIZE map lacks positive finite data near Leo P")
+            raise ValueError("PSFSIZE map lacks positive finite data near project target")
         arcsec = float(np.median(samples))
     pixscales = np.asarray(proj_plane_pixel_scales(frame.wcs.celestial),
                            dtype=float)*3600.
@@ -131,7 +131,7 @@ def _suggest_from_native_tractor_psfsize(frame, *, target_icrs_deg):
     image_path = Path(frame.source_evidence.get("files", {}).get("image", ""))
     if not image_path.is_file() or image_path.is_symlink():
         return None
-    if frame.release != "dr11" or frame.region != "south":
+    if frame.release != "dr11" or frame.region not in ("north", "south"):
         return None
     path, _ = tractor_catalog_location(
         frame.source_evidence.get("data_root", image_path.parent),

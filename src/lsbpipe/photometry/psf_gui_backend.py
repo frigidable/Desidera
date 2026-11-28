@@ -1,4 +1,4 @@
-"""GUI orchestration for the Leo P-first PSF-0 experiment.
+"""GUI orchestration for registered PSF-0 experimental objects.
 
 No Qt imports; work is executed by existing SurveyExplorer TaskWorker.
 Uses the saved object-project manifest and the original legacy FITS tree.
@@ -21,6 +21,7 @@ from typing import Callable
 from lsbpipe.photometry.native_fits import load_native_legacy_quartet
 from lsbpipe.photometry.psf_empirical import (
     PSF0Config, PSF0Result, PSF0Star, PSF0QualityError, build_empirical_coadd_psf,
+    PSF0_MAX_CUTOUT_SIZE_PIX,
 )
 from lsbpipe.photometry.psf_export import export_psf0_diagnostic
 from lsbpipe.photometry.psf_tractor_gaia import (
@@ -31,6 +32,9 @@ from lsbpipe.surveys.dataset_integrity import _expected_paths
 from lsbpipe.surveys.object_projects import read_object_project
 
 LEO_P_CENTER = (155.438012, 18.088025)
+NGC2146SAT_CENTER = (96.0619, 77.9684)
+# Scope the new path to the real-data campaign, not a global science claim.
+PILOT_CENTERS = {"leop": LEO_P_CENTER, "ngc2146sat": NGC2146SAT_CENTER}
 BANDS = ("g", "r", "i", "z")
 KINDS = ("image", "invvar", "nexp", "maskbits")
 
@@ -69,7 +73,7 @@ def _same_observation_source(current, recorded) -> bool:
     return tuple(current[:3]) == tuple(recorded[:3])
 
 
-# Six reproducible diagnostic modes. The extended modes jointly change
+# Reproducible diagnostic modes. The extended modes jointly change
 # cutout, sky-annulus and isolation footprints. Their
 # stellar sample can therefore differ: do not claim a controlled
 # single-variable causal inference or select a "best PSF" from these QA
@@ -99,6 +103,18 @@ PSF0_DIAGNOSTIC_EXPERIMENTS = {
             "wing_smoothing": False,
         },
     },
+    "compact_core_sky": {
+        "label": "Compact core · sky 3–3.5× FWHM (wing-sensitive diagnostic)",
+        "kwargs": {"training_outlier_passes": 0, "max_iterations": 16},
+    },
+    "compact_core_robust": {
+        "label": "Compact core · guarded training-star QA (2 passes)",
+        "kwargs": {"training_outlier_passes": 2, "max_iterations": 16},
+    },
+    "compact_moffat_m1": {
+        "label": "PSF-M1 · joint pixel-integrated Moffat (diagnostic)",
+        "kwargs": {"reconstruction": "moffat_m1", "max_iterations": 16},
+    },
     "outer_sky_isolation_footprint": {
         "label": "Extended sky · 16 iterations · nearest DAO separation ≥ stamp size (g pilot)",
         "kwargs": {
@@ -117,7 +133,7 @@ def psf0_experiment_recipe(
     A fixed annulus at 19–24 pix was inside 3×–4× FWHM for the REAL Leo P
     DR11 g PSFSIZE prior of 6.57 pix. Extended modes therefore express the
     *initial* sky-sampling radius in FWHM units and fail closed if the
-    necessary cutout cannot fit safely under the 91-pixel PSF0 limit.
+    necessary cutout exceeds the bounded PSF0 stamp resource limit.
 
     Even 4.5× FWHM does NOT guarantee wing-free sky. The science report
     continues to flag the sky/PSF degeneracy and correlated-coadd noise.
@@ -132,14 +148,19 @@ def psf0_experiment_recipe(
     if experiment != "baseline":
         # Integer annulus boundaries are deterministic, in native pixels;
         # enforce 2 pixels beyond outer sky before the square stamp edge.
-        inner = float(math.ceil(4.5*fwhm))
-        outer = float(math.ceil(5.75*fwhm))
+        # Explicit alternative when wide isolation yields no usable stars.
+        # This fits a finite core only: closer sky can absorb stellar wings.
+        # Never substitute automatically for the original extended recipe.
+        compact = experiment in ("compact_core_sky", "compact_core_robust", "compact_moffat_m1")
+        inner_factor, outer_factor = (3., 3.5) if compact else (4.5, 5.75)
+        inner = float(math.ceil(inner_factor*fwhm))
+        outer = float(math.ceil(outer_factor*fwhm))
         half = int(outer)+2
         size = max(51, 2*half+1)
-        if size > 91:
+        if size > PSF0_MAX_CUTOUT_SIZE_PIX:
             raise ValueError(
                 f"FWHM-scaled sky annulus needs {size} px for assumed "
-                f"FWHM {fwhm:.2f} px, above the 91 px PSF0 limit. "
+                f"FWHM {fwhm:.2f} px, above the {PSF0_MAX_CUTOUT_SIZE_PIX} px PSF0 limit. "
                 "Choose baseline as a wing-sensitive diagnostic, not as "
                 "a substitute for validated extended-wing background; "
                 "do not silently shrink the annulus.")
@@ -149,8 +170,10 @@ def psf0_experiment_recipe(
             sky_annulus_outer_pix=outer,
             min_neighbor_separation_pix=float(size+4),
         )
-        if experiment == "outer_sky_isolation_footprint":
-            # Registered, deliberately separate one-factor A/B:
+        if compact or experiment == "outer_sky_isolation_footprint":
+            # Compact is a separate wing-sensitive experiment, not a
+            # relaxation of isolation inside the selected stamp.
+            # Registered extended footprint experiment:
             # centre-to-centre DAO isolation of one FULL stamp width
             # rather than full width + 4 px. In the real Leo P g
             # 81px stamp this recovers the possibility of evaluating
@@ -163,26 +186,30 @@ def psf0_experiment_recipe(
     return PSF0Config(guessed_fwhm_pix=fwhm, **kw)
 
 
-def _leo_p_project(project_root):
+def _registered_pilot_project(project_root):
     """Use existing UUID and saved source identity, never a guessed folder."""
     from astropy.coordinates import SkyCoord
     import astropy.units as u
 
     project = read_object_project(project_root)
-    if project.display_name.strip().casefold().replace(" ", "") != "leop":
-        raise ValueError("PSF-0 real-object pilot currently supports Leo P only")
+    name = project.display_name.strip().casefold().replace(" ", "")
+    if name not in PILOT_CENTERS:
+        raise ValueError("PSF-0 real-object pilot supports Leo P and NGC2146sat only")
     if project.field is None or project.data_root is None or project.selected_dataset is None:
-        raise ValueError("Leo P needs its saved coordinates, selected dataset and data root")
+        raise ValueError("Pilot needs saved coordinates, selected dataset and data root")
     center = SkyCoord(project.field.ra_deg*u.deg, project.field.dec_deg*u.deg)
-    expected = SkyCoord(LEO_P_CENTER[0]*u.deg, LEO_P_CENTER[1]*u.deg)
+    expected = SkyCoord(*PILOT_CENTERS[name], unit="deg")
     if center.separation(expected).arcsec > 45:
-        raise ValueError("Leo P project center differs by over 45 arcsec; review galaxy identity")
+        raise ValueError("Pilot project center differs by over 45 arcsec; review galaxy identity")
+    if name == "ngc2146sat" and tuple(project.selected_dataset[:3]) != (
+            "dr11", "north", "0965p780"):
+        raise ValueError("NGC2146sat PSF pilot requires DR11 North brick 0965p780")
     return project
 
 
 def inspect_psf0_bands(project_root: str | Path) -> dict:
     """Metadata/path-only availability for the current Galaxy Workspace."""
-    project = _leo_p_project(project_root)
+    project = _registered_pilot_project(project_root)
     release, region, brick, selected = project.selected_dataset
     entries = []
     for band in BANDS:
@@ -200,7 +227,7 @@ def inspect_psf0_bands(project_root: str | Path) -> dict:
         })
     catalog_path = None
     catalog_present = False
-    if release == "dr11" and region == "south":
+    if release == "dr11" and region in ("north", "south"):
         candidate_path, _ = tractor_catalog_location(
             project.data_root, release=release, region=region, brick=brick)
         catalog_path = str(candidate_path)
@@ -247,6 +274,7 @@ def _saved_manual_exclusions(project, source_hashes, *,
             # Before this feature, only DAO candidates existed. Treat
             # those historical receipts as DAO-only; never as Gaia-strict.
             original_recipe.setdefault("star_catalog_policy", "dao_diagnostic")
+            original_recipe.setdefault("reconstruction", "epsf")
             ids = data["excluded_training_star_ids"]
             if (data.get("schema") !=
                     "desidera.psf0-manual-training-review/1"
@@ -287,7 +315,10 @@ def run_gui_psf0(
     if not math.isfinite(protection_arcsec) or not 0 < protection_arcsec <= 1800:
         raise ValueError("Invalid galaxy-protection radius")
     release, region, brick, _ = snapshot["dataset"]
-    project = _leo_p_project(project_root)
+    project = _registered_pilot_project(project_root)
+    if (project.display_name.strip().casefold().replace(" ", "") == "ngc2146sat"
+            and extended_research_qa):
+        raise ValueError("NGC2146sat pilot currently supports core and holdout QA only; disable Advanced full research QA")
     _progress(progress, f"Checking {release.upper()} {band}: original FITS and source SHA-256")
     frame = load_native_legacy_quartet(
         project.data_root, release=release, region=region, brick=brick,
@@ -306,9 +337,8 @@ def run_gui_psf0(
     depth = "full research QA" if extended_research_qa else "core and holdout QA"
     _progress(progress, f"Building provisional {band} PSF · {depth}")
     try:
-        # The fixed Leo P coordinate is only an IDENTITY GUARD in
-        # _leo_p_project. All downstream stages use the saved project's
-        # actual target ICRS anchor. PSF source protection must agree.
+        # Registered coordinates are identity guards only. Fit and
+        # source protection use the saved project's actual ICRS anchor.
         project_anchor = (float(project.field.ra_deg),
                           float(project.field.dec_deg))
         result = build_empirical_coadd_psf(
@@ -357,7 +387,7 @@ def run_gui_psf0(
 
 def acquire_gui_psf0_tractor(project_root, *, progress=None):
     """Explicit user-requested native DR11 Tractor acquisition in Galaxy Workspace."""
-    project = _leo_p_project(project_root)
+    project = _registered_pilot_project(project_root)
     release, region, brick, _ = project.selected_dataset
     _progress(progress, "Getting original release- and brick-matched DR11 Tractor catalog")
     result = download_native_tractor_gaia(
@@ -398,14 +428,15 @@ def suggest_gui_psf0_fwhm(project_root, *, band, progress=None):
     if eligible is None or not eligible["paths_present_unverified"]:
         raise ValueError("Native optical quartet is incomplete for PSFSIZE check")
     release, region, brick, _ = selection["dataset"]
-    project = _leo_p_project(project_root)
+    project = _registered_pilot_project(project_root)
     _progress(progress, "Checking image WCS and optional local Legacy PSFSIZE map")
     frame = load_native_legacy_quartet(
         project.data_root, release=release, region=region,
         brick=brick, band=band, hash_inputs=False,
         require_explicit_bunit=True)
     result = suggest_detection_fwhm_from_psfsize(
-        frame, target_icrs_deg=LEO_P_CENTER)
+        frame, target_icrs_deg=(float(project.field.ra_deg),
+                               float(project.field.dec_deg)))
     return {
         "project_id": project.project_id,
         "project_root": str(project.root),
@@ -432,7 +463,7 @@ def commit_psf0_manual_review(preview, *, explicitly_confirmed=False):
         raise ValueError("Manual review must be explicitly applied in GUI")
     if not isinstance(preview, dict) or preview.get("star_review") is None:
         raise ValueError("Manual review requires a real completed star inventory")
-    project = _leo_p_project(preview["project_root"])
+    project = _registered_pilot_project(preview["project_root"])
     if (project.project_id != preview["project_id"] or
             not _same_observation_source(project.selected_dataset, preview.get("dataset"))):
         raise ValueError("Saved project identity changed during star review")
@@ -527,7 +558,7 @@ def save_gui_psf0(preview: dict, progress: Callable | None = None) -> str:
     result = preview["result"]
     if result.lineage_id is None or not result.source_hashes:
         raise ValueError("Verified source hashes required before diagnostic save")
-    project = _leo_p_project(preview["project_root"])
+    project = _registered_pilot_project(preview["project_root"])
     if (project.project_id != preview["project_id"]
             or not _same_observation_source(project.selected_dataset, preview.get("dataset"))):
         raise ValueError("Galaxy project or selected dataset changed; rerun the diagnostic")

@@ -505,3 +505,56 @@ def test_sky_visual_error_tone_is_not_science_acceptance(qtbot,monkeypatch):
     stage._snapshot=lambda:None
     stage.refresh_context()
     assert stage.status.property("visualState")=="normal"
+
+
+def test_expanded_sky_source_identity_and_stale_probe(qtbot,monkeypatch):
+    scene=SimpleNamespace(_band="r",_future=None,_project_root=Path("/not/read"),
+        _project_id="p",_loaded={"project_id":"p","band":"r","source":"s",
+            "grid_fingerprint":"grid","original_fits_sha256_local":{"image":"hash"}},
+        _draft=SimpleNamespace(project_id="p",digest="d"),
+        _contamination={"status":"CATALOGUE_CONTAMINATION_MASK_NOT_ADOPTED",
+            "project_id":"p","band":"r","dataset_source":"s","draft_digest":"d",
+            "catalog_sha256":"cat","effective_source_mask_sha256":"m"})
+    w=SkyWorkspace(scene); qtbot.addWidget(w)
+    assert not w.expanded_btn.isEnabled()
+    scene._foreground_psf_result=dict(project_id="p",dataset_source="s",band="r",draft_digest="d",
+        tractor_catalog_sha256="cat",original_scene_grid_fingerprint="grid",
+        original_fits_sha256_local={"image":"hash"},sh1c_preview=dict(
+            status="SH1C_CONDITIONAL_PREVIEW_NOT_ADOPTED",grid_fingerprint="grid",draft_digest="d",
+            effective_source_mask_sha256="m",sky1_inputs={"image":"placeholder"}))
+    w.refresh_context()
+    assert w.expanded_btn.isEnabled()
+    ident=w._snapshot()[0]+(id(scene._foreground_psf_result),)
+    assert w._current_identity(ident,w._snapshot())==ident
+    import numpy as np
+    import json
+    a=np.ones((64,64))
+    def fake(ds,draft,cont,probe,other):
+        return dict(status="SKY1_NOT_ADOPTED",project_id="p",dataset_source="s",band="r",
+            draft_sha256="d",catalog_sha256="cat",foreground_source_objid=360,
+            expanded_sky=dict(expanded_shape=[64,64],expanded_target_xy=[32.,32.],
+                pixel_scale_arcsec=.262,warning="conditional",expanded_layers={"original":a,"SH1C":a},
+                expanded_safe_mask=np.ones_like(a,dtype=bool),layers={},
+                source_entries=[{"objid":5,"x":12.,"y":12.}],
+                trials=[dict(halo_scenario="SH1C",target_guard_arcsec=60.,tile_size_pix=32,
+                    candidates=[],blocks=[dict(tile_x_pix=0,tile_y_pix=0,x_pix=15.,y_pix=15.,
+                        mean_nMgy_pix=.001,median_nMgy_pix=.0009,n=1024)])]))
+    monkeypatch.setattr(sky_module,"run_expanded_sky",fake)
+    w.run_expanded_diagnostic()
+    qtbot.waitUntil(lambda:w._future is None,timeout=4000)
+    assert w.current_expanded_result() is not None
+    assert w.sky_graphics.items()
+    w._inspect_block(12.5,51.5)
+    assert "OBJID 5" in w.block_caption.text()
+    assert "N=1024" in w.block_caption.text()
+    w.copy_qa()
+    qa=json.loads(QApplication.clipboard().text())
+    assert qa["expanded_sky"]["expanded_layers"]["original"]["pixel_array_omitted"]
+    scene._foreground_psf_result=dict(scene._foreground_psf_result)
+    assert w._current_identity(ident,w._snapshot())!=ident
+    scene._foreground_psf_result["draft_digest"]="stale"
+    w.refresh_context()
+    assert not w.expanded_btn.isEnabled()
+
+    assert w.current_expanded_result() is None
+    assert not w.copy_btn.isEnabled()

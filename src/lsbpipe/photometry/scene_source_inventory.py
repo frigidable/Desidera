@@ -259,7 +259,7 @@ def _described_source(row, *, x, y, disposition, release, region, brick,
     model_fluxes = dict(row.get("model_fluxes_nMgy") or {})
     model_ivars = dict(row.get("model_flux_ivars") or {})
     return {
-        "source_id":sid, "objid":objid,
+        "source_id":sid, "objid":objid, "brick_primary":bool(row.get("brick_primary",True)),
         "x":float(x), "y":float(y),
         "centre_in_native_frame":bool(centre_in_native_frame),
         "ra_deg":row.get("ra_deg"), "dec_deg":row.get("dec_deg"),

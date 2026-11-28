@@ -507,6 +507,9 @@ class ApertureWorkspace(QWidget):
             self.context_label.setText(
                 f"Band {snap[1]['band'].upper()} · native Scene masks ready "
                 "· zero additional sky correction.")
+            if hasattr(self._sky,"current_expanded_result") and self._sky.current_expanded_result() is not None:
+                self.context_label.setText(f"Band {snap[1]['band'].upper()} · halo-aware sky QA available; "
+                    "Apertures still uses zero additional sky correction (not adopted).")
             self.context_label.setToolTip(
                 f"Source {snap[1]['source']}; project {snap[1]['project_id']}; "
                 f"draft {snap[2].digest}. Provisional geometry only.")

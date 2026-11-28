@@ -346,6 +346,13 @@ class PhotometryWorkspace(QWidget):
             self.scene_editor, self.sky_stage, self.stage_tabs)
         self.stage_tabs.addTab(
             self.aperture_stage, "4 · Apertures")
+        self.joint_review_btn = QPushButton("Joint photometry QA…", self.aperture_stage)
+        self.joint_review_btn.setObjectName("photometry_joint_archive_review")
+        self.joint_review_btn.setAccessibleName("Review existing joint annular diagnostic archive")
+        self.joint_review_btn.setEnabled(False)
+        self.joint_review_btn.setToolTip("Select a project target and native dataset first.")
+        self.joint_review_btn.clicked.connect(self._open_joint_archive_review)
+        self.aperture_stage.layout().insertWidget(2, self.joint_review_btn, 0, Qt.AlignLeft)
         # Color-coded pictograms identify the analysis *kind*, never
         # imply that an unadopted scientific result passed QA.
         for idx, (glyph, accent) in enumerate((
@@ -715,9 +722,38 @@ class PhotometryWorkspace(QWidget):
         finally:
             self._suppress_navigation = False
 
+    def _open_joint_archive_review(self):
+        """Explicit read-only archive review; not a new science run."""
+        if self._project_root is None or self._bound_project_id is None:
+            return
+        from lsbpipe.surveys.object_projects import read_object_project
+        from lsbpipe.gui.joint_archive_dialog import JointArchiveDialog
+        try:
+            saved = read_object_project(self._project_root)
+            source = tuple(saved.selected_dataset[:3]) if saved.selected_dataset else None
+            identity = (str(saved.data_root) if saved.data_root is not None else None, source)
+            if (saved.project_id != self._bound_project_id or identity != self._bound_source_identity
+                    or saved.field is None or source is None):
+                raise ValueError("Project selection changed or lacks a target/native dataset. Refresh first.")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.project_qa_status.setText(f"Joint review unavailable: {exc}")
+            self.project_qa_status.show()
+            return
+        context = dict(project_id=saved.project_id, source_triplet=source,
+                       target_icrs=(saved.field.ra_deg,saved.field.dec_deg),
+                       target_radius_arcsec=saved.target_radius_arcsec)
+        dialog = JointArchiveDialog(project_name=saved.display_name,
+            project_root=saved.root,context=context,parent=self)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
     def refresh(self, *, force=False):
         # Only a new project or explicit Refresh can discard a preview.
         # Re-entering the same project/photometry view is non-destructive.
+        self.joint_review_btn.setEnabled(False)
+        self.joint_review_btn.setToolTip("Select a project target and native dataset first.")
         self.scene_editor.bind_project(self._project_root)
         self.sky_stage.refresh_context()
         self.aperture_stage.refresh_context()
@@ -769,6 +805,12 @@ class PhotometryWorkspace(QWidget):
             return
         self.title.setText(f"Photometry · {result['galaxy']}")
         selected = result["selected_dataset"]
+        ready = bool(selected and result["target_defined"])
+        self.joint_review_btn.setEnabled(ready)
+        if ready:
+            self.joint_review_btn.setToolTip(
+                "Open a verified local diagnostic ZIP or review receipt; "
+                "does not run photometry, reopen FITS or adopt results.")
         identity = " / ".join(selected) if selected else "No dataset selected"
         self.source_identity.setText(
             f"Selected native source: {identity}"

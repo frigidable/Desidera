@@ -39,6 +39,7 @@ _PARAM_BASIS = {
     "excluded_training_star_ids": ("RESEARCHER_SELECTION", "explicit human reviewed train exclusions; never holdouts"),
     "star_catalog_policy": ("IDENTITY_POLICY", "Gaia/Tractor/DAO catalog provenance, not itself clean-star proof"),
     "training_outlier_passes": ("ALGORITHM_POLICY", "in-sample training-only trim budget; uncalibrated"),
+    "reconstruction": ("ALGORITHM_POLICY", "explicit ePSF or joint finite Moffat diagnostic; no science adoption"),
 }
 
 

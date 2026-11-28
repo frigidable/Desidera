@@ -55,7 +55,7 @@ def test_controlled_psf_recipe_variants_have_explicit_science_semantics():
     assert tuple(PSF0_DIAGNOSTIC_EXPERIMENTS) == (
         "baseline", "outer_sky", "outer_sky_robust",
         "outer_sky_convergence", "outer_sky_no_wing_smoothing",
-        "outer_sky_isolation_footprint")
+        "compact_core_sky", "compact_core_robust", "compact_moffat_m1", "outer_sky_isolation_footprint")
     base = psf0_experiment_recipe(4.8, "baseline")
     extent = psf0_experiment_recipe(4.8, "outer_sky")
     robust = psf0_experiment_recipe(4.8, "outer_sky_robust")
@@ -131,16 +131,16 @@ def test_psf0_extended_sky_adapts_to_actual_leo_p_psfsize_prior():
     assert wide.digest != psf0_experiment_recipe(4.80, "outer_sky").digest
     # The sky geometry cannot silently fall back to a closer annulus
     # for bad seeing. The scientist must choose a different experiment.
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_robust")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_convergence")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_no_wing_smoothing")
-    with pytest.raises(ValueError, match="above the 91 px PSF0 limit"):
-        psf0_experiment_recipe(8.5, "outer_sky_isolation_footprint")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_robust")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_convergence")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_no_wing_smoothing")
+    with pytest.raises(ValueError, match="above the 151 px PSF0 limit"):
+        psf0_experiment_recipe(20., "outer_sky_isolation_footprint")
 
 
 def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
@@ -158,7 +158,7 @@ def test_psf0_scaled_annuli_are_explicit_not_scientifically_certified():
     assert set(("baseline","outer_sky","outer_sky_robust",
                 "outer_sky_convergence",
                 "outer_sky_no_wing_smoothing",
-                "outer_sky_isolation_footprint")) == set(
+                "outer_sky_isolation_footprint", "compact_core_sky", "compact_core_robust", "compact_moffat_m1")) == set(
         __import__(
             "lsbpipe.photometry.psf_gui_backend",
             fromlist=["PSF0_DIAGNOSTIC_EXPERIMENTS"]
@@ -226,3 +226,94 @@ def test_tractor_psf_training_keeps_non_gaia_identity_and_audits_every_gate():
     assert failure == "TRACTOR_NONSTELLAR_MODEL"
     assert PSF0Config(star_catalog_policy="tractor_psf_validated").star_catalog_policy == (
         "tractor_psf_validated")
+
+
+def test_ngc2146sat_pilot_lists_native_grz_and_local_catalog(tmp_path, monkeypatch):
+    from lsbpipe.photometry.psf_tractor_gaia import tractor_catalog_location
+    monkeypatch.setenv("LSBPIPE_SESSION_DIR", str(tmp_path / "session"))
+    p = create_object_project("NGC2146sat", tmp_path / "NGC2146sat",
+                              field=SkyField(96.0619, 77.9684, 2.6))
+    p.data_root = p.root / "originals"
+    p.data_root.mkdir()
+    p.selected_dataset = ("dr11", "north", "0965p780", "r")
+    save_object_project(p)
+    for band in ("g", "r", "z"):
+        for path in _expected_paths(p.data_root, ("dr11", "north", "0965p780", band)).values():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"path presence fixture")
+    catalog, _ = tractor_catalog_location(
+        p.data_root, release="dr11", region="north", brick="0965p780")
+    catalog.parent.mkdir(parents=True)
+    catalog.write_bytes(b"path presence fixture")
+    info = inspect_psf0_bands(p.root)
+    assert [x["band"] for x in info["bands"]] == ["g", "r", "z"]
+    assert all(x["paths_present_unverified"] for x in info["bands"])
+    assert info["gaia_tractor_present_unverified"] is True
+    assert info["gaia_tractor_path"] == str(catalog)
+    assert info["status"] == "PATHS_ONLY_NOT_SCIENCE_VALIDATED"
+
+
+def test_ngc2146sat_pilot_rejects_wrong_center(tmp_path, monkeypatch):
+    p = _leo_project(tmp_path, monkeypatch, galaxy="NGC2146sat")
+    with pytest.raises(ValueError, match="center differs"):
+        inspect_psf0_bands(p.root)
+
+
+@pytest.mark.parametrize("mode", ["outer_sky", "outer_sky_robust",
+    "outer_sky_convergence", "outer_sky_no_wing_smoothing",
+    "outer_sky_isolation_footprint"])
+def test_ngc2146sat_r_scaled_stamp_preserves_sky_geometry(mode):
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    from lsbpipe.photometry.psf_empirical import PSF0Config
+    cfg = psf0_experiment_recipe(10.79, mode)
+    assert cfg.cutout_size_pix == 131
+    assert cfg.sky_annulus_inner_pix == 49.
+    assert cfg.sky_annulus_outer_pix == 63.
+    assert cfg.min_neighbor_separation_pix == (131. if mode == "outer_sky_isolation_footprint" else 135.)
+    assert cfg.sky_annulus_outer_pix <= cfg.cutout_size_pix // 2 - 2
+    assert cfg.max_invalid_fraction == PSF0Config().max_invalid_fraction
+    assert cfg.min_train_stars == PSF0Config().min_train_stars
+    assert cfg.min_holdout_stars == PSF0Config().min_holdout_stars
+    with pytest.raises(ValueError, match="15..151 px"):
+        PSF0Config(cutout_size_pix=153)
+
+
+def test_ngc2146sat_r_compact_core_recipe_is_explicit_and_preserves_gates():
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    from dataclasses import replace
+    wide = psf0_experiment_recipe(10.79, "outer_sky_isolation_footprint")
+    compact = psf0_experiment_recipe(10.79, "compact_core_sky")
+    assert wide.cutout_size_pix == 131
+    assert compact == replace(wide, cutout_size_pix=81,
+                              sky_annulus_inner_pix=33.,
+                              sky_annulus_outer_pix=38.,
+                              min_neighbor_separation_pix=81.)
+    assert compact.digest != wide.digest
+    assert compact.sky_annulus_inner_pix >= 3 * 10.79
+    assert compact.sky_annulus_outer_pix >= 3.5 * 10.79
+    assert compact.sky_annulus_outer_pix <= compact.cutout_size_pix // 2 - 2
+    assert 2 * compact.sky_annulus_outer_pix <= compact.min_neighbor_separation_pix
+    assert psf0_experiment_recipe(6.27, "outer_sky_isolation_footprint").cutout_size_pix == 79
+
+
+def test_ngc2146sat_compact_guarded_training_experiment_changes_only_training_passes():
+    from dataclasses import replace
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    compact = psf0_experiment_recipe(10.79, "compact_core_sky")
+    robust = psf0_experiment_recipe(10.79, "compact_core_robust")
+    assert robust == replace(compact, training_outlier_passes=2)
+    assert robust.digest != compact.digest
+
+
+def test_moffat_m1_explicit_recipe_keeps_compact_sample_and_legacy_digest():
+    from dataclasses import replace, asdict
+    from hashlib import sha256
+    import json
+    from lsbpipe.photometry.psf_gui_backend import psf0_experiment_recipe
+    compact = psf0_experiment_recipe(10.79, "compact_core_sky")
+    m1 = psf0_experiment_recipe(10.79, "compact_moffat_m1")
+    assert m1 == replace(compact, reconstruction="moffat_m1")
+    assert m1.digest != compact.digest
+    legacy = asdict(compact)
+    legacy.pop("reconstruction")
+    assert compact.digest == sha256(json.dumps(legacy,sort_keys=True,allow_nan=False).encode()).hexdigest()
