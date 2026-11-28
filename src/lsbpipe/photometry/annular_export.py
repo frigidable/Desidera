@@ -72,6 +72,8 @@ def export_annular_diagnostic(path, records, covariance, fit, *, render=False):
         for name in ("operator","radial_nodes_arcsec","ring_edges_arcsec",
                      "observed_flux_nMgy","valid_pixel_count"):
             arrays[f"band{i}_{name}"]=r[name]
+        if "full_aperture_operator" in r:
+            arrays[f"band{i}_full_aperture_operator"]=r["full_aperture_operator"]
     csvbuf=io.StringIO()
     writer=csv.DictWriter(csvbuf,fieldnames=list(rows[0]))
     writer.writeheader()
@@ -81,6 +83,13 @@ def export_annular_diagnostic(path, records, covariance, fit, *, render=False):
     contents={"rings.csv":csvbuf.getvalue().encode("utf-8"),"arrays.npz":npbuf.getvalue()}
     fit_meta={k:v for k,v in fit.items() if k!="prediction"}
     contents["fit.json"]=json.dumps(_jsonable(fit_meta),indent=2,allow_nan=False).encode("utf-8")
+    if "asymptotic_diagnostic" in fit:
+        asym=fit["asymptotic_diagnostic"]
+        if (asym.get("status")!=STATUS or tuple(asym["record_sha256"])!=tuple(fit["record_sha256"])
+                or asym["covariance_sha256"]!=fit["covariance_sha256"]
+                or asym.get("asymptotic_flux_adopted") is not False):
+            raise ValueError("Asymptotic diagnostic provenance mismatch")
+        contents["asymptotic.json"]=json.dumps(_jsonable(asym),indent=2,allow_nan=False).encode("utf-8")
     if render:
         # Optional matplotlib dependency, no GUI/backend or external inputs.
         from matplotlib.figure import Figure
