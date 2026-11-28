@@ -34,7 +34,7 @@ def annular_support(rings, sectors, valid, *, n_rings, n_sectors,
     inside = r >= 0
     if np.any((s[inside] < 0) | (s[inside] >= n_sectors)):
         raise ValueError("Invalid sector label")
-    idx = r[inside].astype(np.int64)*n_sectors+s[inside]
+    idx = r[inside].astype(np.int64)*n_sectors+s[inside].astype(np.int64)
     total = np.bincount(idx, minlength=n_rings*n_sectors).reshape(n_rings,n_sectors)
     kept = np.bincount(idx[v[inside]], minlength=n_rings*n_sectors).reshape(n_rings,n_sectors)
     divide = lambda a,b: np.divide(a,b,out=np.zeros_like(a,dtype=float),where=b>0)
@@ -69,13 +69,24 @@ def adjoint_annular_operator(radius, radial_nodes, ring_masks, psf, *,
     if (k.ndim!=2 or not k.size or any(n%2!=1 for n in k.shape) or
             np.any(k<0) or not np.isclose(k.sum(),1,rtol=1e-6,atol=1e-9)):
         raise ValueError("Odd finite normalized nonnegative PSF required")
-    if not len(masks) or np.any(masks.sum(axis=0)>1) or np.any(~masks.any(axis=(1,2))):
+    if not len(masks):
         raise ValueError("Nonempty disjoint ring masks required")
-    left = np.clip(np.searchsorted(nodes,r,side="right")-1,0,len(nodes)-2)
-    f = (r-nodes[left])/(nodes[left+1]-nodes[left])
+    used=np.zeros(r.shape,dtype=bool)
     result=[]
+    py,px=np.array(k.shape)//2
     for mask in masks:
-        weight=fftconvolve(mask.astype(float),k[::-1,::-1],mode="same")
+        if not mask.any() or np.any(mask&used):
+            raise ValueError("Nonempty disjoint ring masks required")
+        used |= mask
+        iy,ix=np.nonzero(mask)
+        sl=np.s_[max(0,iy.min()-py):min(r.shape[0],iy.max()+py+1),
+                 max(0,ix.min()-px):min(r.shape[1],ix.max()+px+1)]
+        rr=r[sl]
+        left=np.clip(np.searchsorted(nodes,rr,side="right")-1,0,len(nodes)-2)
+        f=(rr-nodes[left])/(nodes[left+1]-nodes[left])
+        # The finite adjoint support is the observed mask dilated by the
+        # kernel half-size. Cropping here preserves the full zero-boundary sum.
+        weight=fftconvolve(mask[sl].astype(float),k[::-1,::-1],mode="same")
         a=np.bincount(left.ravel(),weights=(weight*(1-f)).ravel(),minlength=len(nodes))
         a+=np.bincount((left+1).ravel(),weights=(weight*f).ravel(),minlength=len(nodes))
         result.append(a)
