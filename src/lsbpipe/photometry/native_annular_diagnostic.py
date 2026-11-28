@@ -298,3 +298,27 @@ def common_native_validity(frames, scenes):
         base &= evaluate_mask(s,f.image_nMgy,f.invvar_nMgy2,grid_id=grid,
                               operation=Operation.PHOTOMETRY,observation_valid=valid).valid
     return np.frombuffer(base.tobytes(),dtype=bool).reshape(base.shape)
+
+
+def fit_native_covariance_sersic(records, covariance_result, *, train_rings,
+                                 test_rings, initial, bounds):
+    """Fit only the records bound to a native conditional covariance result."""
+    records=tuple(records)
+    if (covariance_result.get("status")!=STATUS
+            or covariance_result.get("covariance_model")!="ADDITIVE_COHERENT_TILE_AND_INDEPENDENT_IVAR"
+            or covariance_result.get("covariance_calibrated") is not False
+            or tuple(annular_record_sha256(r) for r in records)!=tuple(covariance_result["record_sha256"])):
+        raise ValueError("Native covariance and exact annular inputs must match")
+    result=fit_common_support_sersic(records,covariance_result["covariance"],
+        band_order=covariance_result["band_order"],
+        covariance_source="ADDITIVE_COHERENT_TILE_AND_INDEPENDENT_IVAR",
+        train_rings=train_rings,test_rings=test_rings,initial=initial,bounds=bounds)
+    result["covariance_hypothesis"]={
+        "model":covariance_result["covariance_model"],
+        "length_arcsec":covariance_result["length_arcsec"],
+        "mix":covariance_result["mix"],
+        "block_size":covariance_result["block_size"],
+        "n_matched_far_controls":covariance_result["n_matched_far_controls"],
+        "control_sky_prediction_uncertainty_not_removed":True,
+    }
+    return result
