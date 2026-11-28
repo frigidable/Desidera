@@ -431,3 +431,50 @@ original FITS are still unchanged. Display this limitation; an explicit
 researcher association is necessary before creating a receipt. This
 increment intentionally does not launch the new multiband optimizer,
 edit saved masks or automatically convert earlier PSF/Scene drafts.
+
+
+### Implemented archive review increment
+
+The existing fourth Photometry Workspace tab (Apertures) now provides
+**Joint photometry QA…**. No fifth navigation key or new project
+directory is introduced. The action is disabled without saved target
+and dataset; on click the project passport is reread and UUID/source
+identity rechecked. No FITS, network or science worker is opened.
+
+`joint_archive_review.py` validates the supported ZIP schema, member
+set and sizes, all manifest SHA-256 entries, exact selected source,
+band order, target-anchor proximity within the existing project target
+radius, signed ring table and fit/optional asymptotic/publication QA
+provenance. It does not extract ZIP members or load NPZ arrays. PNGs
+have size limits. These are integrity and association checks, not
+authentication, numerical reanalysis, original FITS verification or
+scientific validation.
+
+`joint_archive_dialog.py` displays a loading/error status, provenance
+summary, signed ring table and archived PNG selector. Existing figures
+are viewed at fit-to-viewport or native display size. A read-only worker
+is used for archive validation; new selection invalidates prior review.
+A separate explicit confirmation enables a new JSON association receipt.
+The receipt stores the exact archive SHA-256, absolute path and current
+project context. Reopen is explicit, checks the current context and
+revalidates the archive; moved/changed archives require a new review.
+No project passport or adopted result is changed.
+
+Tests: tests/test_joint_archive_review.py checks archive-format fixtures,
+negative signed flux, association/receipt safeguards, corruption and Qt
+empty/loading/populated/error/narrow states. test_native_workflow.py
+also reads the actual exporter result from the synthetic native workflow.
+scripts/capture_gui_baseline.py now captures four additional screenshots
+with an explicitly synthetic archive-format fixture and action bounds.
+No real research-object images are included in these fixtures.
+
+Evidence at implementation time is E0 (source review). Exact new-head
+CI and screenshot capture/inspection are pending; no visual approval
+or on-device claim. The prior 230a07a CI was not observed completing
+successfully before these edits. This increment is an archive review
+interface, not yet a GUI launcher for the new numerical pipeline.
+Next: integrate reviewed native Scene/PSF input snapshots, explicit
+parameter setup and staged cancellable worker runs. Full resumable
+computation state, original FITS verification, and real NGC2146sat
+replay remain open. No changes to the numerical photometry algorithms
+or science-adoption status in this GUI increment.
