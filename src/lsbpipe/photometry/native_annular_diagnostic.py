@@ -12,8 +12,9 @@ import numpy as np
 
 from lsbpipe.scene import SceneState, evaluate_mask, Operation
 from .contracts import NativeBandFrame, PSFDescription
-from .radial_models import NestedEllipse
-from .annular_inference import annular_support, adjoint_annular_operator
+from .radial_models import NestedEllipse, sersic_intensity, sersic_model_total, EllipseNode
+from .annular_inference import (annular_support, adjoint_annular_operator,
+                                fit_conditional_gls, conditional_holdout)
 from .sky_masks import native_boolean_mask_sha256
 from .uncertainty_budget import STATUS
 
@@ -137,6 +138,7 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
                                     grid_id=grid,mask_grid_id=scene.grid_id)
     return {"status":STATUS,"dataset_id":frame.dataset_id,"grid_id":grid,
             "native_input_sha256":digest,"scene_revision":scene.revision,
+            "pixel_area_arcsec2":frame.local_pixel_area_arcsec2,
             "valid_sha256":native_boolean_mask_sha256(valid),
             "corrections":[{"kind":c.kind,"source":c.source,"sha256":c.sha256} for c in corrections],
             "psf_sha256":sha256(np.asarray(psf.kernel,dtype=np.float64).tobytes()).hexdigest(),
@@ -148,3 +150,81 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
             "formal_diagonal_variance_nMgy2":formal,"operator":op,
             "operator_ring_indices":np.flatnonzero(measured),
             "covariance_calibrated":False,"full_geometry_containment_verified":False}
+
+
+def fit_common_support_sersic(records, covariance, *, band_order,
+                              covariance_source, train_rings, test_rings,
+                              initial, bounds):
+    """Joint conditional fit on explicitly common support, never science adoption.
+
+    Records are ordered by band_order, which also specifies covariance block
+    order. Each parameter triple is log(I0 per pixel), log(scale arcsec),
+    log(Sersic index). Same native WCS and exact same observed support are
+    required for this particular joint diagnostic. The caller supplies the
+    full conditional covariance, not just diagonal IVAR.
+    """
+    records=tuple(records)
+    bands=tuple(band_order)
+    if (not records or len(records)!=len(bands) or len(set(bands))!=len(bands)
+            or not isinstance(covariance_source,str) or not covariance_source.strip()):
+        raise ValueError("Explicit band order and covariance provenance required")
+    first=records[0]
+    n=len(first["ring_edges_arcsec"])-1
+    for rec,b in zip(records,bands):
+        if rec["status"]!=STATUS or rec["dataset_id"].split("/")[-1]!=b:
+            raise ValueError("Record status or band order mismatch")
+        if (rec["dataset_id"].rsplit("/",1)[0]!=first["dataset_id"].rsplit("/",1)[0]
+                or rec["grid_id"]!=first["grid_id"]
+                or rec["valid_sha256"]!=first["valid_sha256"]
+                or rec["geometry"]!=first["geometry"]
+                or rec["anchor_icrs"]!=first["anchor_icrs"]
+                or not np.array_equal(rec["ring_edges_arcsec"],first["ring_edges_arcsec"])):
+            raise ValueError("Joint fit requires identical native geometry and support")
+        if not np.array_equal(rec["operator_ring_indices"],np.arange(n)):
+            raise ValueError("Missing ring support; prepare a smaller explicitly declared range")
+    tr,te=np.asarray(train_rings),np.asarray(test_rings)
+    if (tr.shape!=(n,) or te.shape!=(n,) or tr.dtype.kind!="b" or te.dtype.kind!="b"
+            or not tr.any() or np.any(tr&te)):
+        raise ValueError("Explicit disjoint ring selections required")
+    for rec in records:
+        if np.any((tr|te)&~rec["coverage"]["eligible"]):
+            raise ValueError("Training/holdout outside contiguous coverage gate")
+    p=np.asarray(initial,dtype=float)
+    if p.shape!=(3*len(bands),):
+        raise ValueError("Three log parameters per ordered band required")
+    d=np.concatenate([rec["observed_flux_nMgy"] for rec in records])
+    def predictor(z):
+        result=[]
+        for i,rec in enumerate(records):
+            amp,re,idx=np.exp(z[3*i:3*i+3])
+            profile=sersic_intensity(rec["radial_nodes_arcsec"],amp,re,idx)
+            result.append(rec["operator"]@profile)
+        return np.concatenate(result)
+    train=np.tile(tr,len(bands))
+    test=np.tile(te,len(bands))
+    result=fit_conditional_gls(d,covariance,predictor,p,bounds,train=train)
+    result["band_order"]=bands
+    result["covariance_source"]=covariance_source
+    result["model_extrapolations"]=None
+    result["holdout"]=None
+    result["full_geometry_containment_verified"]=False
+    if not result["success"]:
+        return result
+    z=result["parameters"]
+    geo=first["geometry"]
+    geometry=NestedEllipse(EllipseNode(**geo["inner"]),EllipseNode(**geo["outer"]),
+                           geo["transition_start"],geo["transition_end"])
+    models={}
+    for i,(rec,b) in enumerate(zip(records,bands)):
+        amp,re,idx=np.exp(z[3*i:3*i+3])
+        models[b]=sersic_model_total(geometry,amp/rec["pixel_area_arcsec2"],re,idx)
+        models[b]["index"]=float(idx)
+    result["model_extrapolations"]=models
+    if test.any() and result["conditional_parameter_covariance"] is not None:
+        eps=1e-5
+        jac=np.column_stack([(predictor(z+v*eps)-predictor(z-v*eps))/(2*eps)
+                             for v in np.eye(len(z))])
+        result["holdout"]=conditional_holdout(
+            d,result["prediction"],covariance,jac,
+            result["conditional_parameter_covariance"],train=train,test=test)
+    return result
