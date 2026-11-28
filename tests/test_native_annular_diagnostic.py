@@ -45,7 +45,8 @@ def test_native_joint_workflow_on_synthetic_frames(tmp_path):
         params=dict(anchor_icrs=(96,78),ring_edges=np.arange(0,14,2.),
                     radial_nodes=np.arange(0,41,.02),psf=psf,
                     psf_input_sha256=frame.native_input_sha256,psf_grid_id=grid,
-                    n_sectors=4,ring_min=.5,cumulative_min=.5,sector_min=.4)
+                    n_sectors=4,ring_min=.5,cumulative_min=.5,sector_min=.4,
+                    retain_full_aperture_operator=True)
         rec=prepare_native_annuli(frame,scene,geometry,corrections=(sky,),**params)
         assert rec["coverage"]["eligible"].all()
         assert rec["status"]=="DIAGNOSTIC_NOT_ADOPTED"
@@ -70,6 +71,26 @@ def test_native_joint_workflow_on_synthetic_frames(tmp_path):
     assert fit["holdout"]["chi2"]<.001
     assert fit["model_extrapolations"]["g"]["kind"]=="UNTRUNCATED_MODEL_EXTRAPOLATION"
     assert not fit["covariance_calibrated"]
+    from lsbpipe.photometry.asymptotic_diagnostic import asymptotic_flux_diagnostic
+    asym=asymptotic_flux_diagnostic(records,np.eye(12)*.0004,fit,
+        aperture_count=6,plateau_inner_count=5,
+        fractional_tolerance=.02,normal_multiplier=1.96)
+    assert not asym["asymptotic_flux_adopted"]
+    assert asym["conditional_component_covariance_nMgy2"].shape==(16,16)
+    assert np.linalg.eigvalsh(asym["conditional_component_covariance_nMgy2"]).min()>-1e-10
+    for band in ("g","r"):
+        row=asym["bands"][band]
+        flux=lambda k:row[k]["flux_nMgy"]
+        assert flux("model_missing_in_frame_aperture")>0
+        assert flux("hybrid_in_frame_aperture")==pytest.approx(
+            flux("observed_valid_flux")+flux("model_missing_in_frame_aperture"))
+        assert flux("pure_model_total")==pytest.approx(
+            flux("intrinsic_model_enclosed")+flux("intrinsic_model_outer_tail"))
+        assert flux("hybrid_model_corrected_total")==pytest.approx(
+            flux("hybrid_in_frame_aperture")+flux("model_psf_and_sampling_transfer")
+            +flux("intrinsic_model_outer_tail"))
+        assert flux("hybrid_model_corrected_total")==pytest.approx(flux("pure_model_total"),rel=2e-4)
+    fit["asymptotic_diagnostic"]=asym
     from lsbpipe.photometry.annular_export import export_annular_diagnostic
     import zipfile, json, hashlib
     path=tmp_path/"diagnostic.zip"
@@ -77,7 +98,7 @@ def test_native_joint_workflow_on_synthetic_frames(tmp_path):
     assert manifest["status"]=="DIAGNOSTIC_NOT_ADOPTED"
     with zipfile.ZipFile(path) as z:
         assert z.testzip() is None
-        assert set(z.namelist())=={"rings.csv","arrays.npz","fit.json","manifest.json"}
+        assert set(z.namelist())=={"rings.csv","arrays.npz","fit.json","manifest.json","asymptotic.json"}
         stored=json.loads(z.read("manifest.json"))
         for name,digest in stored["files_sha256"].items():
             assert hashlib.sha256(z.read(name)).hexdigest()==digest
