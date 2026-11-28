@@ -79,3 +79,59 @@ def test_reject_non_nested_box_and_holdout_overlap():
         fit_block_geometry(e,n,data,kernels,**dict(kwargs,train_tiles=bad))
     with pytest.raises(ValueError,match="disjoint"):
         fit_block_geometry(e,n,data,kernels,**dict(kwargs,train_tiles=kwargs["holdout_tiles"]))
+
+
+def test_native_geometry_identity_and_review(monkeypatch):
+    WCS=pytest.importorskip("astropy.wcs").WCS
+    from lsbpipe.scene import SceneState, MaskLayer, LayerKind
+    from lsbpipe.photometry.contracts import NativeBandFrame, PSFDescription
+    from lsbpipe.photometry.native_annular_diagnostic import NativeCorrection
+    import lsbpipe.photometry.geometry_inference as gi
+    w=WCS(naxis=2)
+    w.wcs.crpix=[5.,5.]
+    w.wcs.crval=[96.,78.]
+    w.wcs.cdelt=[-1/3600,1/3600]
+    w.wcs.ctype=["RA---TAN","DEC--TAN"]
+    shape=(9,9)
+    frames=[];scenes=[];corrections=[];psfs=[];identities=[]
+    for i,band in enumerate(("g","r")):
+        f=NativeBandFrame(np.full(shape,2.+i),np.ones(shape),np.ones(shape),
+                          np.zeros(shape,dtype=np.uint32),w,
+                          release="dr9",region="south",brick="0965p780",band=band)
+        grid=f.native_grid_fingerprint
+        mask=np.zeros(shape,dtype=bool);mask[2+i,2]=True
+        s=SceneState("synthetic",grid,band,shape,(
+            MaskLayer("mask",LayerKind.INSTRUMENTAL_DEFECT,mask,grid,band),))
+        c=NativeCorrection("residual_sky",grid,f.native_input_sha256,
+                           "synthetic fixed correction",np.ones(shape))
+        k=np.zeros((3,3));k[1,1]=1
+        frames.append(f);scenes.append(s);corrections.append((c,))
+        psfs.append(PSFDescription("EMPIRICAL_KERNEL",k,{"fixture":"synthetic"}))
+        identities.append((f.native_input_sha256,grid))
+    def probe(e,n,images,kernels,*,valid,region,band_order,**kw):
+        assert band_order==("g","r")
+        assert not valid[2,2] and not valid[3,2]
+        assert valid.sum()==79
+        np.testing.assert_allclose(images[0][valid],1.)
+        np.testing.assert_allclose(images[1][valid],2.)
+        assert abs(e[4,4])+abs(n[4,4])<1e-7
+        return {"status":"DIAGNOSTIC_NOT_ADOPTED"}
+    monkeypatch.setattr(gi,"fit_block_geometry",probe)
+    kw=dict(anchor_icrs=(96.,78.),corrections_by_band=corrections,
+        psfs=psfs,psf_identities=identities,region=np.ones(shape,dtype=bool),
+        region_grid_id=grid,train_tiles=np.ones((3,3),dtype=bool),
+        holdout_tiles=np.zeros((3,3),dtype=bool))
+    result=gi.fit_native_geometry_candidates(frames,scenes,**kw)
+    assert not result["geometry_adopted"]
+    with pytest.raises(ValueError,match="PSF"):
+        gi.fit_native_geometry_candidates(frames,scenes,**dict(kw,psf_identities=identities[::-1]))
+    node={"east_arcsec":0.,"north_arcsec":0.,"q":.6,"pa_deg":45.}
+    candidate={"success":True,"boundary":False,"geometry":{"inner":node,
+        "outer":node,"transition_start":2.,"transition_end":8.}}
+    result["candidates"]={"constant":candidate}
+    with pytest.raises(ValueError):
+        gi.reviewed_geometry_candidate(result,"constant",confirmed=False)
+    assert gi.reviewed_geometry_candidate(result,"constant",confirmed=True).inner.q==.6
+    candidate["boundary"]=True
+    with pytest.raises(ValueError):
+        gi.reviewed_geometry_candidate(result,"constant",confirmed=True)
