@@ -28,7 +28,8 @@ def _jsonable(obj):
     return obj
 
 
-def export_annular_diagnostic(path, records, covariance, fit, *, render=False):
+def export_annular_diagnostic(path, records, covariance, fit, *, render=False,
+                              publication_context=None):
     """Write a NEW archive for an exact joint fit and its measured support.
 
     No calibrated confidence intervals, reconstructed masked flux or physical
@@ -136,7 +137,14 @@ def export_annular_diagnostic(path, records, covariance, fit, *, render=False):
                 fig.savefig(buf,format=ext,dpi=160)
                 contents[f"{kind}.{ext}"]=buf.getvalue()
             fig.clear()
+    if publication_context is not None:
+        from .publication_products import render_publication_products
+        products=render_publication_products(records,covariance,fit,**dict(publication_context))
+        if set(products)&set(contents):
+            raise ValueError("Publication product name collision")
+        contents.update(products)
     manifest={"status":STATUS,"schema":"desidera.annular-diagnostic/1",
+              "six_figure_diagnostic":publication_context is not None,
               "band_order":bands,"record_sha256":fit["record_sha256"],
               "covariance_sha256":fit["covariance_sha256"],
               "covariance_source":fit["covariance_source"],
