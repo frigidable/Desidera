@@ -150,7 +150,9 @@ def read_joint_archive(path, *, project_id, source_triplet, target_icrs,
         if (not isinstance(entry,dict)
                 or entry.get("dataset_id")!="/".join(context["source_triplet"]+[b])
                 or not _sha_ok(entry.get("native_input_sha256"))
-                or not _sha_ok(entry.get("grid_id"))
+                or not isinstance(entry.get("grid_id"),str)
+                or not entry["grid_id"].startswith("wcs-sha256:")
+                or not _sha_ok(entry["grid_id"][len("wcs-sha256:"):])
                 or "synthetic_injection_parent_sha256" in entry):
             raise ValueError("Archive does not match the selected native source")
         anchor=entry.get("anchor_icrs")
