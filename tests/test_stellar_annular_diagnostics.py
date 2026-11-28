@@ -140,3 +140,25 @@ def test_real_ngc2146sat_conditional_calibration_regression():
     np.testing.assert_allclose(c,[[.006677118952708755,.0017405768207996368],
                                   [.0017405768207996368,.00589106776534264]],rtol=1e-10)
     assert linear_sigma(c,[1,-1])==pytest.approx(.095327,abs=1e-5)
+
+
+def test_real_control_comparison_contract_on_synthetic_vectors():
+    from lsbpipe.photometry.annular_inference import control_model_comparison
+    x=np.arange(4,dtype=float)
+    models={
+        "constant":(lambda p:np.repeat(p[0],4),[1.],([-10.],[10.])),
+        "linear":(lambda p:p[0]+p[1]*x,[1.,0.],([-10.,-10.],[10.,10.])),
+    }
+    kwargs=dict(null_model="constant",train=np.ones(4,dtype=bool),
+                reference_support_id="same",control_support_ids=("same","same"),
+                control_ids=("a","b"),overlap=np.eye(2,dtype=bool),
+                control_provenance="synthetic test only")
+    result=control_model_comparison(2+x,np.repeat(2.,4),[.2*x,2*x],
+                                    np.eye(4),models,**kwargs)
+    assert result["target"]["delta_chi2"]==pytest.approx(5.)
+    assert result["n_equal_or_exceed"]==1
+    assert result["calibrated_false_positive_rate"] is None
+    kwargs["overlap"]=np.ones((2,2),dtype=bool)
+    with pytest.raises(ValueError):
+        control_model_comparison(2+x,np.repeat(2.,4),[.2*x,2*x],
+                                 np.eye(4),models,**kwargs)
