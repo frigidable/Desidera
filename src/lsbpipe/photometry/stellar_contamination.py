@@ -264,7 +264,7 @@ def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
     y=r*np.cos(angle)/fg
     template=compact_halo_template(r,cutoff_arcsec=cutoff,power=p,
                                    pivot_arcsec=pivot,core_arcsec=core)
-    means=[]; designs=[]; halos=[]; masks=[]; tiles=[]; counts=[]; footprints=[]
+    means=[]; designs=[]; halos=[]; masks=[]; tiles=[]; counts=[]; footprints=[]; mean_variances=[]
     ny,nx=frame.shape
     for j in range(0,ny-block_size+1,block_size):
         for i in range(0,nx-block_size+1,block_size):
@@ -284,6 +284,7 @@ def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
             halos.append(float(template[sl][ok].mean()))
             masks.append(mask);tiles.append((i,j));counts.append(int(ok.sum()))
             footprints.append(native_boolean_mask_sha256(ok))
+            mean_variances.append(float(np.sum(1/frame.invvar_nMgy2[sl][ok])/ok.sum()**2))
     if not masks:
         raise ValueError("No eligible independent blocks")
     far,near,holdout,far_control=np.asarray(masks,dtype=bool).T
@@ -304,6 +305,7 @@ def fit_native_independent_sky_halo(frame, scene, *, star_icrs, galaxy_icrs,
         "proposed_layers":(core_layer,ray_layer),"block_xy":np.asarray(tiles),
         "block_counts":np.asarray(counts),"far":far,"near":near,"holdout":holdout,
         "far_control":far_control,"block_footprint_sha256":tuple(footprints),
+        "block_formal_mean_variance":np.asarray(mean_variances),
         "block_size":block_size,"star_icrs":(ra,dec),"far_star_guard_arcsec":fg,
         "core_arcsec":core,"cutoff_arcsec":cutoff,"pivot_arcsec":pivot,"power":p,
         "sky_degree":sky_degree,
