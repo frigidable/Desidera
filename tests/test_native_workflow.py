@@ -126,6 +126,14 @@ def test_full_native_workflow(tmp_path):
                 np.testing.assert_allclose(a["band0_observed_ring_flux"],
                                            out["records"][0]["observed_flux_nMgy"])
             assert not fit["workflow"]["full_geometry_containment_verified"]
+    from lsbpipe.photometry.joint_archive_review import read_joint_archive
+    review=read_joint_archive(path,project_id="synthetic-native-workflow",
+        source_triplet=("dr9","south","0965p780"),target_icrs=anchor,target_radius_arcsec=60.)
+    assert len(review["rows"])==12
+    assert review["archive_sha256"]
+    assert bool(review["figures"])==has_matplotlib
+    assert review["asymptotic"] is not None
+    assert not review["original_fits_reverified"]
     assert all(len(s.layers)==0 for s in scenes)
     assert tuple(f.native_input_sha256 for f in frames)==tuple(i[0] for i in identities)
     from lsbpipe.photometry.publication_products import publication_arrays
