@@ -703,6 +703,86 @@ def main():
         finally:
             window.close()
             app.processEvents()
+    # Existing joint diagnostic archive review: no real FITS or network.
+    # This is an explicitly synthetic UI-format fixture, not a science run.
+    from lsbpipe.gui.joint_archive_dialog import JointArchiveDialog
+    import hashlib
+    import io
+    import zipfile
+    import numpy as np
+    with tempfile.TemporaryDirectory(prefix="desidera-joint-review-ci-") as tmp:
+        root=Path(tmp)
+        context=dict(project_id="offline-joint-review",source_triplet=("dr11","north","0965p780"),
+                     target_icrs=(96.,78.),target_radius_arcsec=60.)
+        bands=["g","r"]
+        fit=dict(status="DIAGNOSTIC_NOT_ADOPTED",success=True,boundary=False,
+                 band_order=bands,record_sha256=["a"*64,"b"*64],covariance_sha256="c"*64,
+                 covariance_calibrated=False,train_rings=[True,False],test_rings=[False,True],
+                 chi2=2.3,dof=1,covariance_source="SYNTHETIC GUI FIXTURE ONLY")
+        csvtext="band,a_inner_arcsec,a_outer_arcsec,observed_nMgy,model_same_support_nMgy,conditional_sigma_nMgy,eligible,train,test\n"
+        for b in bands:
+            csvtext+=f"{b},0,5,2,2.1,0.2,True,True,False\n{b},5,10,-0.2,0.1,0.3,True,False,True\n"
+        buf=io.BytesIO()
+        np.savez_compressed(buf,fixture=np.arange(3))
+        members={"rings.csv":csvtext.encode(),"fit.json":json.dumps(fit).encode(),
+                 "arrays.npz":buf.getvalue()}
+        manifest=dict(status="DIAGNOSTIC_NOT_ADOPTED",schema="desidera.annular-diagnostic/1",
+                      band_order=bands,record_sha256=fit["record_sha256"],
+                      covariance_sha256=fit["covariance_sha256"],covariance_calibrated=False,
+                      full_geometry_containment_verified=False,
+                      inputs=[dict(dataset_id=f"dr11/north/0965p780/{b}",native_input_sha256="d"*64,
+                          grid_id="wcs-sha256:"+"e"*64,anchor_icrs=[96.,78.]) for b in bands],
+                      files_sha256={k:hashlib.sha256(v).hexdigest() for k,v in members.items()})
+        archive=root/"synthetic-review.zip"
+        with zipfile.ZipFile(archive,"w") as z:
+            for k,v in members.items():
+                z.writestr(k,v)
+            z.writestr("manifest.json",json.dumps(manifest))
+        dialog=JointArchiveDialog(project_name="Synthetic review fixture — no science",
+                                  project_root=root,context=context)
+        def capture_review(state,width,height):
+            dialog.resize(width,height)
+            dialog.show()
+            for _ in range(5):
+                app.processEvents()
+            shot=dialog.grab()
+            path=outdir/f"joint_review_{state}_{width}x{height}.png"
+            if ((shot.width(),shot.height())!=(width,height)
+                    or not shot.save(str(path),"PNG") or path.stat().st_size<1024):
+                raise AssertionError(f"Joint review screenshot failed: {state}")
+            actions={name:_bounds(widget,dialog) for name,widget in
+                     (("open",dialog.open_btn),("reopen",dialog.reopen_btn),
+                      ("save",dialog.save_btn),("status",dialog.status))}
+            if any(not a["visible"] or a["x"]<0 or a["y"]<0
+                   or a["x"]+a["width"]>width or a["y"]+a["height"]>height for a in actions.values()):
+                raise AssertionError(f"Joint review action clipped: {state}")
+            reports.append(dict(state="joint_review_"+state,screenshot=path.name,
+                screenshot_px=[shot.width(),shot.height()],screenshot_bytes=path.stat().st_size,
+                viewer_content="SYNTHETIC_ARCHIVE_FORMAT_FIXTURE_NOT_SURVEY_FITS",
+                network_used=False,scientific_status="NO_SCIENCE_RESULT",widgets=actions))
+        try:
+            capture_review("empty",900,650)
+            dialog.start_load(archive)
+            dialog._future.result(timeout=15)
+            dialog._poll()
+            if dialog.rings.rowCount()!=4:
+                raise AssertionError("Synthetic archive review did not load")
+            dialog.tabs.setCurrentIndex(1)
+            capture_review("populated",900,650)
+            capture_review("populated_narrow",640,480)
+            dialog.start_load(root/"missing.zip")
+            try:
+                dialog._future.result(timeout=15)
+            except FileNotFoundError:
+                pass
+            dialog._poll()
+            if "Review failed" not in dialog.status.text():
+                raise AssertionError("Missing review archive did not fail closed")
+            capture_review("error",640,480)
+        finally:
+            dialog.reject()
+            dialog.deleteLater()
+            app.processEvents()
     index = {
         "evidence_level": "E1_CAPTURED_NOT_VISUALLY_REVIEWED",
         "screens": reports,
