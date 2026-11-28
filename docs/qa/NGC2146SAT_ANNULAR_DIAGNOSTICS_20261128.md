@@ -244,3 +244,51 @@ predeclared bounds/splits, joint empirical covariance calibration,
 full real-data replay, profile family and pixel injection studies, six
 publication figures, end-to-end workspace orchestration and GUI review.
 No new method is science-adopted.
+
+
+## Staged native workflow (follow-up)
+
+The exact prior commit b1edfc217850dd065202be62e0e74a6834c5772e
+passed all six Survey Explorer jobs (Ubuntu and Windows Python 3.10
+and 3.12, package wheel and GUI import) and the Windows UI baseline.
+Actions runs 46139519136 and 46139519113. The earlier native access
+violation did not recur; its root cause has not been established.
+
+`native_workflow.py` composes the previously separate research APIs:
+
+- prepare_scene_candidates fits each band on its existing native scene,
+  constructs candidate additional mask layers, and retains correction
+  rasters, PSF identities and block fits. Original scenes stay unchanged.
+- geometry_candidates optionally evaluates PSF-forward fixed, constant
+  and varying geometry after explicit mask review.
+- run_reviewed_annular_workflow requires mask confirmation and an
+  explicitly reviewed NestedEllipse, computes common valid support,
+  measures signed annuli, checks finite PSF footprint around the
+  measured pixels and contiguous coverage of requested rings, builds
+  conditional covariance, fits the joint Sérsic model and optionally
+  writes a new diagnostic archive.
+
+There is no fallback to a different radial limit, mask, geometry or
+noise hypothesis. WorkflowBlocked carries the failed stage and reason
+for expected scientific/input gate failures. Failed, boundary or
+rank-deficient fits are not exported by this workflow as complete.
+The PSF footprint check does not certify geometric containment of an
+entire contour; in-frame coverage is still explicitly labelled as such.
+The workflow uses an independently fitted single-star compact halo
+per band and fixed compact-source corrections. It does not estimate
+geometry uncertainty, select a covariance model, calibrate the noise,
+or validate independent full-brick controls. No scientific acceptance
+is implied by an archive or the DIAGNOSTIC_COMPLETE stage.
+
+The in-memory candidate bundle is a research API, not a persistent
+review token or an immutable serialized provenance artifact. Callers
+must preserve the prepared results unchanged. Geometry provenance
+from geometry_candidates should be preserved separately; passing an
+explicit NestedEllipse is also supported. A dedicated GUI integration
+and persistent review state remain outstanding.
+
+tests/test_native_workflow.py adds a synthetic two-band end-to-end
+fixture with different PSFs, bright star and correlated block noise,
+plus review, coverage and archive tests. The new test execution
+requires exact-commit CI. No real native FITS replay or additional
+scientific adoption was performed in this follow-up.
