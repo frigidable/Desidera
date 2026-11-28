@@ -107,7 +107,8 @@ def geometry_candidates(prepared, *, masks_confirmed, anchor_icrs, region,
 def run_reviewed_annular_workflow(prepared, *, masks_confirmed, geometry_confirmed,
                                    geometry, anchor_icrs, annular_settings,
                                    covariance_settings, fit_settings,
-                                   output=None, render=False, asymptotic_settings=None):
+                                   output=None, render=False, asymptotic_settings=None,
+                                   publication=False):
     """Measure, estimate conditional covariance, fit and optionally export.
 
     geometry is an explicitly reviewed NestedEllipse (which may come from
@@ -120,6 +121,8 @@ def run_reviewed_annular_workflow(prepared, *, masks_confirmed, geometry_confirm
         raise WorkflowBlocked("MASK_REVIEW", "Explicit review of the proposed scene required")
     if geometry_confirmed is not True or not isinstance(geometry,NestedEllipse):
         raise WorkflowBlocked("GEOMETRY_REVIEW", "Explicit reviewed nested geometry required")
+    if not isinstance(publication,bool) or (publication and output is None):
+        raise WorkflowBlocked("EXPORT", "Six-figure publication export requires an explicit output path")
     frames, scenes=prepared.frames,prepared.proposed_scenes
     common=_stage("COMMON_SUPPORT",common_native_validity,frames,scenes)
     if not common.any():
@@ -177,8 +180,12 @@ def run_reviewed_annular_workflow(prepared, *, masks_confirmed, geometry_confirm
             records,covariance["covariance"],fit,**dict(asymptotic_settings))
     manifest=None
     if output is not None:
+        context=None
+        if publication:
+            context={"frames":frames,"scenes":scenes,"psfs":prepared.psfs,
+                     "corrections_by_band":prepared.corrections}
         manifest=_stage("EXPORT",export_annular_diagnostic,output,records,
-                        covariance["covariance"],fit,render=render)
+                        covariance["covariance"],fit,render=render,publication_context=context)
     return {"status":STATUS,"stage":"DIAGNOSTIC_COMPLETE","records":records,
             "covariance":covariance,"fit":fit,"manifest":manifest,
             "science_adopted":False,"covariance_calibrated":False}
