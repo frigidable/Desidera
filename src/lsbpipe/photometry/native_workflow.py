@@ -21,6 +21,7 @@ from .geometry_inference import fit_native_geometry_candidates, reviewed_geometr
 from .radial_models import NestedEllipse
 from .block_covariance import native_scene_block_covariance
 from .annular_export import export_annular_diagnostic
+from .asymptotic_diagnostic import asymptotic_flux_diagnostic
 from .uncertainty_budget import STATUS
 
 
@@ -106,7 +107,7 @@ def geometry_candidates(prepared, *, masks_confirmed, anchor_icrs, region,
 def run_reviewed_annular_workflow(prepared, *, masks_confirmed, geometry_confirmed,
                                    geometry, anchor_icrs, annular_settings,
                                    covariance_settings, fit_settings,
-                                   output=None, render=False):
+                                   output=None, render=False, asymptotic_settings=None):
     """Measure, estimate conditional covariance, fit and optionally export.
 
     geometry is an explicitly reviewed NestedEllipse (which may come from
@@ -125,7 +126,8 @@ def run_reviewed_annular_workflow(prepared, *, masks_confirmed, geometry_confirm
         raise WorkflowBlocked("COMMON_SUPPORT", "No common valid pixels")
     ann=dict(annular_settings)
     if any(k in ann for k in ("common_valid","retain_pixel_support","anchor_icrs",
-                               "corrections","psf","psf_input_sha256","psf_grid_id")):
+                               "corrections","psf","psf_input_sha256","psf_grid_id",
+                               "retain_full_aperture_operator")):
         raise WorkflowBlocked("INPUT", "Annular settings cannot override native identities or support")
     records=[]
     for f,s,c,p,identity in zip(frames,scenes,prepared.corrections,
@@ -133,7 +135,8 @@ def run_reviewed_annular_workflow(prepared, *, masks_confirmed, geometry_confirm
         rec=_stage(f"ANNULI_{f.band}",prepare_native_annuli,
             f,s,geometry,anchor_icrs=anchor_icrs,corrections=c,psf=p,
             psf_input_sha256=identity[0],psf_grid_id=identity[1],
-            common_valid=common,retain_pixel_support=True,**ann)
+            common_valid=common,retain_pixel_support=True,
+            retain_full_aperture_operator=asymptotic_settings is not None,**ann)
         # Require finite PSF support around measured pixels, separately
         # from the in-frame ring coverage (not a full contour certificate).
         yy,xx=np.nonzero(rec["ring_index"]>=0)
@@ -169,6 +172,9 @@ def run_reviewed_annular_workflow(prepared, *, masks_confirmed, geometry_confirm
                         "holdout_rmse":h["holdout_rmse"],"block_counts":list(h["counts"])}
                         for f,h in zip(frames,prepared.halo_fits)],
                      "science_adopted":False}
+    if asymptotic_settings is not None:
+        fit["asymptotic_diagnostic"]=_stage("ASYMPTOTIC",asymptotic_flux_diagnostic,
+            records,covariance["covariance"],fit,**dict(asymptotic_settings))
     manifest=None
     if output is not None:
         manifest=_stage("EXPORT",export_annular_diagnostic,output,records,
