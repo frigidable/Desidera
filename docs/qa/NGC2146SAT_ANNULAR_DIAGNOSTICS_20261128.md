@@ -346,3 +346,53 @@ exact-commit CI. No additional real NGC2146sat measurements have been
 made in this follow-up. Independent control positioning, replacement
 injections and full noise/geometry/source refits remain outstanding,
 along with real-FITS replay, full publication figures and GUI integration.
+
+
+## Six-figure diagnostic export (follow-up)
+
+`publication_products.py` provides an opt-in native-grid figure set.
+Call run_reviewed_annular_workflow with publication=True and an explicit
+new output ZIP path. Matplotlib is the existing optional demo extra.
+The workflow passes the exact frames, reviewed scenes, fixed corrections,
+PSFs, annular records, fitted parameters and covariance to the exporter.
+
+Before rendering, publication_arrays independently reconstructs the
+common validity, native annulus labels, corrected data and the finite
+PSF-convolved model using the fitted radial interpolation. It verifies
+native input/grid/scene identities, correction and PSF checksums, and
+both observed and model ring-sum closure against the fit. A mismatch
+blocks the export. No masked observational pixel is reconstructed.
+The displayed model is masked to the same observed support as the data.
+
+Six PNG/SVG pairs:
+- 01_stellar_halo: before halo removal, halo model, corrected image;
+- 02_prepared_images: corrected native images and geometry contours;
+- 03_curve_of_growth: signed measured cumulative flux and same-support model;
+- 04_surface_brightness: positive eligible measurements, before extinction;
+- 05_model_residual: observed, PSF-convolved model, signed residual;
+- 06_radial_model: signed mean radial intensity and raw model residual.
+
+Native image axes are pixels, not claimed north-up sky coordinates.
+Nonpositive flux stays in numerical tables but cannot be expressed as
+a finite magnitude. Positive bins whose conditional lower flux interval
+crosses zero are marked separately, without fabricated symmetric
+magnitude errors. All error bars are conditional and all figures are
+marked DIAGNOSTIC_NOT_ADOPTED. Raw residuals are not the correlated
+conditional held-out residuals.
+
+publication_arrays.npz contains the actual plotted rasters, common mask,
+radius/annulus index, signed ring fluxes, conditional covariance and
+support metadata. publication_qa.json records closure errors and
+provenance. All members are covered by the existing ZIP manifest.
+The full contour containment and empirical uncertainty calibration
+remain unverified. These are publication-format diagnostics, not
+scientifically approved final article figures.
+
+Extended test_native_workflow.py checks all twelve image members when
+Matplotlib is installed, manifest hashes, signed residual identity,
+masked pixels and rejection of a substituted correction. CI installs
+the existing exact,demo,test extras. New code has not yet passed
+exact-commit CI and no real FITS publication figures were rendered
+or visually inspected in this follow-up. Prior run 46146235229 for
+742e2829 was canceled before completing. GUI integration and real
+NGC2146sat replay remain separate open gates.
