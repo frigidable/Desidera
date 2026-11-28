@@ -292,3 +292,57 @@ fixture with different PSFs, bright star and correlated block noise,
 plus review, coverage and archive tests. The new test execution
 requires exact-commit CI. No real native FITS replay or additional
 scientific adoption was performed in this follow-up.
+
+
+## Asymptotic flux decomposition and differential injections (follow-up)
+
+The exact prior commit 5e05ef5b77f7c47fd5fbba04e8c8aac336f3ca9a
+had successful Ubuntu Python 3.10/3.12 scientific jobs and package wheel
+in run 46145869317. The remaining jobs were canceled on subsequent
+pushes. Do not attribute these results to the new head.
+
+`asymptotic_diagnostic.py` requires the optional full in-frame
+aperture PSF operator from prepare_native_annuli. It reports separately:
+the signed valid-pixel aperture sum, model missing-pixel increment,
+hybrid in-frame aperture flux, intrinsic Sérsic enclosed flux and
+outer tail, PSF/sampling transfer (intrinsic enclosed minus full
+in-frame convolved model), pure model total and hybrid corrected total.
+The latter equals observed valid flux plus model total minus predicted
+valid flux. No masked observational pixels are filled. Full finite PSF
+footprint around in-frame aperture pixels is required; full geometric
+containment of the actual contour remains unverified. Model magnitudes
+are before extinction. Negative measured flux is retained.
+
+The outer tail is integrated directly, with the regularized upper
+incomplete gamma function for the constant-q outer domain. Conditional
+component covariance uses the Gauss-Newton response of the parameters
+to the training measurements and propagates the full ring covariance
+through the total data-plus-model derivative. This retains the cross
+term and does not add a separate independent parameter variance.
+Neither the model total nor a plateau check establishes an empirical
+asymptote or constrains arbitrary additional light outside the fit.
+Optional workflow asymptotic_settings (including predeclared
+aperture_count and optionally all three plateau settings) includes
+asymptotic.json and full operators in arrays.npz. No automatic adoption.
+
+`pixel_injection.py` creates a separate NativeBandFrame with an explicit
+positive native-sampled Sérsic signal convolved with the empirical PSF.
+It retains original invalid pixels, native masks, IVAR and NEXP, records
+parent and model identities, and does not simulate additional noise.
+Original FITS and in-memory observations stay unchanged. Annular records
+carry the synthetic parent identity and the observational exporter rejects
+them. The differential wrapper re-runs both the original and injected
+workflow with matched hypotheses, checks identical measurement support,
+refits sky/halo and covariance, and reports expected valid ring signal,
+measured ring-flux change, biases and fitted model-total response.
+Geometry and compact-source amplitudes remain fixed. This is a
+differential stress test, not independent recovery of a component or
+a calibrated coverage/false-positive experiment. The wrapper returns
+a diagnostic result only; it does not write an observational archive.
+
+Added tests in test_asymptotic_diagnostic.py, test_pixel_injection.py
+and extended end-to-end native workflow tests. New tests still require
+exact-commit CI. No additional real NGC2146sat measurements have been
+made in this follow-up. Independent control positioning, replacement
+injections and full noise/geometry/source refits remain outstanding,
+along with real-FITS replay, full publication figures and GUI integration.
