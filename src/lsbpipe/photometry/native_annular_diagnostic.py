@@ -46,7 +46,8 @@ class NativeCorrection:
 def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
                           radial_nodes, corrections, psf, psf_input_sha256,
                           psf_grid_id, n_sectors, ring_min, cumulative_min,
-                          sector_min, max_work_pixels=2_000_000, row_chunk=128):
+                          sector_min, max_work_pixels=2_000_000, row_chunk=128,
+                          common_valid=None, retain_pixel_support=False):
     """Build observed signed fluxes and a finite native PSF response matrix.
 
     The tangent plane is a small-field sky-offset approximation. Coverage
@@ -79,6 +80,11 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
     hard_valid &= ~frame.mask_reasons[f"ALLMASK_{frame.band.upper()}"]
     valid=evaluate_mask(scene,frame.image_nMgy,frame.invvar_nMgy2,grid_id=grid,
                         operation=Operation.PHOTOMETRY,observation_valid=hard_valid).valid
+    if common_valid is not None:
+        common=np.asarray(common_valid)
+        if common.dtype.kind!="b" or common.shape!=frame.shape or np.any(common & ~valid):
+            raise ValueError("Common support must be a Boolean subset of native scene validity")
+        valid=common.copy()
     image=np.array(frame.image_nMgy,copy=True)
     for c in corrections:
         if c.grid_id!=grid or c.input_sha256!=digest or c.values.shape!=frame.shape:
@@ -140,10 +146,12 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
     if measured.any():
         op=adjoint_annular_operator(radius,radial_nodes,masks[measured],psf.kernel,
                                     grid_id=grid,mask_grid_id=scene.grid_id)
-    return {"status":STATUS,"dataset_id":frame.dataset_id,"grid_id":grid,
+    ring_index=np.where(valid,labels,-1).astype(np.int32)
+    result={"status":STATUS,"dataset_id":frame.dataset_id,"grid_id":grid,
             "native_input_sha256":digest,"scene_revision":scene.revision,
             "pixel_area_arcsec2":frame.local_pixel_area_arcsec2,
             "valid_sha256":native_boolean_mask_sha256(valid),
+            "ring_index_sha256":numeric_sha256(ring_index),
             "corrections":[{"kind":c.kind,"source":c.source,"sha256":c.sha256} for c in corrections],
             "psf_sha256":sha256(np.asarray(psf.kernel,dtype=np.float64).tobytes()).hexdigest(),
             "anchor_icrs":[ra,dec],"geometry":asdict(geometry),"ring_edges_arcsec":edges.copy(),
@@ -155,6 +163,9 @@ def prepare_native_annuli(frame, scene, geometry, *, anchor_icrs, ring_edges,
             "formal_diagonal_variance_nMgy2":formal,"operator":op,
             "operator_ring_indices":np.flatnonzero(measured),
             "covariance_calibrated":False,"full_geometry_containment_verified":False}
+    if retain_pixel_support:
+        result["ring_index"]=np.frombuffer(ring_index.tobytes(),dtype=ring_index.dtype).reshape(ring_index.shape)
+    return result
 
 
 def fit_common_support_sersic(records, covariance, *, band_order,
@@ -181,6 +192,7 @@ def fit_common_support_sersic(records, covariance, *, band_order,
         if (rec["dataset_id"].rsplit("/",1)[0]!=first["dataset_id"].rsplit("/",1)[0]
                 or rec["grid_id"]!=first["grid_id"]
                 or rec["valid_sha256"]!=first["valid_sha256"]
+                or rec["ring_index_sha256"]!=first["ring_index_sha256"]
                 or rec["geometry"]!=first["geometry"]
                 or rec["anchor_icrs"]!=first["anchor_icrs"]
                 or not np.array_equal(rec["ring_edges_arcsec"],first["ring_edges_arcsec"])):
@@ -251,7 +263,7 @@ def annular_record_sha256(rec):
     """Bind fit/export to the same measured ring arrays and provenance."""
     import json
     fields=("status","dataset_id","grid_id","native_input_sha256",
-            "scene_revision","valid_sha256","corrections","psf_sha256",
+            "scene_revision","valid_sha256","ring_index_sha256","corrections","psf_sha256",
             "anchor_icrs","geometry","coverage_thresholds","pixel_area_arcsec2")
     meta={k:rec[k] for k in fields}
     h=sha256(json.dumps(meta,sort_keys=True,allow_nan=False).encode("utf-8"))
@@ -264,3 +276,25 @@ def annular_record_sha256(rec):
         h.update(name.encode("ascii"))
         h.update(numeric_sha256(rec["coverage"][name]).encode("ascii"))
     return h.hexdigest()
+
+
+def common_native_validity(frames, scenes):
+    """Intersection of reviewed native scene validity, without reprojection."""
+    frames,scenes=tuple(frames),tuple(scenes)
+    if not frames or len(frames)!=len(scenes):
+        raise ValueError("Explicit aligned native frames and scenes required")
+    if any(not isinstance(f,NativeBandFrame) for f in frames):
+        raise ValueError("Validated native frames required")
+    first=frames[0]
+    grid=first.native_grid_fingerprint
+    base=np.ones(first.shape,dtype=bool)
+    for f,s in zip(frames,scenes):
+        if (not isinstance(s,SceneState) or f.native_grid_fingerprint!=grid
+                or s.grid_id!=grid or s.band!=f.band or s.shape!=first.shape
+                or f.dataset_id.rsplit("/",1)[0]!=first.dataset_id.rsplit("/",1)[0]):
+            raise ValueError("Exact common native grid and release/brick required")
+        valid=f.valid & ~f.mask_reasons[f"SATUR_{f.band.upper()}"]
+        valid &= ~f.mask_reasons[f"ALLMASK_{f.band.upper()}"]
+        base &= evaluate_mask(s,f.image_nMgy,f.invvar_nMgy2,grid_id=grid,
+                              operation=Operation.PHOTOMETRY,observation_valid=valid).valid
+    return np.frombuffer(base.tobytes(),dtype=bool).reshape(base.shape)
