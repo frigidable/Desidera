@@ -14,11 +14,12 @@ def test_native_joint_workflow_on_synthetic_frames(tmp_path):
     from astropy.coordinates import SkyCoord
     from astropy import units as u
     w=WCS(naxis=2)
-    w.wcs.crpix=[21.,21.]
+    w.wcs.crpix=[41.,41.]
     w.wcs.crval=[96.,78.]
-    w.wcs.cdelt=[-1/3600,1/3600]
+    w.wcs.cdelt=[-.5/3600,.5/3600]
     w.wcs.ctype=["RA---TAN","DEC--TAN"]
-    yy,xx=np.indices((41,41))
+    # Resolve the 0–2 arcsec ring in all four sectors even with a hard exclusion.
+    yy,xx=np.indices((81,81))
     center=SkyCoord(96*u.deg,78*u.deg,frame="icrs")
     coords=w.pixel_to_world(xx,yy).icrs
     distance=center.separation(coords).arcsec
@@ -36,7 +37,7 @@ def test_native_joint_workflow_on_synthetic_frames(tmp_path):
                               np.zeros(im.shape,dtype=np.uint32),w,
                               release="dr9",region="south",brick="0965p780",band=band)
         grid=frame.native_grid_fingerprint
-        hard=np.zeros(im.shape,dtype=bool);hard[21,21]=True
+        hard=np.zeros(im.shape,dtype=bool);hard[41,41]=True
         scene=SceneState("synthetic",grid,band,frame.shape,(
             MaskLayer("hard",LayerKind.INSTRUMENTAL_DEFECT,hard,grid,band),))
         sky=NativeCorrection("residual_sky",grid,frame.native_input_sha256,
