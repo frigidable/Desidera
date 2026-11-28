@@ -54,3 +54,19 @@ def test_spatial_block_covariance_matches_full_kron():
     with pytest.raises(ValueError):
         conditional_block_covariance(xy,l,scales,rho,rem,band_order=("g","r"),
                                      length_arcsec=3,mix=.6,max_tiles=2)
+
+
+def test_single_ring_exact_zero_and_paired_controls():
+    from lsbpipe.photometry.block_covariance import paired_control_statistics
+    assert np.array_equal(within_tile_diagonal_remainder([[.1,.2,3.7]]),[[0.]])
+    r=np.array([[-2.,-3.],[-1.,-1.],[0.,.2],[1.,1.2],[2.,4.]])
+    result=paired_control_statistics(r,band_order=("g","r"),tile_ids=range(5),
+                                     minimum_tiles=4,clip_sigma=3.)
+    assert result["n_matched_tiles"]==5
+    np.testing.assert_allclose(result["scales"],1.4826*np.median(
+        np.abs(r-np.median(r,axis=0)),axis=0))
+    np.testing.assert_allclose(np.diag(result["correlation"]),1.)
+    assert np.linalg.eigvalsh(result["correlation"]).min()>=0
+    with pytest.raises(ValueError):
+        paired_control_statistics(r,band_order=("g","r"),tile_ids=[0,0,1,2,3],
+                                  minimum_tiles=4,clip_sigma=3.)
